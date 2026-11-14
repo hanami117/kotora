@@ -1,17 +1,19 @@
 # Kotora roadmap
 
 The plan, in stages. Each stage ends with a review by the user before the next one starts. The design and
-its reasons are in [DESIGN.md](DESIGN.md); open questions are in its section 12.
+its reasons are in [DESIGN.md](DESIGN.md); the user's decisions of 2026-11-14 are in its section 12.
+v0.1 is MyAnimeList; AniList comes in v0.2.
 
 ## Status
 
-- **Stage 0, design:** in review (branch `design`). No code yet.
+- **Stage 0, design:** decisions recorded 2026-11-14 (branch `design`); waiting for the merge. No code yet.
 
 ## Stage 0: design (current)
 
 - [x] Research: Taiga today, alternatives, building blocks, service terms, detection on Wayland and macOS
 - [x] docs/DESIGN.md, docs/ROADMAP.md, CLAUDE.md
-- [ ] The user answers the open questions (DESIGN.md §12); the design is updated and merged
+- [x] The user answers the open questions (DESIGN.md §12, "Decisions (2026-11-14)"); the design is updated
+- [ ] Merge the `design` branch (the user's call)
 
 ## Stage 1: skeleton
 
@@ -26,46 +28,53 @@ its reasons are in [DESIGN.md](DESIGN.md); open questions are in its section 12.
   and compare with upstream's test data.
 - [ ] `deny.toml`, clippy clean, Linux check script (from Uzumaki's `scripts/linux-check`).
 
-## Stage 2: AniList, read only
+## Stage 2: MyAnimeList, read only
 
-- [ ] Sign-in: implicit grant with a loopback redirect, and the PIN fallback. Token in the keyring;
-  sign out.
-- [ ] Fetch the user's anime list (`MediaListCollection`) into the store; covers through the art cache.
+- [ ] Sign-in: OAuth 2 PKCE (`plain`) with a loopback redirect and token refresh. The MAL Client ID comes
+  from `config.toml` or a build-time default (`KOTORA_MAL_CLIENT_ID`); no secret in the repo. Token in a
+  0600 file with a warning in Settings; sign out deletes it.
+- [ ] Fetch the user's anime list (`GET /users/@me/animelist`, paged) into the store; covers through the
+  art cache.
 - [ ] List page by status: virtual rows, sorting, search filter, offline start from the cache.
-- [ ] Rate limiter (25 requests a minute budget) with 429 and `Retry-After` handling.
-- [ ] Scenes: signed out, loading, empty, list, offline.
+- [ ] Rate limiter (MAL: 20 requests a minute budget, 1 s apart; limits undocumented) with 429 handling.
+- [ ] A service trait in `core`, so AniList can be added in v0.2 without touching the queue.
+- [ ] Scenes: signed out, no Client ID, loading, empty, list, offline.
 
 ## Stage 3: edits and sync queue
 
 - [ ] Inline editor (progress, status, score) and `+1`.
-- [ ] `pending_op` queue: coalescing, a worker, backoff, the 401 "sign in again" state, conflict
-  detection on the remote `updatedAt`.
+- [ ] `pending_op` queue: coalescing, a worker (`PATCH my_list_status`), backoff, the 401 / failed-refresh
+  "sign in again" state, conflict detection on the remote `updated_at`.
 - [ ] Queue page with badge and per-op errors; conflict choice.
 - [ ] `kot list`, `kot +1`, `kot set`, `kot queue`, `kot sync`.
 
 ## Stage 4: detection (completes v0.1)
 
-- [ ] `detect`: MPRIS source (zbus, `xesam:url`, position), and the mpv IPC source (configured socket
-  paths) on Linux and macOS.
-- [ ] Recognition: parse, cache, match against the list, one service search, confidence.
+- [ ] `detect`: MPRIS source (zbus, `xesam:url`, position) for VLC, mpv and mpc-qt; the mpv IPC source
+  (configured socket paths) on Linux and macOS (IINA included); the VLC HTTP interface source on macOS.
+- [ ] Verify mpc-qt's `xesam:url` (file URI?) on a real install, and VLC's `status.json` fields on macOS.
+- [ ] Recognition: parse, cache, match against the list, one MAL search, confidence.
 - [ ] Update decision (threshold), Now Playing banner, desktop notification, Update / Not now / Wrong
   anime.
 - [ ] `kot now`, `kot confirm`, `kot dismiss`.
-- [ ] Settings page: account, detection sources with live status, threshold.
+- [ ] Settings page: account, MAL Client ID, detection sources with live status, threshold, and the
+  auto-update switch (off by default; scenes for both states).
 - [ ] Integration test with a fake MPRIS player on a private bus.
 
 ## Stage 5: release 0.1
 
 - [ ] `install.sh` (copy Uzumaki's: `~/.local`, desktop file, icons, `--uninstall`).
-- [ ] Icon, README with screenshots from `--snap` scenes, CHANGELOG.
-- [ ] AUR PKGBUILD (source) and, if wanted, AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed).
+- [ ] Icon (placeholder until the separate icon work: a tiger that cites Taiga's), README with screenshots
+  from `--snap` scenes and a clear credit to Taiga, About page credits, CHANGELOG.
+- [ ] AUR PKGBUILD (source). AppImage and DMG are not part of v0.1 (v0.2).
 - [ ] Live test by the user on Arch (Wayland and X11) and on the Mac.
 - [ ] Make the repo public (the user's call).
 
 ## Later (v0.2 and on, order to be agreed)
 
 - **v0.2:**
-  - MyAnimeList (PKCE `plain`) and several accounts
+  - AniList (implicit grant; re-check the terms first) and several accounts
+  - AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed)
   - the mpv Lua script (`extras/mpv/kotora.lua` → `kot report`)
   - corrections UI ("this file / folder is X")
   - local history with undo
@@ -82,10 +91,10 @@ its reasons are in [DESIGN.md](DESIGN.md); open questions are in its section 12.
   - Discord Rich Presence
   - tray, hidden start, auto-start
 - **Later:**
-  - browser extension with native messaging
   - Jellyfin, Plex and Kodi sources
   - offline mapping data (anime-offline-database, downloaded at runtime)
   - Kitsu and Shikimori
   - light theme
   - update notice
-  - possibly torrent feeds (open question)
+  - torrent feeds: opt-in, no default sources
+  - streaming sites: MAL-Sync is recommended; no extension of our own for now

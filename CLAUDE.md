@@ -1,7 +1,7 @@
 # Kotora: a native anime tracker for Linux and macOS (Rust + Rune)
 
 Kotora (小虎, "little tiger") is a tribute to Taiga, the Windows anime tracker. It keeps the user's list on
-an online service (AniList first, MyAnimeList next) up to date, recognises the episode playing in the user's
+an online service (MyAnimeList first, AniList from v0.2) up to date, recognises the episode playing in the user's
 own media player, and asks before it records the episode.
 
 - App id, desktop entry, icon name, Wayland `app_id` and macOS bundle id: `io.github.hanami117.kotora`.
@@ -10,7 +10,7 @@ own media player, and asks before it records the episode.
 
 ## Read first
 
-1. `docs/DESIGN.md`: goals, non-goals, v0.1 scope, architecture, terms of use, open questions.
+1. `docs/DESIGN.md`: goals, non-goals, v0.1 scope, architecture, terms of use, and the user's decisions (§12).
 2. `docs/ROADMAP.md`: stages and current status. Update it when a stage moves.
 3. Uzumaki, our sister app on the same stack, is the knowledge base. It is a sibling checkout,
    `../uzumaki` (public repo `hanami117/uzumaki`).
@@ -31,7 +31,7 @@ own media player, and asks before it records the episode.
   - `ctl`: the `kot` protocol and binary.
 - **Storage:** SQLite (`rusqlite`, bundled), offline-first. The online service is the source of truth.
   Local edits go into a visible `pending_op` queue that syncs and reports conflicts. Tokens are in the
-  system keyring, never in the database or in logs.
+  a 0600 file (no keyring), never in the database or in logs.
 - **No async runtime of our own:** blocking `ureq` and `zbus` on worker threads. Results reach the UI
   through `AppHandle::update_if`, returning true only on a visible change.
 - **`kot`:** JSON lines over `$XDG_RUNTIME_DIR/kotora.sock` (`KOTORA_CTL_SOCKET` overrides). The same
@@ -40,16 +40,21 @@ own media player, and asks before it records the episode.
 ## Constraints
 
 - **Service terms.**
-  - AniList clause 5 (2026-08-18) forbids use in competing list or tracker services. Kotora is only a
+  - AniList (v0.2) clause 5 (2026-08-18) forbids use in competing list or tracker services. Kotora is only a
     client for the user's own account: never keep a list of our own built from AniList data, never
     export AniList data as a backup, never crawl or hoard, and respect the rate limit (budget 25 requests
     a minute).
-  - MAL's API licence: keep data client-side and only as long as needed; never store credentials.
+  - MAL (v0.1) API licence: keep data client-side and only as long as needed; never store credentials.
+- **Defaults decided 2026-11-14** (DESIGN.md §12): updates ask first (the auto-update switch is OFF by
+  default); the MAL rate budget is 20 requests a minute; v0.1 players are mpv, VLC, mpc-qt (macOS: mpv,
+  IINA, VLC); no torrent feeds by default; streaming sites are left to MAL-Sync; Kotora stays separate
+  from Taiga and credits it in the README and About.
 - **No streaming, downloading or DRM work.** Kotora tracks and doesn't play or fetch video. No scraping
   of streaming sites inside the app.
 - **No secrets in the repo:**
-  - An AniList or MAL client id is public by design.
-  - A client secret must never be committed; the design avoids needing one (implicit grant, PKCE).
+  - An AniList or MAL client id is public by design. The MAL Client ID goes in `config.toml` or a
+    build-time default (`KOTORA_MAL_CLIENT_ID`); see DESIGN.md §8.1.
+  - A client secret must never be committed; the design avoids needing one (implicit grant, PKCE `plain` for MAL).
 - **No personal data in committed files:** no real names, e-mail addresses, home paths with usernames,
   tokens, or the user's real list or file names. Fixtures are made up or anonymised.
 - **Licences:** dependencies must pass `cargo deny check licenses` (GPL-3.0-compatible allowlist, MPL-2.0
@@ -66,15 +71,14 @@ own media player, and asks before it records the episode.
   ./target/debug/kotora --snap /tmp/out.png --scene <name> --size 1280x800 --scale 1
   ```
   `--tree FILE` dumps the element tree, `--script FILE` drives input, and `--list-scenes` lists scenes.
-  Every view and state gets a scene with fake data. Guard network, detectors, keyring and the socket
+  Every view and state gets a scene with fake data. Guard network, detectors, the token file and the socket
   with `rune::is_headless()`.
 - **Never touch the user's account without their OK.**
   - Reads with a copied token go in a scratch config dir (`chmod go-rwx`, deleted afterwards).
   - Every write to the real list (progress, status, score) needs explicit approval first.
 - **A second copy for tests** needs `KOTORA_TEST_INSTANCE=1` (no single-instance check), a scratch
   `KOTORA_CTL_SOCKET`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME`, and
-  `KOTORA_OFFLINE=1` unless network is the point. Never share the user's database, socket or keyring
-  entry.
+  `KOTORA_OFFLINE=1` unless network is the point. Never share the user's database, socket or token file.
 - **Don't touch the user's mpv config, players or desktop settings.** Detector tests use recorded
   messages, a fake MPRIS player on a private bus (`dbus-run-session`) and temp sockets.
 - **Performance:**
