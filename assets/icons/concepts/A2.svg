@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- A2: bolder, simpler cub on a night-blue tile; slanted lids give a feisty look. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a5c"/><stop offset="1" stop-color="#1b2640"/></linearGradient>
+    <path id="head" d="M512 220 C740 220 880 350 880 530 C880 720 720 850 512 850 C304 850 144 720 144 530 C144 350 284 220 512 220 Z"/>
+    <clipPath id="hc"><use href="#head"/></clipPath>
+    <g id="ear">
+      <path d="M200 380 C176 260 210 170 268 160 C330 152 400 210 420 262 Z" fill="#f28a22"/>
+      <path d="M246 330 C236 268 254 222 282 218 C318 214 352 248 364 282 Z" fill="#ffe9cf"/>
+    </g>
+    <g id="feat">
+      <path d="M136 476 L296 522 L136 572 Z" fill="#26170f"/>
+      <path d="M400 230 L436 360 L340 260 Z" fill="#26170f"/>
+      <ellipse cx="372" cy="560" rx="54" ry="62" fill="#26170f"/>
+      <path d="M296 440 L296 496 L470 572 L470 440 Z" fill="#f28a22"/>
+      <circle cx="352" cy="588" r="15" fill="#fff"/>
+    </g>
+  </defs>
+  <rect x="54" y="54" width="916" height="916" rx="224" fill="url(#bg)"/>
+  <use href="#ear"/><use href="#ear" transform="translate(1024 0) scale(-1 1)"/>
+  <use href="#head" fill="#f28a22"/>
+  <g clip-path="url(#hc)">
+    <use href="#feat"/><use href="#feat" transform="translate(1024 0) scale(-1 1)"/>
+    <path d="M472 220 L552 220 L512 372 Z" fill="#26170f"/>
+  </g>
+  <path d="M512 636 C424 636 352 676 352 736 C352 796 424 820 512 820 C600 820 672 796 672 736 C672 676 600 636 512 636 Z" fill="#fff0dc" clip-path="url(#hc)"/>
+  <path d="M462 650 L562 650 Q578 650 568 664 L526 708 Q512 720 498 708 L456 664 Q446 650 462 650 Z" fill="#26170f"/>
+</svg>
