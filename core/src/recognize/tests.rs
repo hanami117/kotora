@@ -83,6 +83,11 @@ fn normalising_and_seasons_in_titles() {
     assert_eq!(split_season("starfall delivery service ii"), ("starfall delivery service".into(), Some(2)));
     assert_eq!(split_season("neon ronin 2099"), ("neon ronin 2099".into(), None));
     assert_eq!(split_season("season"), ("season".into(), None));
+    assert_eq!(split_season("season 2"), ("season 2".into(), None));
+    assert_eq!(split_season("starfall delivery service third season"), ("starfall delivery service".into(), Some(3)));
+    assert_eq!(split_season("starfall delivery service 2nd season the long night"), ("starfall delivery service the long night".into(), Some(2)));
+    assert_eq!(split_season("ほしぞら郵便 第3期"), ("ほしぞら郵便".into(), Some(3)));
+    assert_eq!(split_season("ほしぞら郵便第3期"), ("ほしぞら郵便".into(), Some(3)));
     assert!(similarity("lanterns of kirigaoka", "lanterns of kirigaoka") == 1.0);
     assert!(similarity("lanterns of kirigaoka", "lantern of kirigaoka") > 0.9);
     assert!(similarity("lanterns of kirigaoka", "clockwork tanuki") < 0.3);
@@ -134,9 +139,10 @@ fn the_cache_wins_and_ignores() {
 #[test]
 fn search_hits_on_and_off_the_list() {
     let hit = |id, t: &str| SearchHit { id, title: t.into(), other_titles: vec![] };
-    assert_eq!(from_search(&[hit(77, "Elsewhere"), hit(2, "Hoshizora Yuubin")], &list()), Found::List { media_id: 2, sure: false, why: "found by a MyAnimeList search".into() });
-    assert_eq!(from_search(&[hit(77, "Elsewhere")], &list()), Found::NotOnList { media_id: 77, title: "Elsewhere".into() });
-    assert_eq!(from_search(&[], &list()), Found::Nothing);
+    let p = parse("/v/Hoshi - 03.mkv").unwrap();
+    assert_eq!(from_search(&p, &[hit(77, "Elsewhere"), hit(2, "Hoshizora Yuubin")], &list()), Found::List { media_id: 2, sure: false, why: "found by a MyAnimeList search".into() });
+    assert_eq!(from_search(&p, &[hit(77, "Elsewhere")], &list()), Found::NotOnList { media_id: 77, title: "Elsewhere".into() });
+    assert_eq!(from_search(&p, &[], &list()), Found::Nothing);
 }
 
 #[test]
@@ -184,4 +190,101 @@ fn anitomy_upstream() {
         }
     }
     println!("anitomy upstream data: {ok} of {n} with the expected title and episode");
+}
+
+/// A made-up series of three seasons: season 1 and 2 completed, season 3 being watched. The
+/// files name only the start of the title ("Yakusou") and the season.
+fn series() -> Vec<ListItem> {
+    let mut s1 = item(11, "Yakusou no Sasayaki", Status::Completed, 24, 0);
+    s1.media.title_en = Some("The Herbalist Whispers".into());
+    s1.media.episodes = Some(24);
+    let mut s2 = item(12, "Yakusou no Sasayaki 2nd Season", Status::Completed, 24, 0);
+    s2.media.title_en = Some("The Herbalist Whispers Season 2".into());
+    s2.media.episodes = Some(24);
+    let mut s3 = item(13, "Yakusou no Sasayaki: Kouhen", Status::Watching, 6, 0);
+    s3.media.title_en = Some("The Herbalist Whispers Season 3".into());
+    s3.media.title_ja = Some("ヤクソウノササヤキ 第3期".into());
+    s3.media.synonyms = vec![];
+    s3.media.episodes = Some(12);
+    let mut other = list();
+    other.extend([s1, s2, s3]);
+    other
+}
+
+fn picked(id: u32) -> Cached {
+    Some((id, "user".into(), String::new()))
+}
+
+#[test]
+fn a_season_3_file_finds_the_season_3_entry() {
+    let items = series();
+    let p = parse("/v/[Hoshi] Yakusou - S03E07.mkv").unwrap();
+    assert_eq!((p.season, p.key().as_str()), (Some(3), "yakusou#3"));
+    // Only the English title and the Japanese one name season 3; the earlier seasons score 0.
+    let c = candidates(&p, &items);
+    assert_eq!(c[0].media_id, 13);
+    assert!(c.iter().all(|x| x.media_id == 13 || x.score < UNSURE_AT), "{c:?}");
+    let f = on_list(&p, &items, &None, &Relations::default());
+    assert_eq!(f, Some(Found::List { media_id: 13, sure: true, why: "season 3 of a title in your list that starts with \u{201c}Yakusou\u{201d}".into() }));
+    assert_eq!(offer(&items.iter().find(|i| i.media.id == 13).unwrap().clone(), p.episode), Some(7));
+    // The full title with the season works the same; season 2 is the 2nd Season.
+    let p2 = parse("/v/The Herbalist Whispers S2 - 05.mkv").unwrap();
+    assert!(matches!(on_list(&p2, &items, &None, &Relations::default()), Some(Found::List { media_id: 12, sure: true, .. })));
+}
+
+#[test]
+fn a_pick_of_season_1_does_not_take_a_season_3_file() {
+    let items = series();
+    let p = parse("/v/[Hoshi] Yakusou - S03E07.mkv").unwrap();
+    // An old pick for this very key ("yakusou#3") of the completed season 1.
+    let f = on_list(&p, &items, &picked(11), &Relations::default());
+    assert!(
+        matches!(&f, Some(Found::List { media_id: 13, sure: true, why }) if why.contains("earlier pick, Yakusou no Sasayaki, is another season")),
+        "{f:?}"
+    );
+    // A pick for season 1 is kept under season 1's key: never looked up for this file.
+    assert_ne!(parse("/v/[Hoshi] Yakusou - 07.mkv").unwrap().key(), p.key());
+}
+
+#[test]
+fn a_pick_applies_to_its_season_only() {
+    let items = series();
+    let rel = Relations::default();
+    // A pick of the season 3 entry for "yakusou#3" applies to season 3 files.
+    let s3 = parse("/v/[Hoshi] Yakusou - S03E08.mkv").unwrap();
+    assert_eq!(on_list(&s3, &items, &picked(13), &rel), Some(Found::List { media_id: 13, sure: true, why: "you picked it".into() }));
+    // Season 1 files have their own key, so the cache has nothing for them: season 1 matches.
+    let s1 = parse("/v/[Hoshi] Yakusou - S01E08.mkv").unwrap();
+    assert_eq!(s1.key(), "yakusou#1");
+    assert!(matches!(on_list(&s1, &items, &None, &rel), Some(Found::List { media_id: 11, .. })));
+    // A pick that fits no season entry on the list (no season 4 here) is the user's call: kept.
+    let s4 = parse("/v/[Hoshi] Yakusou - S04E01.mkv").unwrap();
+    assert_eq!(on_list(&s4, &items, &picked(13), &rel), Some(Found::List { media_id: 13, sure: true, why: "you picked it".into() }));
+}
+
+#[test]
+fn files_without_a_season_keep_the_old_pick() {
+    let items = series();
+    let rel = Relations::default();
+    // Picks from before this fix were saved as "title#1" for files without a season: they still
+    // apply to such files, even a pick of season 3 (numbered on, the user's call).
+    let p = parse("/v/[Hoshi] Yakusou - 07.mkv").unwrap();
+    assert_eq!((p.season, p.key().as_str()), (None, "yakusou#1"));
+    assert_eq!(on_list(&p, &items, &picked(13), &rel), Some(Found::List { media_id: 13, sure: true, why: "you picked it".into() }));
+    assert_eq!(on_list(&p, &items, &picked(11), &rel), Some(Found::List { media_id: 11, sure: true, why: "you picked it".into() }));
+    // Without a pick, a short title and no season: season 1, but only unsure.
+    assert!(matches!(on_list(&p, &items, &None, &rel), Some(Found::List { media_id: 11, sure: false, .. })));
+}
+
+#[test]
+fn a_search_prefers_the_files_season() {
+    let items = series();
+    let hit = |id, t: &str| SearchHit { id, title: t.into(), other_titles: vec![] };
+    let p = parse("/v/[Hoshi] Yakusou - S04E01.mkv").unwrap();
+    // Season 1 is on the list but season 4 is the file's: the hit off the list naming it wins.
+    let hits = [hit(11, "Yakusou no Sasayaki"), hit(90, "Yakusou no Sasayaki 4th Season")];
+    assert_eq!(from_search(&p, &hits, &items), Found::NotOnList { media_id: 90, title: "Yakusou no Sasayaki 4th Season".into() });
+    // Nothing names season 4: the list's entry, unsure, saying why.
+    let f = from_search(&p, &[hit(11, "Yakusou no Sasayaki"), hit(91, "Yakusou no Sasayaki Movie")], &items);
+    assert_eq!(f, Found::List { media_id: 11, sure: false, why: "found by a MyAnimeList search, but the file says season 4".into() });
 }

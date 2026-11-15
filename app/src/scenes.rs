@@ -196,6 +196,11 @@ pub const SCENES: &[Scene] = &[
         unsure(s);
         s.go(Page::NowPlaying);
     }),
+    ("now-playing-unsure-season", |s| {
+        unsure(s);
+        playing_file(s, "Lantern of Kirigaoka - S02E06.mkv");
+        s.go(Page::NowPlaying);
+    }),
     ("now-playing-unsure-offer", |s| {
         unsure(s);
         reached(s);

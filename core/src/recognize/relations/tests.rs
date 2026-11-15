@@ -124,7 +124,7 @@ fn rezero_season_2_numbered_1_to_25() {
     let items = rezero_list(true);
     // Episodes 1-13 are the 2nd Season's own.
     let (f, ep) = recognise("/v/[Hoshi] Re Zero kara Hajimeru Isekai Seikatsu S2 - 13 [1080p].mkv", &items, &r);
-    assert_eq!((f, ep), (Found::List { media_id: 39587, sure: true, why: "same title in your list".into() }, Some(13)));
+    assert_eq!((f, ep), (Found::List { media_id: 39587, sure: true, why: "the title and season 2 match your list".into() }, Some(13)));
     // Episode 15 is episode 2 of Part 2, and still sure.
     let (f, ep) = recognise("/v/[Hoshi] Re Zero kara Hajimeru Isekai Seikatsu S2 - 15 [1080p].mkv", &items, &r);
     assert_eq!(ep, Some(2));
@@ -151,7 +151,7 @@ fn rezero_absolute_numbers_and_season_3() {
     assert_eq!((f, ep), (Found::List { media_id: 39587, sure: true, why: "episode 30 of Re:Zero kara Hajimeru Isekai Seikatsu is episode 5 of 2nd Season".into() }, Some(5)));
     // A season 3 release, numbered by its own episodes or on from season 1.
     let (f, ep) = recognise("/v/[Hoshi] Re Zero kara Hajimeru Isekai Seikatsu (Season 03) - 05 [1080p].mkv", &items, &r);
-    assert_eq!((f, ep), (Found::List { media_id: 54857, sure: true, why: "same title in your list".into() }, Some(5)));
+    assert_eq!((f, ep), (Found::List { media_id: 54857, sure: true, why: "the title and season 3 match your list".into() }, Some(5)));
     for name in ["/v/[Hoshi] Re Zero kara Hajimeru Isekai Seikatsu S03E05 [1080p].mkv", "/v/[Hoshi] Re Zero (Season 03)/Re Zero kara Hajimeru Isekai Seikatsu - S03E05 [1080p].mkv"] {
         let (f, ep) = recognise(name, &items, &r);
         assert!(matches!(f, Found::List { media_id: 54857, sure: true, .. }) && ep == Some(5), "{name}: {f:?} {ep:?}");

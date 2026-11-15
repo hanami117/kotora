@@ -79,9 +79,17 @@ exactly where Kotora should be strongest.
     named targets.
 - **Recognition:**
   1. An anitomy-style parse of the file name: title, episode, season, release group.
-  2. A match against the user's own list (titles and alternative titles from MAL).
-  3. Otherwise, one rate-limited MAL search (`GET /anime?q=`).
-  4. Results are cached.
+  2. A match against the user's own list (titles and alternative titles from MAL). The season
+     decides: a file that names a season matches only the entry of that season, found by any of
+     its titles ("2nd Season", "Season 3", "第3期"), also when the file's title is only the start
+     of the list's ("Yakusou S03" for "Yakusou no Sasayaki 3rd Season"). Another season never
+     matches, so a completed season 1 is never offered for an S03 file (no rewatch either).
+  3. Otherwise, one rate-limited MAL search (`GET /anime?q=`). A hit off the list naming the
+     file's season beats a hit on the list of another season.
+  4. Results are cached per normalised title and season (`title#3`; no season is `#1`). The
+     user's pick ("Wrong anime…") wins, except when the file names a season, the pick is another
+     season, and the list has a sure match for the file's season (fixed 2026-11-15: a season 1
+     pick had taken season 3 files).
   5. anime-relations (Taiga's rules, CC0) moves an episode numbered on past a season's end to the
      anime it belongs to: "Season 2 - 15" is episode 2 of "2nd Season Part 2" (added 2026-11-15,
      item 13 of section 12).

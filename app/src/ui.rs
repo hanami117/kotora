@@ -1893,7 +1893,8 @@ fn now_card(s: &State, n: &Now) -> El {
 fn unsure_card(s: &State, n: &Now) -> El {
     let (_, title) = now_title(s, n);
     let ep = n.episode().map(|e| format!(", episode {e}")).unwrap_or_default();
-    let season = n.parsed.as_ref().and_then(|p| p.season).map(|se| format!(" season {se}")).unwrap_or_default();
+    // The season is the file's, not the entry's: "S03E07" next to a season 1 title misleads.
+    let season = n.parsed.as_ref().and_then(|p| p.season).map(|se| format!(" (season {se})")).unwrap_or_default();
     let id = n.media_id().unwrap_or(0);
     card("np-unsure", "Not sure")
         .child(
@@ -1902,7 +1903,7 @@ fn unsure_card(s: &State, n: &Now) -> El {
                 .pt(4.0)
                 .items_start()
                 .child(now_cover(s, n, 40.0, 56.0, 12.0))
-                .child(text(format!("From {}: is this {title}{season}{ep}?", n.file)).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0)),
+                .child(text(format!("From {}{season}: is this {title}{ep}?", n.file)).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0)),
         )
         .child(
             row()

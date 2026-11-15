@@ -275,7 +275,7 @@ fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &st
     }
     let mut mal = Mal::new(Client::new(id, UreqTransport::default()), tokens);
     let Ok(hits) = mal.search(&parsed.title) else { return Found::Nothing };
-    let found = recognize::from_search(&hits, items);
+    let found = recognize::from_search(parsed, &hits, items);
     let (mid, title) = match &found {
         Found::List { media_id, .. } => (*media_id, String::new()),
         Found::NotOnList { media_id, title } => (*media_id, title.clone()),

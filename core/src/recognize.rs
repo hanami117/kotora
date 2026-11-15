@@ -2,10 +2,14 @@
 //!
 //! 1. Parse the file name with anitomy (the `anitomy-ng` port, MPL-2.0). Without a title in the
 //!    name, the folder's name gives it.
-//! 2. The cache: the user's own pick ("Wrong anime…") or "not an anime" wins.
+//! 2. The cache, per title and season: the user's own pick ("Wrong anime…") or "not an anime"
+//!    wins. A pick of another season gives way when the file names its season and the list has
+//!    that season ([`on_list`]).
 //! 3. The user's list: every title (main, English, Japanese, synonyms), normalised, with the
-//!    season split off ("2nd Season", "Season 2", "S2", "II"). The same title and season is a
-//!    sure match; a close one (letter pairs, Sørensen–Dice) is unsure and asks.
+//!    season split off ("2nd Season", "Second Season", "Season 2", "第2期", "S2", "II"). The same
+//!    title and season is a sure match, also when the file's title is the start of the list's
+//!    ("Yakusou S03" for "Yakusou no Sasayaki 3rd Season"). Another season never matches; a
+//!    close title (letter pairs, Sørensen–Dice) is unsure and asks.
 //! 4. Nothing on the list: one service search, cached for 30 days. A hit on the list is unsure;
 //!    a hit elsewhere is shown as "not on your list" (adding comes later, v0.4).
 //!
@@ -115,31 +119,69 @@ fn roman(w: &str) -> Option<u32> {
     }
 }
 
-/// Splits a season marker off the end of a normalised title.
+fn ordinal_word(w: &str) -> Option<u32> {
+    ordinal(w).or(match w {
+        "second" => Some(2),
+        "third" => Some(3),
+        "fourth" => Some(4),
+        "fifth" => Some(5),
+        "sixth" => Some(6),
+        _ => None,
+    })
+}
+
+/// "第3期" (Japanese "3rd period"), alone or at the end of a word: (what comes before it, 3).
+fn ki(w: &str) -> Option<(&str, u32)> {
+    let inner = w.strip_suffix('期')?;
+    let at = inner.rfind('第')?;
+    let n = inner[at + '第'.len_utf8()..].parse().ok()?;
+    Some((&inner[..at], n))
+}
+
+/// Splits a season marker off a normalised title: "2nd season", "second season", "season 2",
+/// "第2期" (also before a subtitle: "x 2nd season the sky" is "x the sky", season 2), or "s2"
+/// and "ii" at the end.
 pub fn split_season(norm: &str) -> (String, Option<u32>) {
     let words: Vec<&str> = norm.split(' ').collect();
     let n = words.len();
-    let cut = |k: usize, season: u32| (words[..n - k].join(" "), Some(season));
-    if n >= 3 {
-        // "season 2", "2nd season"
-        if words[n - 2] == "season"
-            && let Ok(s) = words[n - 1].parse()
-        {
-            return cut(2, s);
+    let before = |k: usize, season: u32| (words[..k].join(" "), Some(season));
+    // Only the marker goes: "x 2nd season part 2" is "x part 2", season 2 (not "x").
+    let without = |from: usize, to: usize, season: u32| (words[..from].iter().chain(&words[to..]).copied().collect::<Vec<_>>().join(" "), Some(season));
+    // The last marker after the first word wins.
+    for i in (1..n).rev() {
+        if words[i] == "season" {
+            if i + 1 < n
+                && let Ok(s) = words[i + 1].parse()
+            {
+                return without(i, i + 2, s);
+            }
+            if i >= 2
+                && let Some(s) = ordinal_word(words[i - 1])
+            {
+                return without(i - 1, i + 1, s);
+            }
         }
-        if words[n - 1] == "season"
-            && let Some(s) = ordinal(words[n - 2])
-        {
-            return cut(2, s);
+        if let Some((head, s)) = ki(words[i]) {
+            let mut rest: Vec<&str> = words[..i].to_vec();
+            if !head.is_empty() {
+                rest.push(head);
+            }
+            rest.extend(&words[i + 1..]);
+            return (rest.join(" "), Some(s));
         }
+    }
+    if n == 1
+        && let Some((head, s)) = ki(words[0]).filter(|(h, _)| !h.is_empty())
+    {
+        return (head.to_string(), Some(s));
     }
     if n >= 2 {
         let last = words[n - 1];
         if let Some(s) = last.strip_prefix('s').and_then(|d| d.parse().ok()).filter(|_| last.len() <= 3) {
-            return cut(1, s);
+            return before(n - 1, s);
         }
         if let Some(s) = roman(last) {
-            return cut(1, s);
+            return before(n - 1, s);
         }
     }
     (norm.to_string(), None)
@@ -177,13 +219,46 @@ pub struct Candidate {
     pub score: f32,
 }
 
-/// Every list entry scored against the parsed title, best first (only those above 0.3).
+/// The season the file names, in its name ("S03E07") or its title ("2nd Season"). `None`: it
+/// names none (season 1 then, for matching).
+pub fn file_season(p: &Parsed) -> Option<u32> {
+    p.season.or(split_season(&normalize(&p.title)).1)
+}
+
+/// The seasons an anime's titles name: one title is enough ("Yakusou no Sasayaki: Kouhen" with
+/// the English "… Season 3" is season 3). None named: season 1.
+fn seasons_of<'a>(titles: impl Iterator<Item = &'a str>) -> Vec<u32> {
+    let mut v: Vec<u32> = titles.filter_map(|t| split_season(&normalize(t)).1).collect();
+    if v.is_empty() {
+        v.push(1);
+    }
+    v
+}
+
+/// The file names a season and the entry is another season: "S03E07" against "Yakusou no
+/// Sasayaki" (season 1).
+pub fn season_conflict(p: &Parsed, item: &ListItem) -> bool {
+    file_season(p).is_some_and(|s| !seasons_of(item.media.all_titles()).contains(&s))
+}
+
+/// The shortest base title a prefix match accepts ("Yaku" is too short to mean a series).
+const PREFIX_MIN: usize = 4;
+/// A prefix match in the file's season: sure when alone, below a whole title's 1.0.
+const PREFIX_SURE: f32 = 0.99;
+
+/// Every list entry scored against the parsed title, best first (only those above 0.3). A
+/// file's title that a list title starts with ("Yakusou" for "Yakusou no Sasayaki 3rd Season")
+/// counts as the same series: the season then decides (sure when the file names the season).
+/// Another season of the same title scores 0. Equal scores: the entry being watched first.
 pub fn candidates(p: &Parsed, items: &[ListItem]) -> Vec<Candidate> {
-    let (base, season_in_title) = split_season(&normalize(&p.title));
-    let season = p.season.or(season_in_title).unwrap_or(1);
-    let mut out: Vec<Candidate> = items
+    let (base, _) = split_season(&normalize(&p.title));
+    let named = file_season(p);
+    let season = named.unwrap_or(1);
+    let prefix = format!("{base} ");
+    let mut out: Vec<(Candidate, bool)> = items
         .iter()
         .map(|it| {
+            let in_season = seasons_of(it.media.all_titles()).contains(&season);
             let score = it
                 .media
                 .all_titles()
@@ -192,6 +267,13 @@ pub fn candidates(p: &Parsed, items: &[ListItem]) -> Vec<Candidate> {
                     let same_season = s.unwrap_or(1) == season;
                     if b == base {
                         if same_season { 1.0 } else { 0.0 }
+                    } else if base.chars().count() >= PREFIX_MIN && b.starts_with(&prefix) {
+                        // The series by its start; its season from any of its titles.
+                        match (in_season, named) {
+                            (false, _) => 0.0,
+                            (true, Some(_)) => PREFIX_SURE,
+                            (true, None) => 0.9,
+                        }
                     } else {
                         // "Lanterns of Kirigaoka Season 2" as one title still counts.
                         let whole = normalize(t);
@@ -202,12 +284,13 @@ pub fn candidates(p: &Parsed, items: &[ListItem]) -> Vec<Candidate> {
                     }
                 })
                 .fold(0.0f32, f32::max);
-            Candidate { media_id: it.media.id, title: it.media.title.clone(), score }
+            let watching = it.rewatching || it.status == crate::Status::Watching;
+            (Candidate { media_id: it.media.id, title: it.media.title.clone(), score }, watching)
         })
-        .filter(|c| c.score > 0.3)
+        .filter(|(c, _)| c.score > 0.3)
         .collect();
-    out.sort_by(|a, b| b.score.total_cmp(&a.score));
-    out
+    out.sort_by(|(a, aw), (b, bw)| b.score.total_cmp(&a.score).then(bw.cmp(aw)));
+    out.into_iter().map(|(c, _)| c).collect()
 }
 
 /// What recognition found.
@@ -227,19 +310,43 @@ pub type Cached = Option<(u32, String, String)>;
 
 /// Steps 2 and 3. `None`: nothing on the list; the caller may search (step 4). `rel` only keeps
 /// an episode past the count sure when a relation explains it ([`redirect`] moves it after).
+///
+/// The user's pick wins, except when the file names a season the picked entry isn't and the
+/// list has a sure match for that season: a pick of season 1 never takes "S03E07" from the
+/// season 3 entry. (Picks are kept per title and season, `Parsed::key`, so this only undoes a
+/// wrong pick for this very season.)
 pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations) -> Option<Found> {
+    let c = candidates(p, items);
+    let mut passed_over = None;
     if let Some((id, source, _)) = cached {
         match source.as_str() {
             "ignore" => return Some(Found::Ignored),
-            "user" if items.iter().any(|it| it.media.id == *id) => return Some(Found::List { media_id: *id, sure: true, why: "you picked it".into() }),
+            "user" => {
+                if let Some(it) = items.iter().find(|it| it.media.id == *id) {
+                    let other_sure = c.first().is_some_and(|b| b.score >= PREFIX_SURE && b.media_id != *id && c.get(1).is_none_or(|n| n.score < b.score));
+                    if !(season_conflict(p, it) && other_sure) {
+                        return Some(Found::List { media_id: *id, sure: true, why: "you picked it".into() });
+                    }
+                    passed_over = Some(it.media.title.clone());
+                }
+            }
             _ => {}
         }
     }
-    let c = candidates(p, items);
     let best = c.first().filter(|b| b.score >= UNSURE_AT)?;
-    let exact = c.iter().filter(|x| x.score >= 1.0).count();
-    let mut sure = best.score >= 1.0 && exact == 1;
-    let mut why = if sure { "same title in your list".to_string() } else { format!("close to a title in your list ({:.0}%)", best.score * 100.0) };
+    let ties = c.iter().filter(|x| x.score >= best.score).count();
+    let mut sure = best.score >= PREFIX_SURE && ties == 1;
+    let named = file_season(p).filter(|s| *s > 1);
+    let mut why = match (sure, named) {
+        (true, Some(s)) if best.score < 1.0 => format!("season {s} of a title in your list that starts with \u{201c}{}\u{201d}", p.title),
+        (true, Some(s)) => format!("the title and season {s} match your list"),
+        (true, None) => "same title in your list".to_string(),
+        (false, _) if ties > 1 && best.score >= PREFIX_SURE => format!("{ties} titles in your list match"),
+        (false, _) => format!("close to a title in your list ({:.0}%)", best.score * 100.0),
+    };
+    if let Some(t) = passed_over {
+        why = format!("{why}; your earlier pick, {t}, is another season");
+    }
     // An episode past the count: a different season or numbering, so ask.
     let item = items.iter().find(|it| it.media.id == best.media_id)?;
     if let (Some(ep), Some(n)) = (p.episode, item.media.episodes)
@@ -252,14 +359,29 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
     Some(Found::List { media_id: best.media_id, sure, why })
 }
 
-/// Step 4: the search's hits against the list.
-pub fn from_search(hits: &[SearchHit], items: &[ListItem]) -> Found {
+/// Step 4: the search's hits against the list. A hit on the list of another season than the
+/// file's comes last: a hit off the list that names the file's season is the better answer.
+pub fn from_search(p: &Parsed, hits: &[SearchHit], items: &[ListItem]) -> Found {
+    let on_list = |h: &SearchHit| items.iter().find(|it| it.media.id == h.id);
+    let mut other_season = None;
     for h in hits {
-        if items.iter().any(|it| it.media.id == h.id) {
-            return Found::List { media_id: h.id, sure: false, why: "found by a MyAnimeList search".into() };
+        if let Some(it) = on_list(h) {
+            if !season_conflict(p, it) {
+                return Found::List { media_id: h.id, sure: false, why: "found by a MyAnimeList search".into() };
+            }
+            other_season = other_season.or(Some(h.id));
         }
     }
-    match hits.first() {
+    let off: Vec<&SearchHit> = hits.iter().filter(|h| on_list(h).is_none()).collect();
+    let names_season = |h: &&&SearchHit| file_season(p).is_some_and(|s| seasons_of(std::iter::once(h.title.as_str()).chain(h.other_titles.iter().map(String::as_str))).contains(&s));
+    if let Some(h) = off.iter().find(names_season) {
+        return Found::NotOnList { media_id: h.id, title: h.title.clone() };
+    }
+    if let Some(id) = other_season {
+        let s = file_season(p).unwrap_or(1);
+        return Found::List { media_id: id, sure: false, why: format!("found by a MyAnimeList search, but the file says season {s}") };
+    }
+    match off.first() {
         Some(h) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
         None => Found::Nothing,
     }
