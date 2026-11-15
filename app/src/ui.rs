@@ -424,12 +424,14 @@ fn list_row(e: &Entry, wide: bool) -> El {
                 .center()
                 .hover(PAL.accent)
                 .press(PAL.accent_lo)
+                // On orange the label turns dark (white or dim on orange fails contrast).
+                .hover_group()
                 .on_press_tx(move |s: &mut State, tx: &mut Tx| {
                     // Optimistic and at once (design-spec §6): no counting animation.
                     tx.instant();
                     s.plus_one(id);
                 })
-                .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim)),
+                .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim).group_color(PAL.on_accent)),
         );
     let score = match e.score {
         Some(n) => text(n.to_string()).font(theme::NUM_MED).color(PAL.text),
