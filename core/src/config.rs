@@ -16,6 +16,9 @@
 //! [vlc]                        # macOS: VLC's web interface
 //! port = 8080
 //! password = "…"
+//!
+//! [notices]                    # one-time offers the user has answered
+//! mpv_precise = true           # "enable precise detection" for mpv was shown
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -32,6 +35,15 @@ pub struct Config {
     pub updates: Updates,
     pub players: Players,
     pub vlc: Vlc,
+    pub notices: Notices,
+}
+
+/// One-time offers already answered (shown once, then never again).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Notices {
+    /// The "enable precise detection" offer for mpv was answered (enabled or dismissed).
+    pub mpv_precise: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -113,6 +125,7 @@ impl std::fmt::Debug for Config {
             .field("players", &self.players)
             .field("vlc_port", &self.vlc.port)
             .field("vlc_password", &(!self.vlc.password.is_empty()).then_some("<set>"))
+            .field("notices", &self.notices)
             .finish()
     }
 }
@@ -127,6 +140,8 @@ struct File {
     players: Players,
     #[serde(default)]
     vlc: Vlc,
+    #[serde(default)]
+    notices: Notices,
 }
 
 #[derive(Deserialize, Default)]
@@ -146,6 +161,7 @@ impl Config {
             updates,
             players: f.players,
             vlc: f.vlc,
+            notices: f.notices,
         })
     }
 
@@ -215,6 +231,39 @@ pub fn quote(s: &str) -> String {
     out
 }
 
+/// A pasted MyAnimeList Client ID, checked: trimmed (quotes and spaces around it dropped), not
+/// empty, only hex digits, and about the length MAL gives (32). The error says what to do.
+pub fn check_client_id(raw: &str) -> Result<String, String> {
+    let id = raw.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`').trim();
+    if id.is_empty() {
+        return Err("Paste the Client ID first.".into());
+    }
+    if id.chars().any(char::is_whitespace) {
+        return Err("A Client ID is one word, with no spaces in it.".into());
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("That doesn't look like a Client ID: it has only digits and the letters a to f. Copy the Client ID, not the Client Secret or the app name.".into());
+    }
+    match id.len() {
+        0..=19 => Err(format!("That is too short for a Client ID ({} characters; MyAnimeList's have 32). Copy all of it.", id.len())),
+        65.. => Err(format!("That is too long for a Client ID ({} characters; MyAnimeList's have 32).", id.len())),
+        _ => Ok(id.to_ascii_lowercase()),
+    }
+}
+
+/// Saves the MAL Client ID (`[mal] client_id`), after [`check_client_id`]. Returns the ID saved.
+pub fn save_client_id(path: &Path, raw: &str) -> Result<String, String> {
+    let id = check_client_id(raw)?;
+    write_setting(path, "mal", "client_id", &quote(&id))?;
+    Ok(id)
+}
+
+/// The last four characters of a Client ID, for a masked display.
+pub fn client_id_hint(id: &str) -> String {
+    let n = id.chars().count();
+    id.chars().skip(n.saturating_sub(4)).collect()
+}
+
 /// Writes one setting to the file (0600, through a temp file and a rename).
 pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
     let old = match std::fs::read_to_string(path) {
@@ -278,6 +327,8 @@ mod tests {
         assert_eq!(c.updates, Updates { auto: false, threshold: 80, keep_higher_progress: true });
         assert!(c.players.mpv && c.players.vlc && c.players.other_mpris);
         assert_eq!((c.vlc.port, c.vlc.password.as_str()), (8080, ""));
+        assert!(!c.notices.mpv_precise);
+        assert!(Config::parse("[notices]\nmpv_precise = true\n").unwrap().notices.mpv_precise);
         let c = Config::parse("[updates]\nauto = true\nthreshold = 10\n[players]\nvlc = false\nmpv_sockets = [\"/tmp/a.sock\"]\n").unwrap();
         assert!(c.updates.auto);
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
@@ -299,6 +350,40 @@ mod tests {
         let t = set_line("[updates]\nautomatic = 1\n", "updates", "auto", "true");
         assert_eq!(t, "[updates]\nautomatic = 1\nauto = true\n");
         assert_eq!(set_line("", "updates", "auto", "true"), "[updates]\nauto = true\n");
+    }
+
+    #[test]
+    fn client_ids_are_checked() {
+        let good = "0123456789abcdef0123456789ABCDEF";
+        assert_eq!(check_client_id(&format!("  \"{good}\"\n")).unwrap(), good.to_ascii_lowercase());
+        assert!(check_client_id("   ").unwrap_err().contains("Paste"));
+        assert!(check_client_id("0123 4567").unwrap_err().contains("no spaces"));
+        assert!(check_client_id("my-kotora-app-secret-xyz").unwrap_err().contains("not the Client Secret"));
+        assert!(check_client_id("abc123").unwrap_err().contains("too short"));
+        assert!(check_client_id(&"a".repeat(80)).unwrap_err().contains("too long"));
+        assert_eq!(client_id_hint(good), "CDEF");
+        assert_eq!(client_id_hint("ab"), "ab");
+    }
+
+    #[test]
+    fn saving_the_client_id_keeps_the_rest() {
+        let dir = std::env::temp_dir().join(format!("kot-config-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "# mine\n[updates]\nauto = true\n").unwrap();
+        assert!(save_client_id(&path, "nope").is_err());
+        assert_eq!(Config::load(&path).unwrap().mal_client_id, None, "nothing written for a bad ID");
+        let id = "fedcba9876543210fedcba9876543210";
+        assert_eq!(save_client_id(&path, id).unwrap(), id);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# mine\n[updates]\nauto = true\n"), "{text}");
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.mal_client_id.as_deref(), Some(id));
+        assert!(c.updates.auto);
+        save_client_id(&path, "00000000000000000000000000000000").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap().matches("client_id").count(), 1, "replaced, not added twice");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
