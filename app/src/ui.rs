@@ -32,13 +32,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .fill(PAL.bg)
         .child(sidebar(s, chrome_top))
         .child(el().w(1.0).h_full().fill(PAL.border))
-        .child(main(s, wide))
+        .child(main(s, wide, cx.layout_size("main").map_or(1056.0, |[w, _]| w)))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
 /// while a window shows it (`now::tick`); at rest `poll` has no change and asks for no wake.
 pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
-    crate::now::tick(s, tx)
+    // Both run: each may ask for its own wake.
+    let now = crate::now::tick(s, tx);
+    let airing = crate::airing::tick(s, tx);
+    now || airing
 }
 
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
@@ -114,6 +117,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
     side = side.child(nav_heading("Kotora").mt(12.0));
     side = side
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
+        .child(nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing))
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -284,7 +288,11 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             // A new page replaces the old one at once; rows don't swim.
             tx.instant();
-            if page == Page::Search { s.open_search() } else { s.go(page) }
+            match page {
+                Page::Search => s.open_search(),
+                Page::Airing => s.open_airing(),
+                _ => s.go(page),
+            }
         })
         .child(mark)
         .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
@@ -309,7 +317,8 @@ pub(crate) fn kbd(label: &str) -> El {
 
 // --------------------------------------------------------------------------------------- main
 
-fn main(s: &State, wide: bool) -> El {
+/// `width`: the main area's, from the last layout (the Airing grid's cards per row).
+fn main(s: &State, wide: bool, width: f32) -> El {
     let page = match s.page {
         Page::Setup => crate::setup::page(s),
         // First run: no Client ID, so the wizard is the only thing a list page can show.
@@ -322,6 +331,8 @@ fn main(s: &State, wide: bool) -> El {
         Page::Details => crate::details::page(s, wide),
         Page::Search if !s.has_list() => welcome(s),
         Page::Search => search_view(s, wide),
+        Page::Airing if !s.has_list() => welcome(s),
+        Page::Airing => crate::airing::page(s, width),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).

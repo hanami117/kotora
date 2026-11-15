@@ -63,6 +63,8 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
             format: "tv".into(),
             air_status: "finished_airing".into(),
             cover_url: None,
+            start_date: None,
+            broadcast: None,
         },
         status: Status::Watching,
         progress,
@@ -396,7 +398,7 @@ fn changes_read_plainly() {
 }
 
 fn new_media(id: u32, episodes: Option<u32>) -> Media {
-    Media { id, title: format!("New {id}"), title_en: None, title_ja: None, synonyms: vec![], episodes, format: "tv".into(), air_status: "finished_airing".into(), cover_url: None }
+    Media { id, title: format!("New {id}"), title_en: None, title_ja: None, synonyms: vec![], episodes, format: "tv".into(), air_status: "finished_airing".into(), cover_url: None, start_date: None, broadcast: None }
 }
 
 #[test]

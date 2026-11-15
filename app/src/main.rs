@@ -8,6 +8,7 @@
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
+mod airing;
 mod art;
 mod clientid;
 mod ctl;

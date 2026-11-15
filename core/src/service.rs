@@ -73,6 +73,8 @@ impl AnimeHit {
             format: self.format.clone(),
             air_status: self.air_status.clone(),
             cover_url: self.cover_url.clone(),
+            start_date: None,
+            broadcast: None,
         }
     }
 
@@ -163,6 +165,8 @@ impl Details {
             format: self.format.clone(),
             air_status: self.air_status.clone(),
             cover_url: self.cover_small.clone().or_else(|| self.cover_url.clone()),
+            start_date: self.start_date.clone(),
+            broadcast: None,
         }
     }
 
@@ -207,5 +211,10 @@ pub trait ListService {
     /// One anime's information page, with the user's entry if it is on the list.
     fn details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
         Err(ServiceError::Other("this service has no details page".into()))
+    }
+    /// One page of a season's anime, most members first (`page` from 0), and whether more
+    /// pages follow.
+    fn season(&mut self, _season: crate::airing::Season, _page: u32) -> Result<(Vec<crate::airing::SeasonAnime>, bool), ServiceError> {
+        Err(ServiceError::Other("this service has no season lists".into()))
     }
 }

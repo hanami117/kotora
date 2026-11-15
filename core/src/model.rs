@@ -19,6 +19,10 @@ pub struct Media {
     /// (empty when unknown).
     pub air_status: String,
     pub cover_url: Option<String>,
+    /// The first air date in Japan, `2026-10-03` (or shorter); the Airing timetable starts here.
+    pub start_date: Option<String>,
+    /// The weekly slot in Japan time (MAL `broadcast`), when known.
+    pub broadcast: Option<crate::airing::Broadcast>,
 }
 
 impl Media {

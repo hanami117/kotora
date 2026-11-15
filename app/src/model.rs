@@ -34,6 +34,8 @@ pub enum Page {
     Search,
     /// The setup wizard (`setup.rs`): Client ID and sign-in, step by step.
     Setup,
+    /// What airs this week and this season (`airing.rs`).
+    Airing,
 }
 
 /// The chips above the list.
@@ -379,6 +381,8 @@ pub struct State {
     pub detail: Option<crate::details::Detail>,
     /// The MyAnimeList half of the search (`search.rs`).
     pub online: crate::search::Online,
+    /// The Airing page (`airing.rs`).
+    pub airing: crate::airing::Airing,
     /// The MyAnimeList Client ID field (Welcome and Settings).
     pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
@@ -429,6 +433,7 @@ impl State {
             covers: Covers::default(),
             detail: None,
             online: Default::default(),
+            airing: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
             tick: None,
@@ -958,8 +963,10 @@ impl State {
             }
             Msg::SignedOut => {
                 self.covers.clear();
-                // MyAnimeList's answers go with the account (search results, the open page).
+                // MyAnimeList's answers go with the account (search results, the open page,
+                // the seasons).
                 self.online = Default::default();
+                self.airing = Default::default();
                 if self.page == Page::Details {
                     self.page = self.lit_page();
                 }
@@ -1245,6 +1252,8 @@ mod tests {
                 format: "ona".into(),
                 air_status: "currently_airing".into(),
                 cover_url: None,
+                start_date: None,
+                broadcast: None,
             },
             status,
             progress,
@@ -1466,7 +1475,7 @@ mod tests {
     #[test]
     fn an_added_anime_shows_at_once_and_waits() {
         let mut s = loaded();
-        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None };
+        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None };
         let i = s.add_media(m.clone(), Status::Completed).unwrap();
         let e = &s.entries[i];
         assert_eq!((e.status, e.progress, e.waiting), (Status::Completed, 10, Some("Waiting to sync")));
@@ -1476,7 +1485,7 @@ mod tests {
         assert_eq!(s.entries.iter().filter(|e| e.id == 77).count(), 1);
         assert_eq!(s.entries.iter().find(|e| e.id == 77).unwrap().status, Status::OnHold);
         let mut out = State::start(Auth::SignedOut);
-        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None }, Status::Watching).is_err());
+        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None }, Status::Watching).is_err());
     }
 
     #[test]

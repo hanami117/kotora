@@ -176,6 +176,8 @@ impl State {
             format: String::new(),
             air_status: String::new(),
             cover_url: None,
+            start_date: None,
+            broadcast: None,
         };
         match self.add_media(media, Status::Watching) {
             Ok(_) => self.pick_anime(media_id),
@@ -198,6 +200,8 @@ impl State {
                 format: d.stub.format.clone(),
                 air_status: String::new(),
                 cover_url: d.stub.cover_url.clone(),
+                start_date: None,
+                broadcast: None,
             },
         };
         if let Err(e) = self.add_media(media, status) {

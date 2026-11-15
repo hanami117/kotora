@@ -385,6 +385,61 @@ pub const SCENES: &[Scene] = &[
             d.error = Some("Can't reach MyAnimeList.".into());
         }
     }),
+    // Airing (`airing.rs`): a made-up Winter 2027 season, Central European time.
+    ("airing-week", |s| airing(s, crate::airing::View::Week)),
+    ("airing-week-mine", |s| {
+        airing(s, crate::airing::View::Week);
+        s.airing_mine(crate::airing::Mine::On);
+    }),
+    ("airing-season", |s| airing(s, crate::airing::View::Season)),
+    ("airing-season-tv", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_kind(crate::airing::Kind::Tv);
+    }),
+    ("airing-season-mine", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_mine(crate::airing::Mine::On);
+    }),
+    ("airing-season-not-mine", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_mine(crate::airing::Mine::Off);
+    }),
+    ("airing-season-added", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_add(9302, Status::PlanToWatch);
+    }),
+    ("airing-season-english", |s| {
+        s.set_titles(TitleLang::English);
+        airing(s, crate::airing::View::Season);
+    }),
+    ("airing-loading", |s| {
+        s.go(Page::Airing);
+        s.airing.loading = true;
+    }),
+    ("airing-empty", |s| {
+        let (season, _) = crate::airing::fake_season();
+        s.airing_show(season, Vec::new());
+        s.go(Page::Airing);
+    }),
+    ("airing-error", |s| {
+        let (season, _) = crate::airing::fake_season();
+        s.go(Page::Airing);
+        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+    }),
+    ("airing-error-saved", |s| {
+        airing(s, crate::airing::View::Week);
+        let (season, _) = crate::airing::fake_season();
+        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+    }),
+    ("airing-signed-out", |s| {
+        s.auth = Auth::SignedOut;
+        s.account = None;
+        s.go(Page::Airing);
+    }),
+    ("airing-details", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_details(9301);
+    }),
     ("settings-page", |s| s.go(Page::Settings)),
     // Settings → Titles: English or Japanese where the anime has one, romaji where not.
     ("settings-titles-japanese", |s| {
@@ -505,6 +560,14 @@ fn search(s: &mut State, q: &str, answered: bool) {
         }
         s.online.show(q, hits);
     }
+}
+
+/// The Airing page with the fake season and covers, in `view`.
+fn airing(s: &mut State, view: crate::airing::View) {
+    s.covers.fake();
+    crate::airing::fake(s);
+    s.go(Page::Airing);
+    s.airing_view(view);
 }
 
 /// The details page of `id` (the fake list's, or a made-up search result), answered.
@@ -710,6 +773,30 @@ mod tests {
         let rt = render("list-search-none", (1280.0, 800.0));
         assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+    }
+
+    /// Airing: both views, the filters and the states find their parts, wide and narrow.
+    #[test]
+    fn airing_shows_its_parts() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("airing-week", size);
+            for key in ["nav/airing", "page/airing", "airing/views", "airing/filters", "day/0", "airing/today", "airing/estimated", "airing/week"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            let rt = render("airing-season", size);
+            for key in ["airing/grid", "card/0", "airing/add/9301", "airing/plan/9301"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(rt.find("airing/add/0").is_none(), "on the list: its status, no add");
+        }
+        assert!(render("airing-loading", (1280.0, 800.0)).find("airing/loading").is_some());
+        assert!(render("airing-empty", (1280.0, 800.0)).find("airing/empty").is_some());
+        let rt = render("airing-error", (1280.0, 800.0));
+        assert!(rt.find("airing/error").is_some() && rt.find("airing/retry").is_some() && rt.find("airing/empty").is_some());
+        let rt = render("airing-error-saved", (1280.0, 800.0));
+        assert!(rt.find("airing/error").is_some() && rt.find("airing/week").is_some(), "the saved season stays under the error");
+        assert!(render("airing-signed-out", (1280.0, 800.0)).find("welcome").is_some());
+        assert!(render("airing-details", (1280.0, 800.0)).find("det-title").is_some());
     }
 
     /// Settings → Titles: one choice lit, and every page follows it.

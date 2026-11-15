@@ -265,7 +265,7 @@ fn file_name(path: &str) -> String {
 
 impl State {
     /// A window shows (not hidden). No handle (scenes, tests): `window` says.
-    fn on_screen(&self) -> bool {
+    pub(crate) fn on_screen(&self) -> bool {
         self.handle.as_ref().map_or(self.window, |h| h.is_visible())
     }
 

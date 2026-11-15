@@ -17,3 +17,6 @@ ureq = "3"
 # File-name parsing (recognition): a pure-Rust port of anitomy, MPL-2.0 (DESIGN.md §9; decided
 # 2026-11-15). It brings `regex` without its Unicode tables and fast paths.
 anitomy-ng = { version = "1.0.10", default-features = false }
+# The user's UTC offset (`localtime_r`, `tm_gmtoff`) for the airing times: the system's zone
+# data instead of a time zone crate. Already in the tree (ureq, rusqlite).
+libc = "0.2"
