@@ -21,6 +21,9 @@
 //!
 //! [notices]                    # one-time offers the user has answered
 //! mpv_precise = true           # "enable precise detection" for mpv was shown
+//!
+//! [recognition]
+//! relations_download = true    # refresh anime-relations from GitHub, at most once a week
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -38,6 +41,22 @@ pub struct Config {
     pub players: Players,
     pub vlc: Vlc,
     pub notices: Notices,
+    pub recognition: Recognition,
+}
+
+/// Recognition settings.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Recognition {
+    /// Download a newer anime-relations file (episode redirection) at most once a week. Off: the
+    /// copy built into the app is used.
+    pub relations_download: bool,
+}
+
+impl Default for Recognition {
+    fn default() -> Self {
+        Recognition { relations_download: true }
+    }
 }
 
 /// One-time offers already answered (shown once, then never again).
@@ -132,6 +151,7 @@ impl std::fmt::Debug for Config {
             .field("vlc_port", &self.vlc.port)
             .field("vlc_password", &(!self.vlc.password.is_empty()).then_some("<set>"))
             .field("notices", &self.notices)
+            .field("recognition", &self.recognition)
             .finish()
     }
 }
@@ -148,6 +168,8 @@ struct File {
     vlc: Vlc,
     #[serde(default)]
     notices: Notices,
+    #[serde(default)]
+    recognition: Recognition,
 }
 
 #[derive(Deserialize, Default)]
@@ -168,6 +190,7 @@ impl Config {
             players: f.players,
             vlc: f.vlc,
             notices: f.notices,
+            recognition: f.recognition,
         })
     }
 
@@ -335,6 +358,8 @@ mod tests {
         assert_eq!((c.vlc.port, c.vlc.password.as_str()), (8080, ""));
         assert!(!c.notices.mpv_precise);
         assert!(Config::parse("[notices]\nmpv_precise = true\n").unwrap().notices.mpv_precise);
+        assert!(c.recognition.relations_download);
+        assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
         let c = Config::parse("[updates]\nauto = true\nthreshold = 10\n[players]\nvlc = false\nmpv_sockets = [\"/tmp/a.sock\"]\n").unwrap();
         assert!(c.updates.auto);
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
