@@ -24,7 +24,7 @@
 use std::io;
 use std::process::ExitCode;
 
-use kotora_ctl::{Client, Entry, NowInfo, QueueItem, Reply, Request, Status};
+use kotora_ctl::{AiringItem, Client, Entry, NowInfo, QueueItem, Reply, Request, Status};
 
 const HELP: &str = "\
 kot: talk to a running Kotora
@@ -41,6 +41,7 @@ Commands:
   queue                 changes waiting to sync
   sync                  send the queue now, then read the list again
   now                   what plays, and the episode Kotora offers
+  airing                your anime airing in the next 7 days (estimated)
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
   rewatch TITLE|ID      watch a completed anime again from episode 1
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
         ["queue"] => Request::Queue,
         ["sync"] => Request::Sync,
         ["now"] => Request::Now,
+        ["airing"] => Request::Airing,
         ["confirm"] => Request::Confirm,
         ["dismiss"] => Request::Dismiss,
         ["list"] => Request::List { status: Some("watching".into()) },
@@ -130,6 +132,10 @@ fn main() -> ExitCode {
         }
         Ok(Reply::Now { now }) => {
             print!("{}", now_text(now.as_ref()));
+            ExitCode::SUCCESS
+        }
+        Ok(Reply::Airing { items, note }) => {
+            print!("{}", airing_text(&items, note.as_deref()));
             ExitCode::SUCCESS
         }
         Ok(Reply::Done { message }) => {
@@ -315,6 +321,26 @@ fn now_text(now: Option<&NowInfo>) -> String {
     out
 }
 
+/// Grouped by day: "Today", then "  15:00  Mecha Bento Club  ep 11  (in 6 h)".
+fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
+    if items.is_empty() {
+        return format!("{}\n", note.unwrap_or("Nothing on your list airs in the next 7 days."));
+    }
+    let mut out = String::from("Airing on your list, next 7 days (times estimated from MyAnimeList):\n");
+    let w = items.iter().map(|i| i.title.chars().count()).max().unwrap_or(0).min(40);
+    let mut day = "";
+    for i in items {
+        if i.day != day {
+            day = &i.day;
+            out.push_str(&format!("{day}\n"));
+        }
+        let title: String = i.title.chars().take(40).collect();
+        let behind = if i.behind > 0 { format!(", {} aired not watched", i.behind) } else { String::new() };
+        out.push_str(&format!("  {}  {title:<w$}  ep {}  ({}{behind})\n", i.time, i.episode, i.countdown));
+    }
+    out
+}
+
 fn sync_text(st: &Status) -> String {
     if st.offline {
         return "Offline: the queue is kept and goes out when MyAnimeList can be reached.".into();
@@ -392,6 +418,29 @@ mod tests {
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\ndemo_user on MyAnimeList · 303 entries · 4 changes waiting\n");
         let st = Status { version: "0.1.0 (build 1)".into(), entries: 1, offline: true, ..Default::default() };
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\nnot signed in · 1 entry · synced · offline · hidden\n");
+    }
+
+    #[test]
+    fn airing_reads_plainly() {
+        let it = |title: &str, episode, day: &str, time: &str, countdown: &str, behind| AiringItem {
+            title: title.into(),
+            episode,
+            at: 0,
+            day: day.into(),
+            time: time.into(),
+            countdown: countdown.into(),
+            behind,
+        };
+        let text = airing_text(
+            &[it("Mecha Bento Club", 11, "Today", "15:00", "in 6 h", 0), it("Lanterns", 7, "Saturday", "15:30", "in 1 d 6 h", 1), it("Hoshizora", 4, "Saturday", "17:00", "in 1 d 8 h", 0)],
+            None,
+        );
+        assert_eq!(
+            text,
+            "Airing on your list, next 7 days (times estimated from MyAnimeList):\nToday\n  15:00  Mecha Bento Club  ep 11  (in 6 h)\nSaturday\n  15:30  Lanterns          ep 7  (in 1 d 6 h, 1 aired not watched)\n  17:00  Hoshizora         ep 4  (in 1 d 8 h)\n"
+        );
+        assert_eq!(airing_text(&[], None), "Nothing on your list airs in the next 7 days.\n");
+        assert_eq!(airing_text(&[], Some("Loading.")), "Loading.\n");
     }
 
     #[test]

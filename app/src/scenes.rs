@@ -2,6 +2,7 @@
 //! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
 
 use kotora_core::Status;
+use kotora_core::config::TitleLang;
 
 use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
@@ -389,7 +390,85 @@ pub const SCENES: &[Scene] = &[
             d.error = Some("Can't reach MyAnimeList.".into());
         }
     }),
+    // Airing (`airing.rs`): a made-up Winter 2027 season, Central European time.
+    ("airing-week", |s| airing(s, crate::airing::View::Week)),
+    ("airing-week-mine", |s| {
+        airing(s, crate::airing::View::Week);
+        s.airing_mine(crate::airing::Mine::On);
+    }),
+    ("airing-season", |s| airing(s, crate::airing::View::Season)),
+    ("airing-season-tv", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_kind(crate::airing::Kind::Tv);
+    }),
+    ("airing-season-mine", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_mine(crate::airing::Mine::On);
+    }),
+    ("airing-season-not-mine", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_mine(crate::airing::Mine::Off);
+    }),
+    ("airing-season-added", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_add(9302, Status::PlanToWatch);
+    }),
+    ("airing-season-english", |s| {
+        s.set_titles(TitleLang::English);
+        airing(s, crate::airing::View::Season);
+    }),
+    ("airing-loading", |s| {
+        s.go(Page::Airing);
+        s.airing.loading = true;
+    }),
+    ("airing-empty", |s| {
+        let (season, _) = crate::airing::fake_season();
+        s.airing_show(season, Vec::new());
+        s.go(Page::Airing);
+    }),
+    ("airing-error", |s| {
+        let (season, _) = crate::airing::fake_season();
+        s.go(Page::Airing);
+        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+    }),
+    ("airing-error-saved", |s| {
+        airing(s, crate::airing::View::Week);
+        let (season, _) = crate::airing::fake_season();
+        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+    }),
+    ("airing-signed-out", |s| {
+        s.auth = Auth::SignedOut;
+        s.account = None;
+        s.go(Page::Airing);
+    }),
+    ("airing-details", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_details(9301);
+    }),
     ("settings-page", |s| s.go(Page::Settings)),
+    // Settings → Titles: English or Japanese where the anime has one, romaji where not.
+    ("settings-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        s.go(Page::Settings);
+    }),
+    ("list-titles-english", |s| s.set_titles(TitleLang::English)),
+    ("list-titles-japanese", |s| s.set_titles(TitleLang::Japanese)),
+    ("queue-titles-english", |s| {
+        s.set_titles(TitleLang::English);
+        s.go(Page::Queue);
+    }),
+    ("now-playing-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        s.go(Page::NowPlaying);
+    }),
+    ("details-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        details(s, 0, true);
+    }),
+    ("search-titles-english", |s| {
+        s.set_titles(TitleLang::English);
+        search(s, "kirigaoka", true);
+    }),
     // "Update automatically" on, threshold 90 %, keep-higher off.
     ("settings-auto-on", |s| {
         s.prefs.auto = true;
@@ -486,6 +565,14 @@ fn search(s: &mut State, q: &str, answered: bool) {
         }
         s.online.show(q, hits);
     }
+}
+
+/// The Airing page with the fake season and covers, in `view`.
+fn airing(s: &mut State, view: crate::airing::View) {
+    s.covers.fake();
+    crate::airing::fake(s);
+    s.go(Page::Airing);
+    s.airing_view(view);
 }
 
 /// The details page of `id` (the fake list's, or a made-up search result), answered.
@@ -590,6 +677,8 @@ fn signed_out(s: &mut State, auth: Auth) {
 #[cfg(test)]
 mod tests {
     use super::SCENES;
+    use crate::model::Sort;
+    use kotora_core::config::TitleLang;
     use crate::model::State;
     use rune::{Env, Runtime};
 
@@ -689,6 +778,50 @@ mod tests {
         let rt = render("list-search-none", (1280.0, 800.0));
         assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+    }
+
+    /// Airing: both views, the filters and the states find their parts, wide and narrow.
+    #[test]
+    fn airing_shows_its_parts() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("airing-week", size);
+            for key in ["nav/airing", "page/airing", "airing/views", "airing/filters", "day/0", "airing/today", "airing/estimated", "airing/week"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            let rt = render("airing-season", size);
+            for key in ["airing/grid", "card/0", "airing/add/9301", "airing/plan/9301"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(rt.find("airing/add/0").is_none(), "on the list: its status, no add");
+        }
+        assert!(render("airing-loading", (1280.0, 800.0)).find("airing/loading").is_some());
+        assert!(render("airing-empty", (1280.0, 800.0)).find("airing/empty").is_some());
+        let rt = render("airing-error", (1280.0, 800.0));
+        assert!(rt.find("airing/error").is_some() && rt.find("airing/retry").is_some() && rt.find("airing/empty").is_some());
+        let rt = render("airing-error-saved", (1280.0, 800.0));
+        assert!(rt.find("airing/error").is_some() && rt.find("airing/week").is_some(), "the saved season stays under the error");
+        assert!(render("airing-signed-out", (1280.0, 800.0)).find("welcome").is_some());
+        assert!(render("airing-details", (1280.0, 800.0)).find("det-title").is_some());
+    }
+
+    /// Settings → Titles: one choice lit, and every page follows it.
+    #[test]
+    fn titles_follow_the_setting() {
+        let rt = render("settings-titles-japanese", (1280.0, 800.0));
+        assert!(rt.find("display-card").is_some() && rt.find("set/titles/japanese").is_some() && rt.find("set/titles/romaji").is_some());
+        let mut s = State::fake();
+        let title = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().title.clone();
+        s.set_titles(TitleLang::English);
+        assert_eq!(title(&s, 0), "The Lanterns on Kirigaoka Hill");
+        assert_eq!(title(&s, 2), "Mikan Street Detectives", "no English title: romaji");
+        assert_eq!(s.ctl_queue().iter().find(|q| q.title.contains("Hill")).map(|q| q.state.as_str()), Some("Waiting"), "the queue and kot follow");
+        s.set_titles(TitleLang::Japanese);
+        assert_eq!(title(&s, 0), "霧ヶ丘のランタン");
+        assert_eq!(s.find("lanterns of kirigaoka").map(|i| s.entries[i].id), Ok(0), "kot still finds it by its other titles");
+        s.set_sort(Sort::Title);
+        s.set_titles(TitleLang::Romaji);
+        assert_eq!(title(&s, 0), "Lanterns of Kirigaoka");
+        assert_eq!(s.entries[s.rows[0]].title, "Clockwork Bakery Wars", "the title sort follows the shown titles");
     }
 
     /// Settings: the Accounts and About cards, side by side when wide, stacked when narrow.

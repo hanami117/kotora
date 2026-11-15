@@ -32,13 +32,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .fill(PAL.bg)
         .child(sidebar(s, chrome_top))
         .child(el().w(1.0).h_full().fill(PAL.border))
-        .child(main(s, wide))
+        .child(main(s, wide, cx.layout_size("main").map_or(1056.0, |[w, _]| w)))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
 /// while a window shows it (`now::tick`); at rest `poll` has no change and asks for no wake.
 pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
-    crate::now::tick(s, tx)
+    // Both run: each may ask for its own wake.
+    let now = crate::now::tick(s, tx);
+    let airing = crate::airing::tick(s, tx);
+    now || airing
 }
 
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
@@ -114,6 +117,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
     side = side.child(nav_heading("Kotora").mt(12.0));
     side = side
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
+        .child(nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing))
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -284,7 +288,11 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             // A new page replaces the old one at once; rows don't swim.
             tx.instant();
-            if page == Page::Search { s.open_search() } else { s.go(page) }
+            match page {
+                Page::Search => s.open_search(),
+                Page::Airing => s.open_airing(),
+                _ => s.go(page),
+            }
         })
         .child(mark)
         .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
@@ -309,7 +317,8 @@ pub(crate) fn kbd(label: &str) -> El {
 
 // --------------------------------------------------------------------------------------- main
 
-fn main(s: &State, wide: bool) -> El {
+/// `width`: the main area's, from the last layout (the Airing grid's cards per row).
+fn main(s: &State, wide: bool, width: f32) -> El {
     let page = match s.page {
         Page::Setup => crate::setup::page(s),
         // First run: no Client ID, so the wizard is the only thing a list page can show.
@@ -322,6 +331,8 @@ fn main(s: &State, wide: bool) -> El {
         Page::Details => crate::details::page(s, wide),
         Page::Search if !s.has_list() => welcome(s),
         Page::Search => search_view(s, wide),
+        Page::Airing if !s.has_list() => welcome(s),
+        Page::Airing => crate::airing::page(s, width),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).
@@ -1100,7 +1111,7 @@ fn queue_page(s: &State) -> El {
         );
     }
     for op in s.ops.iter().filter(|o| o.state == OpState::Conflict) {
-        body = body.child(conflict_card(op, now).mx(theme::PAGE_PAD));
+        body = body.child(conflict_card(op, s.op_title(op), now).mx(theme::PAGE_PAD));
     }
     type Group = (&'static str, &'static str, fn(OpState) -> bool);
     let groups: [Group; 3] = [
@@ -1122,7 +1133,7 @@ fn queue_page(s: &State) -> El {
             if i > 0 {
                 list = list.child(el().w_full().h(1.0).fill(PAL.border));
             }
-            list = list.child(queue_row(op, now));
+            list = list.child(queue_row(op, s.op_title(op), now));
         }
     }
     if any {
@@ -1142,7 +1153,7 @@ fn changes(n: u32) -> String {
 
 /// One change: cover, title, what changes (and the service's words when it failed), its state
 /// or its actions, and when it was made or sent.
-fn queue_row(op: &Op, now: i64) -> El {
+fn queue_row(op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
     let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
@@ -1180,8 +1191,8 @@ fn queue_row(op: &Op, now: i64) -> El {
         .h(48.0)
         .gap(14.0)
         .center_y()
-        .child(cover(op.media_id, &op.title, 26.0, 36.0, 9.0))
-        .child(text(op.title.clone()).font(theme::BODY_MED).color(PAL.text).truncate().w(240.0))
+        .child(cover(op.media_id, title, 26.0, 36.0, 9.0))
+        .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).truncate().w(240.0))
         .child(what)
         .child(end)
         .child(text(kotora_core::time::age(when, now)).font(theme::LABEL_NUM).color(PAL.faint).w(52.0).justify_end());
@@ -1209,7 +1220,7 @@ fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
 }
 
 /// A conflict: the user's change and the service's entry side by side, Keep mine / Take theirs.
-fn conflict_card(op: &Op, now: i64) -> El {
+fn conflict_card(op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let side = |key: &str, head: String, big: String, act: El, on: bool| {
         col()
@@ -1245,7 +1256,7 @@ fn conflict_card(op: &Op, now: i64) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(icon(&icons::ALERT, 16.0).color(PAL.accent))
-                .child(text(format!("Conflict: {}", op.title)).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
+                .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
                 .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
         )
         .child(text("MyAnimeList changed after your edit. Kotora did not overwrite it. Pick one.").font(theme::LABEL).color(PAL.dim))
@@ -1384,10 +1395,16 @@ fn settings(s: &State, wide: bool) -> El {
         col()
             .gap(16.0)
             .w_full()
-            .child(row().gap(16.0).w_full().items_start().child(accounts_card(s).grow(1.0).min_w(0.0)).child(updates_card(s).grow(1.0).min_w(0.0)))
-            .child(row().gap(16.0).w_full().items_start().child(players_card(s).grow(1.0).min_w(0.0)).child(about_card(s).grow(1.0).min_w(0.0)))
+            .child(
+                row()
+                    .gap(16.0)
+                    .w_full()
+                    .items_start()
+                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)))
+                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(display_card(s)).child(about_card(s))),
+            )
     } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(players_card(s)).child(about_card(s))
+        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(players_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
@@ -2125,6 +2142,22 @@ fn updates_card(s: &State) -> El {
             "When only the progress differs and yours is higher, Kotora sends yours.".into(),
             switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
         ))
+}
+
+/// Settings → Display: which title every page (and `kot`) shows.
+fn display_card(s: &State) -> El {
+    let mut choice = row().key("set/titles").gap(6.0);
+    for lang in kotora_core::config::TitleLang::ALL {
+        choice = choice.child(
+            cell(format!("set/titles/{}", lang.key()), format!("Titles in {}", lang.label()), s.prefs.titles == lang, move |s: &mut State| s.set_titles(lang))
+                .child(text(lang.label()).font(theme::LABEL).color(PAL.text)),
+        );
+    }
+    card("display-card", "Display").child(option(
+        "Titles",
+        "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
+        choice,
+    ))
 }
 
 fn players_card(s: &State) -> El {

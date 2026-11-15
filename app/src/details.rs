@@ -34,8 +34,8 @@ pub struct Stub {
 }
 
 impl Stub {
-    pub fn from_hit(h: &AnimeHit) -> Stub {
-        Stub { id: h.id, title: h.title.clone(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes }
+    pub fn from_hit(h: &AnimeHit, lang: kotora_core::config::TitleLang) -> Stub {
+        Stub { id: h.id, title: lang.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref()).to_string(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes }
     }
 
     pub fn from_entry(e: &Entry) -> Stub {
@@ -130,7 +130,7 @@ impl State {
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == it.media.id)
         {
             let waiting = e.waiting;
-            *e = Entry { waiting, ..Entry::from_item(it) };
+            *e = Entry { waiting, ..Entry::from_item(it, self.prefs.titles) };
         }
         let Some(d) = self.detail.as_mut().filter(|d| d.id() == a.id) else { return a.item.is_some() };
         d.loading = !a.done;
@@ -176,6 +176,8 @@ impl State {
             format: String::new(),
             air_status: String::new(),
             cover_url: None,
+            start_date: None,
+            broadcast: None,
         };
         match self.add_media(media, Status::Watching) {
             Ok(_) => self.pick_anime(media_id),
@@ -198,6 +200,8 @@ impl State {
                 format: d.stub.format.clone(),
                 air_status: String::new(),
                 cover_url: d.stub.cover_url.clone(),
+                start_date: None,
+                broadcast: None,
             },
         };
         if let Err(e) = self.add_media(media, status) {
@@ -332,10 +336,12 @@ fn big_cover(s: &State, d: &Detail) -> El {
 /// Left: what MyAnimeList says about the anime.
 fn info_column(s: &State, d: &Detail) -> El {
     let info = d.info.as_ref();
-    let title = info.map_or(d.stub.title.clone(), |i| i.title.clone());
-    let mut head = col().grow(1.0).min_w(0.0).gap(6.0).child(text(title).key("det-title").font(TextStyle::new(24.0, 600.0)).color(PAL.text).wrap());
+    let lang = s.prefs.titles;
+    let title = info.map_or(d.stub.title.as_str(), |i| lang.pick(&i.title, i.title_en.as_deref(), i.title_ja.as_deref()));
+    let mut head = col().grow(1.0).min_w(0.0).gap(6.0).child(text(title.to_string()).key("det-title").font(TextStyle::new(24.0, 600.0)).color(PAL.text).wrap());
     if let Some(i) = info {
-        for t in [i.title_en.as_ref(), i.title_ja.as_ref()].into_iter().flatten().filter(|t| **t != i.title) {
+        // The other titles under the one shown: main (romaji), English, Japanese.
+        for t in [Some(&i.title), i.title_en.as_ref(), i.title_ja.as_ref()].into_iter().flatten().filter(|t| t.as_str() != title) {
             head = head.child(text(t.clone()).font(theme::BODY).color(PAL.dim).wrap());
         }
         if !i.synonyms.is_empty() {

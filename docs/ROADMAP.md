@@ -29,6 +29,9 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   Waiting for the user's live test of that batch. The release moves to Stage 6.
 - **anime-relations (moved from v0.3 into v0.1):** built on branch `relations` (2026-11-15, on top of
   `stage-5`), waiting for review and the user's live test with their Re:Zero releases. See below.
+- **Airing and titles (2026-11-15, user-approved):** built on branch `airing` (on top of `stage-5` at
+  9c26d8f): stripped binaries from `install.sh`, the title language setting, and the Airing page
+  (the seasons browser, moved from v0.4). Waiting for review and the user's live test. See below.
 
 ## Stage 0: design
 
@@ -488,6 +491,86 @@ Live test: play a Season 2 release numbered 1-25 at episode 15 or later, and a S
 Now Playing (and `kot now`) should name 2nd Season Part 2 (or the 3rd Season) with the moved episode
 and the reason.
 
+## Airing, titles and a stripped install (branch `airing`, 2026-11-15)
+
+Why: the user asked for a calendar of what airs (this week, and the season) next to the list, for
+titles in English or Japanese, and for a smaller installed binary. Approved 2026-11-15; one signed
+commit each. The seasons browser moves here from v0.4 as "Airing".
+
+- [x] **`install.sh` strips** the binaries it installs (`install -s`; the build in `target/` keeps
+  its symbols): `kotora` 36.3 → 30.5 MB, `kot` 722 → 560 KB. Tested in a scratch `HOME`: install,
+  then `--uninstall` removes every file Kotora installed (`update-desktop-database` leaves its own
+  `mimeinfo.cache` and `intent.cache`, as before).
+- [x] **Titles: Romaji / English / Japanese** (Settings → Display; `[display] titles`, romaji by
+  default). A missing title falls back to romaji. The shown title is derived once per entry when the
+  list or the setting changes (`Entry::retitle`), never per frame: list rows and the title sort,
+  details, Now Playing and the sidebar card, the banner, search results, the queue, Airing, and `kot`
+  (it prints what the app shows). Matching, recognition and `kot`'s title lookup use every title.
+  Scenes: `settings-titles-japanese`, `list-titles-english`, `list-titles-japanese`,
+  `queue-titles-english`, `now-playing-titles-japanese`, `details-titles-japanese`,
+  `search-titles-english`, `airing-season-english`.
+- [x] **Airing** (`app/src/airing.rs`, `core/src/airing.rs`), a sidebar entry under Kotora, data from
+  MyAnimeList only:
+  - `GET /anime/season/{year}/{season}?sort=anime_num_list_users` with start and end date,
+    broadcast, episodes, status, type, mean, members, alternative titles, picture and
+    `my_list_status`, in pages of 100: 4 pages of the current season, 2 of the one before (only its
+    shows still airing are kept). At most 6 requests, through the app's one rate budget (20 a
+    minute). Saved per season in the store (schema 6, `season`), asked again after 12 h (or with
+    Refresh); only the two seasons shown are kept; sign out deletes them.
+  - The user's own airing entries that the two seasons don't have (long runners): the list sync now
+    asks for `start_date` and `broadcast` too (same request), kept in `media`.
+  - The timetable is Kotora's own estimate (DESIGN.md §5.8): start date's first slot + (N − 1)
+    weeks, JST to the user's zone, moved forward when the progress is ahead. "Times are estimated" on
+    the page; shows without a slot time are listed apart, without a time.
+  - **This week:** the next 7 days from today (decided: today on top rather than Monday, so the
+    countdowns are in view), grouped by day, today lit, local times; the list's shows marked, with
+    "in 2 d 4 h". **This season:** a cover grid by members, filters TV / ONA / Movie and On my list /
+    Not on my list. Every line and card has "+ Watching" / "+ Plan" (through the queue, as search)
+    and opens the details page.
+  - Lightness: everything drawn is derived once (`airing_rebuild`) when the data, a filter or the
+    list changes, and once a minute while the page is on screen (the countdowns; `airing::tick`
+    asks for one `wake_after` to the next minute, none on other pages or with the window hidden).
+    No network in view or poll; virtual rows for both views (the grid is rows of cards). Covers at
+    display size through the cover cache: a card is 128 × 181 pt, about 0.5 MB at 2x, and the grid
+    builds about 50 cards, so the cache's cap goes from 16 to 32 MB (a smaller cap would drop covers
+    still drawn and load them again while scrolling).
+  - Never headless, offline or signed out; the saved seasons show offline with the error.
+  - `kot airing`: the list's episodes in the next 7 days, by day, with times and countdowns.
+  - Scenes: `airing-week`, `airing-week-mine`, `airing-season`, `airing-season-tv`,
+    `airing-season-mine`, `airing-season-not-mine`, `airing-season-added`, `airing-season-english`,
+    `airing-loading`, `airing-empty`, `airing-error`, `airing-error-saved`, `airing-signed-out`,
+    `airing-details`; checked as PNGs at 1280 × 800 and 960 × 600.
+  - Costs (Linux x86_64, release, stripped, `codegen-units = 1`): `kotora` 30,514,200 → 30,772,376
+    bytes (+258,176, +0.26 MB, titles and Airing together); `kot` 560,072 → 578,632 (`kot
+    airing`). No new crate: `libc` was already in the tree.
+- [ ] Live test by the user (read only; an add from Airing is a write to the list, like any add):
+  - Settings → Display → English, then Japanese: the list, a details page, Now Playing, the queue,
+    search and `kot list` follow at once, and after a restart.
+  - Sync once (the list now carries start dates and slots), open Airing: the first open asks
+    MyAnimeList for up to 6 pages; a second open within 12 h asks nothing.
+  - This week: compare a few times on the list with the real broadcast (or a schedule site); check a
+    late-night show (after midnight JST) lands on the right local day; countdowns change once a
+    minute.
+  - This season: filters, covers while scrolling (no flicker of tiles coming back), "+ Plan" on a
+    show (queued, then sent), a card opens its details and Back returns to Airing.
+  - `kot airing`; offline (`KOTORA_OFFLINE=1` in a test copy): the saved season shows.
+  - CPU with Airing open and idle: one wake a minute (`pidstat`).
+
+What the estimate gets wrong (it is marked "estimated" everywhere):
+- Breaks (a skipped week for a holiday or sports), delays, double episodes and recaps shift the real
+  dates; only the user's progress moves the estimate (forward only).
+- MyAnimeList's slot is the Japanese TV broadcast. Simulcasts on streaming sites often come an hour
+  or more later, or on another day.
+- A start date that isn't the regular slot's day (an early premiere, a late-night show listed by the
+  next calendar day) is handled one way only: a slot one day before the start date is taken as the
+  first; anything else starts at the next slot.
+- Shows with no slot time, or a start date without a day (`2027-01`), have no times.
+- Unknown episode counts end at MyAnimeList's end date when there is one, else never.
+
+Later (v0.3, opt-in): AniList's `airingSchedule` has the exact time of each episode (AniChart's
+data); use it for the Airing times after re-checking AniList's terms (clause 5 allows a client of the
+user's own account; a schedule is not the user's list, so it needs a fresh look).
+
 ## Stage 6: release 0.1
 
 - [x] `install.sh` (from Uzumaki's: `~/.local`, desktop file, PNG and SVG icons, `--uninstall`, refuses
@@ -502,8 +585,8 @@ and the reason.
 - [ ] `packaging/release.sh` (tarball and its sha256; copy Uzumaki's), then tag `v0.1.0`, fill in the sha256
   and the CHANGELOG date, regenerate `.SRCINFO`.
 - [ ] Test the AUR package (`makepkg`, `namcap`, `extra-x86_64-build`) and push it to the AUR.
-- [ ] Check that `/usr/bin/kot` is free in Arch's file lists (`pacman -Fy; pacman -F usr/bin/kot`). No package or
-  AUR name `kot` or `kotora` was found on 2026-11-15.
+- [x] Check that `/usr/bin/kot` is free in Arch's file lists (`pacman -Fy; pacman -F usr/bin/kot`): empty on
+  Arch (the user, 2026-11-15). No package or AUR name `kot` or `kotora` was found on 2026-11-15.
 - [ ] Merge `stage-5` into `stage-6` (the live Now Playing position fix), then rebuild the screenshots.
 - [ ] Live test by the user on Arch (Wayland and X11) and on the Mac.
 - [ ] Make the repo public (the user's call).
@@ -516,17 +599,19 @@ the details page moved into v0.1; AniList, AppImage/DMG, the corrections UI and 
 to v0.3.
 
 - **v0.2:**
-  - the mpv Lua script (`extras/mpv/kotora.lua` → `kot report`)
   - local history with undo
+  - (the mpv Lua script was dropped on 2026-11-15: the one-click precise mode covers it)
 - **v0.3:**
   - AniList (implicit grant; re-check the terms first) and several accounts
   - AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed)
   - corrections UI ("this file / folder is X")
   - library folders and "play next episode"
   - opt-in window-title detectors on X11, Hyprland, sway and wlroots
+  - Airing: AniList's `airingSchedule` (exact per-episode times, AniChart's data) as an opt-in,
+    after re-checking AniList's terms
   - (anime-relations episode mapping moved into v0.1, 2026-11-15: done on branch `relations`)
 - **v0.4:**
-  - seasons browser
+  - (the seasons browser moved forward as Airing, 2026-11-15)
   - statistics
   - Discord Rich Presence
   - tray, hidden start, auto-start

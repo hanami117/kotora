@@ -303,6 +303,8 @@ mod tests {
                 format: "tv".into(),
                 air_status: "finished_airing".into(),
                 cover_url: None,
+                start_date: None,
+                broadcast: None,
             },
             status: Status::Watching,
             progress: 1,

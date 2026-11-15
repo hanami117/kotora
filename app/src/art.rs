@@ -23,8 +23,10 @@ use crate::model::{Handle, State};
 /// Download threads at most. Covers are small; this only keeps a screenful from queueing.
 const WORKERS: usize = 4;
 /// Bytes of decoded covers kept (Rune's mips add a third). A row cover at 2x is 68 x 96 px,
-/// about 35 KB: some 450 covers, more than a long list's screenfuls.
-const MEMORY_BUDGET: usize = 16 << 20;
+/// about 35 KB: some 450 covers, more than a long list's screenfuls. An Airing card's cover at 2x
+/// is 256 x 362 px, about 0.5 MB, and the grid builds some 50 cards (the rows on screen and two
+/// more each way): 32 MB keeps them all, so scrolling the grid never drops a cover it still draws.
+const MEMORY_BUDGET: usize = 32 << 20;
 
 /// A cover in memory: the media id and its size in pixels.
 type Key = (u32, u32, u32);

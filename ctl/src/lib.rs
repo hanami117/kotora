@@ -187,6 +187,8 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<String>,
     },
+    /// Episodes of the user's list that air in the next 7 days (estimated). Replies `Airing`.
+    Airing,
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -204,6 +206,31 @@ pub enum Reply {
     Now { now: Option<NowInfo> },
     /// Done, in a sentence.
     Done { message: String },
+    /// The next episodes of the list, soonest first; `note` says why there are none yet.
+    Airing {
+        items: Vec<AiringItem>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+}
+
+/// One episode in `kot airing`. The app writes the day and time in its (the user's) zone.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiringItem {
+    pub title: String,
+    pub episode: u32,
+    /// Unix seconds (estimated).
+    pub at: i64,
+    /// "Today", "Tomorrow", "Saturday".
+    pub day: String,
+    /// "15:30".
+    pub time: String,
+    /// "in 1 d 6 h".
+    pub countdown: String,
+    /// Episodes aired (by the estimate) that the progress hasn't reached.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub behind: u32,
 }
 
 /// What plays, as `kot now` prints it.

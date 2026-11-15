@@ -19,11 +19,20 @@ pub struct Media {
     /// (empty when unknown).
     pub air_status: String,
     pub cover_url: Option<String>,
+    /// The first air date in Japan, `2026-10-03` (or shorter); the Airing timetable starts here.
+    pub start_date: Option<String>,
+    /// The weekly slot in Japan time (MAL `broadcast`), when known.
+    pub broadcast: Option<crate::airing::Broadcast>,
 }
 
 impl Media {
     pub fn is_airing(&self) -> bool {
         self.air_status == "currently_airing"
+    }
+
+    /// The title to show in `lang` (romaji when that one is missing).
+    pub fn display_title(&self, lang: crate::config::TitleLang) -> &str {
+        lang.pick(&self.title, self.title_en.as_deref(), self.title_ja.as_deref())
     }
 
     /// Every title, for the search filter.

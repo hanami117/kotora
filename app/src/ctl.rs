@@ -90,6 +90,20 @@ fn answer(handle: &Handle, req: Request) -> Reply {
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
         Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now() }))),
+        Request::Airing => reply(on_ui(handle, false, |s| {
+            if !s.has_list() {
+                return Err("Not signed in.".to_string());
+            }
+            // The season is read when the Airing page opens; kot asks for it too (saved copy
+            // first, MyAnimeList only when it is old).
+            let note = if s.airing.shows.is_empty() {
+                s.airing_fetch(false);
+                Some("Kotora is reading the season; try again in a few seconds.".to_string())
+            } else {
+                None
+            };
+            Ok(Reply::Airing { items: s.ctl_airing(), note })
+        })),
         Request::Confirm => reply(on_ui(handle, true, |s| {
             let (title, _) = s.record(false)?;
             let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+use crate::airing::{self, Broadcast, SeasonAnime};
 use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
 use crate::service::{AnimeHit, Details, ListService, MyEntry, SearchHit, ServiceError, User};
@@ -346,10 +347,26 @@ impl<T: Transport> Client<T> {
         Ok(User { name: me.name, picture })
     }
 
+    /// One page of a season's anime, most members first (`GET /anime/season/{year}/{season}`,
+    /// [`SEASON_PAGE`] a page), and whether another page follows. NSFW titles are left out, as
+    /// in search.
+    pub fn fetch_season(&mut self, access: &str, season: airing::Season, page: u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
+        let r = self.get(
+            format!(
+                "{API}/anime/season/{}/{}?sort=anime_num_list_users&limit={SEASON_PAGE}&offset={}&fields={SEASON_FIELDS}",
+                season.year,
+                season.name(),
+                page * SEASON_PAGE
+            ),
+            access,
+        )?;
+        parse_season(&r.body).map_err(ServiceError::Other)
+    }
+
     /// The whole list, 100 entries a page, following `paging.next`.
     pub fn fetch_list(&mut self, access: &str) -> Result<Vec<ListItem>, ServiceError> {
         let mut url = format!(
-            "{API}/users/@me/animelist?fields=list_status%7Bnum_times_rewatched%7D,num_episodes,media_type,status,alternative_titles&limit=100&nsfw=true"
+            "{API}/users/@me/animelist?fields=list_status%7Bnum_times_rewatched%7D,num_episodes,media_type,status,alternative_titles,start_date,broadcast&limit=100&nsfw=true"
         );
         let mut items = Vec::new();
         // A real list is a few pages; the cap only stops a loop of links.
@@ -391,6 +408,11 @@ fn api_message(body: &str) -> String {
 // ----------------------------------------------------------------------------------- JSON shapes
 
 /// What a search result row shows (the cover comes by default).
+/// The Airing page: what a card and the timetable need.
+const SEASON_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_date,end_date,broadcast,mean,num_list_users,my_list_status";
+/// Anime a season page asks for.
+pub const SEASON_PAGE: u32 = 100;
+
 const BROWSE_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean";
 /// The details page.
 const DETAIL_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean,rank,popularity,num_list_users,\
@@ -420,6 +442,19 @@ struct FullNode {
     studios: Vec<Named>,
     genres: Vec<Named>,
     my_list_status: Option<FullListStatus>,
+    broadcast: Option<RawBroadcast>,
+}
+
+#[derive(Deserialize)]
+struct RawBroadcast {
+    day_of_the_week: Option<String>,
+    start_time: Option<String>,
+}
+
+impl RawBroadcast {
+    fn parse(self) -> Option<Broadcast> {
+        Broadcast::parse(self.day_of_the_week.as_deref()?, self.start_time.as_deref())
+    }
 }
 
 #[derive(Deserialize)]
@@ -495,6 +530,51 @@ pub fn parse_hits(body: &str) -> Result<Vec<AnimeHit>, String> {
     }
     let page: Page = serde_json::from_str(body).map_err(|e| format!("can't read the search answer ({})", e.classify_name()))?;
     Ok(page.data.into_iter().map(|i| i.node.hit()).collect())
+}
+
+/// The answer of `GET /anime/season/{year}/{season}?fields=…`, and whether more pages follow.
+pub fn parse_season(body: &str) -> Result<(Vec<SeasonAnime>, bool), String> {
+    #[derive(Deserialize)]
+    struct Page {
+        #[serde(default)]
+        data: Vec<Item>,
+        paging: Option<Paging>,
+    }
+    #[derive(Deserialize)]
+    struct Item {
+        node: FullNode,
+    }
+    let page: Page = serde_json::from_str(body).map_err(|e| format!("can't read the season list ({})", e.classify_name()))?;
+    let more = page.paging.and_then(|p| p.next).is_some_and(|n| !n.is_empty());
+    let list = page
+        .data
+        .into_iter()
+        .filter(|i| i.node.id != 0)
+        .map(|i| {
+            let n = i.node;
+            let (title_en, title_ja, synonyms) = n.alt();
+            let mine = n.my_list_status.and_then(|m| Some((m.status.filter(|s| Status::from_mal(s).is_some())?, m.num_episodes_watched)));
+            SeasonAnime {
+                id: n.id,
+                title: n.title,
+                title_en,
+                title_ja,
+                synonyms,
+                format: n.media_type.unwrap_or_default(),
+                episodes: n.num_episodes.filter(|&e| e > 0),
+                air_status: n.status.unwrap_or_default(),
+                start_date: non_empty(n.start_date),
+                end_date: non_empty(n.end_date),
+                broadcast: n.broadcast.and_then(RawBroadcast::parse),
+                mean: n.mean.filter(|m| *m > 0.0),
+                members: n.num_list_users,
+                // The medium size (225 px wide) is plenty for a card.
+                cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
+                mine,
+            }
+        })
+        .collect();
+    Ok((list, more))
 }
 
 /// The answer of `GET /anime/{id}?fields=…`.
@@ -589,6 +669,10 @@ struct Node {
     num_episodes: Option<u32>,
     media_type: Option<String>,
     status: Option<String>,
+    #[serde(default)]
+    start_date: Option<String>,
+    #[serde(default)]
+    broadcast: Option<RawBroadcast>,
 }
 
 #[derive(Deserialize)]
@@ -701,6 +785,8 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
                 air_status: n.status.unwrap_or_default(),
                 // The medium size is plenty for a 34 x 48 row.
                 cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
+                start_date: non_empty(n.start_date),
+                broadcast: n.broadcast.and_then(RawBroadcast::parse),
             },
             status,
             progress: ls.num_episodes_watched,
@@ -816,6 +902,10 @@ impl<T: Transport> ListService for Mal<T> {
 
     fn browse(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         self.authed(|c, a| c.browse_anime(a, query, limit))
+    }
+
+    fn season(&mut self, season: airing::Season, page: u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
+        self.authed(|c, a| c.fetch_season(a, season, page))
     }
 
     fn details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
@@ -1239,5 +1329,47 @@ mod tests {
         assert_eq!((u.name.as_str(), u.picture.as_deref()), ("demo_user", Some("https://cdn.example.invalid/images/userimages/5.jpg?t=1")));
         assert_eq!(mal.user().unwrap().picture, None, "no picture set");
         assert_eq!(seen.lock().unwrap()[0].1, "https://api.myanimelist.net/v2/users/@me?fields=picture");
+    }
+
+    /// Made-up season answer in MyAnimeList's shape (no real titles).
+    const SEASON: &str = r#"{"data":[
+        {"node":{"id":9201,"title":"Kirigaoka no Lantern","main_picture":{"medium":"https://cdn.example.invalid/9201.jpg","large":"https://cdn.example.invalid/9201l.jpg"},
+          "alternative_titles":{"synonyms":[],"en":"Lanterns of Kirigaoka","ja":"霧ヶ丘のランタン"},"media_type":"tv","num_episodes":12,"status":"currently_airing",
+          "start_date":"2026-10-03","end_date":"2026-12-19","broadcast":{"day_of_the_week":"saturday","start_time":"23:30"},"mean":8.12,"num_list_users":154321,
+          "my_list_status":{"status":"watching","score":0,"num_episodes_watched":6,"is_rewatching":false,"updated_at":"2026-11-10T10:00:00+00:00"}}},
+        {"node":{"id":9202,"title":"Hoshizora Web Shorts","media_type":"ona","num_episodes":0,"status":"currently_airing","start_date":"2026-10",
+          "broadcast":{"day_of_the_week":"friday"},"num_list_users":1200}},
+        {"node":{"id":9203,"title":"Late Night Ronin","media_type":"tv","status":"not_yet_aired","start_date":"2026-11-29",
+          "broadcast":{"day_of_the_week":"saturday","start_time":"25:30"},"num_list_users":900}}
+      ],"paging":{"next":"https://api.myanimelist.net/v2/anime/season/2026/fall?offset=100"},"season":{"year":2026,"season":"fall"}}"#;
+
+    #[test]
+    fn reads_a_season_page() {
+        let (list, more) = parse_season(SEASON).unwrap();
+        assert!(more);
+        assert_eq!(list.len(), 3);
+        let a = &list[0];
+        assert_eq!((a.id, a.title_en.as_deref(), a.episodes, a.members), (9201, Some("Lanterns of Kirigaoka"), Some(12), Some(154_321)));
+        assert_eq!(a.broadcast, Some(Broadcast { day: 5, minute: Some(23 * 60 + 30) }));
+        assert_eq!((a.start_date.as_deref(), a.end_date.as_deref()), (Some("2026-10-03"), Some("2026-12-19")));
+        assert_eq!(a.mine, Some(("watching".into(), 6)));
+        assert_eq!(a.cover_url.as_deref(), Some("https://cdn.example.invalid/9201.jpg"));
+        let b = &list[1];
+        assert_eq!((b.episodes, b.broadcast, b.mine.as_ref()), (None, Some(Broadcast { day: 4, minute: None }), None));
+        assert_eq!(list[2].broadcast, Some(Broadcast { day: 6, minute: Some(90) }), "25:30 Saturday is 01:30 Sunday");
+        let (_, more) = parse_season(r#"{"data":[],"paging":{}}"#).unwrap();
+        assert!(!more);
+        assert!(parse_season("nope").is_err());
+    }
+
+    #[test]
+    fn the_season_request_asks_by_members_and_pages() {
+        let (f, seen) = fake(vec![ok(SEASON)]);
+        let (mut c, _) = client(f);
+        let (list, _) = c.fetch_season("a", airing::Season { year: 2026, quarter: 3 }, 1).unwrap();
+        assert_eq!(list.len(), 3);
+        let url = seen.lock().unwrap()[0].1.clone();
+        assert!(url.starts_with("https://api.myanimelist.net/v2/anime/season/2026/fall?sort=anime_num_list_users&limit=100&offset=100&fields="), "{url}");
+        assert!(url.contains("broadcast") && url.contains("start_date") && url.contains("num_list_users") && url.contains("my_list_status"));
     }
 }

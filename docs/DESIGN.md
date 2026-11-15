@@ -118,14 +118,16 @@ exactly where Kotora should be strongest.
 ### Later (roughly in order; see docs/ROADMAP.md)
 - **AniList** (v0.3; implicit grant, section 8.2) as a second service. Any number of accounts, one
   primary. Still a pure client of the user's own list (AniList terms clause 5).
-- **The mpv Lua script:** reports file, position and end to `kot`, so no IPC socket setup is needed.
+- **The mpv Lua script:** dropped (2026-11-15). The one-click precise mode (Stage 5) writes the IPC
+  socket line to `mpv.conf`, which covers what the script was for.
 - **Window-title detectors** where a compositor allows it: X11, Hyprland, sway or wlroots
   foreign-toplevel. These are opt-in. (The open-file detectors moved into v0.1, above.)
 - **Recognition corrections UI:** "this file / folder is X" and episode offsets. (anime-relations,
   for numbering that continues across seasons, came into v0.1.)
 - **History:** a local log of what was watched and when, with undo.
-- **Seasons browser:** current, next and past seasons from the signed-in service (MAL: `GET
-  /anime/season/{year}/{season}`), fetched on demand. Add to Plan to watch.
+- **Seasons browser:** came forward as the **Airing** page (2026-11-15, section 5.8): this week and
+  this season from MAL's `GET /anime/season/{year}/{season}`, with Kotora's own timetable. AniList's
+  exact `airingSchedule` is an opt-in for v0.3, after re-checking its terms.
 - **Library folders:** scan for which episodes are available locally; play the next episode in your
   player.
 - **Statistics:** time watched, score distribution.
@@ -152,7 +154,6 @@ detect/             kotora-detect: now-playing sources behind one trait. MPRIS (
 app/                kotora: the Rune app. State, views, scenes; spawns core workers and detectors.
 ctl/                kotora-ctl: the `kot` protocol (Request/Reply JSON lines), serve/Client, `kot`
                     binary, socket path, single instance, version line (build.rs git facts).
-extras/mpv/         kotora.lua (later): the mpv script.
 packaging/          install.sh at the top; appimage/, aur/, aur-bin/, macos/, release.sh (later).
 docs/               DESIGN.md, ROADMAP.md, rune-notes (pointer to Uzumaki's), protocol notes.
 ```
@@ -193,6 +194,7 @@ reads (as `uzu` reads Uzumaki's cache).
 | `recognition` | cache: normalised parsed title (+ season, group) → media id, source (`auto`/`user`), confidence, last used |
 | `history` | local log: media, episode, when, how (detected/manual), op id (for undo) |
 | `kv` | small settings that are not user-edited (last sync cursor etc.) |
+| `season` | (schema 6) a season's anime list from the service as JSON, for Airing: asked again after 12 h, only the two seasons shown are kept, deleted at sign out. `media` also keeps `start_date` and `broadcast` (`saturday 23:30`, JST) for the timetable |
 
 User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). The UI writes it too.
 
@@ -236,7 +238,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
    | mpv JSON IPC | Linux, macOS | path, title, position, duration, pause | the user sets `input-ipc-server` (mpv.conf, IINA "additional mpv options"); we watch the configured socket path(s). v0.1 |
    | MPRIS (zbus) | Linux | `xesam:url` (file URI for VLC, mpv-mpris, …), title, position, length | watch `NameOwnerChanged` + `PropertiesChanged`; browsers give title only (weak hint). v0.1 |
    | VLC HTTP interface | macOS | file name (`information.category.meta.filename`), time, length, state from `/requests/status.json` | VLC has no MPRIS on macOS. The user enables the web interface and sets a password in VLC's preferences; Kotora stores that password in the config, so it is opt-in and the Settings page says so. Field names **(unverified)**; check against a live VLC in stage 4. A `libproc` open-files fallback comes later. v0.1 |
-   | mpv Lua script → `kot report` | Linux, macOS | path, position, end | no socket setup (mpv Lua has no sockets, so the script runs `kot` as a subprocess). Later |
+   | mpv Lua script → `kot report` | Linux, macOS | path, position, end | dropped 2026-11-15: the one-click precise mode writes the socket line instead |
    | `/proc/<pid>/fd` | Linux | open video files of known players | same user, no permissions; several open files possible (prefetch). Stage 5 (v0.1) |
    | `libproc` open files | macOS | same | believed to need no permission for the same user **(unverified)**. Stage 5 if it fits, else later |
    | window titles | X11, Hyprland, sway, wlroots (foreign-toplevel) | title | **not available on GNOME or KDE Wayland** without an extension or KWin script; opt-in. Later |
@@ -318,9 +320,34 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
 - **Settings:** account, detection sources (each with a status line: "MPRIS: VLC playing" or "mpv socket:
   not found"), threshold, the **auto-update switch** (off by default, with a one-line explanation), the
   MAL Client ID field, theme.
+- **Titles** (2026-11-15): Settings → Display picks Romaji (MAL's main title, the default), English
+  or Japanese; a missing one falls back to romaji. Display only: matching uses every title.
 - **Design language:** Uzumaki's dark, minimal look with Inter, but Kotora has its own identity: a tiger
   icon that cites Taiga's, and its own accent colour (tiger orange is the starting idea). **Icon:
   placeholder for now; the icon work is a separate task.** Light theme later.
+
+### 5.8 Airing: the timetable estimate (2026-11-15)
+
+MyAnimeList gives a show's start date and its weekly slot in Japan (`broadcast { day_of_the_week,
+start_time }`, JST), not the time of each episode. Kotora estimates them itself:
+
+- **Episode N** airs at the first slot on or after the start date, plus N − 1 weeks. If the slot's
+  weekday is the day *before* the start date, that day is the first slot (a late-night show listed
+  by the next calendar day, or an early premiere); the following weeks are right either way. A
+  late-night `25:30` is read as 01:30 the next day. Episodes stop at the count, else at the end date.
+- **Time zones without a time zone crate:** Japan has no summer time, so a JST wall time minus 9 h is
+  exact unix seconds. Showing it uses the C library's `localtime_r` (`tm_gmtoff`), which reads `TZ`
+  and the system's zone data, DST included (`core::time::Clock`). A slot can move to another day in
+  the user's zone (Sunday 01:00 JST is Saturday in Europe and America), so the day comes from the
+  local date of the computed time, never from MAL's weekday.
+- **Self-correction:** when the progress on a list entry is past the episodes the estimate says have
+  aired, the episodes move forward: the next one is progress + 1, at the next slot.
+- **Marked "estimated"** everywhere. Shows without a slot time or a full start date are listed
+  without a time. What it gets wrong is listed in ROADMAP.md (Airing).
+- **Data:** the current season and the one before (its shows still airing), most members first, at
+  most 6 requests per 12 h, plus the user's airing entries from the list sync (which asks for the
+  start date and slot at no extra request). Season lists are saved for the page only and deleted at
+  sign out (MAL licence: client-side, only as long as needed).
 
 ## 6. What we take from Uzumaki (copy, then adapt; same author, GPL-3.0-or-later)
 
@@ -545,6 +572,12 @@ The user answered the open questions. These are decided; the rest of this docume
     does it, moved forward from v0.3 so split seasons and numbering that continues across seasons
     (the user's Re:Zero releases) are recognised. The rules file is built in and refreshed from
     GitHub at most once a week (section 11). The corrections UI stays in v0.3.
+
+14. **Airing, titles and the mpv script (2026-11-15):** the seasons browser comes forward from v0.4
+    as the Airing page (MAL data only, Kotora's own estimate, section 5.8); AniList's
+    `airingSchedule` is an opt-in for v0.3 after re-checking its terms. A title language setting
+    (Romaji / English / Japanese) is added. The mpv Lua script is dropped: the one-click precise mode
+    covers it. `/usr/bin/kot` is free on Arch.
 
 **Players for v0.1:** mpv (IPC socket and MPRIS), VLC (MPRIS on Linux), mpc-qt (MPRIS; `xesam:url`
 unverified), and from Stage 5 all of them (plus Celluloid and Haruna) through their open files on

@@ -8,6 +8,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::airing::{Broadcast, Season, SeasonAnime};
 use crate::service::Details;
 use crate::{ListItem, Media, Status};
 
@@ -114,6 +115,20 @@ pub(crate) const MIGRATIONS: &[&str] = &[
      ALTER TABLE pending_op ADD COLUMN old_times_rewatched INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE pending_op ADD COLUMN r_rewatching INTEGER;
      ALTER TABLE pending_op ADD COLUMN r_times_rewatched INTEGER;",
+    // 6: Airing. `media.start_date` and `media.broadcast` (`saturday 23:30`, Japan time) for the
+    // timetable of airing entries. `season`: a season's anime list as JSON (`airing::SeasonAnime`),
+    // fetched at most every `SEASON_FRESH` seconds; only the seasons the page shows are kept, and
+    // sign out deletes them.
+    "ALTER TABLE media ADD COLUMN start_date TEXT;
+     ALTER TABLE media ADD COLUMN broadcast TEXT;
+     CREATE TABLE season (
+        service TEXT NOT NULL,
+        year INTEGER NOT NULL,
+        season TEXT NOT NULL,
+        body TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (service, year, season)
+     );",
 ];
 
 /// Details of titles not on the list kept at most (the newest).
@@ -209,6 +224,7 @@ impl Store {
             "DELETE FROM kv WHERE key LIKE ?1 || ':%'",
             "DELETE FROM recognition WHERE service = ?1",
             "DELETE FROM details WHERE service = ?1",
+            "DELETE FROM season WHERE service = ?1",
         ] {
             tx.execute(sql, [service])?;
         }
@@ -254,12 +270,13 @@ impl Store {
         tx.execute("DELETE FROM entry WHERE service = ?1", [service])?;
         {
             let mut media = tx.prepare(
-                "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
+                   start_date, broadcast)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT (service, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
                    title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
                    format = excluded.format, air_status = excluded.air_status, cover_url = excluded.cover_url,
-                   fetched_at = excluded.fetched_at",
+                   fetched_at = excluded.fetched_at, start_date = excluded.start_date, broadcast = excluded.broadcast",
             )?;
             let mut entry = tx.prepare(
                 "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, times_rewatched, updated_at)
@@ -278,7 +295,9 @@ impl Store {
                     m.format,
                     m.air_status,
                     m.cover_url,
-                    now
+                    now,
+                    m.start_date,
+                    m.broadcast.map(crate::airing::Broadcast::to_text)
                 ])?;
                 entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at])?;
             }
@@ -313,7 +332,8 @@ impl Store {
     pub fn refresh_media(&self, service: &str, m: &Media, now: i64) -> Result<bool> {
         let n = self.conn.execute(
             "UPDATE media SET title = ?3, title_en = ?4, title_ja = ?5, synonyms = ?6, episodes = ?7, format = ?8,
-               air_status = ?9, cover_url = COALESCE(?10, cover_url), fetched_at = ?11
+               air_status = ?9, cover_url = COALESCE(?10, cover_url), fetched_at = ?11,
+               start_date = COALESCE(?12, start_date), broadcast = COALESCE(?13, broadcast)
              WHERE service = ?1 AND id = ?2 AND id IN (SELECT media_id FROM entry WHERE service = ?1)",
             params![
                 service,
@@ -326,7 +346,9 @@ impl Store {
                 m.format,
                 m.air_status,
                 m.cover_url,
-                now
+                now,
+                m.start_date,
+                m.broadcast.map(crate::airing::Broadcast::to_text)
             ],
         )?;
         Ok(n > 0)
@@ -364,6 +386,41 @@ impl Store {
         Ok(())
     }
 
+    // ----------------------------------------------------------------------------- seasons
+
+    /// A saved season list and when it was fetched.
+    pub fn season(&self, service: &str, season: Season) -> Result<Option<(Vec<SeasonAnime>, i64)>> {
+        let row: Option<(String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT body, fetched_at FROM season WHERE service = ?1 AND year = ?2 AND season = ?3",
+                params![service, season.year, season.name()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(body, at)| serde_json::from_str(&body).ok().map(|v| (v, at))))
+    }
+
+    /// Saves a season list and forgets every season not in `keep` (no hoarding: only what the
+    /// Airing page shows).
+    pub fn save_season(&self, service: &str, season: Season, list: &[SeasonAnime], now: i64, keep: &[Season]) -> Result<()> {
+        let body = serde_json::to_string(list).map_err(|e| StoreError(e.to_string()))?;
+        self.conn.execute(
+            "INSERT INTO season (service, year, season, body, fetched_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (service, year, season) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at",
+            params![service, season.year, season.name(), body, now],
+        )?;
+        let kept: Vec<String> = keep.iter().chain([&season]).map(|s| format!("{}/{}", s.year, s.name())).collect();
+        let mut rows = self.conn.prepare("SELECT year, season FROM season WHERE service = ?1")?;
+        let all: Vec<(u16, String)> = rows.query_map([service], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<std::result::Result<_, _>>()?;
+        for (y, s) in all {
+            if !kept.contains(&format!("{y}/{s}")) {
+                self.conn.execute("DELETE FROM season WHERE service = ?1 AND year = ?2 AND season = ?3", params![service, y, s])?;
+            }
+        }
+        Ok(())
+    }
+
     // --------------------------------------------------------------------------------- kv
 
     pub fn kv_get(&self, key: &str) -> Result<Option<String>> {
@@ -395,7 +452,7 @@ impl Store {
 }
 
 const ITEM_SELECT: &str = "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
-        e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched
+        e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched, m.start_date, m.broadcast
  FROM entry e JOIN media m ON m.service = e.service AND m.id = e.media_id";
 
 fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
@@ -412,6 +469,8 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
             format: r.get(6)?,
             air_status: r.get(7)?,
             cover_url: r.get(8)?,
+            start_date: r.get(15)?,
+            broadcast: r.get::<_, Option<String>>(16)?.as_deref().and_then(Broadcast::from_text),
         },
         status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
         progress: r.get(10)?,
@@ -438,6 +497,8 @@ pub(crate) mod tests {
                 format: "tv".into(),
                 air_status: if id.is_multiple_of(2) { "currently_airing".into() } else { "finished_airing".into() },
                 cover_url: Some(format!("https://example.invalid/{id}.jpg")),
+                start_date: None,
+                broadcast: None,
             },
             status,
             progress,
@@ -541,6 +602,37 @@ pub(crate) mod tests {
         let got = s.load_list("mal").unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].media.id, 1);
+    }
+
+    #[test]
+    fn seasons_are_cached_and_only_two_kept() {
+        let mut st = Store::open_memory().unwrap();
+        let fall = Season { year: 2026, quarter: 3 };
+        let a = SeasonAnime { id: 9201, title: "Kirigaoka no Lantern".into(), broadcast: Some(Broadcast { day: 5, minute: Some(1410) }), members: Some(5), ..Default::default() };
+        assert_eq!(st.season("mal", fall).unwrap(), None);
+        st.save_season("mal", fall.previous().previous(), &[], 10, &[]).unwrap();
+        st.save_season("mal", fall.previous(), &[], 20, &[fall]).unwrap();
+        st.save_season("mal", fall, std::slice::from_ref(&a), 30, &[fall.previous()]).unwrap();
+        assert_eq!(st.season("mal", fall).unwrap(), Some((vec![a], 30)));
+        assert!(st.season("mal", fall.previous()).unwrap().is_some());
+        assert_eq!(st.season("mal", fall.previous().previous()).unwrap(), None, "an older season is forgotten");
+        st.clear_service("mal").unwrap();
+        assert_eq!(st.season("mal", fall).unwrap(), None, "sign out forgets the seasons");
+    }
+
+    #[test]
+    fn the_list_keeps_the_start_date_and_the_slot() {
+        let mut st = Store::open_memory().unwrap();
+        let mut it = item(2, "Kirigaoka no Lantern", Status::Watching, 6, 100);
+        it.media.start_date = Some("2026-10-03".into());
+        it.media.broadcast = Some(Broadcast { day: 5, minute: Some(1410) });
+        st.replace_list("mal", std::slice::from_ref(&it), 1000).unwrap();
+        assert_eq!(st.load_item("mal", 2).unwrap().unwrap().media, it.media);
+        // A details refresh (no slot known) keeps the saved one.
+        let mut m = it.media.clone();
+        m.broadcast = None;
+        st.refresh_media("mal", &m, 2000).unwrap();
+        assert_eq!(st.load_item("mal", 2).unwrap().unwrap().media.broadcast, it.media.broadcast);
     }
 
     #[test]
