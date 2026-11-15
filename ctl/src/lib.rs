@@ -145,6 +145,30 @@ pub enum Request {
     Show,
     /// Quits the app. Replies `Status`, then the app goes away.
     Quit,
+    /// The saved list: one status (`watching`, `plan`, `completed`, `on-hold`, `dropped`) or all
+    /// (`None`). Replies `List`.
+    List {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// One more episode of the entry whose title matches. Replies `Edited`.
+    PlusOne { title: String },
+    /// Sets the progress, status or score of the entry whose title matches. Replies `Edited`.
+    Set {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        progress: Option<u32>,
+        /// A status name as in `List`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        /// 1-10; 0 removes the score.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        score: Option<u8>,
+    },
+    /// The sync queue. Replies `Queue`.
+    Queue,
+    /// Sends the queue now, then reads the list again. Replies `Status`.
+    Sync,
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -154,6 +178,44 @@ pub enum Request {
 pub enum Reply {
     Status(Status),
     Error { message: String },
+    List { entries: Vec<Entry> },
+    /// The entry after an edit; the change waits in the queue.
+    Edited { entry: Entry },
+    Queue { ops: Vec<QueueItem> },
+}
+
+/// One list entry, as `kot list` prints it.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Entry {
+    /// The service's id (MyAnimeList id).
+    pub id: u32,
+    pub title: String,
+    /// "Watching", "Plan to watch", …
+    pub status: String,
+    pub progress: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episodes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<u8>,
+    /// "Waiting to sync", "Conflict in queue", "Sync failed"; `None` when synced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
+}
+
+/// One change in the sync queue.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QueueItem {
+    pub title: String,
+    /// "Progress 3 → 5", "Status → Completed, score 8".
+    pub change: String,
+    /// "Waiting", "Sending", "Conflict", "Failed", "Sent".
+    pub state: String,
+    /// The service's words for a failed change, the last error of a retried one, or what the
+    /// service has in a conflict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// What `kot status` prints. Every field has a default, so an older app's reply still reads.

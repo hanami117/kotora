@@ -34,7 +34,8 @@ fn wire_format_is_readable() {
 
 #[test]
 fn requests_and_replies_round_trip() {
-    for req in [Request::Status, Request::Show, Request::Quit] {
+    let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0) };
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -178,4 +179,39 @@ fn the_build_script_facts_parse() {
     assert_eq!(parse_facts(""), None);
     assert_eq!(parse_facts("main\t20c1fe9\t1\t0"), facts("main", "20c1fe9", true, false));
     assert_eq!(parse_facts("main\t20c1fe9"), None);
+}
+
+#[test]
+fn stage_3_wire_format() {
+    assert_eq!(serde_json::to_string(&Request::List { status: Some("watching".into()) }).unwrap(), r#"{"cmd":"list","status":"watching"}"#);
+    assert_eq!(serde_json::to_string(&Request::List { status: None }).unwrap(), r#"{"cmd":"list"}"#);
+    assert_eq!(serde_json::to_string(&Request::PlusOne { title: "Neon".into() }).unwrap(), r#"{"cmd":"plus_one","title":"Neon"}"#);
+    assert_eq!(
+        serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None }).unwrap(),
+        r#"{"cmd":"set","title":"Neon","progress":3}"#
+    );
+    assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);
+    assert_eq!(serde_json::to_string(&Request::Sync).unwrap(), r#"{"cmd":"sync"}"#);
+    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, waiting: None };
+    let text = serde_json::to_string(&Reply::Edited { entry: e.clone() }).unwrap();
+    assert_eq!(text, r#"{"reply":"edited","entry":{"id":7,"title":"Neon","status":"Watching","progress":3,"episodes":12}}"#);
+    assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), Reply::Edited { entry: e });
+    let q = Reply::Queue { ops: vec![QueueItem { title: "Neon".into(), change: "Progress 2 \u{2192} 3".into(), state: "Waiting".into(), note: None }] };
+    assert_eq!(serde_json::from_str::<Reply>(&serde_json::to_string(&q).unwrap()).unwrap(), q);
+}
+
+/// An app from stage 2 answers a stage 3 request with "bad request", which `kot` explains.
+#[test]
+fn an_old_app_refuses_new_requests_plainly() {
+    #[derive(Deserialize)]
+    #[serde(tag = "cmd", rename_all = "snake_case")]
+    enum OldRequest {
+        Status,
+        Show,
+        Quit,
+    }
+    let line = serde_json::to_string(&Request::Queue).unwrap();
+    assert!(serde_json::from_str::<OldRequest>(&line).is_err());
+    assert!(matches!(serde_json::from_str::<OldRequest>(r#"{"cmd":"quit"}"#), Ok(OldRequest::Quit)));
+    let _ = (OldRequest::Status, OldRequest::Show);
 }

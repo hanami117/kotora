@@ -1,17 +1,17 @@
-//! The MyAnimeList client, read only (DESIGN.md §8.1): OAuth 2 with PKCE (`plain`, the only method
-//! MAL supports), token refresh, the user's anime list, a rate budget and 429 handling.
+//! The MyAnimeList client (DESIGN.md §8.1): OAuth 2 with PKCE (`plain`, the only method MAL
+//! supports), token refresh, the user's anime list, one entry (read and `PATCH my_list_status`),
+//! a rate budget and 429 handling.
 //!
 //! HTTP goes through the [`Transport`] trait, so tests run against recorded JSON and never call MAL.
 //! Nothing here logs a token, a code or the Client ID, and error texts never carry a response body
 //! beyond MAL's own short `error` / `message` words.
 
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::ListItem;
-use crate::Media;
-use crate::Status;
+use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
 use crate::service::{ListService, ServiceError};
 use crate::time;
@@ -33,7 +33,7 @@ pub struct Request {
     pub method: &'static str,
     pub url: String,
     pub bearer: Option<String>,
-    /// A form-encoded body (POST).
+    /// A form-encoded body (POST, PATCH).
     pub form: Option<String>,
 }
 
@@ -67,18 +67,23 @@ impl Default for UreqTransport {
 
 impl Transport for UreqTransport {
     fn send(&self, req: &Request) -> Result<Response, String> {
-        let mut resp = if req.method == "POST" {
-            let mut r = self.agent.post(&req.url).header("Content-Type", "application/x-www-form-urlencoded");
-            if let Some(b) = &req.bearer {
-                r = r.header("Authorization", &format!("Bearer {b}"));
+        let auth = req.bearer.as_ref().map(|b| format!("Bearer {b}"));
+        let mut resp = match req.method {
+            "POST" | "PATCH" => {
+                let r = if req.method == "POST" { self.agent.post(&req.url) } else { self.agent.patch(&req.url) };
+                let mut r = r.header("Content-Type", "application/x-www-form-urlencoded");
+                if let Some(a) = &auth {
+                    r = r.header("Authorization", a);
+                }
+                r.send(req.form.clone().unwrap_or_default())
             }
-            r.send(req.form.clone().unwrap_or_default())
-        } else {
-            let mut r = self.agent.get(&req.url);
-            if let Some(b) = &req.bearer {
-                r = r.header("Authorization", &format!("Bearer {b}"));
+            _ => {
+                let mut r = self.agent.get(&req.url);
+                if let Some(a) = &auth {
+                    r = r.header("Authorization", a);
+                }
+                r.call()
             }
-            r.call()
         }
         .map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
@@ -146,11 +151,15 @@ pub fn authorize_url(client_id: &str, pkce: &Pkce) -> String {
 
 // ---------------------------------------------------------------------------------------- client
 
+/// One request budget for the whole app: the list sync and the queue worker run on different
+/// threads with their own clients, and together stay within MAL's 20 a minute.
+static BUDGET: LazyLock<Arc<Mutex<Limiter>>> = LazyLock::new(|| Arc::new(Mutex::new(Limiter::mal())));
+
 /// MAL calls with the rate budget and the 429 rule. Holds the Client ID, which `Debug` hides.
 pub struct Client<T: Transport> {
     client_id: String,
     transport: T,
-    limiter: Limiter,
+    limiter: Arc<Mutex<Limiter>>,
     sleep: Box<dyn FnMut(Duration) + Send>,
 }
 
@@ -180,7 +189,13 @@ const MAX_WAIT: u64 = 60;
 
 impl<T: Transport> Client<T> {
     pub fn new(client_id: String, transport: T) -> Self {
-        Client { client_id, transport, limiter: Limiter::mal(), sleep: Box::new(std::thread::sleep) }
+        Client { client_id, transport, limiter: BUDGET.clone(), sleep: Box::new(std::thread::sleep) }
+    }
+
+    /// A budget of its own instead of the app's (tests, which run side by side).
+    pub fn with_own_budget(mut self) -> Self {
+        self.limiter = Arc::new(Mutex::new(Limiter::mal()));
+        self
     }
 
     /// Replaces the sleep (tests record the waits instead of waiting).
@@ -192,7 +207,7 @@ impl<T: Transport> Client<T> {
     fn call(&mut self, req: &Request) -> Result<Response, CallError> {
         let mut attempt = 0;
         loop {
-            let wait = self.limiter.acquire(Instant::now());
+            let wait = self.limiter.lock().unwrap_or_else(|e| e.into_inner()).acquire(Instant::now());
             if !wait.is_zero() {
                 (self.sleep)(wait);
             }
@@ -205,7 +220,7 @@ impl<T: Transport> Client<T> {
                         return Err(CallError::RateLimited);
                     }
                     let wait = Duration::from_secs(resp.retry_after.unwrap_or(5u64 << attempt).clamp(1, MAX_WAIT));
-                    self.limiter.hold(Instant::now(), wait);
+                    self.limiter.lock().unwrap_or_else(|e| e.into_inner()).hold(Instant::now(), wait);
                 }
                 401 => return Err(CallError::Unauthorized),
                 s @ 500..=599 => return Err(CallError::Offline(format!("MyAnimeList is having trouble (HTTP {s})"))),
@@ -249,6 +264,42 @@ impl<T: Transport> Client<T> {
             return Err(CallError::Other("MyAnimeList sent a link to another site; ignored".into()));
         }
         self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None })
+    }
+
+    /// The user's list entry for one anime (`GET /anime/{id}?fields=my_list_status`); `None` when
+    /// the anime is not on the list.
+    pub fn fetch_entry(&mut self, access: &str, id: u32) -> Result<Option<Remote>, ServiceError> {
+        let r = self.get(format!("{API}/anime/{id}?fields=my_list_status"), access)?;
+        #[derive(Deserialize)]
+        struct One {
+            my_list_status: Option<ListStatus>,
+        }
+        let one: One = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read the entry answer ({})", e.classify_name())))?;
+        Ok(one.my_list_status.and_then(ListStatus::remote))
+    }
+
+    /// Sends one change (`PATCH /anime/{id}/my_list_status`, form-encoded) and returns the entry
+    /// MAL saved. Only the changed fields go; a score of 0 removes the score.
+    pub fn patch_entry(&mut self, access: &str, id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        let mut pairs: Vec<(&str, String)> = Vec::new();
+        if let Some(st) = change.status {
+            pairs.push(("status", st.mal_name().into()));
+        }
+        if let Some(p) = change.progress {
+            // MAL's request name differs from its answer's (`num_episodes_watched`).
+            pairs.push(("num_watched_episodes", p.to_string()));
+        }
+        if let Some(sc) = change.score {
+            pairs.push(("score", sc.unwrap_or(0).min(10).to_string()));
+        }
+        if pairs.is_empty() {
+            return Err(ServiceError::Other("nothing to send".into()));
+        }
+        let body = form(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>());
+        let req = Request { method: "PATCH", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body) };
+        let r = self.call(&req)?;
+        let ls: ListStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
+        ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
     }
 
     pub fn fetch_user_name(&mut self, access: &str) -> Result<String, ServiceError> {
@@ -366,6 +417,17 @@ struct ListStatus {
     #[serde(default)]
     is_rewatching: bool,
     updated_at: Option<String>,
+}
+
+impl ListStatus {
+    fn remote(self) -> Option<Remote> {
+        let status = self.status.as_deref().and_then(Status::from_mal)?;
+        Some(Remote {
+            values: Values { status, progress: self.num_episodes_watched, score: (self.score > 0).then_some(self.score.min(10)) },
+            rewatching: self.is_rewatching,
+            updated_at: self.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
+        })
+    }
 }
 
 fn non_empty(s: Option<String>) -> Option<String> {
@@ -490,6 +552,14 @@ impl<T: Transport> ListService for Mal<T> {
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
         self.authed(|c, a| c.fetch_list(a))
     }
+
+    fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        self.authed(|c, a| c.fetch_entry(a, media_id))
+    }
+
+    fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        self.authed(|c, a| c.patch_entry(a, media_id, change))
+    }
 }
 
 // ------------------------------------------------------------------------------------------ tests
@@ -543,7 +613,7 @@ mod tests {
     fn client(f: Fake) -> (Client<Fake>, Arc<Mutex<Vec<Duration>>>) {
         let waits: Arc<Mutex<Vec<Duration>>> = Arc::default();
         let w = waits.clone();
-        (Client::new("fake-client-id".into(), f).with_sleep(move |d| w.lock().unwrap().push(d)), waits)
+        (Client::new("fake-client-id".into(), f).with_own_budget().with_sleep(move |d| w.lock().unwrap().push(d)), waits)
     }
 
     fn tmp_tokens(name: &str, t: Option<Token>) -> TokenStore {
@@ -736,6 +806,62 @@ mod tests {
         let mut mal = Mal::new(c, tmp_tokens("none", None));
         assert_eq!(mal.user_name(), Err(ServiceError::SignInAgain));
         assert!(seen.lock().unwrap().is_empty(), "no request without a token");
+    }
+
+    // -- one entry: read and PATCH (recorded shapes, made-up data; MAL is never called)
+
+    const ENTRY: &str = include_str!("../tests/mal_anime_entry.json");
+    const NOT_ON_LIST: &str = include_str!("../tests/mal_anime_not_on_list.json");
+    const PATCHED: &str = include_str!("../tests/mal_patch_answer.json");
+
+    #[test]
+    fn reads_one_entry_or_none() {
+        let (f, seen) = fake(vec![ok(ENTRY), ok(NOT_ON_LIST)]);
+        let (mut c, _) = client(f);
+        let r = c.fetch_entry("acc", 1001).unwrap().unwrap();
+        assert_eq!(r.values, Values { status: Status::Watching, progress: 5, score: Some(8) });
+        assert_eq!(r.updated_at, 1_519_450_460);
+        assert_eq!(c.fetch_entry("acc", 1003).unwrap(), None);
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "https://api.myanimelist.net/v2/anime/1001?fields=my_list_status"));
+        assert_eq!(seen[0].2.as_deref(), Some("acc"));
+    }
+
+    #[test]
+    fn patch_sends_only_the_changed_fields_with_mals_names() {
+        let (f, seen) = fake(vec![ok(PATCHED), ok(PATCHED)]);
+        let (mut c, _) = client(f);
+        let r = c.patch_entry("acc", 1001, &Change { progress: Some(6), ..Default::default() }).unwrap();
+        assert_eq!(r.values.progress, 6);
+        assert_eq!(r.updated_at, 1_519_552_800);
+        c.patch_entry("acc", 1001, &Change { status: Some(Status::Completed), score: Some(None), ..Default::default() }).unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("PATCH", "https://api.myanimelist.net/v2/anime/1001/my_list_status"));
+        assert_eq!(seen[0].3.as_deref(), Some("num_watched_episodes=6"));
+        assert_eq!(seen[1].3.as_deref(), Some("status=completed&score=0"));
+        assert_eq!(seen[1].2.as_deref(), Some("acc"));
+        assert!(c.patch_entry("acc", 1, &Change::default()).is_err(), "an empty change is never sent");
+    }
+
+    #[test]
+    fn a_refused_patch_carries_mals_words() {
+        let body = r#"{"error":"invalid_content","message":"num_watched_episodes is out of range"}"#;
+        let (f, _) = fake(vec![Ok(Response { status: 400, retry_after: None, body: body.into() })]);
+        let (mut c, _) = client(f);
+        let e = c.patch_entry("acc", 1, &Change { progress: Some(99), ..Default::default() }).unwrap_err();
+        assert!(matches!(&e, ServiceError::Other(m) if m.contains("out of range")), "{e:?}");
+    }
+
+    #[test]
+    fn update_entry_refreshes_on_401_and_sends_again() {
+        let (f, seen) = fake(vec![status(401, None), ok(&tok_json("new")), ok(PATCHED)]);
+        let (c, _) = client(f);
+        let mut mal = Mal::new(c, tmp_tokens("patch401", Some(token("old", 3000))));
+        let r = mal.update_entry(1001, &Change { progress: Some(6), ..Default::default() }).unwrap();
+        assert_eq!(r.values.progress, 6);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert_eq!((seen[2].0.as_str(), seen[2].2.as_deref()), ("PATCH", Some("new")));
     }
 
     #[test]

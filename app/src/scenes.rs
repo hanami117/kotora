@@ -3,6 +3,8 @@
 
 use kotora_core::Status;
 
+use kotora_core::queue::OpState;
+
 use crate::model::{Auth, Filter, Page, Sort, State};
 
 /// A scene: its name and the change it makes to the fake first state.
@@ -54,6 +56,7 @@ pub const SCENES: &[Scene] = &[
     ("empty", |s| {
         s.entries.clear();
         s.refresh();
+        s.ops.clear();
         s.queue = 0;
         s.now = None;
     }),
@@ -63,11 +66,68 @@ pub const SCENES: &[Scene] = &[
         s.refresh();
         s.loading = true;
         s.syncing = true;
+        s.ops.clear();
         s.queue = 0;
         s.now = None;
     }),
+    // The inline editor under a row (Lanterns of Kirigaoka), as opened by a press on it.
+    ("list-editor", |s| s.toggle_editor(0)),
+    // The editor after picking Completed (progress fills) and a score of 9.
+    ("list-editor-changed", |s| {
+        s.toggle_editor(4);
+        s.editor_status(Status::Completed);
+        s.editor_score(Some(9));
+    }),
+    // `+1` pressed on a synced row: the number moves at once and the row waits to sync.
+    ("list-plus-one", |s| {
+        let _ = s.plus_one(4);
+    }),
+    // An entry with no episode count (still airing): `?` and no upper bound.
+    ("list-editor-unknown-count", |s| {
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == 6) {
+            e.episodes = None;
+        }
+        s.toggle_editor(6);
+    }),
     ("now-playing-page", |s| s.go(Page::NowPlaying)),
+    // The queue as in the mockup: a conflict, two waiting, one failed, two sent today.
     ("queue-page", |s| s.go(Page::Queue)),
+    ("queue-empty", |s| {
+        s.ops.clear();
+        s.queue = 0;
+        s.go(Page::Queue);
+    }),
+    // No network: the queue keeps everything, with Try now.
+    ("queue-offline", |s| {
+        s.offline = true;
+        s.error = Some("Can't reach MyAnimeList. Showing your saved list.".into());
+        if let Some(op) = s.ops.iter_mut().find(|o| o.id == 2) {
+            op.error = Some("can't reach the service: no answer from MyAnimeList".into());
+            op.attempts = 2;
+        }
+        s.go(Page::Queue);
+    }),
+    // The sign-in expired (401, refresh refused): the queue is kept, with a Sign in button.
+    ("queue-sign-in-again", |s| {
+        s.auth = Auth::Expired;
+        s.go(Page::Queue);
+    }),
+    // A conflict where the entry was removed on MyAnimeList.
+    ("queue-conflict-removed", |s| {
+        if let Some(op) = s.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
+            op.remote = None;
+        }
+        s.go(Page::Queue);
+    }),
+    // One change on its way, nothing else open.
+    ("queue-sending", |s| {
+        s.ops.retain(|o| o.id == 2 || o.state == OpState::Done);
+        if let Some(op) = s.ops.iter_mut().find(|o| o.id == 2) {
+            op.state = OpState::Sending;
+        }
+        s.queue = 1;
+        s.go(Page::Queue);
+    }),
     ("settings-page", |s| s.go(Page::Settings)),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
@@ -89,6 +149,7 @@ fn signed_out(s: &mut State, auth: Auth) {
     s.entries.clear();
     s.refresh();
     s.synced_at = None;
+    s.ops.clear();
     s.queue = 0;
     s.now = None;
 }
@@ -177,6 +238,31 @@ mod tests {
         }
         let rt = render("settings-signed-out", (1360.0, 860.0));
         assert!(rt.find("sign-in").is_some() && rt.find("sign-out").is_none());
+    }
+
+    #[test]
+    fn the_editor_opens_under_its_row() {
+        let rt = render("list-editor", (1280.0, 800.0));
+        for key in ["editor", "ed/status/completed", "ed/progress", "ed/plus", "ed/score/none", "ed/score/10", "ed/save", "ed/cancel"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(render("list", (1280.0, 800.0)).find("editor").is_none());
+        // Narrow window: the editor still fits.
+        assert!(render("list-editor", (960.0, 600.0)).find("ed/save").is_some());
+    }
+
+    #[test]
+    fn the_queue_page_shows_each_kind_of_change() {
+        let rt = render("queue-page", (1280.0, 800.0));
+        for key in ["page/queue", "conflict/1", "conflict/1/keep", "conflict/1/take", "qh/waiting", "qh/failed", "qh/sent", "q/2", "q/4/edit", "q/4/discard", "q/5", "queue/sync-now"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(rt.find("queue/offline").is_none() && rt.find("queue/expired").is_none());
+        assert!(render("queue-empty", (1280.0, 800.0)).find("queue-empty").is_some());
+        assert!(render("queue-offline", (1280.0, 800.0)).find("queue/try-now").is_some());
+        let rt = render("queue-sign-in-again", (1280.0, 800.0));
+        assert!(rt.find("queue/expired").is_some() && rt.find("queue/sign-in").is_some() && rt.find("conflict/1").is_some());
+        assert!(render("queue-conflict-removed", (1280.0, 800.0)).find("conflict/1/take").is_some());
     }
 
     /// The type column hides below 1100 pt.

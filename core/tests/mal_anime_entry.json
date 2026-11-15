@@ -1,0 +1,15 @@
+{
+  "id": 1001,
+  "title": "Lanterns of Kirigaoka",
+  "main_picture": {
+    "medium": "https://cdn.example.invalid/1001m.jpg",
+    "large": "https://cdn.example.invalid/1001l.jpg"
+  },
+  "my_list_status": {
+    "status": "watching",
+    "score": 8,
+    "num_episodes_watched": 5,
+    "is_rewatching": false,
+    "updated_at": "2018-02-24T05:34:20+00:00"
+  }
+}

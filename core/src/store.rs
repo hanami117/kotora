@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::{ListItem, Media, Status};
 
 /// Each entry is one migration; the schema version is the number of entries applied.
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     // 1: the cached list. `pending_op` and the rest come with the queue (stage 3).
     "CREATE TABLE account (
         service TEXT PRIMARY KEY,
@@ -46,6 +46,37 @@ const MIGRATIONS: &[&str] = &[
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
      );",
+    // 2: the sync queue (stage 3, `queue.rs`). One row per change waiting for the service (several
+    // edits merge into one row while it waits). `status`, `progress`, `score`: the new values, NULL
+    // when unchanged (`score` 0 removes the score). `old_*`: the entry before the first edit.
+    // `base_updated_at`: the service's `updated_at` the edit started from (conflict check).
+    // `r_*`: the service's entry when a conflict was found (`r_status` NULL: removed there).
+    // State: queued, sending, conflict, failed, done (kept a day for the Sent list).
+    "CREATE TABLE pending_op (
+        id INTEGER PRIMARY KEY,
+        service TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        status TEXT,
+        progress INTEGER,
+        score INTEGER,
+        old_status TEXT NOT NULL,
+        old_progress INTEGER NOT NULL,
+        old_score INTEGER NOT NULL,
+        base_updated_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        edited_at INTEGER NOT NULL,
+        edits INTEGER NOT NULL DEFAULT 1,
+        state TEXT NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_try INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        sent_at INTEGER,
+        r_status TEXT,
+        r_progress INTEGER,
+        r_score INTEGER,
+        r_updated_at INTEGER
+     );
+     CREATE INDEX pending_op_state ON pending_op (service, state);",
 ];
 
 #[derive(Debug)]
@@ -66,7 +97,7 @@ impl From<rusqlite::Error> for StoreError {
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -84,6 +115,11 @@ impl Store {
 
     pub fn open_memory() -> Result<Store> {
         Store::init(Connection::open_in_memory()?)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_connection(conn: Connection) -> Result<Store> {
+        Store::init(conn)
     }
 
     fn init(mut conn: Connection) -> Result<Store> {
@@ -124,6 +160,7 @@ impl Store {
     pub fn clear_service(&mut self, service: &str) -> Result<()> {
         let tx = self.conn.transaction()?;
         for sql in [
+            "DELETE FROM pending_op WHERE service = ?1",
             "DELETE FROM entry WHERE service = ?1",
             "DELETE FROM media WHERE service = ?1",
             "DELETE FROM account WHERE service = ?1",
@@ -139,6 +176,7 @@ impl Store {
 
     /// Replaces the saved list of `service` with the fetched one, in one transaction. Entries and
     /// media that are no longer on the list go away (no hoarding). Records the sync time.
+    /// Changes still in the queue are laid over the fetched entries: they win until sent.
     pub fn replace_list(&mut self, service: &str, items: &[ListItem], now: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM entry WHERE service = ?1", [service])?;
@@ -173,7 +211,13 @@ impl Store {
                 entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.updated_at])?;
             }
         }
-        tx.execute("DELETE FROM media WHERE service = ?1 AND id NOT IN (SELECT media_id FROM entry WHERE service = ?1)", [service])?;
+        crate::queue::lay_over(&tx, service)?;
+        // Keep the media of a change that still waits (its title shows in the queue).
+        tx.execute(
+            "DELETE FROM media WHERE service = ?1 AND id NOT IN (SELECT media_id FROM entry WHERE service = ?1)
+               AND id NOT IN (SELECT media_id FROM pending_op WHERE service = ?1 AND state != 'done')",
+            [service],
+        )?;
         tx.execute("INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value", params![format!("{service}:synced_at"), now.to_string()])?;
         tx.commit()?;
         Ok(())
@@ -181,36 +225,16 @@ impl Store {
 
     /// The saved list, newest update first.
     pub fn load_list(&self, service: &str) -> Result<Vec<ListItem>> {
-        let mut st = self.conn.prepare(
-            "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
-                    e.status, e.progress, e.score, e.rewatching, e.updated_at
-             FROM entry e JOIN media m ON m.service = e.service AND m.id = e.media_id
-             WHERE e.service = ?1 ORDER BY e.updated_at DESC, m.id",
-        )?;
-        let rows = st.query_map([service], |r| {
-            let synonyms: String = r.get(4)?;
-            let status: String = r.get(9)?;
-            Ok(ListItem {
-                media: Media {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    title_en: r.get(2)?,
-                    title_ja: r.get(3)?,
-                    synonyms: serde_json::from_str(&synonyms).unwrap_or_default(),
-                    episodes: r.get(5)?,
-                    format: r.get(6)?,
-                    air_status: r.get(7)?,
-                    cover_url: r.get(8)?,
-                },
-                status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
-                progress: r.get(10)?,
-                score: r.get(11)?,
-                rewatching: r.get(12)?,
-                updated_at: r.get(13)?,
-            })
-        })?;
+        let mut st = self.conn.prepare(&format!("{ITEM_SELECT} WHERE e.service = ?1 ORDER BY e.updated_at DESC, m.id"))?;
+        let rows = st.query_map([service], item_row)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+
+    /// One saved entry.
+    pub fn load_item(&self, service: &str, media_id: u32) -> Result<Option<ListItem>> {
+        Ok(self.conn.query_row(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.media_id = ?2"), params![service, media_id], item_row).optional()?)
+    }
+
 
     // --------------------------------------------------------------------------------- kv
 
@@ -227,6 +251,33 @@ impl Store {
     pub fn synced_at(&self, service: &str) -> Result<Option<i64>> {
         Ok(self.kv_get(&format!("{service}:synced_at"))?.and_then(|v| v.parse().ok()))
     }
+}
+
+const ITEM_SELECT: &str = "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
+        e.status, e.progress, e.score, e.rewatching, e.updated_at
+ FROM entry e JOIN media m ON m.service = e.service AND m.id = e.media_id";
+
+fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
+    let synonyms: String = r.get(4)?;
+    let status: String = r.get(9)?;
+    Ok(ListItem {
+        media: Media {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            title_en: r.get(2)?,
+            title_ja: r.get(3)?,
+            synonyms: serde_json::from_str(&synonyms).unwrap_or_default(),
+            episodes: r.get(5)?,
+            format: r.get(6)?,
+            air_status: r.get(7)?,
+            cover_url: r.get(8)?,
+        },
+        status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
+        progress: r.get(10)?,
+        score: r.get(11)?,
+        rewatching: r.get(12)?,
+        updated_at: r.get(13)?,
+    })
 }
 
 #[cfg(test)]

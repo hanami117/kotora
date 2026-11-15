@@ -6,6 +6,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use kotora_core::{Change, Status};
 use kotora_ctl::{Reply, Request, Server};
 
 use crate::model::{Handle, State};
@@ -36,14 +37,22 @@ pub fn other_copy_running(show: bool) -> bool {
 }
 
 fn answer(handle: &Handle, req: Request) -> Reply {
-    let r = match req {
-        Request::Status => on_ui(handle, false, |s| s.ctl_status()),
+    let status = |r: Result<kotora_ctl::Status, String>| match r {
+        Ok(st) => Reply::Status(st),
+        Err(message) => Reply::Error { message },
+    };
+    let reply = |r: Result<Result<Reply, String>, String>| match r.and_then(|r| r) {
+        Ok(reply) => reply,
+        Err(message) => Reply::Error { message },
+    };
+    match req {
+        Request::Status => status(on_ui(handle, false, |s| s.ctl_status())),
         Request::Show => {
             handle.open();
-            on_ui(handle, true, |s| {
+            status(on_ui(handle, true, |s| {
                 s.window = true;
                 s.ctl_status()
-            })
+            }))
         }
         Request::Quit => {
             let r = on_ui(handle, false, |s| s.ctl_status());
@@ -52,13 +61,60 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 std::thread::sleep(QUIT_DELAY);
                 handle.quit();
             });
-            r
+            status(r)
         }
-    };
-    match r {
-        Ok(st) => Reply::Status(st),
-        Err(message) => Reply::Error { message },
+        Request::List { status: st } => reply(on_ui(handle, false, move |s| list(s, st.as_deref()))),
+        Request::PlusOne { title } => reply(on_ui(handle, true, move |s| {
+            let i = s.find(&title)?;
+            let i = s.plus_one(s.entries[i].id)?;
+            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+        })),
+        Request::Set { title, progress, status: st, score } => reply(on_ui(handle, true, move |s| {
+            let i = s.find(&title)?;
+            let status = match st.as_deref() {
+                Some(name) => Some(parse_status(name)?),
+                None => None,
+            };
+            let change = Change { status, progress, score: score.map(|n| (n > 0).then_some(n)) };
+            let i = s.edit(s.entries[i].id, change)?;
+            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+        })),
+        Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
+        Request::Sync => reply(on_ui(handle, true, |s| {
+            if !s.has_list() {
+                return Err("Not signed in.".to_string());
+            }
+            s.sync_now();
+            Ok(Reply::Status(s.ctl_status()))
+        })),
     }
+}
+
+/// `watching`, `plan`, `completed`, `on-hold`, `dropped` (and MAL's names, any case).
+fn parse_status(name: &str) -> Result<Status, String> {
+    let n = name.trim().to_lowercase().replace([' ', '_'], "-");
+    let st = match n.as_str() {
+        "plan-to-watch" | "ptw" | "planned" => Some(Status::PlanToWatch),
+        "onhold" | "hold" | "paused" => Some(Status::OnHold),
+        "complete" | "done" => Some(Status::Completed),
+        _ => Status::ALL.into_iter().find(|s| s.slug() == n),
+    };
+    st.ok_or_else(|| format!("Unknown status \u{201c}{name}\u{201d}: use watching, plan, completed, on-hold or dropped."))
+}
+
+/// `kot list`: one status (sidebar order within it: last updated first) or all of them.
+fn list(s: &State, status: Option<&str>) -> Result<Reply, String> {
+    if !s.has_list() {
+        return Err("Not signed in.".into());
+    }
+    let only = status.map(parse_status).transpose()?;
+    let mut entries = Vec::new();
+    for st in Status::ALL.into_iter().filter(|st| only.is_none_or(|o| o == *st)) {
+        let mut rows: Vec<&crate::model::Entry> = s.entries.iter().filter(|e| e.status == st).collect();
+        rows.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
+        entries.extend(rows.into_iter().map(|e| e.ctl()));
+    }
+    Ok(Reply::List { entries })
 }
 
 fn on_ui<T: Send + 'static>(handle: &Handle, redraw: bool, f: impl FnOnce(&mut State) -> T + Send + 'static) -> Result<T, String> {

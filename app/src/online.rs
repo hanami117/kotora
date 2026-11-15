@@ -2,7 +2,7 @@
 //! short-lived thread and reports to the UI thread with `AppHandle::update_if` (`State::apply`).
 //! Nothing here runs in headless mode, and nothing waits when there is no work (no timers).
 //!
-//! Read only: stage 2 never writes to the MAL account.
+//! Writes to the account go through the sync queue (`queue.rs`), never from here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,8 +48,10 @@ pub fn start(s: &mut State) {
             Err(e) => return send(&h, Msg::SyncFailed(Fail::Other(format!("Can't open the saved list: {e}")))),
         };
         // The saved list first, so the app is useful before (and without) the network.
-        if let (Ok(items), Ok(user), Ok(synced_at)) = (store.load_list("mal"), store.account("mal"), store.synced_at("mal")) {
-            send(&h, Msg::Cache { items, user, synced_at });
+        let now = now_unix();
+        let _ = store.queue_start("mal", now);
+        if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (store.load_list("mal"), store.account("mal"), store.synced_at("mal"), store.queue("mal", now)) {
+            send(&h, Msg::Cache { items, user, synced_at, ops });
         }
         if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
     });
@@ -79,7 +81,8 @@ fn sync_now(h: &Handle, mut store: Store) {
     send(h, sync_with(&mut service, &mut store, now_unix()));
 }
 
-/// Fetches the list, saves it, and says what happened. Pure of threads, so tests drive it.
+/// Fetches the list, saves it, and says what happened. The list sent to the UI is the saved one,
+/// with the changes still in the queue laid over it. Pure of threads, so tests drive it.
 pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> Msg {
     let title = service.title();
     let fail = |e: ServiceError| {
@@ -98,7 +101,10 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     if let Err(e) = store.replace_list(name, &items, now) {
         return Msg::SyncFailed(Fail::Other(format!("Can't save the list: {e}")));
     }
-    Msg::Synced { items, synced_at: now }
+    match store.load_list(name) {
+        Ok(items) => Msg::Synced { items, synced_at: now },
+        Err(e) => Msg::SyncFailed(Fail::Other(format!("Can't read the saved list: {e}"))),
+    }
 }
 
 // -------------------------------------------------------------------------------------- sign in
@@ -197,7 +203,7 @@ pub fn recheck_config(s: &mut State) {
 
 #[cfg(test)]
 mod tests {
-    use kotora_core::{ListItem, Media, Status};
+    use kotora_core::{Change, ListItem, Media, Remote, Status};
 
     use super::*;
 
@@ -215,6 +221,12 @@ mod tests {
         }
         fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
             self.0.clone()
+        }
+        fn get_entry(&mut self, _: u32) -> Result<Option<Remote>, ServiceError> {
+            unreachable!("a sync reads the whole list")
+        }
+        fn update_entry(&mut self, _: u32, _: &Change) -> Result<Remote, ServiceError> {
+            unreachable!("a sync never writes")
         }
     }
 
@@ -246,6 +258,17 @@ mod tests {
         assert!(matches!(&msg, Msg::Synced { items, synced_at: 500 } if items.len() == 2));
         assert_eq!(store.load_list("mal").unwrap().len(), 2);
         assert_eq!(store.synced_at("mal").unwrap(), Some(500));
+    }
+
+    #[test]
+    fn a_sync_shows_changes_that_still_wait() {
+        let mut store = Store::open_memory().unwrap();
+        store.replace_list("mal", &[item(1)], 1).unwrap();
+        store.enqueue("mal", 1, Change { progress: Some(4), ..Default::default() }, 2).unwrap();
+        match sync_with(&mut Fake(Ok(vec![item(1)])), &mut store, 500) {
+            Msg::Synced { items, .. } => assert_eq!(items[0].progress, 4),
+            m => panic!("{m:?}"),
+        }
     }
 
     #[test]

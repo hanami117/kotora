@@ -3,10 +3,15 @@
 //!
 //! Every fake title here is made up (the same ones as `mockup/kotora.html`).
 
-use kotora_core::{ListItem, Status};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use kotora_core::queue::{Op, OpState};
+use kotora_core::{Change, ListItem, Remote, Status, Values};
 use rune::{AppHandle, Image, TextEdit};
 
 use crate::art::Covers;
+use crate::queue::{Cmd, Worker};
 
 pub type Handle = AppHandle<State>;
 
@@ -172,11 +177,29 @@ impl Entry {
 
     /// The grey line after the tags.
     pub fn note(&self) -> &'static str {
-        self.waiting.or(self.airing_note).unwrap_or(match self.air {
+        // The tag already says "Waiting to sync"; the note says more only for a conflict or a failure.
+        self.waiting.filter(|w| *w != waiting_label(OpState::Queued)).or(self.airing_note).unwrap_or(match self.air {
             Air::Finished => "Finished airing",
             Air::Upcoming => "Not yet aired",
             _ => "",
         })
+    }
+
+    pub fn values(&self) -> Values {
+        Values { status: self.status, progress: self.progress, score: self.score }
+    }
+
+    /// The entry as `kot` prints it.
+    pub fn ctl(&self) -> kotora_ctl::Entry {
+        kotora_ctl::Entry {
+            id: self.id,
+            title: self.title.clone(),
+            status: self.status.label().into(),
+            progress: self.progress,
+            episodes: self.episodes,
+            score: self.score,
+            waiting: self.waiting.map(Into::into),
+        }
     }
 
     pub fn fraction(&self) -> f32 {
@@ -195,11 +218,35 @@ pub struct NowMini {
     pub line: String,
 }
 
-/// What a worker tells the UI thread (`online.rs` sends these through `AppHandle::update_if`).
+/// The inline editor's draft: nothing is queued until Save.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Editor {
+    pub id: u32,
+    pub status: Status,
+    pub progress: u32,
+    pub score: Option<u8>,
+}
+
+/// What the queue's "waiting" tag says for an entry with an open change.
+pub fn waiting_label(state: OpState) -> &'static str {
+    match state {
+        OpState::Conflict => "Conflict in queue",
+        OpState::Failed => "Sync failed",
+        _ => "Waiting to sync",
+    }
+}
+
+/// What a worker tells the UI thread (`online.rs` and `queue.rs` send these through
+/// `AppHandle::update_if`).
 #[derive(Debug)]
 pub enum Msg {
-    /// The saved list from the database, at start.
-    Cache { items: Vec<ListItem>, user: Option<String>, synced_at: Option<i64> },
+    /// The saved list and the queue from the database, at start.
+    Cache { items: Vec<ListItem>, user: Option<String>, synced_at: Option<i64>, ops: Vec<Op> },
+    /// The queue changed: all of it, the entries it touched, and those that left the list.
+    /// `offline`: a send failed for lack of network (true) or went through (false).
+    Queue { ops: Vec<Op>, items: Vec<ListItem>, gone: Vec<u32>, offline: Option<bool> },
+    /// The queue couldn't do something (database trouble, an action on a change that's gone).
+    QueueError(String),
     /// A fresh list from the service, already saved.
     Synced { items: Vec<ListItem>, synced_at: i64 },
     /// The sync failed; the saved list stays.
@@ -237,16 +284,20 @@ pub struct State {
     pub syncing: bool,
     /// The last sync's error, in plain words (red alert on the list).
     pub error: Option<String>,
+    /// Open changes in the queue (the badge): waiting, failed and conflicted.
     pub queue: u32,
+    /// The sync queue: open changes, then those sent in the last day.
+    pub ops: Vec<Op>,
+    /// The row whose inline editor is open, and its draft.
+    pub editor: Option<Editor>,
+    /// The queue's worker thread (`queue.rs`); runs only while there is work.
+    pub worker: Arc<Worker>,
     pub offline: bool,
     /// Unix seconds of the last full sync.
     pub synced_at: Option<i64>,
     /// Scenes pin the clock; the real app reads it when it draws.
     pub fixed_now: Option<i64>,
     pub now: Option<NowMini>,
-    /// Stage 2 writes nothing to the account, so the real app hides `+1`. The fake state (scenes)
-    /// keeps it, as the edits will look in stage 3.
-    pub read_only: bool,
     /// The window is open (false after a `--hidden` start until `kot show`).
     pub window: bool,
     /// Set while a sign-in waits for the browser; setting it ends the wait.
@@ -278,12 +329,14 @@ impl State {
             loading: false,
             syncing: false,
             error: None,
-            queue: 4,
+            queue: 0,
+            ops: fake_ops(),
+            editor: None,
+            worker: Arc::default(),
             offline: false,
             synced_at: Some(FAKE_NOW - 120),
             fixed_now: Some(FAKE_NOW),
             now: Some(NowMini { id: 0, title: "Lanterns of Kirigaoka".into(), line: "Ep 6 · mpv · 82%".into() }),
-            read_only: false,
             window: true,
             cancel: None,
             logo: None,
@@ -291,6 +344,7 @@ impl State {
             covers: Covers::default(),
             handle: None,
         };
+        s.queue_changed();
         s.refresh();
         s
     }
@@ -302,12 +356,12 @@ impl State {
         s.auth = auth;
         s.account = None;
         s.queue = 0;
+        s.ops.clear();
         s.synced_at = None;
         s.fixed_now = None;
         s.now = None;
         s.loading = matches!(auth, Auth::SignedIn);
         s.handle = None;
-        s.read_only = true;
         s.refresh();
         s
     }
@@ -368,26 +422,199 @@ impl State {
         self.refresh();
     }
 
-    /// `+1`: optimistic, at once (the queue comes in stage 3; until then it only changes the
-    /// screen, and a sync brings back MyAnimeList's number).
-    pub fn plus_one(&mut self, id: u32) {
-        let now = self.clock();
-        if self.read_only {
-            return;
+    /// An edit (the editor, `+1`, `kot`): the list shows it at once and the queue sends it.
+    /// Returns the entry's index.
+    pub fn edit(&mut self, id: u32, change: Change) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
         }
-        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
-            && e.episodes.is_none_or(|n| e.progress < n)
+        let now = self.clock();
+        let i = self.entries.iter().position(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let e = &mut self.entries[i];
+        if let (Some(p), Some(n)) = (change.progress, e.episodes)
+            && p > n
         {
-            e.progress += 1;
-            e.updated_at = now;
-            if e.new_episode.is_some_and(|n| e.progress >= n) {
-                e.new_episode = None;
+            return Err(format!("{} has {n} episode{}.", e.title, if n == 1 { "" } else { "s" }));
+        }
+        if let Some(Some(sc)) = change.score
+            && !(1..=10).contains(&sc)
+        {
+            return Err("A score goes from 1 to 10.".into());
+        }
+        let after = change.apply(e.values());
+        if after == e.values() {
+            return Ok(i);
+        }
+        e.status = after.status;
+        e.progress = after.progress;
+        e.score = after.score;
+        e.updated_at = now;
+        if e.new_episode.is_some_and(|n| e.progress >= n) {
+            e.new_episode = None;
+        }
+        // Back to where the entry's only waiting change started: the queue drops it.
+        let open: Vec<&Op> = self.ops.iter().filter(|o| o.media_id == id && o.state.is_open()).collect();
+        let e = &mut self.entries[i];
+        if let [op] = open.as_slice()
+            && op.state != OpState::Sending
+            && op.old == after
+        {
+            e.waiting = None;
+        } else if e.waiting.is_none() {
+            e.waiting = Some(waiting_label(OpState::Queued));
+        }
+        crate::queue::send(self, Cmd::Edit { media_id: id, change });
+        self.refresh();
+        Ok(i)
+    }
+
+    /// `+1`: optimistic, at once (design-spec §6).
+    pub fn plus_one(&mut self, id: u32) -> Result<usize, String> {
+        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        if e.episodes.is_some_and(|n| e.progress >= n) {
+            return Err(format!("{} is at its last episode.", e.title));
+        }
+        let p = e.progress + 1;
+        self.edit(id, Change { progress: Some(p), ..Default::default() })
+    }
+
+    // ------------------------------------------------------------------------- inline editor
+
+    /// A row press: opens its editor, or closes it when it is open.
+    pub fn toggle_editor(&mut self, id: u32) {
+        if self.editor.is_some_and(|ed| ed.id == id) {
+            self.editor = None;
+        } else if let Some(e) = self.entries.iter().find(|e| e.id == id) {
+            self.editor = Some(Editor { id, status: e.status, progress: e.progress, score: e.score });
+        }
+    }
+
+    fn editor_episodes(&self) -> Option<u32> {
+        let id = self.editor?.id;
+        self.entries.iter().find(|e| e.id == id)?.episodes
+    }
+
+    pub fn editor_step(&mut self, delta: i32) {
+        let max = self.editor_episodes();
+        if let Some(ed) = &mut self.editor {
+            let p = ed.progress.saturating_add_signed(delta);
+            ed.progress = max.map_or(p, |n| p.min(n));
+        }
+    }
+
+    /// Completed fills the progress when the count is known.
+    pub fn editor_status(&mut self, st: Status) {
+        let max = self.editor_episodes();
+        if let Some(ed) = &mut self.editor {
+            ed.status = st;
+            if st == Status::Completed
+                && let Some(n) = max
+            {
+                ed.progress = n;
+            }
+        }
+    }
+
+    pub fn editor_score(&mut self, score: Option<u8>) {
+        if let Some(ed) = &mut self.editor {
+            ed.score = score;
+        }
+    }
+
+    /// Save: the changed fields become one edit.
+    pub fn save_editor(&mut self) -> Result<(), String> {
+        let Some(ed) = self.editor else { return Ok(()) };
+        let Some(e) = self.entries.iter().find(|e| e.id == ed.id) else {
+            self.editor = None;
+            return Ok(());
+        };
+        let change = Change { status: Some(ed.status), progress: Some(ed.progress), score: Some(ed.score) }.without_same(&e.values());
+        self.edit(ed.id, change)?;
+        self.editor = None;
+        Ok(())
+    }
+
+    // --------------------------------------------------------------------------------- queue
+
+    /// After `ops` or `entries` change: the badge and each row's waiting tag.
+    fn queue_changed(&mut self) {
+        self.queue = self.ops.iter().filter(|o| o.state.is_open()).count() as u32;
+        for e in &mut self.entries {
+            e.waiting = None;
+        }
+        for op in self.ops.iter().filter(|o| o.state.is_open()) {
+            if let Some(e) = self.entries.iter_mut().find(|e| e.id == op.media_id) {
+                // A conflict or a failure says more than "waiting".
+                if e.waiting.is_none() || op.state != OpState::Queued {
+                    e.waiting = Some(waiting_label(op.state));
+                }
+            }
+        }
+    }
+
+    pub fn queue_cmd(&mut self, cmd: Cmd) {
+        crate::queue::send(self, cmd);
+    }
+
+    /// "Sync now", "Try now", `kot sync`: send what waits, then read the list again.
+    pub fn sync_now(&mut self) {
+        self.error = None;
+        if self.queue > 0 {
+            self.queue_cmd(Cmd::Kick { refresh: true });
+        } else {
+            crate::online::refresh(self);
+        }
+    }
+
+    /// The queue as `kot queue` prints it.
+    pub fn ctl_queue(&self) -> Vec<kotora_ctl::QueueItem> {
+        let service = "MyAnimeList";
+        self.ops
+            .iter()
+            .map(|o| kotora_ctl::QueueItem {
+                title: o.title.clone(),
+                change: kotora_core::queue::describe(&o.change, &o.old),
+                state: o.state.label().into(),
+                note: match o.state {
+                    OpState::Conflict => Some(match &o.remote {
+                        Some(r) => format!("{service} has {}", remote_text(r, o.episodes)),
+                        None => format!("removed from your list on {service}"),
+                    }),
+                    OpState::Done => None,
+                    _ => o.error.clone(),
+                },
+            })
+            .collect()
+    }
+
+    /// The entry `q` names: a whole title first, then a part of one that matches one entry.
+    pub fn find(&self, q: &str) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        let q = q.trim().to_lowercase();
+        if q.is_empty() {
+            return Err("Which anime? Give a part of its title.".into());
+        }
+        let whole: Vec<usize> = (0..self.entries.len()).filter(|&i| self.entries[i].search.lines().any(|t| t == q)).collect();
+        if whole.len() == 1 {
+            return Ok(whole[0]);
+        }
+        let part: Vec<usize> = if whole.is_empty() { (0..self.entries.len()).filter(|&i| self.entries[i].search.contains(&q)).collect() } else { whole };
+        match part.as_slice() {
+            [] => Err(format!("No anime on your list matches \u{201c}{q}\u{201d}.")),
+            [i] => Ok(*i),
+            many => {
+                let names: Vec<&str> = many.iter().take(5).map(|&i| self.entries[i].title.as_str()).collect();
+                let more = if many.len() > 5 { format!(" and {} more", many.len() - 5) } else { String::new() };
+                Err(format!("{} anime match \u{201c}{q}\u{201d}: {}{more}. Give more of the title.", many.len(), names.join(", ")))
             }
         }
     }
 
     fn set_items(&mut self, items: &[ListItem]) {
         self.entries = items.iter().map(Entry::from_item).collect();
+        self.queue_changed();
         self.refresh();
     }
 
@@ -395,11 +622,18 @@ impl State {
     pub fn apply(&mut self, msg: Msg) -> bool {
         let service = "MyAnimeList";
         match msg {
-            Msg::Cache { items, user, synced_at } => {
+            Msg::Cache { items, user, synced_at, ops } => {
+                self.ops = ops;
                 // A sync that already finished is newer than the cache read.
                 if self.synced_at.is_none() || self.entries.is_empty() {
                     self.set_items(&items);
                     self.synced_at = self.synced_at.or(synced_at);
+                } else {
+                    self.queue_changed();
+                }
+                // Changes left from the last run go out now.
+                if self.auth == Auth::SignedIn && self.ops.iter().any(|o| o.state == OpState::Queued) {
+                    self.queue_cmd(Cmd::Kick { refresh: false });
                 }
                 if let Some(u) = user {
                     self.account = Some((u, service));
@@ -427,9 +661,39 @@ impl State {
                         self.offline = true;
                         self.error = Some(m);
                     }
-                    Fail::SignInAgain => self.auth = Auth::Expired,
+                    Fail::SignInAgain => {
+                        self.auth = Auth::Expired;
+                        self.worker.hold.store(true, Ordering::Relaxed);
+                    }
                     Fail::Other(m) => self.error = Some(m),
                 }
+                true
+            }
+            Msg::Queue { ops, items, gone, offline } => {
+                for it in &items {
+                    let e = Entry::from_item(it);
+                    match self.entries.iter_mut().find(|x| x.id == e.id) {
+                        Some(x) => *x = e,
+                        None => self.entries.push(e),
+                    }
+                }
+                self.entries.retain(|e| !gone.contains(&e.id));
+                if self.editor.is_some_and(|ed| gone.contains(&ed.id)) {
+                    self.editor = None;
+                }
+                self.ops = ops;
+                if let Some(off) = offline {
+                    self.offline = off;
+                    if !off && self.error.as_deref().is_some_and(|e| e.starts_with("Can't reach")) {
+                        self.error = None;
+                    }
+                }
+                self.queue_changed();
+                self.refresh();
+                true
+            }
+            Msg::QueueError(m) => {
+                self.error = Some(m);
                 true
             }
             Msg::Idle => {
@@ -442,6 +706,11 @@ impl State {
                 self.account = Some((user, service));
                 self.cancel = None;
                 self.error = None;
+                // The queue waited for this.
+                self.worker.hold.store(false, Ordering::Relaxed);
+                if self.queue > 0 {
+                    self.queue_cmd(Cmd::Kick { refresh: false });
+                }
                 true
             }
             Msg::SignInFailed(m) => {
@@ -456,6 +725,9 @@ impl State {
                 self.auth = Auth::SignedOut;
                 self.account = None;
                 self.entries.clear();
+                self.ops.clear();
+                self.queue = 0;
+                self.editor = None;
                 self.synced_at = None;
                 self.syncing = false;
                 self.loading = false;
@@ -480,6 +752,52 @@ impl State {
     }
 }
 
+/// The service's side of a conflict: "Progress 8 / 24, Watching, score 7".
+pub fn remote_text(r: &Remote, episodes: Option<u32>) -> String {
+    let total = episodes.map_or("?".to_string(), |n| n.to_string());
+    let score = r.values.score.map_or("no score".to_string(), |n| format!("score {n}"));
+    format!("{} / {total}, {}, {score}", r.values.progress, r.values.status.label())
+}
+
+/// The mockup's queue: a conflict, two waiting, one failed, two sent. Media ids are the fake
+/// list's (`WATCHING` order); the open changes match what the fake rows show.
+fn fake_ops() -> Vec<Op> {
+    let op = |id: i64, media_id: u32, change: Change, old: Values, state: OpState, ago: i64| Op {
+        id,
+        media_id,
+        title: WATCHING[media_id as usize].title.into(),
+        episodes: Some(WATCHING[media_id as usize].episodes),
+        change,
+        old,
+        base_updated_at: FAKE_NOW - 90_000,
+        created_at: FAKE_NOW - ago,
+        edited_at: FAKE_NOW - ago,
+        edits: 1,
+        state,
+        attempts: 0,
+        next_try: 0,
+        error: None,
+        sent_at: (state == OpState::Done).then_some(FAKE_NOW - ago),
+        remote: None,
+    };
+    let w = |progress, score| Values { status: Status::Watching, progress, score };
+    let progress = |p| Change { progress: Some(p), ..Default::default() };
+    vec![
+        Op {
+            remote: Some(Remote { values: w(8, None), rewatching: false, updated_at: FAKE_NOW - 3_000 }),
+            ..op(1, 2, progress(7), w(6, None), OpState::Conflict, 4_500)
+        },
+        Op { edits: 2, ..op(2, 0, progress(5), w(3, Some(8)), OpState::Queued, 900) },
+        op(3, 8, Change { progress: Some(1), score: Some(Some(8)), status: None }, w(0, None), OpState::Queued, 1_900),
+        Op {
+            error: Some("MyAnimeList answered HTTP 400 (invalid_content: num_watched_episodes)".into()),
+            ..op(4, 7, progress(11), w(10, Some(7)), OpState::Failed, 6_000)
+        },
+        op(5, 1, progress(8), w(7, Some(9)), OpState::Done, 7_200),
+        op(6, 3, Change { score: Some(Some(7)), ..Default::default() }, w(3, Some(6)), OpState::Done, 12_600),
+    ]
+}
+
 struct Fake {
     title: &'static str,
     progress: u32,
@@ -490,7 +808,6 @@ struct Fake {
     airing: Option<&'static str>,
     new_episode: Option<u32>,
     rewatching: bool,
-    waiting: Option<&'static str>,
 }
 
 /// "2 h", "3 days", "1 week", … as seconds (the fake list's ages).
@@ -508,20 +825,21 @@ fn fake_age(label: &str) -> i64 {
 }
 
 const fn fk(title: &'static str, progress: u32, episodes: u32, score: Option<u8>, updated: &'static str, airing: Option<&'static str>) -> Fake {
-    Fake { title, progress, episodes, score, kind: "TV", updated, airing, new_episode: None, rewatching: false, waiting: None }
+    Fake { title, progress, episodes, score, kind: "TV", updated, airing, new_episode: None, rewatching: false }
 }
 
 /// The Watching page of the mockup, in "Last updated" order, plus two more off screen.
 const WATCHING: [Fake; 12] = [
     Fake { new_episode: Some(6), ..fk("Lanterns of Kirigaoka", 5, 12, Some(8), "now", Some("Ep 7 on Sat")) },
     fk("Starfall Delivery Service", 8, 13, Some(9), "2 h", Some("Ep 9 on Wed")),
-    Fake { waiting: Some("Conflict in queue"), ..fk("Mikan Street Detectives", 7, 24, None, "yesterday", None) },
+    // A conflict in the fake queue (`fake_ops`).
+    fk("Mikan Street Detectives", 7, 24, None, "1 day", None),
     fk("Slow Life on Hoshizora Island", 3, 12, Some(7), "2 days", Some("Ep 4 on Sun")),
     fk("Neon Ronin 2099", 22, 26, Some(8), "3 days", None),
     Fake { rewatching: true, ..fk("The Ninth Shrine Maiden", 6, 12, Some(10), "5 days", None) },
     fk("Mecha Bento Club", 4, 10, None, "1 week", Some("Ep 11 on Fri")),
     fk("Ghost of the Library Stacks", 11, 12, Some(7), "2 weeks", None),
-    fk("Paper Crane Racing: Second Lap", 1, 12, None, "1 month", None),
+    fk("Paper Crane Racing: Second Lap", 1, 12, Some(8), "1 month", None),
     Fake { kind: "Movie", ..fk("Kumo to Kaze no Ryokan", 0, 1, None, "2 months", None) },
     Fake { new_episode: Some(9), ..fk("Tidepool Radio", 8, 12, Some(6), "3 months", Some("Ep 10 on Tue")) },
     Fake { new_episode: Some(3), ..fk("Clockwork Bakery Wars", 2, 12, None, "4 months", None) },
@@ -556,7 +874,7 @@ fn fake_entries() -> Vec<Entry> {
             airing_note: f.airing,
             new_episode: f.new_episode,
             rewatching: f.rewatching,
-            waiting: f.waiting,
+            waiting: None,
             cover_url: None,
         })
         .collect();
@@ -652,16 +970,86 @@ mod tests {
     }
 
     #[test]
-    fn the_real_app_is_read_only() {
-        let mut s = State::start(Auth::SignedIn);
-        s.apply(Msg::Synced { items: vec![item(1, "A", Status::Watching, 3, None, 1)], synced_at: 1 });
-        s.plus_one(1);
-        assert_eq!(s.entries[0].progress, 3, "stage 2 never changes progress");
-        let mut f = State::fake();
-        let id = f.entries[0].id;
-        let before = f.entries[0].progress;
-        f.plus_one(id);
-        assert_eq!(f.entries[0].progress, before + 1);
+    fn edits_show_at_once_and_check_their_values() {
+        let mut s = loaded();
+        let i = s.plus_one(1).unwrap();
+        assert_eq!((s.entries[i].progress, s.entries[i].waiting), (4, Some("Waiting to sync")));
+        assert_eq!(s.entries[i].updated_at, FAKE_NOW);
+        assert_eq!(titles(&s)[0], "Bravo", "the edited row moves to the top of Last updated");
+        assert!(s.edit(1, Change { progress: Some(13), ..Default::default() }).unwrap_err().contains("12 episodes"));
+        assert!(s.edit(1, Change { score: Some(Some(11)), ..Default::default() }).is_err());
+        assert!(s.edit(99, Change::default()).is_err());
+        s.edit(4, Change { progress: Some(12), ..Default::default() }).unwrap();
+        assert!(s.plus_one(4).unwrap_err().contains("last episode"));
+        let mut out = State::start(Auth::SignedOut);
+        assert_eq!(out.edit(1, Change::default()).unwrap_err(), "Not signed in.");
+    }
+
+    #[test]
+    fn the_editor_drafts_and_saves_one_change() {
+        let mut s = loaded();
+        s.toggle_editor(1);
+        s.editor_step(1);
+        s.editor_step(-5);
+        assert_eq!(s.editor.unwrap().progress, 0);
+        s.editor_step(100);
+        assert_eq!(s.editor.unwrap().progress, 12, "capped at the count");
+        s.editor_step(-9);
+        s.editor_score(None);
+        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().progress, 3, "nothing changes before Save");
+        s.save_editor().unwrap();
+        assert!(s.editor.is_none());
+        let e = s.entries.iter().find(|e| e.id == 1).unwrap();
+        assert_eq!((e.progress, e.score), (3, None));
+        s.toggle_editor(2);
+        s.editor_status(Status::Completed);
+        assert_eq!(s.editor.unwrap().progress, 12, "Completed fills the progress");
+        s.toggle_editor(2);
+        assert!(s.editor.is_none(), "a second press closes it");
+    }
+
+    #[test]
+    fn find_takes_a_whole_title_or_a_part_that_matches_one() {
+        let s = loaded();
+        let title = |r: Result<usize, String>| r.map(|i| s.entries[i].title.clone());
+        assert_eq!(title(s.find("ALPHA")), Ok("alpha".into()));
+        assert_eq!(title(s.find("charl")), Ok("Charlie".into()));
+        assert_eq!(title(s.find("delta english")), Ok("Delta".into()));
+        assert!(s.find("english").unwrap_err().starts_with("4 anime match"));
+        assert!(s.find("zzz").unwrap_err().starts_with("No anime"));
+        assert!(s.find(" ").is_err());
+    }
+
+    #[test]
+    fn the_queue_snapshot_moves_rows_badge_and_tags() {
+        let mut s = State::fake();
+        assert_eq!(s.queue, 4, "conflict, two waiting, one failed");
+        let mikan = s.entries.iter().find(|e| e.title == "Mikan Street Detectives").unwrap();
+        assert_eq!((mikan.waiting, mikan.note()), (Some("Conflict in queue"), "Conflict in queue"));
+        let lanterns = s.entries.iter().find(|e| e.id == 0).unwrap();
+        assert_eq!(lanterns.note(), "Ep 7 on Sat", "a plain wait says so in the tag only");
+        // The worker reports: everything sent, one entry updated, one removed.
+        let mut it = item(0, "Lanterns of Kirigaoka", Status::Watching, 6, Some(8), 5);
+        it.media.episodes = Some(12);
+        let done: Vec<Op> = s.ops.iter().filter(|o| o.state == OpState::Done).cloned().collect();
+        assert!(s.apply(Msg::Queue { ops: done, items: vec![it], gone: vec![2], offline: Some(false) }));
+        assert_eq!(s.queue, 0);
+        assert!(s.entries.iter().all(|e| e.waiting.is_none()));
+        assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 6);
+        assert!(!s.entries.iter().any(|e| e.id == 2));
+        s.apply(Msg::Queue { ops: vec![], items: vec![], gone: vec![], offline: Some(true) });
+        assert!(s.offline);
+    }
+
+    #[test]
+    fn sign_in_again_holds_the_queue_and_signing_in_frees_it() {
+        let mut s = State::fake();
+        s.apply(Msg::SyncFailed(Fail::SignInAgain));
+        assert!(s.worker.hold.load(Ordering::Relaxed));
+        s.apply(Msg::SignedIn { user: "demo_user".into() });
+        assert!(!s.worker.hold.load(Ordering::Relaxed));
+        s.apply(Msg::SignedOut);
+        assert!(s.ops.is_empty() && s.queue == 0);
     }
 
     #[test]
@@ -714,6 +1102,7 @@ mod tests {
         assert!(s.apply(Msg::SyncFailed(Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into()))));
         assert!(s.offline && s.error.is_some() && !s.syncing);
         assert_eq!(s.entries.len(), 303, "the saved list stays");
+        assert_eq!(s.queue, 4);
         s.apply(Msg::SyncFailed(Fail::SignInAgain));
         assert_eq!(s.auth, Auth::Expired);
         assert!(s.has_list());
@@ -730,7 +1119,7 @@ mod tests {
     fn an_old_cache_never_replaces_a_newer_sync() {
         let mut s = State::start(Auth::SignedIn);
         s.apply(Msg::Synced { items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)], synced_at: 10 });
-        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), synced_at: Some(5) });
+        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), synced_at: Some(5), ops: vec![] });
         assert_eq!(s.entries.len(), 1);
         assert_eq!(s.entries[0].title, "Fresh");
         assert_eq!(s.account.as_ref().map(|a| a.0.as_str()), Some("demo_user"));
@@ -743,9 +1132,9 @@ mod tests {
         s.entries.clear();
         s.loading = true;
         s.syncing = true;
-        s.apply(Msg::Cache { items: vec![], user: None, synced_at: None });
+        s.apply(Msg::Cache { items: vec![], user: None, synced_at: None, ops: vec![] });
         assert!(s.loading, "nothing saved yet: keep the skeleton");
-        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, synced_at: Some(1) });
+        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, synced_at: Some(1), ops: vec![] });
         assert!(!s.loading);
     }
 }

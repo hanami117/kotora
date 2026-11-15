@@ -1,7 +1,7 @@
 //! What the app needs from an online list service. MyAnimeList implements it in v0.1; AniList
 //! can in v0.2 without the store or the queue changing.
 
-use crate::ListItem;
+use crate::{Change, ListItem, Remote};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
@@ -26,7 +26,7 @@ impl std::fmt::Display for ServiceError {
     }
 }
 
-/// Read access to the user's own list. Writes arrive in stage 3.
+/// The user's own list: read it, read one entry, change one entry.
 pub trait ListService {
     /// Machine name, the `service` column of the store: `mal`.
     fn name(&self) -> &'static str;
@@ -36,4 +36,8 @@ pub trait ListService {
     fn user_name(&mut self) -> Result<String, ServiceError>;
     /// The whole list.
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError>;
+    /// The service's copy of one entry now; `None` when it is not on the list.
+    fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError>;
+    /// Sends one change and returns the entry as the service saved it.
+    fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError>;
 }
