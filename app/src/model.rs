@@ -573,6 +573,7 @@ impl State {
             e.waiting = Some(waiting_label(OpState::Queued));
         }
         crate::queue::send(self, Cmd::Edit { media_id: id, change });
+        self.recheck_now();
         self.refresh();
         Ok(i)
     }
@@ -787,6 +788,7 @@ impl State {
     fn set_items(&mut self, items: &[ListItem]) {
         self.entries = items.iter().map(Entry::from_item).collect();
         self.queue_changed();
+        self.recheck_now();
         self.refresh();
     }
 
@@ -855,6 +857,7 @@ impl State {
                     self.editor = None;
                 }
                 self.ops = ops;
+                self.recheck_now();
                 if let Some(off) = offline {
                     self.offline = off;
                     if !off && self.error.as_deref().is_some_and(|e| e.starts_with("Can't reach")) {
@@ -981,6 +984,8 @@ pub fn fake_now() -> Now {
         acted: false,
         recorded: None,
         picking: false,
+        mark: None,
+        counted: false,
     }
 }
 

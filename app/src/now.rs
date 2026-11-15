@@ -48,6 +48,21 @@ pub struct Now {
     pub recorded: Option<Recorded>,
     /// "Wrong anime…" is open.
     pub picking: bool,
+    /// The matched entry as the offer last saw it: when it changes (`+1`, the editor, `kot`, a
+    /// sync), "Not now" and the one notification no longer hold, and the offer is asked again.
+    pub mark: Option<Mark>,
+    /// The playing episode was counted by a change made while it played (by hand, `kot`, a
+    /// sync): it is not "watching it again" when that change completed the entry.
+    pub counted: bool,
+}
+
+/// What of the matched entry decides the offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub id: u32,
+    pub progress: u32,
+    pub status: Status,
+    pub rewatching: bool,
 }
 
 /// An episode recorded from here, for the banner's Undo.
@@ -165,6 +180,8 @@ impl Now {
             acted: false,
             recorded: None,
             picking: false,
+            mark: None,
+            counted: false,
         }
     }
 
@@ -280,6 +297,9 @@ impl State {
         let now = self.now.as_ref()?;
         let id = now.media_id()?;
         let i = self.entries.iter().position(|e| e.id == id)?;
+        if now.counted {
+            return None;
+        }
         let ep = rewatch_for(&self.entries[i], now.episode())?;
         Some((i, ep))
     }
@@ -311,12 +331,45 @@ impl State {
         let new = Now::from_seen(seen);
         match &mut self.now {
             Some(old) if old.key == new.key && old.file == new.file => {
-                let (dismissed, acted, recorded, picking, reached) = (old.dismissed, old.acted, old.recorded, old.picking, old.reached);
-                *old = Now { dismissed, acted, recorded, picking, reached: reached || new.reached, ..new };
+                let (dismissed, acted, recorded, picking, reached, mark, counted) = (old.dismissed, old.acted, old.recorded, old.picking, old.reached, old.mark, old.counted);
+                *old = Now { dismissed, acted, recorded, picking, reached: reached || new.reached, mark, counted, ..new };
             }
             _ => self.now = Some(new),
         }
-        self.act();
+        if !self.recheck_now() {
+            self.act(true);
+        }
+        true
+    }
+
+    /// The matched entry's [`Mark`] now.
+    fn entry_mark(&self) -> Option<Mark> {
+        let id = self.now.as_ref()?.media_id()?;
+        let e = self.entries.iter().find(|e| e.id == id)?;
+        Some(Mark { id, progress: e.progress, status: e.status, rewatching: e.rewatching })
+    }
+
+    /// Call after the entries change (an edit, a sync, the queue). When the playing file's
+    /// entry changed, the offer is decided again: "Not now" and the notification were about the
+    /// old progress. Ahead by two, then `+1` by hand: the playing episode is the next one and is
+    /// asked for (at once if the file passed the threshold). Counted by hand: the offer goes.
+    /// It asks then, never records by itself. Says whether it acted.
+    pub fn recheck_now(&mut self) -> bool {
+        let mark = self.entry_mark();
+        let Some(n) = &mut self.now else { return false };
+        let old = std::mem::replace(&mut n.mark, mark);
+        // The first sight of the match (a new file, a pick) and a recorded episode (its Undo
+        // banner stays) keep their state.
+        let (Some(old), Some(mark)) = (old, mark) else { return false };
+        if old == mark || old.id != mark.id || n.recorded.is_some() {
+            return false;
+        }
+        if !mark.rewatching && n.episode().is_some_and(|ep| mark.progress >= ep) {
+            n.counted = true;
+        }
+        n.dismissed = false;
+        n.acted = false;
+        self.act(false);
         true
     }
 
@@ -327,12 +380,13 @@ impl State {
             return false;
         }
         now.reached = true;
-        self.act();
+        self.act(true);
         true
     }
 
-    /// Once reached and recognised: record (auto, sure) or ask with a notification. Once per file.
-    fn act(&mut self) {
+    /// Once reached and recognised: record (auto, sure, `may_record`) or ask with a notification.
+    /// Once per file, and again when the entry changes ([`State::recheck_now`]).
+    fn act(&mut self, may_record: bool) {
         let Some(now) = &self.now else { return };
         if !now.reached || now.acted || now.recognizing || now.dismissed || !self.has_list() {
             return;
@@ -351,7 +405,7 @@ impl State {
         let title = self.entries[i].title.clone();
         // A player seen by its open file only knows no position or pause: the time open is a
         // guess, so it always asks, even with "Update automatically" on.
-        let auto = self.prefs.auto && now.sure() && now.via != crate::precise::VIA_PROCESS;
+        let auto = may_record && self.prefs.auto && now.sure() && now.via != crate::precise::VIA_PROCESS;
         if let Some(n) = &mut self.now {
             n.acted = true;
         }
@@ -363,6 +417,20 @@ impl State {
             let q = if self.now.as_ref().is_some_and(Now::sure) { "Update" } else { "Not sure: update" };
             crate::detect::notify(&format!("{q} {title} to episode {ep}?"), "Open Kotora, or run kot confirm.", self.handle.is_some());
         }
+    }
+
+    /// An edit from the banner itself (Update, Start rewatch, Undo): it answers the offer, so
+    /// [`State::recheck_now`] doesn't ask again.
+    fn edit_playing(&mut self, id: u32, change: Change) -> Result<usize, String> {
+        if let Some(n) = &mut self.now {
+            n.mark = None;
+        }
+        let r = self.edit(id, change);
+        let mark = self.entry_mark();
+        if let Some(n) = &mut self.now {
+            n.mark = mark;
+        }
+        r
     }
 
     /// Update (the banner, `kot confirm`): the offered episode goes to the queue.
@@ -378,7 +446,7 @@ impl State {
         // (`edit` does that when the total is known).
         let last = e.episodes.is_some_and(|n| n > 0 && ep == n);
         let status = (old_status == Status::PlanToWatch && !last).then_some(Status::Watching);
-        self.edit(id, Change { progress: Some(ep), status, ..Default::default() })?;
+        self.edit_playing(id, Change { progress: Some(ep), status, ..Default::default() })?;
         let completed = old_status != Status::Completed && self.entries.iter().any(|e| e.id == id && e.status == Status::Completed);
         if let Some(n) = &mut self.now {
             n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed, auto, old_rewatching, old_times, rewatch: false });
@@ -398,7 +466,7 @@ impl State {
         // One edit: the rewatch and the episode (the last one ends it again, counted).
         let cur = start.apply(e.values());
         let change = start.merge(Change { progress: Some(ep), ..Default::default() }.completes(&cur, e.episodes));
-        self.edit(id, change)?;
+        self.edit_playing(id, change)?;
         if let Some(n) = &mut self.now {
             n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed: false, auto: false, old_rewatching: false, old_times, rewatch: true });
             n.acted = true;
@@ -417,7 +485,7 @@ impl State {
             times_rewatched: Some(r.old_times),
             ..Default::default()
         };
-        let _ = self.edit(r.id, back);
+        let _ = self.edit_playing(r.id, back);
         if let Some(n) = &mut self.now {
             n.recorded = None;
             n.dismissed = true;
@@ -455,7 +523,8 @@ impl State {
         if let Some(key) = key {
             crate::detect::correct(self, key, Some(media_id));
         }
-        self.act();
+        self.recheck_now();
+        self.act(true);
     }
 
     /// "Not an anime": this title is ignored from now on.
@@ -680,6 +749,123 @@ mod tests {
         s.record(false).unwrap();
         let e = s.entries.iter().find(|e| e.id == id).unwrap();
         assert_eq!((e.status, e.progress, e.rewatching, e.times_rewatched), (Status::Completed, 12, false, times + 1));
+    }
+
+    /// The playing file's state for `seen`, by IPC (with a position) or by its process only.
+    fn seen_via(file: &str, reached: bool, process: bool) -> Seen {
+        let mut v = seen(file, Some(0), true, reached);
+        if process {
+            v.track.playing.via = kotora_detect::Via::Process;
+            v.track.playing.position = None;
+            v.track.playing.duration = None;
+        }
+        v
+    }
+
+    fn progress(s: &State) -> u32 {
+        s.entries.iter().find(|e| e.id == 0).unwrap().progress
+    }
+
+    /// Lanterns of Kirigaoka (id 0) is at 5 of 12 and episode 7 plays, past the threshold: one
+    /// is missing. "Not now", then `+1` by hand (6): episode 7 is the next one and is asked for
+    /// at once, by IPC and by process. Asked, never recorded by itself.
+    #[test]
+    fn ahead_by_two_then_plus_one_asks_for_the_playing_episode() {
+        for process in [false, true] {
+            for not_now in [false, true] {
+                let mut s = fresh();
+                s.now_seen(Some(seen_via("Lanterns of Kirigaoka - 07.mkv", true, process)));
+                assert_eq!(progress(&s), 5);
+                // Even with "Update automatically" on, asking again never records.
+                s.prefs.auto = true;
+                if not_now {
+                    assert!(s.dismiss_now() && !s.banner());
+                }
+                s.plus_one(0).unwrap();
+                assert_eq!(progress(&s), 6);
+                assert_eq!(s.offer().map(|(_, ep)| ep), Some(7));
+                assert!(s.banner(), "process {process}, not now {not_now}");
+                let n = s.now.as_ref().unwrap();
+                assert!(n.acted && n.recorded.is_none(), "asked again, not recorded");
+                assert_eq!(s.ctl_now().unwrap().offer, Some(7));
+                assert_eq!(s.record(false).unwrap().1, 7);
+                assert_eq!(progress(&s), 7);
+            }
+        }
+    }
+
+    /// The same before the threshold: no banner yet, then it asks once the file counts.
+    #[test]
+    fn plus_one_before_the_threshold_waits_for_it() {
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 07.mkv", Some(0), true, false)));
+        s.plus_one(0).unwrap();
+        assert!(!s.banner());
+        assert!(s.now_reached("mpv:/tmp/mpv.sock", "/v/Lanterns of Kirigaoka - 07.mkv"));
+        assert!(s.banner());
+        assert_eq!(s.offer().map(|(_, ep)| ep), Some(7));
+    }
+
+    /// `+1` by hand to the playing episode: the offer goes, nothing is counted twice.
+    #[test]
+    fn plus_one_to_the_playing_episode_ends_the_offer() {
+        for process in [false, true] {
+            let mut s = fresh();
+            s.now_seen(Some(seen_via("Lanterns of Kirigaoka - 06.mkv", true, process)));
+            assert!(s.banner());
+            s.plus_one(0).unwrap();
+            assert_eq!(progress(&s), 6);
+            assert!(s.offer().is_none() && !s.banner(), "process {process}");
+            assert_eq!(s.ctl_now().unwrap().offer, None);
+            assert!(s.record(false).is_err(), "kot confirm has nothing to add");
+            assert_eq!(progress(&s), 6);
+        }
+        // The last episode, counted by hand, completes the entry: no "watching it again?".
+        let mut s = fresh();
+        s.edit(0, Change { progress: Some(11), ..Default::default() }).unwrap();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 12.mkv", Some(0), true, true)));
+        assert!(s.banner());
+        s.plus_one(0).unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().status, Status::Completed);
+        assert!(s.offer().is_none() && s.rewatch_offer().is_none() && !s.banner());
+    }
+
+    /// A change from a sync or the queue (another device, `kot`) decides the offer again too;
+    /// one that leaves the progress alone keeps "Not now".
+    #[test]
+    fn a_synced_change_decides_the_offer_again() {
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 07.mkv", Some(0), true, true)));
+        assert!(s.dismiss_now());
+        let e = s.entries.iter().find(|e| e.id == 0).unwrap();
+        let media = kotora_core::Media {
+            id: 0,
+            title: e.title.clone(),
+            title_en: None,
+            title_ja: None,
+            synonyms: vec![],
+            episodes: Some(12),
+            format: "tv".into(),
+            air_status: "currently_airing".into(),
+            cover_url: None,
+        };
+        let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7 };
+        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(5, Some(8))], gone: vec![], offline: None });
+        assert!(!s.banner(), "same progress: Not now holds");
+        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(6, Some(8))], gone: vec![], offline: None });
+        assert!(s.banner());
+        assert_eq!(s.offer().map(|(_, ep)| ep), Some(7));
+    }
+
+    /// Undo on the banner puts the entry back and stays closed: it doesn't ask again at once.
+    #[test]
+    fn undo_does_not_ask_again() {
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        s.record(false).unwrap();
+        s.undo_record();
+        assert_eq!(progress(&s), 5);
+        assert!(!s.banner());
     }
 
     #[test]
