@@ -164,6 +164,7 @@ pub fn sign_in(s: &mut State) {
     s.cancel = Some(cancel.clone());
     s.auth = Auth::SigningIn;
     s.error = None;
+    s.sign_in_link = None;
     std::thread::spawn(move || match sign_in_flow(&h, &cancel) {
         Ok((user, picture)) => {
             send(&h, Msg::SignedIn { user, picture });
@@ -184,12 +185,15 @@ pub fn cancel_sign_in(s: &mut State) {
     }
 }
 
-fn sign_in_flow(_h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
+fn sign_in_flow(h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
     let id = Config::load(&paths::config_file())?.mal_client_id.ok_or("No MyAnimeList Client ID in config.toml.")?;
     // Bind first: if the port is busy there is no point in opening the browser.
     let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for MyAnimeList's reply: {e}", mal::PORT))?;
     let pkce = Pkce::new().map_err(|e| format!("Can't make a sign-in code: {e}"))?;
-    open_browser(&mal::authorize_url(&id, &pkce))?;
+    let url = mal::authorize_url(&id, &pkce);
+    // The link shows while Kotora waits, for a browser that didn't open (or opened elsewhere).
+    let opened = open_browser(&url).is_ok();
+    send(h, Msg::SignInUrl { url, opened });
     let code = loopback::wait_for_code(&listener, &pkce.state, SIGN_IN_TIMEOUT, cancel)?;
     drop(listener);
     let mut service = Mal::new(Client::new(id, UreqTransport::default()), TokenStore::new(paths::token_file()));

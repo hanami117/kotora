@@ -1,14 +1,13 @@
-//! The MyAnimeList Client ID from the app (Stage 5): a three-step guide on the Welcome page and a
-//! masked field in Settings, so nobody edits `config.toml` by hand (DESIGN.md §8.1).
+//! The MyAnimeList Client ID from the app (Stage 5): the field of the setup wizard (`setup.rs`)
+//! and a masked field in Settings, so nobody edits `config.toml` by hand (DESIGN.md §8.1).
 //!
 //! Save checks the ID on the UI thread (`config::check_client_id`, instant), then writes
 //! `config.toml` on a short thread (comments kept, 0600) and re-reads the sign-in state, so Sign in
 //! works at once. Headless runs never write: there is no app handle.
 
 use kotora_core::config::{self, Config};
-use kotora_core::mal::REDIRECT_URI;
 use kotora_core::paths;
-use rune::{El, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
+use rune::{El, TextStyle, Tx, col, icon, row, spacer, text, text_input};
 
 use crate::icons;
 use crate::model::{Auth, Msg, State};
@@ -33,6 +32,8 @@ pub struct ClientIdForm {
     pub hint: Option<String>,
     /// The redirect URL was copied (the button says so).
     pub copied: bool,
+    /// The sign-in link was copied (the wizard's "browser didn't open" line).
+    pub link_copied: bool,
     /// Saved in this session (the Welcome page says so above Sign in).
     pub saved: bool,
 }
@@ -73,6 +74,10 @@ impl State {
                 f.editing = false;
                 f.saved = true;
                 f.draft.clear();
+                // The wizard moves on to the sign-in.
+                if self.setup == crate::setup::Step::Paste {
+                    self.setup = crate::setup::Step::SignIn;
+                }
                 // Sign in is enabled at once; a running sign-in or a signed-in account stays.
                 if self.auth == Auth::NoClientId {
                     self.auth = auth;
@@ -99,7 +104,7 @@ impl State {
 }
 
 /// The field with its Save button. `key` scopes the parts (Welcome and Settings both have one).
-fn id_field(s: &State, key: &str, wide: f32) -> El {
+pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
     let f = &s.client_id;
     let border = if f.error.is_some() { PAL.status(kotora_core::Status::Dropped).alpha(0.7) } else { PAL.border_strong };
     let input = row()
@@ -135,50 +140,14 @@ fn id_field(s: &State, key: &str, wide: f32) -> El {
     c
 }
 
-/// One numbered step of the guide.
-fn step(n: u32, title: &str, body: El) -> El {
+/// Copy: copies on press (`f`), then says "Copied" with a check.
+pub(crate) fn copy_button(key: &str, copied: bool, f: impl Fn(&mut State, &mut Tx) + 'static) -> El {
     row()
-        .key(format!("cid-step/{n}"))
-        .gap(14.0)
-        .items_start()
-        .child(
-            el().size(24.0, 24.0)
-                .radius(12.0)
-                .fill(PAL.accent.alpha(0.14))
-                .border(1.0, PAL.accent.alpha(0.5))
-                .center()
-                .child(text(n.to_string()).font(theme::BADGE).color(PAL.accent_hi)),
-        )
-        .child(col().grow(1.0).min_w(0.0).gap(6.0).pt(2.0).child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text)).child(body))
-}
-
-/// The Welcome page's guide: open MAL's API page, create an app, paste the ID.
-pub fn guide(s: &State) -> El {
-    let open = row()
-        .key("cid/open")
-        .role("link")
-        .label("Open MyAnimeList's API page")
-        .focusable(true)
-        .h(30.0)
-        .px(12.0)
-        .gap(8.0)
-        .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.raised)
-        .border(1.0, PAL.border_strong)
-        .hover(PAL.hover())
-        .press(PAL.press())
-        .cursor(rune::Cursor::Pointer)
-        .on_press(|s: &mut State| online::open_link(s, API_PAGE))
-        .child(text("Open the API page").font(theme::LABEL_BTN).color(PAL.text))
-        .child(icon(&icons::EXTERNAL, 14.0).color(PAL.dim));
-    let copied = s.client_id.copied;
-    let copy = row()
-        .key("cid/copy")
+        .key(key.to_string())
         .role("button")
-        .label("Copy the redirect URL")
+        .label(if copied { "Copied" } else { "Copy" })
         .focusable(true)
-        .h(30.0)
+        .h(28.0)
         .px(10.0)
         .gap(6.0)
         .center_y()
@@ -187,63 +156,12 @@ pub fn guide(s: &State) -> El {
         .border(1.0, PAL.border_strong)
         .hover(PAL.hover())
         .press(PAL.press())
-        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
-            tx.copy(REDIRECT_URI);
-            s.client_id.copied = true;
+            f(s, tx);
         })
         .child(icon(if copied { &icons::CHECK } else { &icons::COPY }, 14.0).color(if copied { PAL.ok() } else { PAL.dim }))
-        .child(text(if copied { "Copied" } else { "Copy" }).font(theme::LABEL_BTN).color(PAL.text));
-    let url = row()
-        .key("cid/url")
-        .h(30.0)
-        .px(10.0)
-        .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.field)
-        .border(1.0, PAL.border)
-        .child(text(REDIRECT_URI).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text));
-    let pair = |k: &str, v: &str| {
-        row()
-            .gap(6.0)
-            .child(text(format!("{k}:")).font(theme::LABEL).color(PAL.dim))
-            .child(text(v.to_string()).font(TextStyle::new(12.0, 500.0)).color(PAL.text))
-    };
-    col()
-        .key("no-client-id")
-        .w(600.0)
-        .gap(18.0)
-        .padding(20.0)
-        .mt(8.0)
-        .radius(theme::R_LG)
-        .fill(PAL.surface)
-        .border(1.0, PAL.border)
-        .child(step(
-            1,
-            "Open MyAnimeList's API page",
-            col()
-                .gap(8.0)
-                .child(text("Sign in to myanimelist.net there and press \u{201c}Create ID\u{201d}.").font(theme::LABEL).color(PAL.dim).wrap())
-                .child(row().child(open)),
-        ))
-        .child(step(
-            2,
-            "Fill in the form",
-            col()
-                .gap(8.0)
-                .child(row().gap(16.0).child(pair("App Type", "other")).child(pair("Purpose", "non-commercial")))
-                .child(text("App Redirect URL, exactly:").font(theme::LABEL).color(PAL.dim))
-                .child(row().gap(8.0).center_y().child(url).child(copy))
-                .child(text("The other fields can be anything, for example App Name \u{201c}Kotora\u{201d}. No Client Secret is needed.").font(theme::LABEL).color(PAL.faint).wrap()),
-        ))
-        .child(step(
-            3,
-            "Paste the Client ID",
-            col()
-                .gap(8.0)
-                .child(text("MyAnimeList shows it after you submit. Kotora keeps it in its settings file, only readable by you.").font(theme::LABEL).color(PAL.dim).wrap())
-                .child(id_field(s, "cid", 380.0)),
-        ))
+        .child(text(if copied { "Copied" } else { "Copy" }).font(theme::LABEL_BTN).color(PAL.text))
 }
 
 /// Settings → Accounts: the ID, masked, with Change (or the field while changing).
@@ -260,7 +178,14 @@ pub fn settings_row(s: &State) -> El {
         });
     if !f.editing {
         let label = if f.hint.is_some() { "Change" } else { "Set" };
-        return row().key("set/cid").gap(12.0).py(10.0).center_y().child(head).child(small_button("set/cid-change", label, f.hint.is_none(), Some(State::edit_client_id)));
+        return row()
+            .key("set/cid")
+            .gap(8.0)
+            .py(10.0)
+            .center_y()
+            .child(head)
+            .child(small_button("set/setup-again", "Set up again", false, Some(State::setup_again)))
+            .child(small_button("set/cid-change", label, f.hint.is_none(), Some(State::edit_client_id)));
     }
     let mut c = col()
         .key("set/cid")

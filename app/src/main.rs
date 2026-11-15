@@ -21,6 +21,7 @@ mod precise;
 mod queue;
 mod scenes;
 mod search;
+mod setup;
 mod theme;
 mod ui;
 

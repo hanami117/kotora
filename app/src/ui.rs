@@ -66,6 +66,11 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.details_back();
         return true;
     }
+    if k.key == rune::Key::Escape && s.page == Page::Setup && s.setup_closable() {
+        tx.instant();
+        s.setup_close();
+        return true;
+    }
     if k.key == rune::Key::Escape && s.page == Page::Search {
         tx.instant();
         s.close_search();
@@ -306,6 +311,9 @@ pub(crate) fn kbd(label: &str) -> El {
 
 fn main(s: &State, wide: bool) -> El {
     let page = match s.page {
+        Page::Setup => crate::setup::page(s),
+        // First run: no Client ID, so the wizard is the only thing a list page can show.
+        Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide),
         Page::NowPlaying => now_page(s, wide),
@@ -1294,19 +1302,6 @@ fn welcome(s: &State) -> El {
     }
     c = c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text));
     match s.auth {
-        Auth::NoClientId => {
-            c = c
-                .child(text("To sign in, Kotora needs a MyAnimeList Client ID. It is free and takes a minute.").font(theme::BODY).color(PAL.dim))
-                .child(crate::clientid::guide(s))
-                .child(
-                    row()
-                        .gap(8.0)
-                        .mt(6.0)
-                        .center_y()
-                        .child(button("sign-in", "Sign in", true, None))
-                        .child(ghost("check-again", "Check config.toml again", online::recheck_config)),
-                );
-        }
         Auth::SigningIn => {
             c = c
                 .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY).color(PAL.dim))

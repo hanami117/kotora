@@ -7,6 +7,7 @@ use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
 
 use crate::model::{Auth, Filter, Page, Sort, State};
+use crate::setup::Step;
 
 /// A scene: its name and the change it makes to the fake first state.
 pub type Scene = (&'static str, fn(&mut State));
@@ -50,14 +51,78 @@ pub const SCENES: &[Scene] = &[
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
-    // First run: no Client ID in config.toml.
-    ("no-client-id", |s| signed_out(s, Auth::NoClientId)),
-    // The guide with a pasted ID that isn't one (the inline error), and with the URL copied.
+    // First run: no Client ID in config.toml, so the setup wizard (`setup.rs`), step 1.
+    ("no-client-id", |s| setup(s, Step::Welcome)),
+    // Step 3 with a pasted value that isn't an ID (the inline error).
     ("no-client-id-error", |s| {
-        signed_out(s, Auth::NoClientId);
+        setup(s, Step::Paste);
         s.client_id.draft.replace_text("kotora-app-secret-from-mal");
         s.save_client_id();
+    }),
+    ("setup-create", |s| setup(s, Step::Create)),
+    // The redirect URL copied: the button says so.
+    ("setup-create-copied", |s| {
+        setup(s, Step::Create);
         s.client_id.copied = true;
+    }),
+    ("setup-paste", |s| setup(s, Step::Paste)),
+    // 64 hex characters: the Client Secret's shape, refused.
+    ("setup-paste-secret", |s| {
+        setup(s, Step::Paste);
+        s.client_id.draft.replace_text("3f9c0a7e5b1d2c48".repeat(4));
+        s.save_client_id();
+    }),
+    // Saved (after Back from the sign-in step): Next is on.
+    ("setup-paste-saved", |s| {
+        setup(s, Step::Paste);
+        s.auth = Auth::SignedOut;
+        s.client_id.hint = Some("8f3a".into());
+    }),
+    ("setup-sign-in", |s| {
+        setup(s, Step::SignIn);
+        s.auth = Auth::SignedOut;
+        s.client_id.hint = Some("8f3a".into());
+    }),
+    // Waiting for the browser, with the link in case it didn't open.
+    ("setup-signing-in", |s| signing_in(s, true)),
+    ("setup-signing-in-no-browser", |s| {
+        signing_in(s, false);
+        s.client_id.link_copied = true;
+    }),
+    ("setup-sign-in-denied", |s| {
+        setup(s, Step::SignIn);
+        s.auth = Auth::SignedOut;
+        s.client_id.hint = Some("8f3a".into());
+        s.error = Some("MyAnimeList refused the sign-in (access_denied)".into());
+    }),
+    ("setup-sign-in-timeout", |s| {
+        setup(s, Step::SignIn);
+        s.auth = Auth::SignedOut;
+        s.client_id.hint = Some("8f3a".into());
+        s.error = Some("sign-in timed out".into());
+    }),
+    // Back on step 4 after signing in ("Set up again" while signed in).
+    ("setup-signed-in", |s| {
+        s.setup_again();
+        s.setup = Step::SignIn;
+    }),
+    // Done: the list loaded, the players hint.
+    ("setup-done", |s| {
+        s.setup_again();
+        s.setup = Step::Done;
+    }),
+    ("setup-done-loading", |s| {
+        s.setup_again();
+        s.setup = Step::Done;
+        s.entries.clear();
+        s.refresh();
+        s.loading = true;
+        s.syncing = true;
+    }),
+    // Settings → Accounts → "Set up again": step 1, with Close.
+    ("setup-again", |s| {
+        s.go(Page::Settings);
+        s.setup_again();
     }),
     // Saved: Sign in is enabled at once, and the page says the ID was saved.
     ("client-id-saved", |s| {
@@ -431,6 +496,22 @@ fn fake_covers(s: &mut State) {
     }
 }
 
+/// The wizard at `step`, first run (no Client ID, nobody signed in).
+fn setup(s: &mut State, step: Step) {
+    signed_out(s, Auth::NoClientId);
+    s.client_id.hint = None;
+    s.go(Page::Setup);
+    s.setup = step;
+}
+
+fn signing_in(s: &mut State, opened: bool) {
+    setup(s, Step::SignIn);
+    s.client_id.hint = Some("8f3a".into());
+    s.auth = Auth::SigningIn;
+    let url = "https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=0123456789abcdef0123456789abcdef&code_challenge=made-up&code_challenge_method=plain&state=made-up&redirect_uri=http%3A%2F%2F127.0.0.1%3A47321%2Fcallback";
+    s.apply(crate::model::Msg::SignInUrl { url: url.into(), opened });
+}
+
 /// Nobody is signed in: no account, no list, no queue.
 fn signed_out(s: &mut State, auth: Auth) {
     s.auth = auth;
@@ -471,8 +552,8 @@ mod tests {
                 let rt = render(name, size);
                 assert!(rt.find("sidebar").is_some(), "{name}: sidebar");
                 assert!(rt.find("main").is_some(), "{name}: main");
-                // The sign-in screen has no top bar.
-                assert!(rt.find("top").is_some() || rt.find("welcome").is_some(), "{name}: page title");
+                // The sign-in screen and the wizard have no top bar.
+                assert!(rt.find("top").is_some() || rt.find("welcome").is_some() || rt.find("page/setup").is_some(), "{name}: page title");
             }
         }
     }
@@ -492,24 +573,40 @@ mod tests {
     #[test]
     fn sign_in_screens_show_their_parts() {
         let rt = render("no-client-id", (1280.0, 800.0));
-        assert!(rt.find("welcome").is_some() && rt.find("no-client-id").is_some() && rt.find("check-again").is_some());
-        for key in ["cid-step/1", "cid-step/2", "cid-step/3", "cid/open", "cid/copy", "cid/url", "cid/input", "cid/save"] {
+        assert!(rt.find("page/setup").is_some() && rt.find("setup/indicator").is_some() && rt.find("setup/next").is_some());
+        assert!(rt.find("setup/back").is_none() && rt.find("setup/close").is_none(), "step 1, and no way around it without an ID");
+        let rt = render("setup-create", (960.0, 600.0));
+        for key in ["setup/open-api", "setup/copy-redirect", "setup/form/app-redirect-url", "setup/form/purpose-of-use", "setup/no-secret", "setup/back"] {
             assert!(rt.find(key).is_some(), "{key}");
         }
-        assert!(rt.find("cid/error").is_none());
-        assert!(render("no-client-id-error", (1280.0, 800.0)).find("cid/error").is_some());
-        assert!(render("no-client-id", (960.0, 600.0)).find("cid/save").is_some(), "the guide fits a small window");
+        let rt = render("setup-paste", (1280.0, 800.0));
+        assert!(rt.find("setup/cid/input").is_some() && rt.find("setup/cid/save").is_some() && rt.find("setup/cid/error").is_none());
+        assert!(render("no-client-id-error", (1280.0, 800.0)).find("setup/cid/error").is_some());
+        assert!(render("setup-paste-secret", (1280.0, 800.0)).find("setup/cid/error").is_some());
+        assert!(render("setup-paste-saved", (1280.0, 800.0)).find("setup/cid-saved").is_some());
+        assert!(render("setup-sign-in", (1280.0, 800.0)).find("setup/sign-in").is_some());
+        let rt = render("setup-signing-in-no-browser", (960.0, 600.0));
+        assert!(rt.find("setup/waiting").is_some() && rt.find("setup/link").is_some() && rt.find("setup/copy-link").is_some() && rt.find("setup/cancel").is_some());
+        for name in ["setup-sign-in-denied", "setup-sign-in-timeout"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("setup/sign-in-error").is_some() && rt.find("setup/sign-in").is_some(), "{name}");
+        }
+        assert!(render("setup-signed-in", (1280.0, 800.0)).find("setup/signed-in").is_some());
+        let rt = render("setup-done", (1280.0, 800.0));
+        assert!(rt.find("setup/loaded").is_some() && rt.find("setup/to-players").is_some() && rt.find("setup/close").is_none());
+        assert!(render("setup-again", (1280.0, 800.0)).find("setup/close").is_some());
         let rt = render("client-id-saved", (1280.0, 800.0));
-        assert!(rt.find("cid-saved").is_some() && rt.find("no-client-id").is_none());
+        assert!(rt.find("cid-saved").is_some() && rt.find("page/setup").is_none());
         let rt = render("settings-page", (1280.0, 800.0));
         assert!(rt.find("set/cid-masked").is_some() && rt.find("set/cid-change").is_some() && rt.find("set/cid/input").is_none());
+        assert!(rt.find("set/setup-again").is_some());
         let rt = render("settings-client-id-change", (1280.0, 800.0));
         assert!(rt.find("set/cid/input").is_some() && rt.find("set/cid/error").is_some() && rt.find("set/cid-cancel").is_some());
         assert!(render("settings-no-client-id", (1280.0, 800.0)).find("set/cid-change").is_some());
         let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("rows").is_none() && rt.find("account").is_none());
         let rt = render("signed-out", (1280.0, 800.0));
-        assert!(rt.find("welcome").is_some() && rt.find("sign-in").is_some() && rt.find("no-client-id").is_none());
+        assert!(rt.find("welcome").is_some() && rt.find("sign-in").is_some() && rt.find("page/setup").is_none());
         assert!(render("signing-in", (1280.0, 800.0)).find("cancel").is_some());
         assert!(render("sign-in-failed", (1280.0, 800.0)).find("welcome").is_some());
     }

@@ -250,8 +250,11 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
     if !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("That doesn't look like a Client ID: it has only digits and the letters a to f. Copy the Client ID, not the Client Secret or the app name.".into());
     }
+    // MAL's Client IDs have 32 characters and its Client Secrets 64, both hex: a long one is
+    // almost surely the secret, which must never be stored.
     match id.len() {
         0..=19 => Err(format!("That is too short for a Client ID ({} characters; MyAnimeList's have 32). Copy all of it.", id.len())),
+        41..=64 => Err(format!("That looks like the Client Secret ({} characters). Kotora doesn't need it: copy the Client ID instead (32 characters).", id.len())),
         65.. => Err(format!("That is too long for a Client ID ({} characters; MyAnimeList's have 32).", id.len())),
         _ => Ok(id.to_ascii_lowercase()),
     }
@@ -367,6 +370,8 @@ mod tests {
         assert!(check_client_id("my-kotora-app-secret-xyz").unwrap_err().contains("not the Client Secret"));
         assert!(check_client_id("abc123").unwrap_err().contains("too short"));
         assert!(check_client_id(&"a".repeat(80)).unwrap_err().contains("too long"));
+        assert!(check_client_id(&"0123456789abcdef".repeat(4)).unwrap_err().contains("Client Secret"), "64 hex: the secret's shape");
+        assert!(check_client_id(&"9".repeat(40)).is_ok());
         assert_eq!(client_id_hint(good), "CDEF");
         assert_eq!(client_id_hint("ab"), "ab");
     }

@@ -31,6 +31,8 @@ pub enum Page {
     Details,
     /// The search page (`search.rs`): the list and MyAnimeList (Ctrl K).
     Search,
+    /// The setup wizard (`setup.rs`): Client ID and sign-in, step by step.
+    Setup,
 }
 
 /// The chips above the list.
@@ -259,6 +261,8 @@ pub enum Msg {
     /// The profile picture was asked for again (at most daily, after a sync).
     Picture(Option<String>),
     SignInFailed(String),
+    /// The sign-in page's address, and whether the browser was started with it.
+    SignInUrl { url: String, opened: bool },
     SignedOut,
     /// The followed player and what recognition made of its file (`None`: nothing plays).
     Now(Option<Box<Seen>>),
@@ -292,6 +296,12 @@ pub struct State {
     pub account: Option<(String, &'static str)>,
     /// The account's profile picture URL; the sidebar draws it round, else the initial.
     pub avatar: Option<String>,
+    /// While signing in: MyAnimeList's sign-in page, and whether the browser opened it.
+    pub sign_in_link: Option<(String, bool)>,
+    /// The setup wizard's step (`setup.rs`).
+    pub setup: crate::setup::Step,
+    /// The page the wizard returns to when closed (Settings for "Set up again").
+    pub setup_back: Page,
     pub entries: Vec<Entry>,
     /// Indexes into `entries` for the list page: its status, the chip, the search, the sort.
     /// Rebuilt by `refresh()`; the view only reads it.
@@ -362,6 +372,9 @@ impl State {
             auth: Auth::SignedIn,
             account: Some(("demo_user".into(), "MyAnimeList")),
             avatar: None,
+            sign_in_link: None,
+            setup: crate::setup::Step::Welcome,
+            setup_back: Page::List(Status::Watching),
             entries: fake_entries(),
             rows: Vec::new(),
             loading: false,
@@ -410,6 +423,10 @@ impl State {
         s.loading = matches!(auth, Auth::SignedIn);
         s.handle = None;
         s.client_id.hint = None;
+        // First run: the setup wizard.
+        if auth == Auth::NoClientId {
+            s.page = Page::Setup;
+        }
         s.refresh();
         s
     }
@@ -823,9 +840,13 @@ impl State {
             }
             Msg::SignedIn { user, picture } => {
                 self.auth = Auth::SignedIn;
+                if self.setup == crate::setup::Step::SignIn {
+                    self.setup = crate::setup::Step::Done;
+                }
                 self.account = Some((user, service));
                 self.avatar = picture;
                 self.cancel = None;
+                self.sign_in_link = None;
                 self.error = None;
                 // The queue waited for this.
                 self.worker.hold.store(false, Ordering::Relaxed);
@@ -834,10 +855,18 @@ impl State {
                 }
                 true
             }
+            Msg::SignInUrl { url, opened } => {
+                if self.auth != Auth::SigningIn {
+                    return false;
+                }
+                self.sign_in_link = Some((url, opened));
+                true
+            }
             Msg::SignInFailed(m) => {
                 // Keep the saved list when the user was only signing in again.
                 self.auth = if self.entries.is_empty() { Auth::SignedOut } else { Auth::Expired };
                 self.cancel = None;
+                self.sign_in_link = None;
                 self.error = Some(m);
                 true
             }

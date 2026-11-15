@@ -76,6 +76,9 @@ impl Pal {
     pub fn warn(&self) -> Color {
         self.st_onhold
     }
+    pub fn err(&self) -> Color {
+        self.st_dropped
+    }
     pub fn hover(&self) -> Color {
         Color::WHITE.alpha(0.05)
     }
