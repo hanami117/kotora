@@ -5,8 +5,8 @@
 #   ./install.sh --uninstall   remove it again (keeps your list, sign-in and settings)
 #
 # Installs into $PREFIX (default ~/.local):
-#   bin/kotora                                               the app (release build)
-#   bin/kot                                                  the command line
+#   bin/kotora                                               the app (release build, stripped)
+#   bin/kot                                                  the command line (stripped)
 #   share/applications/io.github.hanami117.kotora.desktop
 #   share/icons/hicolor/<size>/apps/io.github.hanami117.kotora.png   (16 to 512 px)
 #   share/icons/hicolor/scalable/apps/io.github.hanami117.kotora.svg
@@ -88,8 +88,16 @@ target="${CARGO_TARGET_DIR:-target}/release/kotora"
 
 # --- Install ------------------------------------------------------------------------------------
 say "Installing into $PREFIX"
-install -Dm755 "$target" "$BIN"
-install -Dm755 "${target%kotora}kot" "$KOT"
+# Strip the installed copies only (about 36 MB -> 30 MB for kotora); the build in target/ keeps its
+# symbols for backtraces. `strip` comes with binutils (base-devel on Arch).
+strip_flag=()
+if command -v strip >/dev/null; then
+    strip_flag=(-s)
+else
+    say "Note: \`strip\` not found (binutils), so the binaries keep their symbols (about 6 MB more)."
+fi
+install -Dm755 "${strip_flag[@]}" "$target" "$BIN"
+install -Dm755 "${strip_flag[@]}" "${target%kotora}kot" "$KOT"
 install -Dm644 "assets/icons/$APP_ID.svg" "$ICON"
 for icon in assets/icons/hicolor/*/apps/"$APP_ID".png; do
     size=$(basename "$(dirname "$(dirname "$icon")")")
