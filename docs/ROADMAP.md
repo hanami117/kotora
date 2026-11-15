@@ -24,7 +24,9 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
 - **Stage 5, after the first live test:** added 2026-11-15 from the user's feedback. Built on branch
   `stage-5` (on top of `stage-4`): Client ID from the app, search and add, details page, and the
   detection GUI. The detection engine (`stage-5-detect`) was merged into `stage-5` on 2026-11-15 and
-  wired. Waiting for the user's live test. The release moves to Stage 6.
+  wired. After the user's first live test of it, a second batch (2026-11-15): real covers in Now
+  Playing, WebP covers, open by MAL id, a search page, the profile picture and a setup wizard.
+  Waiting for the user's live test of that batch. The release moves to Stage 6.
 
 ## Stage 0: design
 
@@ -98,6 +100,12 @@ same machine, stripped: the default release profile 33.87 MB (full build 1 m 30 
 behaviour. The workspace now sets `codegen-units = 1` in `[profile.release]` (Uzumaki keeps the default;
 the Rune rev is still shared). Fat LTO is the next step if a later stage needs room. macOS arm64 is not
 re-measured; it can only shrink with the same setting.
+
+Stage 5, second batch (2026-11-15): Linux x86_64 stripped, `codegen-units = 1`: 30.04 MB
+(30,041,112 bytes) before the batch's WebP decoder, 30.27 MB (30,272,536) with it, the rest of the
+batch included. So the binary is now 0.27 MB over the indicative 30 MB target (user decision above).
+New dependency: `image-webp` 0.2 (MIT OR Apache-2.0, with `quick-error`); fat LTO stays the next step
+if room is needed.
 
 Stage 4 changes no target. New dependencies: `anitomy-ng` (MPL-2.0) with `regex`/`regex-automata`/
 `regex-syntax`/`aho-corasick` (MIT or Apache-2.0); zbus 5 in `detect` is the copy Rune's AT-SPI already
@@ -302,9 +310,10 @@ nothing has talked to MAL.
 
 - [x] **Client ID from the app** (`app/src/clientid.rs`, `core::config::check_client_id`): the
   Welcome page's three steps (Open the API page; app type "other", non-commercial, the redirect URL
-  with Copy; paste the ID) and a field with Save. The ID is trimmed (quotes too) and must be hex, 20
-  to 64 characters (MAL's are 32); a pasted secret, app name or half an ID gets a line that says what
-  is wrong. Save writes `[mal] client_id` with the comment-keeping writer (0600) on a short thread and
+  with Copy; paste the ID) and a field with Save (the steps became the setup wizard, below). The ID
+  is trimmed (quotes too) and must be hex, 20 to 40 characters (MAL's are 32; 41 to 64 is the
+  Client Secret's shape and is refused as such); a pasted secret, app name or half an ID gets a line
+  that says what is wrong. Save writes `[mal] client_id` with the comment-keeping writer (0600) on a short thread and
   re-reads the sign-in state, so Sign in works at once. Settings → Accounts shows it masked (last 4)
   with Change. `kot config client-id ID` does the same through the running app. Scenes:
   `no-client-id`, `no-client-id-error`, `client-id-saved`, `settings-client-id-change`,
@@ -361,11 +370,49 @@ nothing has talked to MAL.
   tests that find their parts; a press on a row's title opens details, elsewhere the editor.
 - [x] Budgets measured (table above; Linux x86_64 from this stage on; `codegen-units = 1` keeps the
   binary under 30 MB there).
-- [ ] Live test by the user on Arch (STATUS.md).
+- [x] Live test by the user on Arch (first round, 2026-11-15): asked for the batch below.
+
+Second batch after the live test (2026-11-15, one commit each):
+- [x] **Real covers in Now Playing:** the sidebar card and the Now Playing card use the cover cache
+  like the list rows, at their own pixel size: the entry's cover, else (not on the list) the cover
+  from the saved details, which the detect thread fetches once (signed in, online) and saves.
+  Scenes: `now-playing-covers`, `now-playing-not-on-list-cover`.
+- [x] **WebP covers:** MAL serves some covers as `.webp` (58 of a 322-entry list showed only the
+  tile). They are decoded with `image-webp` alone (pure Rust, MIT OR Apache-2.0): +0.23 MB stripped
+  on Linux x86_64 (30,041,112 → 30,272,536 bytes); `image`'s `webp` feature would add 0.56 MB, as it
+  links the encoder too. Test: a lossy and a lossless-with-alpha fixture (`app/tests/*.webp`).
+- [x] **Open by MAL id:** a pasted `myanimelist.net/anime/<id>[/slug]` link (or `anime.php?id=`)
+  opens the details page at once; a bare number keeps the text search (it may be a title) and adds
+  an "Open MyAnimeList #id" line, opened with Enter. Works for anime not on the list. Scene:
+  `search-mal-id`.
+- [x] **Search page:** a Search entry at the top of the sidebar (Ctrl K hint) opens a page with a
+  wide field, focused, and the same results as before (the list's matches, then MyAnimeList's, the
+  id line). Ctrl K opens it from anywhere, Ctrl F too off the list pages; Escape returns (also from
+  inside the field). The list page's box is now a quick filter of the list (no MyAnimeList search)
+  with a "Search MyAnimeList for …" line on top that takes the query along. Scenes: `search-page`,
+  `list-filter`; the `search-online*` scenes show the page.
+- [x] **Profile picture:** `GET /users/@me?fields=picture` (one request: name and picture) at sign-in
+  and after a sync at most daily; the URL is kept in `kv` (`mal:picture`, `mal:picture_at`), the
+  image in the cover cache (disk and memory, both cleared on sign out). Drawn round in the account
+  card over the initial, which stays as the fallback. Scene: `account-picture`.
+- [x] **Setup wizard** (`app/src/setup.rs`): replaces the no-Client-ID Welcome card, five steps with
+  an indicator and Back / Next: Welcome; create the Client ID (the API page, every form field with
+  what to put, the redirect URL with Copy, "you do NOT need the Client Secret"); paste (saving moves
+  on; "check again" for an ID written by hand); sign in (MyAnimeList's own page, the waiting state
+  with the link and Copy when the browser didn't open, denied and timeout with Try again); done (how
+  many anime loaded, the players hint and a link to Settings → Players). Settings → Accounts has
+  "Set up again" (closable, Escape too). A browser that can't be started no longer fails the
+  sign-in: the link shows instead. Scenes: `no-client-id`, `no-client-id-error`, `setup-*`.
+- [x] Scenes checked as PNGs at 1280 × 800 and 960 × 600; `cargo build`, `cargo test --workspace` and
+  `cargo clippy --workspace --all-targets` clean.
+- [ ] Live test of the second batch by the user on Arch.
 
 Decided in this stage (easy to change):
-- The search box searches the whole list, not only the page's status, once it holds a query; the chips
-  hide while searching. Clearing it brings the status page back.
+- The list page's box filters the whole list, not only the page's status, once it holds a query; the
+  chips hide while it does. Clearing it brings the status page back. MyAnimeList is searched only
+  from the search page (second batch).
+- A bare number in a search box is offered as a MyAnimeList id (Enter) but still searched as text;
+  a pasted link opens at once.
 - Search results hide anime already on the list (they are shown above, with their status). MAL's
   default leaves out NSFW titles in search.
 - A row's title opens details; the rest of the row still opens the inline editor.
