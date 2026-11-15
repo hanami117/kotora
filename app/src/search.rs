@@ -1,6 +1,7 @@
-//! Search and add (Stage 5). With a query in the search box the list page shows search results:
-//! the user's own entries that match (every status, the page's own first), then MyAnimeList's
-//! results that are not on the list, each with "+ Watching" and a menu of the other statuses.
+//! Search and add (Stage 5). The search page (the sidebar's Search, Ctrl K) shows the user's own
+//! entries that match (every status), then MyAnimeList's results that are not on the list, each
+//! with "+ Watching" and a menu of the other statuses. The list page's search box is a quick
+//! filter: the list's matches, and one line that takes the query to the search page.
 //!
 //! The MyAnimeList search runs only when signed in and online, for 3 characters or more, after
 //! the typing stops for [`DEBOUNCE`]: each keystroke bumps a number and a short thread sleeps, then
@@ -92,7 +93,7 @@ fn norm(q: &str) -> String {
 
 /// Why MyAnimeList isn't searched now, if it isn't.
 pub fn blocked(s: &State) -> Option<String> {
-    let q = norm(&s.query.text);
+    let q = norm(s.search_text());
     if s.auth == Auth::Expired {
         return Some("Sign in again to search MyAnimeList.".into());
     }
@@ -109,14 +110,18 @@ impl State {
     /// Every edit of the search box: the list part at once, MyAnimeList after a pause. A pasted
     /// MyAnimeList link opens its details page at once (and leaves the box empty).
     pub fn search_changed(&mut self) {
-        if let Some((id, true)) = mal_id(&self.query.text) {
-            self.query.replace_text("");
+        if let Some((id, true)) = mal_id(self.search_text()) {
+            if self.page == Page::Search { self.find.replace_text("") } else { self.query.replace_text("") }
             self.refresh();
             self.open_mal_id(id);
             return;
         }
         self.refresh();
-        let q = norm(&self.query.text);
+        // The list page's box only filters the list.
+        if self.page != Page::Search {
+            return;
+        }
+        let q = norm(self.search_text());
         let blocked = blocked(self).is_some() || self.auth != Auth::SignedIn;
         let now = self.clock();
         let o = &mut self.online;
@@ -207,9 +212,37 @@ impl State {
 
     /// Enter in the search box: a bare id opens its page. Returns whether it did.
     pub fn search_submit(&mut self) -> bool {
-        let Some((id, _)) = mal_id(&self.query.text) else { return false };
+        let Some((id, _)) = mal_id(self.search_text()) else { return false };
         self.open_mal_id(id);
         true
+    }
+
+    /// The search page, its field focused (the sidebar's Search, Ctrl K). Escape returns.
+    pub fn open_search(&mut self) {
+        if !self.has_list() {
+            return;
+        }
+        if self.page != Page::Search {
+            self.search_back = self.page;
+            self.editor = None;
+            self.go(Page::Search);
+        }
+        self.find.focused = true;
+        self.search_changed();
+    }
+
+    /// The list's quick filter, taken to the search page (its "Search MyAnimeList" line).
+    pub fn search_for_query(&mut self) {
+        let q = self.query.text.trim().to_string();
+        self.find.replace_text(&q);
+        self.open_search();
+    }
+
+    /// Escape on the search page: the page it was opened from.
+    pub fn close_search(&mut self) {
+        self.online.menu = None;
+        let back = if self.search_back == Page::Search { Page::List(Status::Watching) } else { self.search_back };
+        self.go(back);
     }
 
     /// Results that are not on the list (those are shown above them).
@@ -235,19 +268,28 @@ pub enum SRow {
     Hit(usize),
     /// Why there are no results (yet).
     Note,
+    /// The list page's filter: "Search MyAnimeList for …" (opens the search page).
+    Find,
 }
 
 /// The lines of the search results, top to bottom.
 pub fn layout(s: &State) -> Vec<SRow> {
     let mut v = Vec::new();
-    if let Some((id, false)) = mal_id(&s.query.text) {
+    if let Some((id, false)) = mal_id(s.search_text()) {
         v.push(SRow::Id(id));
+    }
+    // The list page's filter: the way to MyAnimeList first, then the list's matches.
+    if s.page != Page::Search {
+        v.push(SRow::Find);
     }
     v.push(SRow::ListHead);
     if s.rows.is_empty() {
         v.push(SRow::ListNone);
     }
     v.extend((0..s.rows.len()).map(SRow::List));
+    if s.page != Page::Search {
+        return v;
+    }
     v.push(SRow::Head);
     let n = if blocked(s).is_some() || s.online.pending || s.online.error.is_some() { 0 } else { s.new_hits().len() };
     if n == 0 {
@@ -267,6 +309,7 @@ pub fn key(s: &State, r: SRow) -> String {
         SRow::Head => "sr/online-head".into(),
         SRow::Hit(i) => s.new_hits().get(i).map_or_else(|| format!("hit-gone-{i}"), |h| format!("hit/{}", h.id)),
         SRow::Note => "sr/note".into(),
+        SRow::Find => "sr/find".into(),
     }
 }
 
@@ -290,7 +333,7 @@ pub fn line(s: &State, r: SRow) -> El {
     match r {
         SRow::Id(id) => id_line(s, id),
         SRow::ListHead => head("sr/list-head-line", format!("On your list \u{b7} {}", s.rows.len()), None),
-        SRow::ListNone => text(format!("Nothing on your list matches \u{201c}{}\u{201d}.", s.query.text.trim()))
+        SRow::ListNone => text(format!("Nothing on your list matches \u{201c}{}\u{201d}.", s.search_text().trim()))
             .key("sr/list-none-line")
             .font(theme::BODY)
             .color(PAL.dim)
@@ -307,12 +350,35 @@ pub fn line(s: &State, r: SRow) -> El {
             head("sr/online-head-line", "On MyAnimeList".into(), end)
         }
         SRow::Note => note(s),
+        SRow::Find => find_line(s),
         SRow::Hit(i) => match s.new_hits().get(i) {
             Some(h) => hit_row(s, h),
             None => el(),
         },
         SRow::List(_) => el(),
     }
+}
+
+/// Above the list's matches: take the filter to the search page (MyAnimeList too).
+fn find_line(s: &State) -> El {
+    let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
+    row()
+        .key("sr/find-line")
+        .h(44.0)
+        .px(theme::PAGE_PAD)
+        .gap(10.0)
+        .center_y()
+        .role("button")
+        .label("Search MyAnimeList too")
+        .hover(PAL.hover())
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.search_for_query();
+        })
+        .child(icon(&icons::SEARCH, 16.0).color(PAL.accent_hi))
+        .child(text(format!("Search MyAnimeList for \u{201c}{}\u{201d}", s.query.text.trim())).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
+        .child(spacer())
+        .child(crate::ui::kbd(kbd))
 }
 
 /// "MyAnimeList #41590 · Open (Enter)": a bare number may be an id as well as a title.
@@ -338,7 +404,7 @@ fn id_line(s: &State, id: u32) -> El {
         .child(icon(&icons::ARROW, 16.0).color(PAL.accent_hi))
         .child(text(format!("Open {what}")).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
         .child(spacer())
-        .child(el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text("Enter").font(rune::TextStyle::new(10.0, 500.0)).color(PAL.faint)))
+        .child(crate::ui::kbd("Enter"))
 }
 
 fn note(s: &State) -> El {
@@ -355,7 +421,7 @@ fn note(s: &State) -> El {
             .child(ghost("sr/retry", "Try again", State::search_again).h(26.0));
     }
     let line = if s.online.hits.is_empty() {
-        format!("MyAnimeList found nothing for \u{201c}{}\u{201d}.", s.query.text.trim())
+        format!("MyAnimeList found nothing for \u{201c}{}\u{201d}.", s.search_text().trim())
     } else {
         "Everything MyAnimeList found is on your list already.".into()
     };
@@ -534,9 +600,16 @@ pub fn fake_hits() -> Vec<AnimeHit> {
 mod tests {
     use super::*;
 
-    fn searching(q: &str) -> State {
+    /// The search page, empty.
+    fn on_page() -> State {
         let mut s = State::fake();
-        s.query.replace_text(q);
+        s.go(Page::Search);
+        s
+    }
+
+    fn searching(q: &str) -> State {
+        let mut s = on_page();
+        s.find.replace_text(q);
         s.search_changed();
         s
     }
@@ -565,14 +638,21 @@ mod tests {
     fn an_id_opens_the_details_page() {
         let mut s = searching("https://myanimelist.net/anime/41590/Velvet_Orchard");
         assert_eq!(s.page, Page::Details);
-        assert!(s.query.text.is_empty());
+        assert!(s.find.text.is_empty());
         let d = s.detail.as_ref().unwrap();
         assert_eq!((d.id(), d.stub.title.as_str()), (41590, "MyAnimeList #41590"));
         s.details_back();
-        assert!(matches!(s.page, Page::List(_)));
+        assert_eq!(s.page, Page::Search);
+        // The list page's filter box takes a link too.
+        let mut s = State::fake();
+        s.query.replace_text("myanimelist.net/anime/41590");
+        s.search_changed();
+        assert_eq!((s.page, s.detail.as_ref().map(|d| d.id())), (Page::Details, Some(41590)));
+        s.details_back();
+        assert!(matches!(s.page, Page::List(_)) && s.query.text.is_empty());
 
         let mut s = searching("41590");
-        assert!(matches!(s.page, Page::List(_)));
+        assert_eq!(s.page, Page::Search);
         assert_eq!(layout(&s).first(), Some(&SRow::Id(41590)));
         assert!(s.search_submit());
         assert_eq!(s.detail.as_ref().map(|d| d.id()), Some(41590));
@@ -589,9 +669,9 @@ mod tests {
     fn short_queries_and_offline_never_ask() {
         let s = searching("ab");
         assert!(!s.online.pending && blocked(&s).unwrap().contains("3 letters"));
-        let mut s = State::fake();
+        let mut s = on_page();
         s.offline = true;
-        s.query.replace_text("lantern");
+        s.find.replace_text("lantern");
         s.search_changed();
         assert!(!s.online.pending && blocked(&s).unwrap().contains("Offline"));
     }
@@ -601,24 +681,24 @@ mod tests {
         let mut s = searching("lantern");
         assert!(s.online.pending, "waits for the pause");
         let first = s.online.seq.load(Ordering::Relaxed);
-        s.query.replace_text("lanterns");
+        s.find.replace_text("lanterns");
         s.search_changed();
         assert!(!s.online_answer(first, "lantern".into(), Ok(fake_hits())), "an older search's answer is dropped");
         let now = s.online.seq.load(Ordering::Relaxed);
         assert!(s.online_answer(now, "lanterns".into(), Ok(fake_hits())));
         assert_eq!(s.new_hits().len(), 4, "the one on the list is left out");
         // Back to the same query later: from memory, nothing asked.
-        s.query.replace_text("lantern");
+        s.find.replace_text("lantern");
         s.search_changed();
-        s.query.replace_text("lanterns");
+        s.find.replace_text("lanterns");
         s.search_changed();
         assert!(!s.online.pending && s.online.hits.len() == 5);
     }
 
     #[test]
     fn adding_a_result_moves_it_to_the_list() {
-        let mut s = State::fake();
-        s.query.replace_text("lantern");
+        let mut s = on_page();
+        s.find.replace_text("lantern");
         s.refresh();
         s.online.show("lantern", fake_hits());
         s.online.menu = Some(9103);
@@ -630,10 +710,36 @@ mod tests {
         assert!(s.rows.iter().any(|&i| s.entries[i].id == 9103), "it matches, so it shows among the list's matches");
     }
 
+    /// The list page's box only filters: no MyAnimeList search, one line to the search page,
+    /// which takes the query along; Escape comes back.
+    #[test]
+    fn the_list_box_filters_and_hands_over() {
+        let mut s = State::fake();
+        s.go(Page::List(Status::Completed));
+        s.query.replace_text("lantern");
+        s.search_changed();
+        assert!(!s.online.pending, "a filter never asks MyAnimeList");
+        let l = layout(&s);
+        assert_eq!((l[0], l[1], l[2]), (SRow::Find, SRow::ListHead, SRow::List(0)));
+        assert!(!l.contains(&SRow::Head));
+        let matches = s.rows.len();
+        s.search_for_query();
+        assert_eq!((s.page, s.find.text.as_str()), (Page::Search, "lantern"));
+        assert!(s.online.pending && s.find.focused);
+        assert_eq!(s.rows.len(), matches, "the list's matches show on the search page too");
+        s.close_search();
+        assert_eq!((s.page, s.query.text.as_str()), (Page::List(Status::Completed), "lantern"));
+        // Signed out: no search page.
+        let mut s = State::fake();
+        s.auth = crate::model::Auth::SignedOut;
+        s.open_search();
+        assert_ne!(s.page, Page::Search);
+    }
+
     #[test]
     fn the_layout_puts_the_list_first() {
-        let mut s = State::fake();
-        s.query.replace_text("lantern");
+        let mut s = on_page();
+        s.find.replace_text("lantern");
         s.refresh();
         s.online.show("lantern", fake_hits());
         let l = layout(&s);
@@ -641,7 +747,7 @@ mod tests {
         assert_eq!(l[1], SRow::List(0));
         let head = l.iter().position(|r| *r == SRow::Head).unwrap();
         assert_eq!(l[head + 1..], [SRow::Hit(0), SRow::Hit(1), SRow::Hit(2), SRow::Hit(3)]);
-        s.query.replace_text("zzzz");
+        s.find.replace_text("zzzz");
         s.refresh();
         s.online.show("zzzz", vec![]);
         assert_eq!(layout(&s), [SRow::ListHead, SRow::ListNone, SRow::Head, SRow::Note]);

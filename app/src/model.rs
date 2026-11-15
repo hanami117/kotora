@@ -29,6 +29,8 @@ pub enum Page {
     Settings,
     /// One anime's information (`details.rs`); `State::detail` says which.
     Details,
+    /// The search page (`search.rs`): the list and MyAnimeList (Ctrl K).
+    Search,
 }
 
 /// The chips above the list.
@@ -277,8 +279,12 @@ pub struct State {
     pub page: Page,
     pub filter: Filter,
     pub sort: Sort,
-    /// The search box.
+    /// The list page's search box: a quick filter of the list.
     pub query: TextEdit,
+    /// The search page's field: the list and MyAnimeList.
+    pub find: TextEdit,
+    /// The page the search page returns to (Escape).
+    pub search_back: Page,
     pub auth: Auth,
     /// The signed-in user name and service; `None` when signed out.
     pub account: Option<(String, &'static str)>,
@@ -347,6 +353,8 @@ impl State {
             filter: Filter::All,
             sort: Sort::Updated,
             query: TextEdit::new(""),
+            find: TextEdit::new(""),
+            search_back: Page::List(Status::Watching),
             auth: Auth::SignedIn,
             account: Some(("demo_user".into(), "MyAnimeList")),
             entries: fake_entries(),
@@ -414,21 +422,31 @@ impl State {
         matches!(self.auth, Auth::SignedIn | Auth::Expired)
     }
 
-    /// Whether the search box holds a query: the list page shows search results (every status,
-    /// then MyAnimeList) instead of one status.
+    /// What the page's search box holds: the search page's field, else the list's filter.
+    pub fn search_text(&self) -> &str {
+        if self.page == Page::Search { &self.find.text } else { &self.query.text }
+    }
+
+    /// Whether a search box holds a query: the list page shows the matches of the whole list
+    /// instead of one status, the search page its results.
     pub fn searching(&self) -> bool {
-        matches!(self.page, Page::List(_)) && !self.query.text.trim().is_empty()
+        matches!(self.page, Page::List(_) | Page::Search) && !self.search_text().trim().is_empty()
     }
 
     /// Rebuilds `rows`: the page's status, then the chip, the search and the sort. Call it after
     /// any change to the page, filter, query, sort or entries. A search looks at every status
     /// (the page's own first) and ignores the chip.
     pub fn refresh(&mut self) {
-        let Page::List(st) = self.page else {
-            self.rows.clear();
-            return;
+        // The search page has no status of its own: the sidebar's order.
+        let st = match self.page {
+            Page::List(st) => st,
+            Page::Search if self.searching() => Status::ALL[0],
+            _ => {
+                self.rows.clear();
+                return;
+            }
         };
-        let q = self.query.text.trim().to_lowercase();
+        let q = self.search_text().trim().to_lowercase();
         let mut rows: Vec<usize> = (0..self.entries.len())
             .filter(|&i| {
                 let e = &self.entries[i];

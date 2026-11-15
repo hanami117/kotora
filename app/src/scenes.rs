@@ -236,6 +236,13 @@ pub const SCENES: &[Scene] = &[
         search(s, "zzzz", false);
         s.online.show("zzzz", vec![]);
     }),
+    // The search page as the sidebar's Search or Ctrl K opens it: the field focused, a hint.
+    ("search-page", |s| s.open_search()),
+    // The list page's box filters the list; one line takes the query to the search page.
+    ("list-filter", |s| {
+        s.query.replace_text("lantern");
+        s.search_changed();
+    }),
     // A bare number may be a MyAnimeList id: the "Open" line on top (Enter opens it).
     ("search-mal-id", |s| {
         search(s, "41590", false);
@@ -350,8 +357,9 @@ fn search(s: &mut State, q: &str, answered: bool) {
     for e in s.entries.iter_mut().filter(|e| e.id < 12) {
         e.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", e.id));
     }
-    s.query.replace_text(q);
-    s.search_changed();
+    s.find.replace_text(q);
+    s.open_search();
+    s.find.focused = false;
     s.online.pending = false;
     if answered {
         let mut hits = crate::search::fake_hits();
@@ -599,7 +607,7 @@ mod tests {
     #[test]
     fn search_shows_the_list_then_myanimelist() {
         let rt = render("search-online", (1280.0, 800.0));
-        for key in ["page/search", "sr/list-head", "0", "sr/online-head", "hit/9101", "hit/9104", "add", "menu"] {
+        for key in ["page/search", "nav/search", "sr/list-head", "0", "sr/online-head", "hit/9101", "hit/9104", "add", "menu"] {
             assert!(rt.find(key).is_some(), "{key}");
         }
         assert!(rt.find("hit/0").is_none(), "an anime on the list shows once, above");

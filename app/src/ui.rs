@@ -41,8 +41,15 @@ pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     crate::now::tick(s, tx)
 }
 
-/// Ctrl F (Cmd F on macOS) jumps to the search box; Escape closes the inline editor.
-pub fn on_key(s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx) -> bool {
+/// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
+/// pages; on a list page Ctrl F jumps to its filter box. Escape closes the inline editor, a
+/// menu, the details page or the search page.
+pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    if k.is_command('k') || (k.is_command('f') && !matches!(s.page, Page::List(_))) {
+        tx.instant();
+        s.open_search();
+        return s.page == Page::Search;
+    }
     if k.is_command('f') && matches!(s.page, Page::List(_)) && s.has_list() {
         s.query.focused = true;
         return true;
@@ -57,6 +64,11 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx) -> bool {
     }
     if k.key == rune::Key::Escape && s.page == Page::Details {
         s.details_back();
+        return true;
+    }
+    if k.key == rune::Key::Escape && s.page == Page::Search {
+        tx.instant();
+        s.close_search();
         return true;
     }
     false
@@ -77,8 +89,12 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
     if let Some((name, service)) = &s.account {
         side = side.child(account(name, service));
     }
-    side = side.child(nav_heading("My list"));
     let lit = s.lit_page();
+    if s.has_list() {
+        let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
+        side = side.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
+    }
+    side = side.child(nav_heading("My list"));
     for st in Status::ALL {
         let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
         side = side.child(nav_item(
@@ -230,6 +246,8 @@ enum NavMark {
 enum NavEnd {
     Count(String),
     Badge(String),
+    /// A keyboard shortcut ("Ctrl K").
+    Kbd(&'static str),
 }
 
 fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool, page: Page) -> El {
@@ -254,7 +272,7 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             // A new page replaces the old one at once; rows don't swim.
             tx.instant();
-            s.go(page);
+            if page == Page::Search { s.open_search() } else { s.go(page) }
         })
         .child(mark)
         .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
@@ -267,8 +285,14 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         Some(NavEnd::Badge(n)) => item.child(
             el().min_w(18.0).h(18.0).px(5.0).radius(9.0).fill(PAL.accent).center().child(text(n).font(theme::BADGE).color(PAL.on_accent)),
         ),
+        Some(NavEnd::Kbd(k)) => item.child(kbd(k)),
         None => item,
     }
+}
+
+/// A shortcut hint: small text in an outlined box.
+pub(crate) fn kbd(label: &str) -> El {
+    el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(label.to_string()).font(TextStyle::new(10.0, 500.0)).color(PAL.faint))
 }
 
 // --------------------------------------------------------------------------------------- main
@@ -281,6 +305,8 @@ fn main(s: &State, wide: bool) -> El {
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
         Page::Details => crate::details::page(s, wide),
+        Page::Search if !s.has_list() => welcome(s),
+        Page::Search => search_view(s, wide),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).
@@ -333,7 +359,7 @@ fn search_box(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder("Search titles or a MAL id", PAL.faint)
+                .placeholder("Filter your list", PAL.faint)
                 .on_edit(|s: &mut State| &mut s.query)
                 .on_input_change(|s: &mut State, tx: &mut Tx| {
                     tx.instant();
@@ -347,9 +373,7 @@ fn search_box(s: &State) -> El {
                     tx.blur();
                 }),
         )
-        .child(
-            el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(kbd).font(TextStyle::new(10.0, 500.0)).color(PAL.faint)),
-        )
+        .child(self::kbd(kbd))
 }
 
 /// The sort control cycles through the orders on each press.
@@ -434,17 +458,23 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
     )
 }
 
-/// The list page while the search box holds a query: the list's matches (every status), then
-/// MyAnimeList's results (`search.rs`).
+/// The list page while its filter box holds a query: the list's matches (every status), then a
+/// line that takes the query to the search page (`search.rs`).
 fn search_page(s: &State, st: Status, wide: bool) -> El {
+    let page = col().key("page/filter").w_full().h_full().child(top(s, "Your list", Some(s.rows.len()), true));
+    results(s, page, format!("filter-scroll/{}", st.slug()), wide)
+}
+
+/// The search results under `page`: the id line, the list's matches and MyAnimeList's (or, on
+/// the list page, the line to the search page).
+fn results(s: &State, mut page: El, scroll_key: String, wide: bool) -> El {
     use crate::search::{SRow, layout};
-    let mut page = col().key("page/search").w_full().h_full().child(top(s, "Search", Some(s.rows.len()), true));
     if let Some(a) = status_alert(s) {
         page = page.child(a);
     }
     let n = layout(s).len();
     page.child(header(wide, s.sort)).child(
-        col().key(format!("search-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
+        col().key(scroll_key).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
             col().key("rows").growth(GrowthSpec::default()).virtual_rows(
                 n,
                 theme::ROW_H,
@@ -457,6 +487,82 @@ fn search_page(s: &State, st: Status, wide: bool) -> El {
             ),
         ),
     )
+}
+
+/// The search page (the sidebar's Search, Ctrl K): a wide field, then the list's matches and
+/// MyAnimeList's results, as the list page showed them before.
+fn search_view(s: &State, wide: bool) -> El {
+    let field = row()
+        .key("find")
+        .role("textbox")
+        .h(40.0)
+        .px(12.0)
+        .gap(10.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border_strong)
+        .child(icon(&icons::SEARCH, 18.0).color(PAL.faint))
+        .child(
+            text_input(&s.find, TextStyle::new(15.0, 400.0))
+                .key("find-input")
+                .grow(1.0)
+                .min_w(0.0)
+                .single_line()
+                .color(PAL.text)
+                .placeholder("Search your list and MyAnimeList, or paste a MyAnimeList link", PAL.faint)
+                .on_edit(|s: &mut State| &mut s.find)
+                // Escape goes back from the field too (the field would only let go of the focus).
+                .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+                    if k.key != rune::Key::Escape || s.online.menu.is_some() {
+                        return false;
+                    }
+                    tx.instant();
+                    tx.blur();
+                    s.close_search();
+                    true
+                })
+                .on_input_change(|s: &mut State, tx: &mut Tx| {
+                    tx.instant();
+                    s.search_changed();
+                })
+                .on_submit(|s: &mut State, tx: &mut Tx| {
+                    if s.search_submit() {
+                        tx.instant();
+                    }
+                    tx.blur();
+                }),
+        )
+        .child(kbd("Esc"));
+    let count = s.searching().then(|| s.rows.len() + s.new_hits().len());
+    let page = col()
+        .key("page/search")
+        .w_full()
+        .h_full()
+        .child(top(s, "Search", count, false))
+        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).child(field.grow(1.0).max_w(720.0)));
+    if !s.searching() {
+        return page.child(search_hint());
+    }
+    results(s, page, "search-scroll".into(), wide)
+}
+
+/// The empty search page: what it finds.
+fn search_hint() -> El {
+    let line = |t: &str| text(t.to_string()).font(theme::LABEL).color(PAL.dim).wrap();
+    col()
+        .key("search-hint")
+        .mx(theme::PAGE_PAD)
+        .max_w(720.0)
+        .gap(6.0)
+        .padding(16.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .child(text("Find any anime").font(theme::SECTION).color(PAL.text))
+        .child(line("Titles in English, Japanese or romaji search your list first, then MyAnimeList (3 letters or more)."))
+        .child(line("A MyAnimeList link or id (such as 41590) opens that anime's page, on your list or not."))
+        .child(text("Esc goes back. The box on a list page filters that list.").font(theme::LABEL).color(PAL.faint).wrap().mt(4.0))
 }
 
 fn chips(s: &State, st: Status) -> El {
