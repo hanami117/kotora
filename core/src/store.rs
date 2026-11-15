@@ -77,6 +77,20 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         r_updated_at INTEGER
      );
      CREATE INDEX pending_op_state ON pending_op (service, state);",
+    // 3: the recognition cache (stage 4, `recognize.rs`). `key`: the parsed title, normalised, and
+    // its season (`lanterns of kirigaoka#1`). `source`: `user` (picked in "Wrong anime"), `ignore`
+    // (not an anime), `search` (one MAL search; `media_id` 0 when it found nothing). `title`: the
+    // found anime's name, so a search hit not on the list needs no second call. List matches are
+    // not cached: they follow the list. Search rows older than 30 days are dropped.
+    "CREATE TABLE recognition (
+        service TEXT NOT NULL,
+        key TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        used_at INTEGER NOT NULL,
+        PRIMARY KEY (service, key)
+     );",
 ];
 
 #[derive(Debug)]
@@ -165,10 +179,39 @@ impl Store {
             "DELETE FROM media WHERE service = ?1",
             "DELETE FROM account WHERE service = ?1",
             "DELETE FROM kv WHERE key LIKE ?1 || ':%'",
+            "DELETE FROM recognition WHERE service = ?1",
         ] {
             tx.execute(sql, [service])?;
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------------ recognition
+
+    /// The cached answer for a parsed title: (media id, source, title).
+    pub fn recognition(&self, service: &str, key: &str) -> Result<Option<(u32, String, String)>> {
+        Ok(self
+            .conn
+            .query_row("SELECT media_id, source, title FROM recognition WHERE service = ?1 AND key = ?2", params![service, key], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()?)
+    }
+
+    /// Saves an answer (and drops search answers older than 30 days).
+    pub fn set_recognition(&self, service: &str, key: &str, media_id: u32, source: &str, title: &str, now: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO recognition (service, key, media_id, source, title, used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (service, key) DO UPDATE SET media_id = ?3, source = ?4, title = ?5, used_at = ?6",
+            params![service, key, media_id, source, title, now],
+        )?;
+        self.conn.execute("DELETE FROM recognition WHERE source = 'search' AND used_at < ?1", [now - 30 * 86_400])?;
+        Ok(())
+    }
+
+    pub fn forget_recognition(&self, service: &str, key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM recognition WHERE service = ?1 AND key = ?2", params![service, key])?;
         Ok(())
     }
 
@@ -281,7 +324,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub fn item(id: u32, title: &str, status: Status, progress: u32, updated_at: i64) -> ListItem {

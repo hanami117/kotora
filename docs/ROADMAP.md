@@ -18,6 +18,9 @@ v0.1 is MyAnimeList; AniList comes in v0.2.
 - **Stage 3, edits and sync queue:** built on branch `stage-3` (2026-11-15, on top of `stage-2`), waiting
   for review and the user's live write test. Every write path is tested against recorded-shape JSON
   and fake services only; nothing has written to the real MAL account.
+- **Stage 4, detection (completes v0.1):** built on branch `stage-4` (2026-11-15, on top of `stage-3`),
+  waiting for review and the user's live player tests on Arch and the Mac. Detectors are tested with
+  recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus (Docker).
 
 ## Stage 0: design
 
@@ -39,15 +42,20 @@ Kotora has no Electron, no bridge and no audio, so it must stay small. Measure i
 of every stage and write the numbers here. A stage that breaks a budget explains why or fixes it.
 The first numbers are targets; Stage 1 measures the real baseline and may adjust them once, with a reason.
 
-| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) | Stage 3 (2026-11-15) |
-|---|---|---|---|---|---|---|
-| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below) | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB | macOS arm64 23.5 MB (23,538,104 bytes; +0.2 MB: queue, editor, queue page). Linux arm64 (Docker) 27.6 MB (27,561,088 bytes; +0.2 MB). `kot` 0.5 MB |
-| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured |
-| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user |
-| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) |
-| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls |
-| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured |
-| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) |
+| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) | Stage 3 (2026-11-15) | Stage 4 (2026-11-15) |
+|---|---|---|---|---|---|---|---|
+| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below) | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB | macOS arm64 23.5 MB (23,538,104 bytes; +0.2 MB: queue, editor, queue page). Linux arm64 (Docker) 27.6 MB (27,561,088 bytes; +0.2 MB). `kot` 0.5 MB | macOS arm64 24.6 MB (24,563,488 bytes; +1.0 MB: anitomy-ng with `regex`, detectors, Now Playing). Linux arm64 (Docker) 29.2 MB (29,200,048 bytes; +1.6 MB): 0.8 MB under the 30 MB target, so v0.2 must watch it. `kot` 0.6 MB |
+| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured | not re-measured |
+| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user | live only; to be measured by the user |
+| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) | macOS `--hidden`, scratch config, detection on (one mpv socket watched): 13 MB footprint (peak 89 MB during start) |
+| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls | macOS `--hidden`, detection on, no player: 0.00 s CPU in 60 s, 0 idle wakeups. A fake mpv playing for 27 s: 0.00 s CPU (no position polling; one wake at the threshold). VLC's web interface (macOS, opt-in, off until its password is set) is the one poll: 60 s while VLC is not running, 30 s idle, 15 s playing |
+| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured | not re-measured |
+| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) | not re-measured |
+
+Stage 4 changes no target. New dependencies: `anitomy-ng` (MPL-2.0) with `regex`/`regex-automata`/
+`regex-syntax`/`aho-corasick` (MIT or Apache-2.0); zbus 5 in `detect` is the copy Rune's AT-SPI already
+builds (`cargo tree -d`: one zbus, 5.19.0), with its `blocking-api` feature added; `ureq` and `libc` were
+already in the build. `cargo bloat` on Linux: .text 19.7 MiB (18.5 before); zbus 1.3 MiB (1.0 before: the blocking API and Kotora's MPRIS and notification calls), `regex_syntax` 0.18 MiB, `kotora` and `kotora_core` 0.51 MiB together (0.34 before); `anitomy_ng`, `regex_automata` and `aho_corasick` are below the top 25.
 
 Stage 3 changes no target and adds no dependency: +0.2 MB on macOS and on Linux, where the binary is
 2.4 MB under the 30 MB target. `cargo bloat` on Linux: .text 18.5 MiB (18.3 before); `kotora` and
@@ -169,17 +177,65 @@ Open after Stage 3:
 
 ## Stage 4: detection (completes v0.1)
 
-- [ ] `detect`: MPRIS source (zbus, `xesam:url`, position; use the zbus major that Rune's AT-SPI
-  accessibility already pulls, today 5, so there is one copy; blocking API, no tokio) for VLC, mpv and mpc-qt; the mpv IPC source
-  (configured socket paths) on Linux and macOS (IINA included); the VLC HTTP interface source on macOS.
-- [ ] Verify mpc-qt's `xesam:url` (file URI?) on a real install, and VLC's `status.json` fields on macOS.
-- [ ] Recognition: parse, cache, match against the list, one MAL search, confidence.
-- [ ] Update decision (threshold), Now Playing banner, desktop notification, Update / Not now / Wrong
-  anime.
-- [ ] `kot now`, `kot confirm`, `kot dismiss`.
-- [ ] Settings page: account, MAL Client ID, detection sources with live status, threshold, and the
-  auto-update switch (off by default; scenes for both states).
-- [ ] Integration test with a fake MPRIS player on a private bus.
+Built 2026-11-15 on `stage-4`. Tested with recorded messages, a fake mpv on a temp socket, a fake MPRIS
+player on a private bus (`dbus-run-session` in the Linux Docker check) and fake services; the first
+real players are the user's live test (STATUS.md).
+
+- [x] `detect`: every source is a blocking thread that sleeps until something happens; nothing polls
+  except VLC's web interface on macOS (opt-in, slow).
+  - **mpv IPC** (Linux and macOS; IINA through "additional mpv options"): `observe_property` for path,
+    title, duration, pause, speed, idle; the position is read only after a seek, restart or pause.
+    While the socket is missing, inotify (Linux) or kqueue (macOS) waits on its folder. Paths:
+    `[players] mpv_sockets` in `config.toml`, else `$XDG_RUNTIME_DIR/mpv.sock` (Linux) or
+    `/tmp/mpv.sock` and `/tmp/iina.sock` (macOS; a path with "iina" in it is IINA).
+  - **MPRIS** (Linux): zbus 5 blocking API, the copy AT-SPI already builds (one zbus). Match rules for
+    `NameOwnerChanged` of `org.mpris.MediaPlayer2.*` and signals at `/org/mpris/MediaPlayer2`, then
+    `GetAll`. Only players with a `file://` `xesam:url` count (browsers and music players are skipped).
+  - **VLC web interface** (macOS): `/requests/status.json` on 127.0.0.1 with the password from
+    `[vlc] password`; one connection attempt a minute while VLC is not running, 30 s idle, 15 s playing.
+  - **Watch hub:** follows the player that started playing last, and works out the position from the
+    clock and the speed between reports. It wakes once, when the threshold is due. A file counts as
+    watched at the threshold (default 80 %) with real play time of a quarter of it, at most 2 minutes
+    (a jump to the end doesn't count), or when the player stops after half.
+  - Desktop notification: `org.freedesktop.Notifications` (Linux), `osascript` (macOS).
+- [ ] Verify mpc-qt's `xesam:url` (file URI?) on a real install, and VLC's `status.json` fields on macOS
+  (the user's live test; the parsers follow the documented shapes).
+- [x] Recognition (`core/src/recognize.rs`): `anitomy-ng` 1.0.10 parses the name (the folder's name when
+  the file has no title); a match on every list title with the season split off ("2nd Season",
+  "Season 2", "S2", "II") is sure, a close one (letter-pair similarity ≥ 75 %) or an episode past the
+  count is unsure. The user's pick and "not an anime" are cached (schema 3, `recognition`); with no match
+  on the list, one MAL search (`GET /anime?q=`, shared rate budget, signed in and online only), cached
+  30 days. A hit on the list is unsure; a hit elsewhere shows "not on your list" (adding is v0.4).
+  anitomy check: 240 made-up names (10 titles × 8 patterns × 3 episodes) all right; upstream anitomy's
+  own `test/data.json` (run by hand, not in the repo): 160 of 182 with upstream's title and episode.
+- [x] Update decision, Now Playing banner (on every page), desktop notification, Update / Not now /
+  Wrong anime… The banner asks once the file counts as watched; Update queues the progress like `+1`
+  (and Plan to watch becomes Watching). "Wrong anime…" opens a picker of the 8 closest list titles and
+  "Not an anime". Never an episode at or below the progress (unless rewatching) or past the count.
+  With "Update automatically" on, a sure match is queued at once and the banner offers Undo.
+- [x] `kot now`, `kot confirm`, `kot dismiss`.
+- [x] Settings: Updates card ("Update automatically", off by default; "Offer the update at" 70/80/90/100 %;
+  "Keep the higher progress in conflicts", on by default, now a real switch for the queue) and Players
+  card (a switch and a live status line per player, Linux or macOS set). Settings write single lines of
+  `config.toml` (comments kept, 0600). The Accounts card already had the account and Client ID state.
+- [x] Integration test with a fake MPRIS player on a private bus (`detect/tests/mpris_bus.rs`, run by the
+  Linux check's `test` step).
+- Scenes: `now-playing-page`, `-paused`, `-offer`, `-offer-page`, `-recorded`, `-unsure`,
+  `-unsure-offer`, `-picking`, `-not-on-list`, `-unknown`, `-empty`; `settings-auto-on`,
+  `settings-players-off`.
+
+Open after Stage 4:
+- **For the user to decide:** should `+1` (and recording) on the last episode set Completed? Today it
+  doesn't.
+- Recording an episode of a Plan to watch entry sets Watching (decided here, as MAL's site does; easy to
+  drop).
+- The notification has no buttons: Update is in the app or `kot confirm`. On macOS, `osascript` may show
+  it as "Script Editor" until there is an app bundle (v0.2).
+- VLC's web password and the mpv socket paths are set in `config.toml`, not in Settings; socket path
+  changes need a restart.
+- "Wrong anime…" lists the closest titles only, no search; the corrections UI is v0.2.
+- The page's position is worked out from the clock when the page is drawn; it doesn't move by itself
+  (no timer).
 
 ## Stage 5: release 0.1
 

@@ -41,6 +41,8 @@ pub struct Worker {
     slot: Mutex<Option<Sender<Cmd>>>,
     /// The sign-in is gone: keep the queue, send nothing until the user signs in again.
     pub hold: AtomicBool,
+    /// Settings → Updates: "Keep the higher progress in conflicts" is OFF (it is on by default).
+    pub ask_on_higher: AtomicBool,
 }
 
 /// Hands `cmd` to the worker, starting it if it isn't running.
@@ -152,7 +154,7 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             svc = service(w);
         }
         let wait = match svc.as_mut() {
-            Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step(&mut store, service, now_unix()) {
+            Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(&mut store, service, now_unix(), !w.ask_on_higher.load(Ordering::Relaxed)) {
                 Ok(Step::Handled { media_id, outcome }) => {
                     let offline = match outcome {
                         Outcome::Retry(_) => Some(true),

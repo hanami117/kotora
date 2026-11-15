@@ -8,6 +8,9 @@
 //! kot set TITLE EP [--status S] [--score N|none]
 //! kot queue      changes waiting to sync
 //! kot sync       send the queue now, then read the list again
+//! kot now        what plays, and the episode Kotora offers to record
+//! kot confirm    record the offered episode (the banner's Update)
+//! kot dismiss    not now
 //! kot show       shows the window
 //! kot quit       quits the app
 //! kot --version
@@ -19,7 +22,7 @@
 use std::io;
 use std::process::ExitCode;
 
-use kotora_ctl::{Client, Entry, QueueItem, Reply, Request, Status};
+use kotora_ctl::{Client, Entry, NowInfo, QueueItem, Reply, Request, Status};
 
 const HELP: &str = "\
 kot: talk to a running Kotora
@@ -35,6 +38,9 @@ Commands:
       [--status STATUS] [--score N|none]
   queue                 changes waiting to sync
   sync                  send the queue now, then read the list again
+  now                   what plays, and the episode Kotora offers
+  confirm               record the offered episode
+  dismiss               not now: hide the offer for this file
   show                  show the window
   quit                  quit Kotora
   help                  this text
@@ -55,6 +61,9 @@ fn main() -> ExitCode {
         ["quit"] => Request::Quit,
         ["queue"] => Request::Queue,
         ["sync"] => Request::Sync,
+        ["now"] => Request::Now,
+        ["confirm"] => Request::Confirm,
+        ["dismiss"] => Request::Dismiss,
         ["list"] => Request::List { status: Some("watching".into()) },
         ["list", "all"] => Request::List { status: None },
         ["list", st] => Request::List { status: Some((*st).to_string()) },
@@ -98,6 +107,10 @@ fn main() -> ExitCode {
         }
         Ok(Reply::Queue { ops }) => {
             print!("{}", queue_text(&ops));
+            ExitCode::SUCCESS
+        }
+        Ok(Reply::Now { now }) => {
+            print!("{}", now_text(now.as_ref()));
             ExitCode::SUCCESS
         }
         Ok(Reply::Error { message }) if message.starts_with("bad request") => {
@@ -239,6 +252,22 @@ fn queue_text(ops: &[QueueItem]) -> String {
     out
 }
 
+fn now_text(now: Option<&NowInfo>) -> String {
+    let Some(n) = now else { return "Nothing is playing.\n".into() };
+    let state = if n.playing { "Playing" } else { "Paused" };
+    let pct = n.percent.map(|p| format!(", {p}%")).unwrap_or_default();
+    let ep = n.episode.map(|e| format!(" episode {e}")).unwrap_or_default();
+    let mut out = format!("{state} in {} ({}{pct}): {}{ep}\n  {}\n  {}\n", n.player, n.via, n.title, n.file, n.matched);
+    out.push_str(&match (n.recorded, n.offer) {
+        (Some(ep), _) => format!("  Recorded episode {ep}.\n"),
+        (None, Some(ep)) if n.dismissed => format!("  Episode {ep} offered; you said not now (kot confirm records it).\n"),
+        (None, Some(ep)) if n.reached => format!("  Update to episode {ep}? kot confirm\n"),
+        (None, Some(ep)) => format!("  Episode {ep} is offered once it counts as watched (kot confirm records it now).\n"),
+        (None, None) => "  Nothing to record.\n".into(),
+    });
+    out
+}
+
 fn sync_text(st: &Status) -> String {
     if st.offline {
         return "Offline: the queue is kept and goes out when MyAnimeList can be reached.".into();
@@ -307,5 +336,29 @@ mod tests {
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\ndemo_user on MyAnimeList · 303 entries · 4 changes waiting\n");
         let st = Status { version: "0.1.0 (build 1)".into(), entries: 1, offline: true, ..Default::default() };
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\nnot signed in · 1 entry · synced · offline · hidden\n");
+    }
+
+    #[test]
+    fn now_reads_plainly() {
+        assert_eq!(now_text(None), "Nothing is playing.\n");
+        let n = NowInfo {
+            player: "mpv".into(),
+            via: "IPC socket".into(),
+            file: "[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv".into(),
+            playing: true,
+            percent: Some(82),
+            title: "Lanterns of Kirigaoka".into(),
+            episode: Some(6),
+            matched: "In your list (Watching), sure".into(),
+            offer: Some(6),
+            reached: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            now_text(Some(&n)),
+            "Playing in mpv (IPC socket, 82%): Lanterns of Kirigaoka episode 6\n  [Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv\n  In your list (Watching), sure\n  Update to episode 6? kot confirm\n"
+        );
+        assert!(now_text(Some(&NowInfo { recorded: Some(6), ..n.clone() })).ends_with("Recorded episode 6.\n"));
+        assert!(now_text(Some(&NowInfo { offer: None, ..n })).ends_with("Nothing to record.\n"));
     }
 }

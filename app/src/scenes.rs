@@ -4,6 +4,7 @@
 use kotora_core::Status;
 
 use kotora_core::queue::OpState;
+use kotora_core::recognize::Found;
 
 use crate::model::{Auth, Filter, Page, Sort, State};
 
@@ -89,7 +90,58 @@ pub const SCENES: &[Scene] = &[
         }
         s.toggle_editor(6);
     }),
+    // Now Playing: episode 6 of Lanterns of Kirigaoka in mpv, 68 % in, a sure match (no banner yet).
     ("now-playing-page", |s| s.go(Page::NowPlaying)),
+    ("now-playing-paused", |s| {
+        if let Some(n) = &mut s.now {
+            n.playing = false;
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // It passed the threshold: the banner asks on top of every page.
+    ("now-playing-offer", reached),
+    ("now-playing-offer-page", |s| {
+        reached(s);
+        s.go(Page::NowPlaying);
+    }),
+    // "Update automatically" on: recorded at once, Undo in the banner.
+    ("now-playing-recorded", |s| {
+        s.prefs.auto = true;
+        reached(s);
+    }),
+    // A close title, not the same: "Not sure", and the banner says so.
+    ("now-playing-unsure", |s| {
+        unsure(s);
+        s.go(Page::NowPlaying);
+    }),
+    ("now-playing-unsure-offer", |s| {
+        unsure(s);
+        reached(s);
+    }),
+    // "Wrong anime…": the closest titles on the list.
+    ("now-playing-picking", |s| s.wrong_anime()),
+    // One MyAnimeList search found it, but it isn't on the list.
+    ("now-playing-not-on-list", |s| {
+        playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
+        if let Some(n) = &mut s.now {
+            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // Nothing on the list, nothing found.
+    ("now-playing-unknown", |s| {
+        playing_file(s, "holiday_2026_beach.mp4");
+        if let Some(n) = &mut s.now {
+            n.found = Found::Nothing;
+            n.candidates.clear();
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // No player plays anything.
+    ("now-playing-empty", |s| {
+        s.now = None;
+        s.go(Page::NowPlaying);
+    }),
     // The queue as in the mockup: a conflict, two waiting, one failed, two sent today.
     ("queue-page", |s| s.go(Page::Queue)),
     ("queue-empty", |s| {
@@ -129,11 +181,59 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::Queue);
     }),
     ("settings-page", |s| s.go(Page::Settings)),
+    // "Update automatically" on, threshold 90 %, keep-higher off.
+    ("settings-auto-on", |s| {
+        s.prefs.auto = true;
+        s.prefs.threshold = 90;
+        s.prefs.keep_higher = false;
+        s.go(Page::Settings);
+    }),
+    // Two players switched off, one with a problem.
+    ("settings-players-off", |s| {
+        s.prefs.players.vlc = false;
+        s.prefs.players.iina = false;
+        s.prefs.players.other_mpris = false;
+        s.players = vec![kotora_detect::SourceStatus {
+            switch: kotora_detect::Switch::Mpv,
+            via: kotora_detect::Via::MpvIpc,
+            line: "folder of /run/user/1000/mpv.sock not found".into(),
+            led: kotora_detect::Led::Problem,
+        }];
+        s.now = None;
+        s.go(Page::Settings);
+    }),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
         s.go(Page::Settings);
     }),
 ];
+
+/// The fake episode passed the threshold.
+fn reached(s: &mut State) {
+    let (key, file) = match &mut s.now {
+        Some(n) => {
+            n.position = Some(1166.0);
+            (n.key.clone(), n.file.clone())
+        }
+        None => return,
+    };
+    s.now_reached(&key, &file);
+}
+
+fn unsure(s: &mut State) {
+    playing_file(s, "Lantern of Kirigaoka - 06.mkv");
+    if let Some(n) = &mut s.now {
+        n.found = Found::List { media_id: 0, sure: false, why: "close to a title in your list (95%)".into() };
+    }
+}
+
+/// The fake player shows another file.
+fn playing_file(s: &mut State, file: &str) {
+    if let Some(n) = &mut s.now {
+        n.file = file.into();
+        n.parsed = kotora_core::recognize::parse(file);
+    }
+}
 
 fn fake_covers(s: &mut State) {
     s.covers.fake();
@@ -263,6 +363,46 @@ mod tests {
         let rt = render("queue-sign-in-again", (1280.0, 800.0));
         assert!(rt.find("queue/expired").is_some() && rt.find("queue/sign-in").is_some() && rt.find("conflict/1").is_some());
         assert!(render("queue-conflict-removed", (1280.0, 800.0)).find("conflict/1/take").is_some());
+    }
+
+    #[test]
+    fn now_playing_shows_its_parts() {
+        let rt = render("now-playing-page", (1280.0, 800.0));
+        for key in ["page/now", "np-card", "np-bar", "np-file", "np-match", "np/update", "np/wrong", "np-players", "player/mpv", "np-mini"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(rt.find("banner").is_none(), "no banner before the threshold");
+        for name in ["now-playing-offer", "now-playing-offer-page", "now-playing-unsure-offer"] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in ["banner", "banner/update", "banner/not-now", "banner/wrong"] {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+        }
+        // The banner fits a narrow window too.
+        assert!(render("now-playing-offer", (960.0, 600.0)).find("banner/update").is_some());
+        let rt = render("now-playing-recorded", (1280.0, 800.0));
+        assert!(rt.find("banner/undo").is_some() && rt.find("banner/update").is_none());
+        assert!(render("now-playing-unsure", (1280.0, 800.0)).find("np/yes").is_some());
+        let rt = render("now-playing-picking", (1280.0, 800.0));
+        assert!(rt.find("np-picker").is_some() && rt.find("pick/0").is_some() && rt.find("pick/none").is_some());
+        assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-not-on-list").is_some());
+        let rt = render("now-playing-unknown", (1280.0, 800.0));
+        assert!(rt.find("np/update").is_none() && rt.find("np-card").is_some());
+        let rt = render("now-playing-empty", (1280.0, 800.0));
+        assert!(rt.find("np-empty").is_some() && rt.find("np-mini").is_none() && rt.find("np-players").is_some());
+    }
+
+    #[test]
+    fn settings_has_updates_and_players() {
+        for size in [(1360.0, 860.0), (960.0, 600.0)] {
+            let rt = render("settings-page", size);
+            for key in ["updates-card", "set/auto", "set/threshold", "set/keep-higher", "set/asks-on", "players-card", "set/switch/mpv"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+        }
+        let rt = render("settings-auto-on", (1360.0, 860.0));
+        assert!(rt.find("set/asks-off").is_some());
+        assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
     }
 
     /// The type column hides below 1100 pt.

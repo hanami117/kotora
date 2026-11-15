@@ -1,6 +1,6 @@
 # Kotora: project status
 
-Last updated: 2026-11-15 (stage 3). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
+Last updated: 2026-11-15 (stage 4). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
 and `docs/ROADMAP.md` before starting work on a new machine.
 
 ## Where things are
@@ -30,7 +30,18 @@ and `docs/ROADMAP.md` before starting work on a new machine.
   - `app`: inline editor, `+1`, waiting tags, the Sync queue page, the worker thread (only while there is work)
   - `kot list | +1 | set | queue | sync`
   - tested against recorded-shape JSON and fake services; **nothing has written to the real MAL yet**
-- Decided: anitomy = an existing Rust port (MPL-2.0), added and measured with recognition in Stage 4 (ROADMAP, Stage 1).
+- `stage-4` (on top of `stage-3`, not merged, not pushed): detection; completes v0.1.
+  - `detect`: mpv IPC (folder watch while the socket is missing), MPRIS (Linux, zbus 5 blocking, the
+    copy AT-SPI builds), VLC's web interface (macOS, opt-in), the watch hub (threshold from the clock,
+    no poll), desktop notifications
+  - `core`: `recognize.rs` (anitomy-ng, list match, seasons, cache in schema 3, one MAL search),
+    `config.toml` `[updates]`, `[players]`, `[vlc]` and a line writer, "keep the higher progress" setting
+  - `app`: Now Playing page and banner, Update / Not now / Wrong anime…, auto-update with Undo,
+    Settings Updates and Players cards
+  - `kot now | confirm | dismiss`
+  - tested with recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus
+- Decided: anitomy = `anitomy-ng` 1.0.10 (MPL-2.0), added in Stage 4: +1.0 MB on macOS, +1.6 MB on Linux
+  with its `regex` (ROADMAP budgets).
 - Still open: the 15-minute refresh, the build-time Client ID default (see docs/ROADMAP.md, Stage 2).
 
 ## Git rules (the repository will be public)
@@ -74,7 +85,8 @@ Uzumaki's `assets/icons` pipeline (`rsvg-convert`).
 
 ## Open questions
 
-- VLC on macOS: detect it through its local HTTP interface (user enables it)?
+- `+1` (and recording a detected episode) on the last episode: set Completed automatically? (the user)
+- VLC on macOS: built through its web interface (opt-in, password in `config.toml`); to verify live.
 - README still lists AniList, MyAnimeList and Kitsu; update it to MAL first.
 
 ## MyAnimeList app registration (2026-11-15)
@@ -150,9 +162,59 @@ Build from the `stage-3` checkout: `cargo build --release -p kotora -p kotora-ct
 The first real call also confirms the two guesses of this stage: `GET /anime/{id}?fields=my_list_status`
 returns the list status, and `PATCH` answers with the saved entry and its new `updated_at`.
 
+## Incident during stage 4 (2026-11-15, the agent)
+
+While measuring, four short test copies of the app were started with scratch settings that zsh did not
+apply (`env $E` is one word in zsh). They ran with the real paths on the Mac:
+- one read of the MAL list with the real token at 19:55 (no write: the queue was empty; `tokens.json`
+  unchanged);
+- **the real database was migrated to schema 3** (a new, empty `recognition` table). A `stage-3`
+  build now refuses it ("the database is from a newer Kotora"). Either test with the `stage-4` build, or
+  go back with
+  `sqlite3 ~/.local/share/kotora/kotora.db "DROP TABLE recognition; PRAGMA user_version = 2;"`
+  (with Kotora closed). The agent did not touch the database again.
+- No player socket existed, so no player was contacted. The agent now checks the scratch socket exists
+  before any measurement.
+
+## Live test of stage 4 (the user)
+
+Build from the `stage-4` checkout: `cargo build --release -p kotora -p kotora-ctl`, start
+`target/release/kotora`. Use a file named like a show on your Watching list, one episode past your
+progress (e.g. `Show Title - 06.mkv` when you are at 5). **Update writes to MAL** like `+1`: use an
+entry you don't mind changing back.
+
+**Arch:**
+1. VLC: play the file. Settings → Players says "VLC · MPRIS · playing"; the sidebar card shows it.
+   Now Playing shows the parsed title, episode, match and your progress.
+2. Skip to about 70 % and let it play past 80 % (2 minutes of real play are needed): the banner and a
+   notification ask "Update … to episode N?". Press **Not now**: nothing changes. Play another file and
+   press **Update**: the row says "Waiting to sync", then MAL has it. Set it back.
+3. mpc-qt: the same. Tell the agent what Settings shows: this confirms that mpc-qt gives a `file://` URL.
+4. mpv: either with mpv-mpris, or with `input-ipc-server=$XDG_RUNTIME_DIR/mpv.sock` in your own mpv.conf
+   (your choice; Kotora never edits it). Start mpv after Kotora too: it must be found without a restart.
+5. `kot now`, `kot dismiss`, `kot confirm` while a file plays.
+6. Wrong anime…: pick another title; play the file again: it remembers. "Not an anime": no more offers.
+7. CPU with a player open and playing: `pidstat -p $(pgrep -x kotora) 5 12` should stay near 0.
+
+**Mac:**
+1. mpv with `input-ipc-server=/tmp/mpv.sock`, and IINA with `input-ipc-server=/tmp/iina.sock` in
+   Settings → Advanced → additional mpv options: same checks as above (banner, notification, Update).
+   The notification may come from "Script Editor".
+2. VLC: turn on the web interface (Preferences → Show All → Interface → Main interfaces: Web; Lua: a
+   password), put `[vlc] password = "…"` in `~/.config/kotora/config.toml`, restart Kotora. Settings
+   says "web interface · playing" while VLC plays. Tell the agent whether the file name shows: this
+   checks VLC's `status.json` fields on macOS.
+3. Settings: switch "Update automatically" on, play an episode past 80 %: it is recorded with Undo in
+   the banner. Press Undo, check MAL. Switch it off again.
+4. CPU: `top -pid $(pgrep -x kotora)` with VLC set up shows a wake every 15 s while it plays (the one
+   poll); with only mpv/IINA, 0.
+5. Memory with the window open: `footprint $(pgrep -x kotora)`.
+
 ## Next steps
 
 1. The user reviews `stage-1`, `stage-2` and `stage-3`, builds them on Arch and the Mac, runs the live tests
    above (stage 3 writes need the user's OK) and measures the live budgets (window memory, first frame).
 2. Decide on the 15-minute refresh, and the open points of Stage 3 (docs/ROADMAP.md).
-3. Stage 4: detection, recognition (anitomy), the Now Playing banner, Settings Updates and Players.
+3. Stage 4 review and the live player tests above; then the open points of Stage 4 (docs/ROADMAP.md),
+   among them whether the last episode sets Completed.
+4. Stage 5: release 0.1.

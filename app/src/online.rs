@@ -73,7 +73,7 @@ pub fn refresh(s: &mut State) {
 
 fn sync_now(h: &Handle, mut store: Store) {
     let id = match Config::load(&paths::config_file()) {
-        Ok(Config { mal_client_id: Some(id) }) => id,
+        Ok(Config { mal_client_id: Some(id), .. }) => id,
         Ok(_) => return send(h, Msg::SyncFailed(Fail::Other("No MyAnimeList Client ID in config.toml.".into()))),
         Err(e) => return send(h, Msg::SyncFailed(Fail::Other(e))),
     };

@@ -1,4 +1,5 @@
-//! The view: sidebar, list page with the inline editor, sync queue and Settings, as in
+//! The view: sidebar, list page with the inline editor, Now Playing (page and banner), sync queue
+//! and Settings, as in
 //! `mockup/kotora.html` (design-spec §4).
 
 use std::f32::consts::PI;
@@ -10,6 +11,9 @@ use crate::icons;
 use kotora_core::queue::{Op, OpState};
 
 use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State, remote_text};
+use crate::now::{Now, THRESHOLDS, clock_text};
+use kotora_core::recognize::Found;
+use kotora_detect::{Led, Switch};
 use crate::online;
 use crate::queue::Cmd;
 use crate::theme::{self, PAL};
@@ -90,6 +94,18 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, s.page == Page::Settings, Page::Settings))
         .child(spacer());
     if let Some(now) = &s.now {
+        let (id, title) = now_title(s, now);
+        let mut bits = Vec::new();
+        if let Some(ep) = now.episode() {
+            bits.push(format!("Ep {ep}"));
+        }
+        bits.push(now.player.clone());
+        if let Some(f) = now.fraction() {
+            bits.push(format!("{:.0}%", f * 100.0));
+        }
+        if !now.playing {
+            bits.push("paused".into());
+        }
         side = side.child(
             row()
                 .key("np-mini")
@@ -99,14 +115,16 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
                 .radius(theme::R_MD)
                 .fill(PAL.surface)
                 .border(1.0, PAL.border)
-                .child(cover(now.id, &now.title, 26.0, 38.0, 9.0))
+                .hover(PAL.hover())
+                .on_press(|s: &mut State| s.go(Page::NowPlaying))
+                .child(cover(id, &title, 26.0, 38.0, 9.0))
                 .child(
                     col()
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(2.0)
-                        .child(text(now.title.clone()).font(rune::TextStyle::new(12.0, 500.0)).color(PAL.text).truncate())
-                        .child(text(now.line.clone()).font(theme::SMALL).color(PAL.faint).truncate()),
+                        .child(text(title).font(rune::TextStyle::new(12.0, 500.0)).color(PAL.text).truncate())
+                        .child(text(bits.join(" \u{b7} ")).font(theme::SMALL).color(PAL.faint).truncate()),
                 ),
         );
     }
@@ -249,20 +267,16 @@ fn main(s: &State, wide: bool) -> El {
     let page = match s.page {
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide),
-        Page::NowPlaying => placeholder(s, "Now Playing", "Nothing is playing."),
+        Page::NowPlaying => now_page(s, wide),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
     };
-    col().key("main").grow(1.0).min_w(0.0).h_full().child(page)
-}
-
-fn placeholder(s: &State, title: &str, line: &str) -> El {
-    col()
-        .key(format!("page/{title}"))
-        .w_full()
-        .h_full()
-        .child(top(s, title, None, false))
-        .child(text(line.to_string()).font(theme::BODY).color(PAL.faint).px(theme::PAGE_PAD))
+    let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
+    // The Now Playing banner sits on top of every page (design-spec §4).
+    if s.banner() {
+        m = m.child(banner(s));
+    }
+    m.child(col().grow(1.0).min_h(0.0).w_full().child(page))
 }
 
 /// The page's top bar: title, count, and (on the list) search and sort.
@@ -1150,13 +1164,17 @@ fn welcome(s: &State) -> El {
     c
 }
 
-/// Settings (design-spec §4): Accounts and About for now; Updates and Players come with detection
-/// (stage 4). Two columns when wide, one below `theme::NARROW_W`.
+/// Settings (design-spec §4): Accounts, Updates, Players and About. Two columns when wide, one
+/// below `theme::NARROW_W`.
 fn settings(s: &State, wide: bool) -> El {
     let cards = if wide {
-        row().gap(16.0).w_full().child(accounts_card(s).grow(1.0).min_w(0.0)).child(about_card(s).grow(1.0).min_w(0.0))
+        col()
+            .gap(16.0)
+            .w_full()
+            .child(row().gap(16.0).w_full().items_start().child(accounts_card(s).grow(1.0).min_w(0.0)).child(updates_card(s).grow(1.0).min_w(0.0)))
+            .child(row().gap(16.0).w_full().items_start().child(players_card(s).grow(1.0).min_w(0.0)).child(about_card(s).grow(1.0).min_w(0.0)))
     } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(about_card(s))
+        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(players_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
@@ -1280,7 +1298,12 @@ fn about_card(s: &State) -> El {
                             .color(PAL.dim)
                             .wrap(),
                     )
-                    .child(text("GPL-3.0-or-later. Not affiliated with MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap())
+                    .child(
+                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng). Not affiliated with MyAnimeList.")
+                            .font(theme::LABEL)
+                            .color(PAL.faint)
+                            .wrap(),
+                    )
                     .child(
                         row()
                             .gap(14.0)
@@ -1294,6 +1317,531 @@ fn about_card(s: &State) -> El {
 /// The `sm` button (26 high) of the settings rows.
 fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
     button(key, label, primary, on).h(26.0).px(10.0)
+}
+
+// ------------------------------------------------------------------------------ now playing
+
+/// The id (for the tile) and the title to show for what plays: the list entry, the search hit,
+/// the parsed title, or the file name.
+fn now_title(s: &State, n: &Now) -> (u32, String) {
+    if let Some(id) = n.media_id()
+        && let Some(e) = s.entries.iter().find(|e| e.id == id)
+    {
+        return (id, e.title.clone());
+    }
+    match &n.found {
+        Found::NotOnList { media_id, title } => (*media_id, title.clone()),
+        _ => {
+            let t = n.parsed.as_ref().map(|p| p.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| n.file.clone());
+            (t.bytes().map(u32::from).sum(), t)
+        }
+    }
+}
+
+/// A cover for the matched entry: the real one when loaded, else the tile.
+fn now_cover(s: &State, n: &Now, w: f32, h: f32, size: f32) -> El {
+    let (id, title) = now_title(s, n);
+    let tile = cover(id, &title, w, h, size).radius(if w > 60.0 { theme::R_LG } else { theme::R_XS });
+    let url = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id)).and_then(|e| e.cover_url.as_deref());
+    match s.covers.get(id, url, w, h) {
+        Some(img) if url.is_some() => tile.child(el().absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
+        _ => tile,
+    }
+}
+
+/// Mixes `a` toward `b` by `t` (linear colours).
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    Color { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t, a: 1.0 }
+}
+
+/// A ghost button (no fill, dim text): "Wrong anime…".
+fn ghost(key: &str, label: &str, f: impl Fn(&mut State) + 'static) -> El {
+    el().key(key.to_string())
+        .role("button")
+        .label(label.to_string())
+        .focusable(true)
+        .h(32.0)
+        .px(10.0)
+        .radius(theme::R_SM)
+        .center()
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            f(s);
+        })
+        .child(text(label.to_string()).font(theme::LABEL_BTN).color(PAL.dim))
+}
+
+/// The banner on top of every page: the offer (Update / Not now / Wrong anime…), or an episode
+/// recorded from here (Undo).
+fn banner(s: &State) -> El {
+    let Some(n) = &s.now else { return el() };
+    let (_, title) = now_title(s, n);
+    let pct = n.fraction().map(|f| format!("{:.0}% watched", f * 100.0));
+    let mut b = row()
+        .key("banner")
+        .mx(theme::PAGE_PAD)
+        .mt(14.0)
+        .px(14.0)
+        .py(12.0)
+        .gap(14.0)
+        .center_y()
+        .radius(theme::R_LG)
+        .linear_gradient(PI / 2.0, [(0.0, mix(PAL.bg, PAL.accent, 0.18)), (0.6, mix(PAL.bg, PAL.accent, 0.06)), (1.0, mix(PAL.bg, PAL.accent, 0.03))])
+        .border(1.0, PAL.accent.alpha(0.35))
+        .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
+        .child(now_cover(s, n, 36.0, 52.0, 12.0));
+    let line = |lead: &str, bold: String, tail: String| {
+        row()
+            .min_w(0.0)
+            .child(text(lead.to_string()).font(theme::BODY).color(PAL.text))
+            .child(text(bold).font(TextStyle::new(13.0, 600.0)).color(PAL.text).truncate().min_w(0.0))
+            .child(text(tail).font(theme::BODY).color(PAL.text))
+    };
+    if let Some(r) = n.recorded {
+        let how = if r.auto { "Updated automatically" } else { "Updated" };
+        let waiting = s.entries.iter().find(|e| e.id == r.id).and_then(|e| e.waiting).unwrap_or("Sent to MyAnimeList");
+        b = b
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(line("Recorded ", title, format!(" episode {}", r.episode)))
+                    .child(text(format!("{how} \u{b7} {waiting}")).font(theme::LABEL).color(PAL.dim)),
+            )
+            .child(button("banner/undo", "Undo", false, Some(State::undo_record)))
+            .child(ghost("banner/close", "Close", |s| {
+                s.dismiss_now();
+            }));
+        return b;
+    }
+    let ep = s.offer().map_or(0, |(_, ep)| ep);
+    let total = s.offer().and_then(|(i, _)| s.entries[i].episodes).map_or("?".to_string(), |n| n.to_string());
+    let matched = if n.sure() { "Matched in your list" } else { "Not sure it's this one" };
+    let small = [pct.as_deref(), Some(matched)].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+    b.child(
+        col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(3.0)
+            .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
+            .child(text(small).font(theme::LABEL).color(PAL.dim)),
+    )
+    .child(text(format!("Update to {ep} / {total}?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
+    .child(button("banner/update", "Update", true, Some(|s: &mut State| {
+        let _ = s.record(false);
+    })))
+    .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
+        s.dismiss_now();
+    })))
+    .child(ghost("banner/wrong", "Wrong anime\u{2026}", State::wrong_anime))
+}
+
+fn led_color(led: Led) -> Color {
+    match led {
+        Led::Playing => PAL.ok(),
+        Led::Idle => PAL.warn(),
+        Led::Problem => PAL.status(Status::Dropped),
+        Led::Off => PAL.faint,
+    }
+}
+
+/// One player's line: dot, name, state.
+fn player_line(s: &State, sw: Switch) -> El {
+    let (line, led) = s.player_line(sw);
+    let on = s.prefs.players.get(sw.config_key());
+    row()
+        .key(format!("player/{}", sw.config_key()))
+        .gap(8.0)
+        .py(6.0)
+        .center_y()
+        .child(el().size(7.0, 7.0).radius(3.5).fill(if on { led_color(led) } else { PAL.faint }))
+        .child(text(sw.label().to_string()).font(theme::BODY_MED).color(PAL.text))
+        .child(text(if on { line } else { "switched off in Settings".into() }).font(theme::LABEL).color(PAL.dim).truncate().grow(1.0).min_w(0.0))
+}
+
+fn players_status_card(s: &State) -> El {
+    let platform = if cfg!(target_os = "macos") { "macOS" } else { "Linux" };
+    let mut c = card("np-players", "Players").child(text(platform.to_string()).font(theme::CAPTION).color(PAL.faint).pb(4.0));
+    for sw in Switch::here() {
+        c = c.child(player_line(s, *sw));
+    }
+    c
+}
+
+/// A label and a value in the Now Playing card.
+fn kv(label: &str, value: El) -> El {
+    row().gap(12.0).py(3.0).items_start().child(text(label.to_string()).font(theme::LABEL).color(PAL.faint).w(110.0)).child(value.grow(1.0).min_w(0.0))
+}
+
+fn match_text(s: &State, n: &Now) -> (String, Color) {
+    match &n.found {
+        Found::List { media_id, sure, why } => {
+            let st = s.entries.iter().find(|e| e.id == *media_id).map_or("", |e| e.status.label());
+            if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
+        }
+        Found::NotOnList { title, .. } => (format!("Not on your list: {title} (found on MyAnimeList)"), PAL.dim),
+        Found::Ignored => ("You marked this file as not an anime".into(), PAL.faint),
+        Found::Nothing if n.recognizing => ("Looking\u{2026}".into(), PAL.faint),
+        Found::Nothing => ("Not found on your list".into(), PAL.faint),
+    }
+}
+
+fn now_card(s: &State, n: &Now) -> El {
+    let (_, title) = now_title(s, n);
+    let entry = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let verb = if n.playing { "Playing" } else { "Paused" };
+    let mut sub = Vec::new();
+    match (n.episode(), entry.and_then(|e| e.episodes)) {
+        (Some(ep), Some(total)) => sub.push(format!("Episode {ep} of {total}")),
+        (Some(ep), None) => sub.push(format!("Episode {ep}")),
+        _ => {}
+    }
+    if let Some(e) = entry
+        && !e.kind.is_empty()
+    {
+        sub.push(e.kind.to_string());
+    }
+    let threshold = s.prefs.threshold;
+    let times = match (n.position_now(), n.duration) {
+        (Some(p), Some(d)) => format!("{} / {}", clock_text(p), clock_text(d)),
+        (Some(p), None) => clock_text(p),
+        _ => String::new(),
+    };
+    let frac = n.fraction().unwrap_or(0.0);
+    // The bar, then the threshold's tick in cream just under it.
+    let t = f32::from(threshold) / 100.0;
+    let bar = col()
+        .key("np-bar")
+        .w_full()
+        .gap(2.0)
+        .child(
+            row()
+                .w_full()
+                .h(6.0)
+                .clip_rounded(3.0)
+                .fill(PAL.border)
+                .child(el().grow(frac).h_full().radius(3.0).fill(PAL.accent))
+                .child(el().grow(1.0 - frac)),
+        )
+        .child(row().w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
+    let mut info = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .child(text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase()).font(theme::CAPTION).color(PAL.faint))
+        .child(text(title).font(theme::TITLE).color(PAL.text).wrap().mt(4.0).mb(2.0))
+        .child(text(sub.join(" \u{b7} ")).font(theme::BODY).color(PAL.dim))
+        .child(
+            row()
+                .mt(16.0)
+                .mb(6.0)
+                .child(text(times).font(theme::LABEL_NUM).color(PAL.text))
+                .child(spacer())
+                .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.faint)),
+        )
+        .child(bar)
+        .child(
+            row()
+                .mt(14.0)
+                .gap(8.0)
+                .center_y()
+                .child(icon(&icons::FILE, 14.0).color(PAL.faint))
+                .child(text(n.file.clone()).key("np-file").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.faint).truncate().min_w(0.0)),
+        );
+    let mut facts = col().mt(14.0);
+    if let Some(p) = &n.parsed {
+        facts = facts.child(kv("Parsed title", text(p.title.clone()).font(theme::BODY).color(PAL.text).wrap()));
+        facts = facts.child(kv("Episode", text(p.episode.map_or("–".into(), |e| e.to_string())).font(theme::LABEL_NUM).color(PAL.text)));
+        if let Some(season) = p.season {
+            facts = facts.child(kv("Season", text(season.to_string()).font(theme::LABEL_NUM).color(PAL.text)));
+        }
+        let group = [p.group.as_deref(), p.resolution.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+        if !group.is_empty() {
+            facts = facts.child(kv("Group", text(group).font(theme::BODY).color(PAL.text)));
+        }
+    }
+    let (m, c) = match_text(s, n);
+    facts = facts.child(kv("Match", text(m).key("np-match").font(theme::BODY).color(c).wrap()));
+    if let Some(e) = entry {
+        let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
+        let after = match s.offer() {
+            Some((_, ep)) => format!("{} / {total} \u{2192} {ep} after update", e.progress),
+            None => format!("{} / {total}", e.progress),
+        };
+        facts = facts.child(kv("Your progress", text(after).font(theme::LABEL_NUM).color(PAL.text)));
+    }
+    info = info.child(facts);
+    let mut actions = row().gap(8.0).mt(14.0);
+    if n.recorded.is_none()
+        && let Some((_, ep)) = s.offer()
+    {
+        actions = actions.child(button("np/update", &format!("Update to episode {ep}"), true, Some(|s: &mut State| {
+            let _ = s.record(false);
+        })));
+    }
+    if n.recorded.is_some() {
+        actions = actions.child(button("np/undo", "Undo", false, Some(State::undo_record)));
+    }
+    if !matches!(n.found, Found::Ignored) {
+        actions = actions.child(ghost("np/wrong", "Wrong anime\u{2026}", State::wrong_anime));
+    }
+    info = info.child(actions);
+    row()
+        .key("np-card")
+        .gap(18.0)
+        .padding(16.0)
+        .items_start()
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .child(now_cover(s, n, 120.0, 170.0, 28.0))
+        .child(info)
+}
+
+/// "Not sure: is this X episode N?" with Yes / Pick another.
+fn unsure_card(s: &State, n: &Now) -> El {
+    let (_, title) = now_title(s, n);
+    let ep = n.episode().map(|e| format!(", episode {e}")).unwrap_or_default();
+    let season = n.parsed.as_ref().and_then(|p| p.season).map(|se| format!(" season {se}")).unwrap_or_default();
+    let id = n.media_id().unwrap_or(0);
+    card("np-unsure", "Not sure")
+        .child(
+            row()
+                .gap(12.0)
+                .pt(4.0)
+                .items_start()
+                .child(now_cover(s, n, 40.0, 56.0, 12.0))
+                .child(text(format!("From {}: is this {title}{season}{ep}?", n.file)).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0)),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .mt(12.0)
+                .child(action("np/yes".into(), "Yes, that one", false, move |s, _| s.pick_anime(id)))
+                .child(ghost("np/pick", "Pick another\u{2026}", State::wrong_anime).h(26.0)),
+        )
+}
+
+/// "Wrong anime…": the closest titles on the list, and "not an anime".
+fn picker_card(n: &Now) -> El {
+    let mut c = card("np-picker", "Which anime is it?").child(
+        text("The closest titles on your list. Kotora remembers your pick for this title.").font(theme::LABEL).color(PAL.dim).wrap().pb(6.0),
+    );
+    if n.candidates.is_empty() {
+        c = c.child(text("Nothing on your list comes close.").font(theme::LABEL).color(PAL.faint).py(4.0));
+    }
+    for (id, title) in &n.candidates {
+        let id = *id;
+        c = c.child(
+            row()
+                .key(format!("pick/{id}"))
+                .role("button")
+                .label(title.clone())
+                .focusable(true)
+                .gap(10.0)
+                .py(6.0)
+                .px(6.0)
+                .center_y()
+                .radius(theme::R_SM)
+                .hover(PAL.hover())
+                .press(PAL.press())
+                .on_press(move |s: &mut State| s.pick_anime(id))
+                .child(cover(id, title, 22.0, 31.0, 8.0))
+                .child(text(title.clone()).font(theme::BODY).color(PAL.text).truncate().grow(1.0).min_w(0.0)),
+        );
+    }
+    c.child(
+        row()
+            .gap(8.0)
+            .mt(10.0)
+            .child(button("pick/none", "Not an anime", false, Some(State::ignore_file)).h(26.0).px(10.0))
+            .child(ghost("pick/cancel", "Cancel", |s| {
+                if let Some(n) = &mut s.now {
+                    n.picking = false;
+                }
+            })
+            .h(26.0)),
+    )
+}
+
+fn not_on_list_card(title: &str) -> El {
+    card("np-not-on-list", "Not on your list").child(
+        text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it on myanimelist.net, then Refresh; Kotora will offer the episode."))
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .wrap(),
+    )
+}
+
+/// Nothing plays: how to let Kotora see the players.
+fn now_empty() -> El {
+    let help = if cfg!(target_os = "macos") {
+        "mpv: add input-ipc-server=/tmp/mpv.sock to mpv.conf. IINA: Settings \u{2192} Advanced \u{2192} additional mpv options, input-ipc-server=/tmp/iina.sock. VLC: turn on its web interface with a password, then put it in config.toml ([vlc] password)."
+    } else {
+        "VLC and mpc-qt are found by themselves (MPRIS). mpv: install mpv-mpris, or add input-ipc-server=$XDG_RUNTIME_DIR/mpv.sock to mpv.conf."
+    };
+    col()
+        .key("np-empty")
+        .gap(6.0)
+        .padding(16.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .child(text("Nothing is playing").font(theme::SECTION).color(PAL.text))
+        .child(text("Play an episode in one of the players on the right; Kotora sees it and offers to record it.").font(theme::LABEL).color(PAL.dim).wrap())
+        .child(text(help).font(theme::LABEL).color(PAL.faint).wrap().mt(4.0))
+        .child(text("Streaming sites in the browser: use MAL-Sync.").font(theme::LABEL).color(PAL.faint).wrap())
+}
+
+fn now_page(s: &State, wide: bool) -> El {
+    let main = match &s.now {
+        Some(n) => now_card(s, n),
+        None => now_empty(),
+    };
+    let mut side = col().gap(16.0);
+    if let Some(n) = &s.now {
+        if n.picking {
+            side = side.child(picker_card(n));
+        } else if matches!(n.found, Found::List { sure: false, .. }) && n.recorded.is_none() {
+            side = side.child(unsure_card(s, n));
+        } else if let Found::NotOnList { title, .. } = &n.found {
+            side = side.child(not_on_list_card(title));
+        }
+    }
+    side = side.child(players_status_card(s));
+    let body = if wide {
+        row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
+    } else {
+        col().gap(16.0).w_full().child(main).child(side)
+    };
+    col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
+        col()
+            .key("now-scroll")
+            .scroll(ScrollSpec { stick_bottom: false })
+            .grow(1.0)
+            .min_h(0.0)
+            .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
+    )
+}
+
+// --------------------------------------------------------------------- settings: updates, players
+
+/// The 36 × 20 switch (design-spec §4): off `border_strong`, on `accent`.
+fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
+    let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.text });
+    let track = row()
+        .key(key)
+        .role("switch")
+        .label(label.to_string())
+        .focusable(true)
+        .w(36.0)
+        .h(20.0)
+        .px(2.0)
+        .center_y()
+        .radius(10.0)
+        .fill(if on { PAL.accent } else { PAL.border_strong })
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |s: &mut State| set(s, !on));
+    if on { track.justify_end() } else { track }.child(knob)
+}
+
+/// A settings line: title and help on the left, the control on the right.
+fn option(title: &str, help: String, control: El) -> El {
+    row()
+        .gap(12.0)
+        .py(10.0)
+        .center_y()
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap())
+                .child(text(help).font(theme::LABEL).color(PAL.dim).wrap()),
+        )
+        .child(control)
+}
+
+fn updates_card(s: &State) -> El {
+    let p = &s.prefs;
+    let next = THRESHOLDS[(THRESHOLDS.iter().position(|t| *t == p.threshold).unwrap_or(1) + 1) % THRESHOLDS.len()];
+    let threshold = row()
+        .key("set/threshold")
+        .role("button")
+        .label(format!("Offer the update at {}%, next {next}%", p.threshold))
+        .focusable(true)
+        .h(28.0)
+        .px(10.0)
+        .gap(6.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border_strong)
+        .hover(PAL.hover())
+        .on_press(|s: &mut State| s.next_threshold())
+        .child(text(format!("{}%", p.threshold)).font(theme::LABEL_NUM).color(PAL.text))
+        .child(icon(&icons::DOWN, 14.0).color(PAL.faint));
+    let ask = if p.auto {
+        "Off: confident matches are recorded at once, with Undo in the banner."
+    } else {
+        "On: a banner and a notification ask; nothing changes until you click Update."
+    };
+    card("updates-card", "Updates")
+        .child(
+            row()
+                .key(if p.auto { "set/asks-off" } else { "set/asks-on" })
+                .gap(8.0)
+                .py(6.0)
+                .center_y()
+                .child(el().size(7.0, 7.0).radius(3.5).fill(if p.auto { PAL.faint } else { PAL.ok() }))
+                .child(text("Ask before updating".to_string()).font(theme::BODY_MED).color(PAL.text))
+                .child(text(ask.to_string()).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
+        )
+        .child(option(
+            "Update automatically",
+            "Record confident matches without asking. Unsure matches still ask. Off by default.".into(),
+            switch("set/auto".into(), "Update automatically", p.auto, State::set_auto),
+        ))
+        .child(option("Offer the update at", "Share of the episode watched (or half, when the player stops)".into(), threshold))
+        .child(option(
+            "Keep the higher progress in conflicts",
+            "When only the progress differs and yours is higher, Kotora sends yours.".into(),
+            switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
+        ))
+}
+
+fn players_card(s: &State) -> El {
+    let platform = if cfg!(target_os = "macos") { "macOS" } else { "Linux" };
+    let mut c = card("players-card", "Players").child(text(platform.to_string()).font(theme::CAPTION).color(PAL.faint));
+    for sw in Switch::here() {
+        let sw = *sw;
+        let on = s.prefs.players.get(sw.config_key());
+        let (line, led) = s.player_line(sw);
+        let help = match sw {
+            Switch::OtherMpris => format!("Haruna, Celluloid and others that report a file \u{b7} {}", line.split(" \u{b7} ").last().unwrap_or("")),
+            _ => line,
+        };
+        c = c.child(
+            row()
+                .key(format!("set/player/{}", sw.config_key()))
+                .gap(12.0)
+                .py(8.0)
+                .center_y()
+                .child(el().size(7.0, 7.0).radius(3.5).fill(if on { led_color(led) } else { PAL.faint }))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(text(sw.label().to_string()).font(theme::BODY_MED).color(PAL.text))
+                        .child(text(help).font(theme::LABEL).color(PAL.dim).truncate()),
+                )
+                .child(switch(format!("set/switch/{}", sw.config_key()), sw.label(), on, move |s, v| s.set_player(sw, v))),
+        );
+    }
+    c.child(text("Socket paths and VLC's web password: config.toml ([players] mpv_sockets, [vlc]). Streaming sites in the browser: use MAL-Sync.").font(theme::LABEL).color(PAL.faint).wrap().mt(6.0))
 }
 
 #[cfg(test)]

@@ -30,9 +30,9 @@ mkdir -p /tmp/kot-check && chmod 700 /tmp/kot-check
 for s in $STEPS; do
   case $s in
     build)   cmd="cargo build --workspace" ;;
-    test)    cmd="cargo test --workspace" ;;
+    test)    cmd="sh -c \"cargo test --workspace && KOTORA_PRIVATE_BUS=1 dbus-run-session -- cargo test -p kotora-detect --test mpris_bus -- --nocapture\"" ;;
     clippy)  cmd="cargo clippy --workspace --all-targets" ;;
-    snap)    cmd="sh -c \"for sc in list list-covers loading list-dropped settings-page list-editor queue-page; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
+    snap)    cmd="sh -c \"for sc in list list-covers loading list-dropped settings-page list-editor queue-page now-playing-page now-playing-offer; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
     release) cmd="sh -c \"cargo build --release -p kotora -p kotora-ctl && strip -o /tmp/kotora.stripped /target/release/kotora && strip -o /tmp/kot.stripped /target/release/kot && ls -l /target/release/kotora /tmp/kotora.stripped /tmp/kot.stripped\"" ;;
     bloat)   cmd="sh -c \"cargo install -q --locked cargo-bloat && cargo bloat --release -p kotora --crates -n 25\"" ;;
     *) echo "unknown step $s"; continue ;;

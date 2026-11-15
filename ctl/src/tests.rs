@@ -35,7 +35,7 @@ fn wire_format_is_readable() {
 #[test]
 fn requests_and_replies_round_trip() {
     let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0) };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync] {
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -44,6 +44,12 @@ fn requests_and_replies_round_trip() {
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), reply);
     }
+    let now = NowInfo { player: "mpv".into(), file: "x - 06.mkv".into(), title: "X".into(), episode: Some(6), offer: Some(6), percent: Some(82), ..Default::default() };
+    for reply in [Reply::Now { now: None }, Reply::Now { now: Some(now) }] {
+        let text = serde_json::to_string(&reply).unwrap();
+        assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), reply);
+    }
+    assert_eq!(serde_json::to_string(&Request::Now).unwrap(), r#"{"cmd":"now"}"#);
     // Signed out: no account field on the wire.
     let text = serde_json::to_string(&Reply::Status(Status::default())).unwrap();
     assert!(!text.contains("account"), "{text}");

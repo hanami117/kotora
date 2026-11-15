@@ -500,8 +500,9 @@ pub enum Decision {
     Conflict,
 }
 
-/// What to do with `op`, given the service's entry now.
-pub fn decide(op: &Op, remote: Option<&Remote>) -> Decision {
+/// What to do with `op`, given the service's entry now. `keep_higher`: a progress-only conflict
+/// where ours is higher sends ours (Settings → Updates, on by default).
+pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
     match remote {
         None if op.base_updated_at < 0 => Decision::Send,
         // Removed on the service after our edit: ask.
@@ -511,14 +512,20 @@ pub fn decide(op: &Op, remote: Option<&Remote>) -> Decision {
         Some(r) => {
             // Only the progress, and ours is higher: the higher number wins (DESIGN.md §5.4).
             let progress_only = op.change.status.is_none() && op.change.score.is_none();
-            if progress_only && op.change.progress.is_some_and(|p| p > r.values.progress) { Decision::Send } else { Decision::Conflict }
+            if keep_higher && progress_only && op.change.progress.is_some_and(|p| p > r.values.progress) { Decision::Send } else { Decision::Conflict }
         }
     }
 }
 
 /// Sends the oldest due change of `service`, if any. One service request or two (read, then
-/// write); the service's own rate limit spaces them.
+/// write); the service's own rate limit spaces them. A higher progress wins a progress-only
+/// conflict (the default; [`step_with`] can turn that off).
 pub fn step(store: &mut Store, service: &mut dyn ListService, now: i64) -> Result<Step> {
+    step_with(store, service, now, true)
+}
+
+/// [`step`] with the "keep the higher progress" setting.
+pub fn step_with(store: &mut Store, service: &mut dyn ListService, now: i64, keep_higher: bool) -> Result<Step> {
     let name = service.name();
     let Some(op) = store.next_due(name, now)? else {
         return Ok(match store.next_wait(name, now)? {
@@ -531,7 +538,7 @@ pub fn step(store: &mut Store, service: &mut dyn ListService, now: i64) -> Resul
         Ok(r) => r,
         Err(e) => return give_back(store, &op, e, now),
     };
-    let outcome = match decide(&op, remote.as_ref()) {
+    let outcome = match decide(&op, remote.as_ref(), keep_higher) {
         Decision::Send => match service.update_entry(op.media_id, &op.change) {
             Ok(r) => {
                 store.mark_sent(name, &op, &r, now)?;

@@ -1,16 +1,19 @@
 //! Kotora: a native anime tracker for Linux and macOS (Rune UI).
 //!
-//! Stage 3: the window with the sidebar and the list page, the saved list in SQLite, MyAnimeList
+//! Stages 1–3: the window with the sidebar and the list page, the saved list in SQLite, MyAnimeList
 //! sign-in and sync, edits (inline editor, `+1`, `kot`) through the sync queue, the queue page, the
-//! `kot` socket and single instance. Headless scenes use fake data. No detection yet.
+//! `kot` socket and single instance; stage 4: detection (mpv IPC, MPRIS, VLC's web interface),
+//! recognition, the Now Playing page and banner. Headless scenes use fake data.
 //!
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
 mod art;
 mod ctl;
+mod detect;
 mod icons;
 mod model;
+mod now;
 mod online;
 mod queue;
 mod scenes;
@@ -121,6 +124,8 @@ fn main() {
         s.window = !hidden;
         // The saved list first, then a sync when signed in (workers, off the UI thread).
         online::start(&mut s);
+        // Players: sources and recognition on their own threads, event driven.
+        detect::start(&mut s);
         s
     });
     app.run();

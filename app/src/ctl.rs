@@ -80,6 +80,19 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Edited { entry: s.entries[i].ctl() })
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
+        Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now() }))),
+        Request::Confirm => reply(on_ui(handle, true, |s| {
+            let (title, _) = s.record(false)?;
+            let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;
+            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+        })),
+        Request::Dismiss => reply(on_ui(handle, true, |s| {
+            if s.now.is_none() {
+                return Err("Nothing is playing.".to_string());
+            }
+            s.dismiss_now();
+            Ok(Reply::Now { now: s.ctl_now() })
+        })),
         Request::Sync => reply(on_ui(handle, true, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());

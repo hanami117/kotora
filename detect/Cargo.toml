@@ -4,6 +4,19 @@ version.workspace = true
 license.workspace = true
 repository.workspace = true
 edition.workspace = true
-description = "Kotora's now-playing sources (MPRIS, mpv IPC, …)"
+description = "Kotora's now-playing sources (MPRIS, mpv IPC, VLC's web interface)"
 
 [dependencies]
+serde_json = "1"
+# inotify / kqueue for the mpv socket's folder.
+libc = "0.2"
+# VLC's web interface (macOS). Already in the build for MyAnimeList (core), so no new code.
+ureq = "3"
+
+# MPRIS and notifications on Linux: zbus 5, the copy Rune's AT-SPI accessibility already builds
+# (`async-io`, no tokio), plus its blocking API. No second zbus.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }

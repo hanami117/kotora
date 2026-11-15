@@ -10,7 +10,11 @@ use kotora_core::queue::{Op, OpState};
 use kotora_core::{Change, ListItem, Remote, Status, Values};
 use rune::{AppHandle, Image, TextEdit};
 
+use kotora_core::recognize::Found;
+use kotora_detect::{Led, SourceStatus, Switch, Via};
+
 use crate::art::Covers;
+use crate::now::{Now, Prefs, Seen};
 use crate::queue::{Cmd, Worker};
 
 pub type Handle = AppHandle<State>;
@@ -210,14 +214,6 @@ impl Entry {
     }
 }
 
-/// The Now Playing card at the bottom of the sidebar.
-#[derive(Clone, Debug)]
-pub struct NowMini {
-    pub id: u32,
-    pub title: String,
-    pub line: String,
-}
-
 /// The inline editor's draft: nothing is queued until Save.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Editor {
@@ -256,6 +252,12 @@ pub enum Msg {
     SignedIn { user: String },
     SignInFailed(String),
     SignedOut,
+    /// The followed player and what recognition made of its file (`None`: nothing plays).
+    Now(Option<Box<Seen>>),
+    /// A file passed the threshold.
+    Reached { key: String, file: String },
+    /// The players' states.
+    Players(Vec<SourceStatus>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -297,7 +299,14 @@ pub struct State {
     pub synced_at: Option<i64>,
     /// Scenes pin the clock; the real app reads it when it draws.
     pub fixed_now: Option<i64>,
-    pub now: Option<NowMini>,
+    /// Now Playing (`now.rs`): the followed player, its file and the offer.
+    pub now: Option<Now>,
+    /// The players' states (Settings → Players, the Now Playing page).
+    pub players: Vec<SourceStatus>,
+    /// Settings → Updates and Players.
+    pub prefs: Prefs,
+    /// The detection threads (`detect.rs`); `None` headless.
+    pub glue: Option<crate::detect::Glue>,
     /// The window is open (false after a `--hidden` start until `kot show`).
     pub window: bool,
     /// Set while a sign-in waits for the browser; setting it ends the wait.
@@ -336,7 +345,10 @@ impl State {
             offline: false,
             synced_at: Some(FAKE_NOW - 120),
             fixed_now: Some(FAKE_NOW),
-            now: Some(NowMini { id: 0, title: "Lanterns of Kirigaoka".into(), line: "Ep 6 · mpv · 82%".into() }),
+            now: Some(fake_now()),
+            players: fake_players(),
+            prefs: Prefs::default(),
+            glue: None,
             window: true,
             cancel: None,
             logo: None,
@@ -360,6 +372,7 @@ impl State {
         s.synced_at = None;
         s.fixed_now = None;
         s.now = None;
+        s.players.clear();
         s.loading = matches!(auth, Auth::SignedIn);
         s.handle = None;
         s.refresh();
@@ -720,6 +733,9 @@ impl State {
                 self.error = Some(m);
                 true
             }
+            Msg::Now(seen) => self.now_seen(seen.map(|b| *b)),
+            Msg::Reached { key, file } => self.now_reached(&key, &file),
+            Msg::Players(v) => self.players_seen(v),
             Msg::SignedOut => {
                 self.covers.clear();
                 self.auth = Auth::SignedOut;
@@ -749,6 +765,46 @@ impl State {
             offline: self.offline,
             window: self.window,
         }
+    }
+}
+
+/// The fake player: Lanterns of Kirigaoka episode 6 in mpv, 68 % in, a sure match.
+pub fn fake_now() -> Now {
+    let file = "[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv";
+    Now {
+        key: "mpv:/tmp/mpv.sock".into(),
+        player: "mpv".into(),
+        via: Via::MpvIpc.label(),
+        file: file.into(),
+        position: Some(968.0),
+        duration: Some(1420.0),
+        at: None,
+        rate: 1.0,
+        playing: true,
+        reached: false,
+        parsed: kotora_core::recognize::parse(file),
+        found: Found::List { media_id: 0, sure: true, why: "same title in your list".into() },
+        recognizing: false,
+        candidates: vec![(0, "Lanterns of Kirigaoka".into()), (3, "Slow Life on Hoshizora Island".into()), (9, "Kumo to Kaze no Ryokan".into())],
+        dismissed: false,
+        acted: false,
+        recorded: None,
+        picking: false,
+    }
+}
+
+/// The fake players of this system (Settings → Players).
+pub fn fake_players() -> Vec<SourceStatus> {
+    let st = |switch, via, line: &str, led| SourceStatus { switch, via, line: line.into(), led };
+    if cfg!(target_os = "macos") {
+        vec![st(Switch::Mpv, Via::MpvIpc, "/tmp/mpv.sock: playing", Led::Playing), st(Switch::Iina, Via::MpvIpc, "/tmp/iina.sock: not running", Led::Off)]
+    } else {
+        vec![
+            st(Switch::Mpv, Via::MpvIpc, "$XDG_RUNTIME_DIR/mpv.sock: playing", Led::Playing),
+            st(Switch::Vlc, Via::Mpris, "not running", Led::Off),
+            st(Switch::MpcQt, Via::Mpris, "running, nothing playing", Led::Idle),
+            st(Switch::OtherMpris, Via::Mpris, "not running", Led::Off),
+        ]
     }
 }
 

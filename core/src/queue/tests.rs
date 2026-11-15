@@ -195,6 +195,14 @@ fn a_higher_progress_wins_on_its_own_and_a_lower_one_asks() {
 }
 
 #[test]
+fn with_the_setting_off_a_higher_progress_asks_too() {
+    let (mut s, mut f) = setup();
+    s.enqueue("mal", 1, progress(6), 500).unwrap();
+    f.remote.insert(1, Remote { values: v(Status::Watching, 5, Some(7)), rewatching: false, updated_at: 400 });
+    assert_eq!(step_with(&mut s, &mut f, 600, false).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Conflict });
+}
+
+#[test]
 fn values_already_on_the_service_count_as_sent() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
@@ -362,7 +370,7 @@ fn sign_out_forgets_the_queue() {
 }
 
 #[test]
-fn the_schema_moves_to_version_2_and_keeps_the_saved_list() {
+fn the_schema_moves_up_from_version_1_and_keeps_the_saved_list() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::store::MIGRATIONS[0]).unwrap();
     conn.pragma_update(None, "user_version", 1).unwrap();
@@ -372,7 +380,7 @@ fn the_schema_moves_to_version_2_and_keeps_the_saved_list() {
     )
     .unwrap();
     let mut s = Store::from_connection(conn).unwrap();
-    assert_eq!(s.schema_version().unwrap(), 2);
+    assert_eq!(s.schema_version().unwrap(), crate::store::MIGRATIONS.len());
     assert_eq!(entry(&s, 1).progress, 2);
     s.enqueue("mal", 1, progress(3), 9).unwrap();
 }

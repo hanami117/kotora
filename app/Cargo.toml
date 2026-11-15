@@ -14,6 +14,7 @@ description = "Kotora: a native anime tracker for Linux and macOS (Rune UI)"
 # its own zbus.
 rune = { git = "https://github.com/anomalyco/rune", rev = "f3d04f3f2069d177d04c963b0ba9f6b2065e46eb", default-features = false, features = ["accessibility", "embedded-fonts", "metal-backend", "svg"] }
 kotora-core = { path = "../core" }
+kotora-detect = { path = "../detect" }
 # The `kot` protocol and socket (the app answers, `kot` asks).
 kotora-ctl = { path = "../ctl" }
 # Cover decoding at display size. Rune already builds this crate with these features, so it adds

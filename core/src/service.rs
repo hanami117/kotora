@@ -26,6 +26,15 @@ impl std::fmt::Display for ServiceError {
     }
 }
 
+/// One anime a service search found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchHit {
+    pub id: u32,
+    pub title: String,
+    /// The other titles (English, Japanese, synonyms).
+    pub other_titles: Vec<String>,
+}
+
 /// The user's own list: read it, read one entry, change one entry.
 pub trait ListService {
     /// Machine name, the `service` column of the store: `mal`.
@@ -40,4 +49,8 @@ pub trait ListService {
     fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError>;
     /// Sends one change and returns the entry as the service saved it.
     fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError>;
+    /// A title search (recognition's one search for a file not matched on the list).
+    fn search(&mut self, _query: &str) -> Result<Vec<SearchHit>, ServiceError> {
+        Ok(Vec::new())
+    }
 }

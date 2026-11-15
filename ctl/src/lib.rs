@@ -169,6 +169,12 @@ pub enum Request {
     Queue,
     /// Sends the queue now, then reads the list again. Replies `Status`.
     Sync,
+    /// What plays and what Kotora offers. Replies `Now`.
+    Now,
+    /// Records the offered episode (the banner's Update). Replies `Edited`.
+    Confirm,
+    /// Not now: hides the offer for this file. Replies `Now`.
+    Dismiss,
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -182,6 +188,39 @@ pub enum Reply {
     /// The entry after an edit; the change waits in the queue.
     Edited { entry: Entry },
     Queue { ops: Vec<QueueItem> },
+    /// `None`: nothing plays.
+    Now { now: Option<NowInfo> },
+}
+
+/// What plays, as `kot now` prints it.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NowInfo {
+    /// "mpv", "VLC media player", …
+    pub player: String,
+    /// "IPC socket", "MPRIS", "web interface".
+    pub via: String,
+    /// The file's name.
+    pub file: String,
+    pub playing: bool,
+    /// 0–100, by position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<u8>,
+    /// The anime: the list entry's title, a search hit, or the parsed title.
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    /// "In your list (Watching), sure: …", "Not on your list: …".
+    pub matched: String,
+    /// The episode Update would record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offer: Option<u32>,
+    /// The episode counts as watched (the banner shows).
+    pub reached: bool,
+    /// The episode recorded from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<u32>,
+    pub dismissed: bool,
 }
 
 /// One list entry, as `kot list` prints it.

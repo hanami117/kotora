@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
-use crate::service::{ListService, ServiceError};
+use crate::service::{ListService, SearchHit, ServiceError};
 use crate::time;
 use crate::tokens::{Token, TokenStore};
 
@@ -302,6 +302,17 @@ impl<T: Transport> Client<T> {
         ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
     }
 
+    /// A title search, `GET /anime?q=` (5 results). MAL wants at least 3 characters; the query is
+    /// cut to 64.
+    pub fn search_anime(&mut self, access: &str, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
+        let q: String = query.trim().chars().take(64).collect();
+        if q.chars().count() < 3 {
+            return Ok(Vec::new());
+        }
+        let r = self.get(format!("{API}/anime?q={}&limit=5&fields=alternative_titles", pct_encode(&q)), access)?;
+        parse_search(&r.body).map_err(ServiceError::Other)
+    }
+
     pub fn fetch_user_name(&mut self, access: &str) -> Result<String, ServiceError> {
         let r = self.get(format!("{API}/users/@me"), access)?;
         let me: Me = serde_json::from_str(&r.body).map_err(|_| ServiceError::Other("can't read the user answer".into()))?;
@@ -436,6 +447,45 @@ fn non_empty(s: Option<String>) -> Option<String> {
 
 /// One page of `animelist`: the entries and the `paging.next` link. Entries without a list status
 /// are skipped (they can't be on the list).
+/// The answer of `GET /anime?q=`.
+pub fn parse_search(body: &str) -> Result<Vec<SearchHit>, String> {
+    #[derive(Deserialize)]
+    struct Page {
+        #[serde(default)]
+        data: Vec<Item>,
+    }
+    #[derive(Deserialize)]
+    struct Item {
+        node: Node,
+    }
+    #[derive(Deserialize)]
+    struct Node {
+        id: u32,
+        title: String,
+        #[serde(default)]
+        alternative_titles: Option<Alt>,
+    }
+    #[derive(Deserialize, Default)]
+    struct Alt {
+        #[serde(default)]
+        synonyms: Vec<String>,
+        #[serde(default)]
+        en: Option<String>,
+        #[serde(default)]
+        ja: Option<String>,
+    }
+    let page: Page = serde_json::from_str(body).map_err(|e| format!("can't read the search answer ({})", e.classify_name()))?;
+    Ok(page
+        .data
+        .into_iter()
+        .map(|i| {
+            let alt = i.node.alternative_titles.unwrap_or_default();
+            let other_titles = alt.en.into_iter().chain(alt.ja).chain(alt.synonyms).filter(|t| !t.is_empty()).collect();
+            SearchHit { id: i.node.id, title: i.node.title, other_titles }
+        })
+        .collect())
+}
+
 pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), String> {
     let page: Page = serde_json::from_str(body).map_err(|e| format!("can't read the list answer ({})", e.classify_name()))?;
     let mut out = Vec::new();
@@ -559,6 +609,10 @@ impl<T: Transport> ListService for Mal<T> {
 
     fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
         self.authed(|c, a| c.patch_entry(a, media_id, change))
+    }
+
+    fn search(&mut self, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
+        self.authed(|c, a| c.search_anime(a, query))
     }
 }
 
@@ -862,6 +916,24 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3);
         assert_eq!((seen[2].0.as_str(), seen[2].2.as_deref()), ("PATCH", Some("new")));
+    }
+
+    #[test]
+    fn search_reads_hits_and_skips_short_queries() {
+        let body = r#"{"data":[{"node":{"id":2001,"title":"Hoshizora Yuubin","main_picture":{"medium":"https://cdn.example.invalid/a.jpg"},
+            "alternative_titles":{"synonyms":["Starfall Post"],"en":"Starfall Delivery Service","ja":""}}},
+            {"node":{"id":2002,"title":"Hoshizora Yuubin 2nd Season"}}],"paging":{}}"#;
+        let (f, seen) = fake(vec![ok(body)]);
+        let (mut c, _) = client(f);
+        let hits = c.search_anime("acc", "Starfall Delivery Service").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!((hits[0].id, hits[0].title.as_str()), (2001, "Hoshizora Yuubin"));
+        assert_eq!(hits[0].other_titles, ["Starfall Delivery Service", "Starfall Post"]);
+        assert!(hits[1].other_titles.is_empty());
+        assert_eq!(c.search_anime("acc", "ab").unwrap(), vec![], "too short: no request");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].1, "https://api.myanimelist.net/v2/anime?q=Starfall%20Delivery%20Service&limit=5&fields=alternative_titles");
     }
 
     #[test]

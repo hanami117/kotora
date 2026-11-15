@@ -20,6 +20,6 @@ allow = [
     "Unlicense",
     "CC0-1.0",
     "Unicode-3.0",
-    "MPL-2.0",            # anitomy-ng (later): file-level copyleft, GPL-3.0 compatible (MPL 2.0 §3.3)
+    "MPL-2.0",            # anitomy-ng (recognition): file-level copyleft, GPL-3.0 compatible (MPL 2.0 §3.3)
     "CDLA-Permissive-2.0", # webpki-roots (the CA list), once ureq arrives
 ]

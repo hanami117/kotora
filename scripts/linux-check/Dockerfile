@@ -5,7 +5,7 @@ RUN apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -yq --no
       pkg-config build-essential git rsync ca-certificates \
       libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
       libx11-dev libxcb1-dev libvulkan1 mesa-vulkan-drivers libegl1 libgl1-mesa-dri libgles2 \
-      fontconfig fonts-dejavu-core fonts-noto-core \
+      fontconfig fonts-dejavu-core fonts-noto-core dbus \
  && rm -rf /var/lib/apt/lists/*
 RUN rustup component add clippy
 ENV HOME=/tmp/home CARGO_HOME=/cargo CARGO_TARGET_DIR=/target CARGO_INCREMENTAL=0 \

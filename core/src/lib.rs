@@ -1,9 +1,9 @@
 //! Kotora's core: no UI and no platform code.
 //!
-//! Stage 3: the data model, the SQLite store (the local cache of the user's list), the sync queue
-//! (`queue.rs`), paths, the config file, the token file, and the MyAnimeList client (list, one
-//! entry, `PATCH my_list_status`). Recognition arrives in stage 4 (docs/ROADMAP.md). Nothing here
-//! touches a UI or starts a thread of its own.
+//! The data model, the SQLite store (the local cache of the user's list), the sync queue
+//! (`queue.rs`), recognition (`recognize.rs`: file name → anime on the list), paths, the config
+//! file, the token file, and the MyAnimeList client (list, one entry, `PATCH my_list_status`,
+//! search). Nothing here touches a UI or starts a thread of its own.
 
 pub mod config;
 pub mod covers;
@@ -13,6 +13,7 @@ pub mod model;
 pub mod paths;
 pub mod queue;
 pub mod ratelimit;
+pub mod recognize;
 pub mod service;
 pub mod store;
 pub mod time;
