@@ -157,6 +157,19 @@ mod tests {
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
     }
 
+    /// Settings: the Accounts and About cards, side by side when wide, stacked when narrow.
+    #[test]
+    fn settings_has_accounts_and_about() {
+        for size in [(1360.0, 860.0), (960.0, 600.0)] {
+            let rt = render("settings-page", size);
+            for key in ["account-card", "acct/mal", "acct/anilist", "token-note", "sign-out", "about-card", "link/source"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+        }
+        let rt = render("settings-signed-out", (1360.0, 860.0));
+        assert!(rt.find("sign-in").is_some() && rt.find("sign-out").is_none());
+    }
+
     /// The type column hides below 1100 pt.
     #[test]
     fn narrow_window_drops_the_type_column() {

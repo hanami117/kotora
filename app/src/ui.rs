@@ -13,12 +13,15 @@ use crate::theme::{self, PAL};
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // The type column hides below 1100 pt (design-spec §3).
     let wide = cx.layout_size("root").is_none_or(|[w, _]| w >= theme::NARROW_W);
+    // macOS draws the traffic lights over the window's top-left (Rune's full-size content), so the
+    // sidebar keeps a band clear for them. None in full screen; Linux draws its own frame.
+    let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 { theme::TITLEBAR_BAND } else { 0.0 };
     row()
         .key("root")
         .w_full()
         .h_full()
         .fill(PAL.bg)
-        .child(sidebar(s))
+        .child(sidebar(s, chrome_top))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide))
 }
@@ -39,8 +42,16 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx) -> bool {
 
 // ------------------------------------------------------------------------------------ sidebar
 
-fn sidebar(s: &State) -> El {
-    let mut side = col().key("sidebar").w(theme::SIDEBAR_W).h_full().fill(PAL.side).pt(14.0).px(10.0).pb(12.0).child(brand(s));
+/// `chrome_top`: the traffic-light band's height (macOS), or 0 where the system draws the frame.
+fn sidebar(s: &State, chrome_top: f32) -> El {
+    let side = col().key("sidebar").w(theme::SIDEBAR_W).h_full().fill(PAL.side).px(10.0).pb(12.0);
+    let side = if chrome_top > 0.0 {
+        // The band drags the window like a title bar; the brand sits just under it.
+        side.child(el().key("sb-titlebar").w_full().h(chrome_top).window_drag()).child(el().h(4.0))
+    } else {
+        side.pt(14.0)
+    };
+    let mut side = side.child(brand(s));
     if let Some((name, service)) = &s.account {
         side = side.child(account(name, service));
     }
@@ -231,7 +242,7 @@ fn main(s: &State, wide: bool) -> El {
         Page::List(st) => list_page(s, st, wide),
         Page::NowPlaying => placeholder(s, "Now Playing", "Nothing is playing."),
         Page::Queue => placeholder(s, "Sync queue", "The queue comes in a later stage."),
-        Page::Settings => settings(s),
+        Page::Settings => settings(s, wide),
     };
     col().key("main").grow(1.0).min_w(0.0).h_full().child(page)
 }
@@ -737,29 +748,150 @@ fn welcome(s: &State) -> El {
     c
 }
 
-fn settings(s: &State) -> El {
-    let mut card = col().key("account-card").gap(8.0).padding(16.0).radius(12.0).fill(PAL.surface).border(1.0, PAL.border).child(text("Account").font(theme::SECTION).color(PAL.text));
-    card = match (&s.account, s.auth) {
-        (Some((name, service)), _) => card
-            .child(text(format!("Signed in as {name} on {service}.")).font(theme::BODY).color(PAL.text))
-            .child(
-                text("Your sign-in token is kept in a file that only you can read. It is not encrypted. Signing out deletes it and your saved list.")
-                    .font(theme::LABEL)
-                    .color(PAL.dim),
-            )
-            .child(row().mt(6.0).child(button("sign-out", "Sign out", false, Some(online::sign_out)))),
-        (None, Auth::NoClientId) => card.child(text("No MyAnimeList Client ID in config.toml yet. The Welcome page shows how to add it.").font(theme::BODY).color(PAL.dim)),
-        (None, Auth::SigningIn) => card.child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY).color(PAL.dim)),
-        (None, _) => card
-            .child(text("Not signed in.").font(theme::BODY).color(PAL.dim))
-            .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in)))),
+/// Settings (design-spec §4): Accounts and About for now; Updates and Players come with detection
+/// (stage 4). Two columns when wide, one below `theme::NARROW_W`.
+fn settings(s: &State, wide: bool) -> El {
+    let cards = if wide {
+        row().gap(16.0).w_full().child(accounts_card(s).grow(1.0).min_w(0.0)).child(about_card(s).grow(1.0).min_w(0.0))
+    } else {
+        col().gap(16.0).w_full().child(accounts_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
         .w_full()
         .h_full()
         .child(top(s, "Settings", None, false))
-        .child(col().px(theme::PAGE_PAD).max_w(560.0).child(card))
+        .child(
+            col()
+                .key("settings-scroll")
+                .scroll(ScrollSpec { stick_bottom: false })
+                .grow(1.0)
+                .min_h(0.0)
+                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(cards)),
+        )
+}
+
+fn card(key: &str, title: &str) -> El {
+    col()
+        .key(key.to_string())
+        .padding(16.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .child(text(title.to_string()).font(theme::SECTION).color(PAL.text).pb(4.0))
+}
+
+/// A service in the Accounts card: badge, name and state, and its button.
+fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: String, action: El, on: bool) -> El {
+    let fg = if on { PAL.text } else { PAL.dim };
+    row()
+        .key(key.to_string())
+        .gap(12.0)
+        .py(10.0)
+        .center_y()
+        .child(
+            el().size(32.0, 32.0)
+                .radius(theme::R_MD)
+                .fill(badge_fill)
+                .center()
+                .child(text(badge.to_string()).font(TextStyle::new(11.0, 600.0)).color(fg)),
+        )
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(name.to_string()).font(theme::BODY_MED).color(fg).truncate())
+                .child(text(line).font(theme::LABEL).color(if on { PAL.dim } else { PAL.faint }).truncate()),
+        )
+        .child(action)
+}
+
+fn accounts_card(s: &State) -> El {
+    let (line, action) = match (&s.account, s.auth) {
+        (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(online::sign_out))),
+        (None, Auth::NoClientId) => ("No Client ID in config.toml".to_string(), small_button("sign-in", "Sign in", true, None)),
+        (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(online::cancel_sign_in))),
+        (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(online::sign_in))),
+    };
+    let client_id = if s.auth == Auth::NoClientId { "not set yet (the Welcome page shows how)" } else { "set" };
+    let note = row()
+        .key("token-note")
+        .gap(10.0)
+        .mt(10.0)
+        .px(12.0)
+        .py(10.0)
+        .items_start()
+        .radius(theme::R_MD)
+        .fill(PAL.st_completed.alpha(0.08))
+        .border(1.0, PAL.st_completed.alpha(0.28))
+        .child(icon(&icons::LOCK, 16.0).color(PAL.st_completed))
+        .child(
+            text(format!(
+                "Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it and your saved list. The Client ID comes from config.toml: {client_id}."
+            ))
+            .font(theme::LABEL)
+            .color(PAL.text)
+            .wrap()
+            .grow(1.0)
+            .min_w(0.0),
+        );
+    card("account-card", "Accounts")
+        .child(service_row("acct/mal", "MAL", hex("#2e51a2"), "MyAnimeList", line, action, true))
+        .child(el().w_full().h(1.0).fill(PAL.border))
+        .child(service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.2".into(), small_button("anilist", "Sign in", false, None), false))
+        .child(note)
+}
+
+fn about_card(s: &State) -> El {
+    let logo = el().size(56.0, 56.0).radius(theme::R_LG);
+    let logo = match &s.logo_big {
+        Some(img) => logo.pixels(img.pixels()),
+        None => logo.fill(PAL.raised),
+    };
+    let link = |key: &str, label: &str, url: &'static str| {
+        text(label.to_string())
+            .key(key.to_string())
+            .role("link")
+            .label(label.to_string())
+            .focusable(true)
+            .font(theme::LABEL)
+            .color(PAL.accent_hi)
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut State| online::open_link(s, url))
+    };
+    card("about-card", "About Kotora").child(
+        row()
+            .gap(16.0)
+            .pt(8.0)
+            .items_start()
+            .child(logo)
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(8.0)
+                    .child(text(format!("Version {}", env!("CARGO_PKG_VERSION"))).font(theme::LABEL_NUM).color(PAL.faint))
+                    .child(
+                        text("A tribute to Taiga, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.")
+                            .font(theme::LABEL)
+                            .color(PAL.dim)
+                            .wrap(),
+                    )
+                    .child(text("GPL-3.0-or-later. Not affiliated with MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap())
+                    .child(
+                        row()
+                            .gap(14.0)
+                            .child(link("link/site", "kotora.moe", "https://kotora.moe"))
+                            .child(link("link/source", "Source code", "https://github.com/hanami117/kotora")),
+                    ),
+            ),
+    )
+}
+
+/// The `sm` button (26 high) of the settings rows.
+fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
+    button(key, label, primary, on).h(26.0).px(10.0)
 }
 
 #[cfg(test)]

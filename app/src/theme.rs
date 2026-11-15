@@ -116,3 +116,12 @@ pub const NARROW_W: f32 = 1100.0;
 pub const R_XS: f32 = 4.0;
 pub const R_SM: f32 = 6.0;
 pub const R_MD: f32 = 8.0;
+pub const R_LG: f32 = 12.0;
+
+/// macOS: the band kept clear at the sidebar's top for the traffic lights, draggable like a
+/// title bar (as in Uzumaki). Linux keeps the desktop's own frame and has no band.
+pub const TITLEBAR_BAND: f32 = 28.0;
+/// macOS: the close button's top-left in points (`rune::Chrome::traffic_lights`): lined up with
+/// the brand logo's left edge (sidebar padding 10 + brand padding 8) and centred in the band.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const TRAFFIC_LIGHTS: (f32, f32) = (18.0, (TITLEBAR_BAND - rune::Chrome::TRAFFIC_LIGHT) / 2.0);

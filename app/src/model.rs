@@ -248,6 +248,8 @@ pub struct State {
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The C2 icon at sidebar size, set in `setup`.
     pub logo: Option<Image>,
+    /// The same icon at 56 pt, for the About card.
+    pub logo_big: Option<Image>,
     pub images: Option<ImageCache>,
     pub handle: Option<Handle>,
 }
@@ -279,6 +281,7 @@ impl State {
             window: true,
             cancel: None,
             logo: None,
+            logo_big: None,
             images: None,
             handle: None,
         };

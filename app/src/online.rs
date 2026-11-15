@@ -152,6 +152,16 @@ fn sign_in_flow(_h: &Handle, cancel: &AtomicBool) -> Result<String, String> {
     Ok(user)
 }
 
+/// A link in Settings: opened by the system browser on a short thread (never in headless runs).
+pub fn open_link(s: &mut State, url: &'static str) {
+    if s.handle.is_none() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let _ = open_browser(url);
+    });
+}
+
 fn open_browser(url: &str) -> Result<(), String> {
     let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     let mut child = std::process::Command::new(program)

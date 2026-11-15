@@ -36,11 +36,14 @@ fn setup(s: &mut State, wake: Waker) {
     let cache = ImageCache::new(wake);
     // Rasterised once at 28 pt and 2x; smaller scales use its mips.
     let logo = cache.svg(LOGO, 28.0, 2.0);
+    let logo_big = cache.svg(LOGO, 56.0, 2.0);
     if rune::is_headless() {
-        // A snap is taken at once: wait for the few-ms raster so the logo is in it.
+        // A snap is taken at once: wait for the few-ms rasters so the logo is in it.
         let _ = logo.wait();
+        let _ = logo_big.wait();
     }
     s.logo = Some(logo);
+    s.logo_big = Some(logo_big);
     s.images = Some(cache);
 }
 
@@ -82,8 +85,12 @@ fn main() {
         ..AppSpec::new("Kotora", (1280.0, 800.0), State::fake, ui::view)
     };
     let app = App::new(spec).tab_visits_controls(true).on_frame_encoded(log_first_frame());
+    // macOS: the traffic lights pinned in a band at the sidebar's top (`theme::TRAFFIC_LIGHTS`),
+    // clear of the logo. Linux keeps the desktop's frame and is not touched.
     #[cfg(target_os = "macos")]
-    let app = app.standard_menus();
+    let app = app
+        .chrome(rune::Chrome { traffic_lights: Some(theme::TRAFFIC_LIGHTS), ..rune::Chrome::DEFAULT })
+        .standard_menus();
 
     // Headless (`--snap`, `--tree`, `--script`): no socket, no single-instance check, nothing
     // that touches the user's setup.
