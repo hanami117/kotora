@@ -11,6 +11,8 @@ pub type Scene = (&'static str, fn(&mut State));
 pub const SCENES: &[Scene] = &[
     // The main list, as `mockup/shots/list.png`.
     ("list", |_| {}),
+    // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
+    ("list-covers", fake_covers),
     ("list-watching", |s| s.go(Page::List(Status::Watching))),
     ("list-plan", |s| s.go(Page::List(Status::PlanToWatch))),
     ("list-completed", |s| s.go(Page::List(Status::Completed))),
@@ -72,6 +74,13 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::Settings);
     }),
 ];
+
+fn fake_covers(s: &mut State) {
+    s.covers.fake();
+    for e in s.entries.iter_mut().filter(|e| e.id % 5 != 2) {
+        e.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", e.id));
+    }
+}
 
 /// Nobody is signed in: no account, no list, no queue.
 fn signed_out(s: &mut State, auth: Auth) {

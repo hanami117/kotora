@@ -180,6 +180,7 @@ pub fn sign_out(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     std::thread::spawn(move || {
         let _ = TokenStore::new(paths::token_file()).delete();
+        kotora_core::covers::clear(&kotora_core::covers::dir());
         if let Ok(mut store) = Store::open(&paths::db_file()) {
             let _ = store.clear_service("mal");
         }

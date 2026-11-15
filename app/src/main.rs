@@ -7,6 +7,7 @@
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
+mod art;
 mod ctl;
 mod icons;
 mod model;
@@ -44,7 +45,7 @@ fn setup(s: &mut State, wake: Waker) {
     }
     s.logo = Some(logo);
     s.logo_big = Some(logo_big);
-    s.images = Some(cache);
+    s.covers.attach(cache);
 }
 
 /// No tray yet: closing the window quits.
@@ -114,6 +115,7 @@ fn main() {
     let _ctl = ctl::start(handle.clone());
     let app = app.init(move || {
         let mut s = State::start(online::initial_auth());
+        s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
         s.handle = Some(handle);
         s.window = !hidden;
         // The saved list first, then a sync when signed in (workers, off the UI thread).

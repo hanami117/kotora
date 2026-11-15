@@ -13,3 +13,6 @@ rune = { git = "https://github.com/anomalyco/rune", rev = "f3d04f3f2069d177d04c9
 kotora-core = { path = "../core" }
 # The `kot` protocol and socket (the app answers, `kot` asks).
 kotora-ctl = { path = "../ctl" }
+# Cover decoding at display size. Rune already builds this crate with these features, so it adds
+# no code of its own (the same version and features, one copy in the tree).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

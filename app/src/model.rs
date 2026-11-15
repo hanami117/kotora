@@ -4,7 +4,9 @@
 //! Every fake title here is made up (the same ones as `mockup/kotora.html`).
 
 use kotora_core::{ListItem, Status};
-use rune::{AppHandle, Image, ImageCache, TextEdit};
+use rune::{AppHandle, Image, TextEdit};
+
+use crate::art::Covers;
 
 pub type Handle = AppHandle<State>;
 
@@ -120,6 +122,8 @@ pub struct Entry {
     pub rewatching: bool,
     /// A change for this entry waits in the queue.
     pub waiting: Option<&'static str>,
+    /// The service's cover image (`None` in the fake list, and for shows without one).
+    pub cover_url: Option<String>,
 }
 
 /// MAL's `media_type` as the Type column writes it.
@@ -162,6 +166,7 @@ impl Entry {
             new_episode: None,
             rewatching: it.rewatching,
             waiting: None,
+            cover_url: m.cover_url.clone(),
         }
     }
 
@@ -250,7 +255,8 @@ pub struct State {
     pub logo: Option<Image>,
     /// The same icon at 56 pt, for the About card.
     pub logo_big: Option<Image>,
-    pub images: Option<ImageCache>,
+    /// Covers in the list, and Rune's image cache (`art.rs`).
+    pub covers: Covers,
     pub handle: Option<Handle>,
 }
 
@@ -282,7 +288,7 @@ impl State {
             cancel: None,
             logo: None,
             logo_big: None,
-            images: None,
+            covers: Covers::default(),
             handle: None,
         };
         s.refresh();
@@ -446,6 +452,7 @@ impl State {
                 true
             }
             Msg::SignedOut => {
+                self.covers.clear();
                 self.auth = Auth::SignedOut;
                 self.account = None;
                 self.entries.clear();
@@ -550,6 +557,7 @@ fn fake_entries() -> Vec<Entry> {
             new_episode: f.new_episode,
             rewatching: f.rewatching,
             waiting: f.waiting,
+            cover_url: None,
         })
         .collect();
     const UPDATED: [&str; 6] = ["3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year"];
@@ -582,6 +590,7 @@ fn fake_entries() -> Vec<Entry> {
                 new_episode: None,
                 rewatching: false,
                 waiting: None,
+                cover_url: None,
             });
             id += 1;
         }

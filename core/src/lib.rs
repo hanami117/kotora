@@ -5,6 +5,7 @@
 //! arrive in later stages (docs/ROADMAP.md). Nothing here touches a UI or starts a thread of its own.
 
 pub mod config;
+pub mod covers;
 pub mod loopback;
 pub mod mal;
 pub mod model;

@@ -20,6 +20,11 @@ pub fn data_dir() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share")
 }
 
+/// `$XDG_CACHE_HOME/kotora` (`~/.cache/kotora`): downloaded covers. Safe to delete.
+pub fn cache_dir() -> PathBuf {
+    xdg("XDG_CACHE_HOME", ".cache")
+}
+
 pub fn config_file() -> PathBuf {
     config_dir().join("config.toml")
 }

@@ -1388,6 +1388,7 @@ dependencies = [
 name = "kotora"
 version = "0.1.0"
 dependencies = [
+ "image",
  "kotora-core",
  "kotora-ctl",
  "rune",

@@ -15,6 +15,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let wide = cx.layout_size("root").is_none_or(|[w, _]| w >= theme::NARROW_W);
     // macOS draws the traffic lights over the window's top-left (Rune's full-size content), so the
     // sidebar keeps a band clear for them. None in full screen; Linux draws its own frame.
+    s.covers.set_scale(cx.env().scale);
     let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 { theme::TITLEBAR_BAND } else { 0.0 };
     row()
         .key("root")
@@ -378,7 +379,7 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
                     s.rows.get(i).map_or_else(|| format!("gone-{i}").into(), |&k| s.entries[k].id.to_string().into())
                 },
                 move |s: &State, i| match s.rows.get(i) {
-                    Some(&k) => list_row(&s.entries[k], wide, s.clock(), !s.read_only),
+                    Some(&k) => list_row(s, &s.entries[k], wide),
                     None => el(),
                 },
             ),
@@ -452,7 +453,8 @@ fn header(wide: bool, sort: Sort) -> El {
         .child(el().w_full().h(1.0).fill(PAL.border))
 }
 
-fn list_row(e: &Entry, wide: bool, now: i64, plus: bool) -> El {
+fn list_row(s: &State, e: &Entry, wide: bool) -> El {
+    let (now, plus) = (s.clock(), !s.read_only);
     let id = e.id;
     let status_c = PAL.status(e.status);
 
@@ -506,7 +508,7 @@ fn list_row(e: &Entry, wide: bool, now: i64, plus: bool) -> El {
         .hover(PAL.hover())
         .child(
             columns(
-                cover(e.id, &e.title, 34.0, 48.0, 12.0),
+                row_cover(s, e),
                 title,
                 progress,
                 score,
@@ -580,6 +582,17 @@ fn cover(id: u32, title: &str, w: f32, h: f32, size: f32) -> El {
         .border(1.0, Color::WHITE.alpha(0.06))
         .center()
         .child(text(initials(title)).font(rune::TextStyle::new(size, 600.0).tracking(0.3)).color(Color::WHITE.alpha(0.88)))
+}
+
+/// A row's cover: the generated tile, with the real cover over it once it is in memory (a
+/// cover still in Rune's decoder paints nothing, so the tile shows until then).
+fn row_cover(s: &State, e: &Entry) -> El {
+    let (w, h) = (34.0, 48.0);
+    let tile = cover(e.id, &e.title, w, h, 12.0);
+    match s.covers.get(e.id, e.cover_url.as_deref(), w, h) {
+        Some(img) => tile.child(el().key("cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
+        None => tile,
+    }
 }
 
 /// Small words the initials skip (English and romaji particles).
