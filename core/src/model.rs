@@ -26,6 +26,11 @@ impl Media {
         self.air_status == "currently_airing"
     }
 
+    /// The title to show in `lang` (romaji when that one is missing).
+    pub fn display_title(&self, lang: crate::config::TitleLang) -> &str {
+        lang.pick(&self.title, self.title_en.as_deref(), self.title_ja.as_deref())
+    }
+
     /// Every title, for the search filter.
     pub fn all_titles(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.title.as_str())

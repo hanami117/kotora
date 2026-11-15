@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use kotora_core::config::TitleLang;
 use kotora_core::queue::{Op, OpState};
 use kotora_core::{Change, ListItem, Media, Remote, Status, Values};
 use rune::{AppHandle, Image, TextEdit};
@@ -119,7 +120,12 @@ pub enum Auth {
 pub struct Entry {
     /// The service's media id (fake here). Picks the cover tile's colours.
     pub id: u32,
+    /// The title shown, in the language of Settings → Titles (derived once, see [`Entry::retitle`]).
     pub title: String,
+    /// The service's main title (romaji on MyAnimeList), and the other two.
+    pub main_title: String,
+    pub title_en: Option<String>,
+    pub title_ja: Option<String>,
     /// Every title, lower case, one per line (the search filter looks here).
     pub search: String,
     pub status: Status,
@@ -163,12 +169,15 @@ pub fn kind_label(format: &str) -> &'static str {
 }
 
 impl Entry {
-    pub fn from_item(it: &ListItem) -> Entry {
+    pub fn from_item(it: &ListItem, lang: TitleLang) -> Entry {
         let m = &it.media;
         let search = m.all_titles().map(str::to_lowercase).collect::<Vec<_>>().join("\n");
         Entry {
             id: m.id,
-            title: m.title.clone(),
+            title: m.display_title(lang).to_string(),
+            main_title: m.title.clone(),
+            title_en: m.title_en.clone(),
+            title_ja: m.title_ja.clone(),
             search,
             status: it.status,
             progress: it.progress,
@@ -188,6 +197,15 @@ impl Entry {
             times_rewatched: it.times_rewatched,
             waiting: None,
             cover_url: m.cover_url.clone(),
+        }
+    }
+
+    /// Shows the title in `lang` (romaji when that one is missing). Only on a change of the
+    /// setting or of the data, never per frame.
+    pub fn retitle(&mut self, lang: TitleLang) {
+        let t = lang.pick(&self.main_title, self.title_en.as_deref(), self.title_ja.as_deref());
+        if t != self.title {
+            self.title = t.to_string();
         }
     }
 
@@ -616,7 +634,7 @@ impl State {
             _ => 0,
         };
         let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock() };
-        let mut e = Entry::from_item(&item);
+        let mut e = Entry::from_item(&item, self.prefs.titles);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
         crate::queue::send(self, Cmd::Add { media, status });
@@ -738,13 +756,32 @@ impl State {
         }
     }
 
+    /// Settings → Titles: every title shown follows at once (`kot` too, as it asks the app), and
+    /// `config.toml` keeps it. Matching still uses every title.
+    pub fn set_titles(&mut self, lang: TitleLang) {
+        if self.prefs.titles == lang {
+            return;
+        }
+        self.prefs.titles = lang;
+        for e in &mut self.entries {
+            e.retitle(lang);
+        }
+        self.refresh();
+        crate::detect::save_setting(self, "display", "titles", kotora_core::config::quote(lang.key()));
+    }
+
+    /// The title a queued change shows: the entry's, in the chosen language, else the saved one.
+    pub fn op_title<'a>(&'a self, op: &'a Op) -> &'a str {
+        self.entries.iter().find(|e| e.id == op.media_id).map_or(op.title.as_str(), |e| e.title.as_str())
+    }
+
     /// The queue as `kot queue` prints it.
     pub fn ctl_queue(&self) -> Vec<kotora_ctl::QueueItem> {
         let service = "MyAnimeList";
         self.ops
             .iter()
             .map(|o| kotora_ctl::QueueItem {
-                title: o.title.clone(),
+                title: self.op_title(o).to_string(),
                 change: kotora_core::queue::describe_op(o),
                 state: o.state.label().into(),
                 note: match o.state {
@@ -785,7 +822,8 @@ impl State {
     }
 
     fn set_items(&mut self, items: &[ListItem]) {
-        self.entries = items.iter().map(Entry::from_item).collect();
+        let lang = self.prefs.titles;
+        self.entries = items.iter().map(|it| Entry::from_item(it, lang)).collect();
         self.queue_changed();
         self.refresh();
     }
@@ -844,7 +882,7 @@ impl State {
             }
             Msg::Queue { ops, items, gone, offline } => {
                 for it in &items {
-                    let e = Entry::from_item(it);
+                    let e = Entry::from_item(it, self.prefs.titles);
                     match self.entries.iter_mut().find(|x| x.id == e.id) {
                         Some(x) => *x = e,
                         None => self.entries.push(e),
@@ -1093,6 +1131,16 @@ const WATCHING: [Fake; 12] = [
     Fake { new_episode: Some(3), ..fk("Clockwork Bakery Wars", 2, 12, None, "4 months", None) },
 ];
 
+/// Made-up English and Japanese titles of the first fake entries (Settings → Titles); the rest
+/// have none, so they show the main title.
+const FAKE_ALT: [(Option<&str>, Option<&str>); 5] = [
+    (Some("The Lanterns on Kirigaoka Hill"), Some("霧ヶ丘のランタン")),
+    (Some("Starfall Express"), Some("星降る配達便")),
+    (None, Some("みかん通り探偵団")),
+    (Some("Island Under the Stars"), Some("星空島スローライフ")),
+    (None, Some("ネオン浪人2099")),
+];
+
 const WORDS_A: [&str; 16] = [
     "Moonlit", "Paper", "Crimson", "Quiet", "Silver", "Hidden", "Northern", "Electric", "Gentle", "Lost", "Velvet", "Second",
     "Endless", "Hollow", "Bright", "Winter",
@@ -1111,12 +1159,20 @@ fn fake_entries() -> Vec<Entry> {
         .map(|(i, f)| Entry {
             id: i as u32,
             title: f.title.into(),
+            main_title: f.title.into(),
+            title_en: FAKE_ALT.get(i).and_then(|a| a.0).map(Into::into),
+            title_ja: FAKE_ALT.get(i).and_then(|a| a.1).map(Into::into),
             // A rewatch is Completed on MAL; the Watching page shows it too.
             status: if f.rewatching { Status::Completed } else { Status::Watching },
             progress: f.progress,
             episodes: Some(f.episodes),
             score: f.score,
-            search: f.title.to_lowercase(),
+            search: [Some(f.title), FAKE_ALT.get(i).and_then(|a| a.0), FAKE_ALT.get(i).and_then(|a| a.1)]
+                .into_iter()
+                .flatten()
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>()
+                .join("\n"),
             kind: f.kind,
             updated_at: FAKE_NOW - fake_age(f.updated),
             air: if f.airing.is_some() { Air::Airing } else { Air::Finished },
@@ -1146,6 +1202,9 @@ fn fake_entries() -> Vec<Entry> {
             let search = title.to_lowercase();
             out.push(Entry {
                 id,
+                main_title: title.clone(),
+                title_en: None,
+                title_ja: None,
                 title,
                 status,
                 progress,

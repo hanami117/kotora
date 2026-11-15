@@ -2,6 +2,7 @@
 //! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
 
 use kotora_core::Status;
+use kotora_core::config::TitleLang;
 
 use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
@@ -385,6 +386,29 @@ pub const SCENES: &[Scene] = &[
         }
     }),
     ("settings-page", |s| s.go(Page::Settings)),
+    // Settings → Titles: English or Japanese where the anime has one, romaji where not.
+    ("settings-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        s.go(Page::Settings);
+    }),
+    ("list-titles-english", |s| s.set_titles(TitleLang::English)),
+    ("list-titles-japanese", |s| s.set_titles(TitleLang::Japanese)),
+    ("queue-titles-english", |s| {
+        s.set_titles(TitleLang::English);
+        s.go(Page::Queue);
+    }),
+    ("now-playing-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        s.go(Page::NowPlaying);
+    }),
+    ("details-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        details(s, 0, true);
+    }),
+    ("search-titles-english", |s| {
+        s.set_titles(TitleLang::English);
+        search(s, "kirigaoka", true);
+    }),
     // "Update automatically" on, threshold 90 %, keep-higher off.
     ("settings-auto-on", |s| {
         s.prefs.auto = true;
@@ -585,6 +609,8 @@ fn signed_out(s: &mut State, auth: Auth) {
 #[cfg(test)]
 mod tests {
     use super::SCENES;
+    use crate::model::Sort;
+    use kotora_core::config::TitleLang;
     use crate::model::State;
     use rune::{Env, Runtime};
 
@@ -684,6 +710,26 @@ mod tests {
         let rt = render("list-search-none", (1280.0, 800.0));
         assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+    }
+
+    /// Settings → Titles: one choice lit, and every page follows it.
+    #[test]
+    fn titles_follow_the_setting() {
+        let rt = render("settings-titles-japanese", (1280.0, 800.0));
+        assert!(rt.find("display-card").is_some() && rt.find("set/titles/japanese").is_some() && rt.find("set/titles/romaji").is_some());
+        let mut s = State::fake();
+        let title = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().title.clone();
+        s.set_titles(TitleLang::English);
+        assert_eq!(title(&s, 0), "The Lanterns on Kirigaoka Hill");
+        assert_eq!(title(&s, 2), "Mikan Street Detectives", "no English title: romaji");
+        assert_eq!(s.ctl_queue().iter().find(|q| q.title.contains("Hill")).map(|q| q.state.as_str()), Some("Waiting"), "the queue and kot follow");
+        s.set_titles(TitleLang::Japanese);
+        assert_eq!(title(&s, 0), "霧ヶ丘のランタン");
+        assert_eq!(s.find("lanterns of kirigaoka").map(|i| s.entries[i].id), Ok(0), "kot still finds it by its other titles");
+        s.set_sort(Sort::Title);
+        s.set_titles(TitleLang::Romaji);
+        assert_eq!(title(&s, 0), "Lanterns of Kirigaoka");
+        assert_eq!(s.entries[s.rows[0]].title, "Clockwork Bakery Wars", "the title sort follows the shown titles");
     }
 
     /// Settings: the Accounts and About cards, side by side when wide, stacked when narrow.

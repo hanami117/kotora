@@ -24,6 +24,9 @@
 //!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
+//!
+//! [display]
+//! titles = "romaji"            # or "english", "japanese"; romaji when a title is missing
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -42,6 +45,57 @@ pub struct Config {
     pub vlc: Vlc,
     pub notices: Notices,
     pub recognition: Recognition,
+    pub display: Display,
+}
+
+/// Which title the app (and `kot`, through the app) shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TitleLang {
+    /// The service's main title (romaji on MyAnimeList).
+    #[default]
+    Romaji,
+    English,
+    Japanese,
+}
+
+impl TitleLang {
+    pub const ALL: [TitleLang; 3] = [TitleLang::Romaji, TitleLang::English, TitleLang::Japanese];
+
+    /// The `config.toml` value.
+    pub fn key(self) -> &'static str {
+        match self {
+            TitleLang::Romaji => "romaji",
+            TitleLang::English => "english",
+            TitleLang::Japanese => "japanese",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TitleLang::Romaji => "Romaji",
+            TitleLang::English => "English",
+            TitleLang::Japanese => "Japanese",
+        }
+    }
+
+    /// The title to show: the English or Japanese one when asked for and known, else the main
+    /// (romaji) title. Matching and recognition always use every title; this is display only.
+    pub fn pick<'a>(self, main: &'a str, en: Option<&'a str>, ja: Option<&'a str>) -> &'a str {
+        let alt = match self {
+            TitleLang::Romaji => None,
+            TitleLang::English => en,
+            TitleLang::Japanese => ja,
+        };
+        alt.map(str::trim).filter(|t| !t.is_empty()).unwrap_or(main)
+    }
+}
+
+/// Display settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Display {
+    pub titles: TitleLang,
 }
 
 /// Recognition settings.
@@ -152,6 +206,7 @@ impl std::fmt::Debug for Config {
             .field("vlc_password", &(!self.vlc.password.is_empty()).then_some("<set>"))
             .field("notices", &self.notices)
             .field("recognition", &self.recognition)
+            .field("display", &self.display)
             .finish()
     }
 }
@@ -170,6 +225,8 @@ struct File {
     notices: Notices,
     #[serde(default)]
     recognition: Recognition,
+    #[serde(default)]
+    display: Display,
 }
 
 #[derive(Deserialize, Default)]
@@ -191,6 +248,7 @@ impl Config {
             vlc: f.vlc,
             notices: f.notices,
             recognition: f.recognition,
+            display: f.display,
         })
     }
 
@@ -368,6 +426,24 @@ mod tests {
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
         assert!(!c.players.get("vlc") && c.players.get("mpv"));
         assert_eq!(c.players.mpv_sockets, ["/tmp/a.sock"]);
+    }
+
+    #[test]
+    fn title_language_falls_back_to_romaji() {
+        assert_eq!(Config::parse("").unwrap().display.titles, TitleLang::Romaji);
+        assert_eq!(Config::parse("[display]\ntitles = \"english\"\n").unwrap().display.titles, TitleLang::English);
+        assert_eq!(Config::parse("[display]\ntitles = \"japanese\"\n").unwrap().display.titles, TitleLang::Japanese);
+        assert!(Config::parse("[display]\ntitles = \"klingon\"\n").is_err(), "an unknown value is refused, never written");
+        for l in TitleLang::ALL {
+            let t = set_line("", "display", "titles", &quote(l.key()));
+            assert_eq!(Config::parse(&t).unwrap().display.titles, l);
+        }
+        let (main, en, ja) = ("Kirigaoka no Lantern", Some("Lanterns of Kirigaoka"), Some("霧ヶ丘のランタン"));
+        assert_eq!(TitleLang::Romaji.pick(main, en, ja), main);
+        assert_eq!(TitleLang::English.pick(main, en, ja), "Lanterns of Kirigaoka");
+        assert_eq!(TitleLang::Japanese.pick(main, en, ja), "霧ヶ丘のランタン");
+        assert_eq!(TitleLang::English.pick(main, None, ja), main, "no English title: romaji");
+        assert_eq!(TitleLang::Japanese.pick(main, en, Some("  ")), main, "a blank title counts as none");
     }
 
     #[test]

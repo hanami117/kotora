@@ -204,7 +204,7 @@ impl State {
         self.online.menu = None;
         let stub = match (self.entries.iter().find(|e| e.id == id), self.online.hits.iter().find(|h| h.id == id)) {
             (Some(e), _) => crate::details::Stub::from_entry(e),
-            (None, Some(h)) => crate::details::Stub::from_hit(h),
+            (None, Some(h)) => crate::details::Stub::from_hit(h, self.prefs.titles),
             (None, None) => crate::details::Stub::bare(id, &format!("MyAnimeList #{id}")),
         };
         self.open_details(stub);
@@ -515,7 +515,8 @@ pub fn status_menu(id: u32) -> El {
 /// A MyAnimeList result: cover, title, what it is, and the add buttons. A press opens its page.
 fn hit_row(s: &State, h: &AnimeHit) -> El {
     let id = h.id;
-    let tile = cover(id, &h.title, 34.0, 48.0, 12.0);
+    let title = s.prefs.titles.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref());
+    let tile = cover(id, title, 34.0, 48.0, 12.0);
     let cov = match s.covers.get(id, h.cover_url.as_deref(), 34.0, 48.0) {
         Some(img) => tile.child(el().absolute(0.0, 0.0).size(34.0, 48.0).radius(theme::R_XS).pixels(img.pixels())),
         None => tile,
@@ -526,11 +527,13 @@ fn hit_row(s: &State, h: &AnimeHit) -> El {
         sub = sub.child(tag_tinted(kind, PAL.dim, PAL.raised));
     }
     sub = sub.child(text(hit_meta(h)).font(theme::LABEL_NUM).color(PAL.faint));
-    if let Some(en) = h.title_en.as_ref().filter(|en| !en.eq_ignore_ascii_case(&h.title)) {
-        sub = sub.child(text(en.clone()).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0));
+    // The second title: English under the main one, else the main one under the chosen one.
+    let second = if title == h.title { h.title_en.as_deref() } else { Some(h.title.as_str()) };
+    if let Some(t) = second.filter(|t| !t.eq_ignore_ascii_case(title)) {
+        sub = sub.child(text(t.to_string()).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0));
     }
     let open = s.online.menu == Some(id);
-    let stub = crate::details::Stub::from_hit(h);
+    let stub = crate::details::Stub::from_hit(h, s.prefs.titles);
     let line = row()
         .key("line")
         .h(theme::ROW_H)
@@ -538,14 +541,14 @@ fn hit_row(s: &State, h: &AnimeHit) -> El {
         .gap(theme::COL_GAP)
         .center_y()
         .role("button")
-        .label(format!("About {}", h.title))
+        .label(format!("About {title}"))
         .hover(PAL.hover())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
             s.open_details(stub.clone());
         })
         .child(cov)
-        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(h.title.clone()).font(theme::ROW_TITLE).color(PAL.text).truncate()).child(sub))
+        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(title.to_string()).font(theme::ROW_TITLE).color(PAL.text).truncate()).child(sub))
         .child(row().gap(6.0).center_y().child(add_button(id)).child(menu_button(id, open)));
     let mut c = col().w_full().child(if open { line.fill(PAL.surface) } else { line });
     if open {

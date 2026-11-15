@@ -91,12 +91,14 @@ pub struct Prefs {
     pub vlc_set_up: bool,
     /// The "precise detection" offer for mpv was answered (`[notices] mpv_precise`).
     pub precise_answered: bool,
+    /// Settings → Titles (`[display] titles`).
+    pub titles: kotora_core::config::TitleLang,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, titles: Default::default() }
     }
 }
 
@@ -109,6 +111,7 @@ impl Prefs {
             players: c.players.clone(),
             vlc_set_up: !c.vlc.password.is_empty(),
             precise_answered: c.notices.mpv_precise,
+            titles: c.display.titles,
         }
     }
 }
