@@ -17,6 +17,7 @@
 
 pub mod dirwatch;
 pub mod mpv;
+pub mod mpvconf;
 #[cfg(target_os = "linux")]
 pub mod mpris;
 pub mod notify;
