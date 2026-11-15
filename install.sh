@@ -8,6 +8,7 @@
 #   bin/kotora                                               the app (release build)
 #   bin/kot                                                  the command line
 #   share/applications/io.github.hanami117.kotora.desktop
+#   share/icons/hicolor/<size>/apps/io.github.hanami117.kotora.png   (16 to 512 px)
 #   share/icons/hicolor/scalable/apps/io.github.hanami117.kotora.svg
 # Your settings, list and caches live in ~/.config/kotora, ~/.local/share/kotora and ~/.cache/kotora.
 # Adapted from Uzumaki's install.sh.
@@ -41,7 +42,7 @@ running() { pgrep -xf "$BIN( .*)?" >/dev/null 2>&1; }
 uninstall() {
     running && die "Kotora is running. Quit it first (kot quit), then run this again."
     say "Removing Kotora from $PREFIX"
-    rm -f "$BIN" "$KOT" "$ICON"
+    rm -f "$BIN" "$KOT" "$ICON" "$ICONS"/*/apps/"$APP_ID".png
     # Only remove the menu entry if it is ours (it may point at a build in a source checkout).
     if [[ -f $DESKTOP ]] && grep -qxF "$EXEC_LINE" "$DESKTOP"; then
         rm -f "$DESKTOP"
@@ -55,7 +56,7 @@ uninstall() {
 
 case "${1:-}" in
     --uninstall) uninstall; exit ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit ;;
     "") ;;
     *) die "unknown option '$1' (try --help)" ;;
 esac
@@ -90,12 +91,16 @@ say "Installing into $PREFIX"
 install -Dm755 "$target" "$BIN"
 install -Dm755 "${target%kotora}kot" "$KOT"
 install -Dm644 "assets/icons/$APP_ID.svg" "$ICON"
+for icon in assets/icons/hicolor/*/apps/"$APP_ID".png; do
+    size=$(basename "$(dirname "$(dirname "$icon")")")
+    install -Dm644 "$icon" "$ICONS/$size/apps/$APP_ID.png"
+done
 
 if [[ -f $DESKTOP ]] && ! grep -qxF "$EXEC_LINE" "$DESKTOP"; then
     say "Replacing the existing menu entry (it started $(grep -m1 '^Exec=' "$DESKTOP" | cut -d= -f2-))"
 fi
 mkdir -p "$(dirname "$DESKTOP")"
-sed "s|^Exec=.*|$EXEC_LINE|" "assets/$APP_ID.desktop" > "$DESKTOP"
+sed "s|^Exec=.*|$EXEC_LINE|" "packaging/linux/$APP_ID.desktop" > "$DESKTOP"
 chmod 644 "$DESKTOP"
 refresh_menus
 
