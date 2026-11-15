@@ -47,6 +47,18 @@ pub const SCENES: &[Scene] = &[
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
     // First run: no Client ID in config.toml.
     ("no-client-id", |s| signed_out(s, Auth::NoClientId)),
+    // The guide with a pasted ID that isn't one (the inline error), and with the URL copied.
+    ("no-client-id-error", |s| {
+        signed_out(s, Auth::NoClientId);
+        s.client_id.draft.replace_text("kotora-app-secret-from-mal");
+        s.save_client_id();
+        s.client_id.copied = true;
+    }),
+    // Saved: Sign in is enabled at once, and the page says the ID was saved.
+    ("client-id-saved", |s| {
+        signed_out(s, Auth::SignedOut);
+        s.client_id.saved = true;
+    }),
     ("signed-out", |s| signed_out(s, Auth::SignedOut)),
     ("signing-in", |s| signed_out(s, Auth::SigningIn)),
     ("sign-in-failed", |s| {
@@ -202,6 +214,19 @@ pub const SCENES: &[Scene] = &[
         s.now = None;
         s.go(Page::Settings);
     }),
+    // Settings → Accounts: Change pressed on the Client ID, with a wrong paste.
+    ("settings-client-id-change", |s| {
+        s.client_id.editing = true;
+        s.client_id.draft.replace_text("abc123");
+        s.save_client_id();
+        s.go(Page::Settings);
+    }),
+    // No Client ID yet: Settings offers to set one.
+    ("settings-no-client-id", |s| {
+        signed_out(s, Auth::NoClientId);
+        s.client_id.hint = None;
+        s.go(Page::Settings);
+    }),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
         s.go(Page::Settings);
@@ -304,6 +329,20 @@ mod tests {
     fn sign_in_screens_show_their_parts() {
         let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("welcome").is_some() && rt.find("no-client-id").is_some() && rt.find("check-again").is_some());
+        for key in ["cid-step/1", "cid-step/2", "cid-step/3", "cid/open", "cid/copy", "cid/url", "cid/input", "cid/save"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(rt.find("cid/error").is_none());
+        assert!(render("no-client-id-error", (1280.0, 800.0)).find("cid/error").is_some());
+        assert!(render("no-client-id", (960.0, 600.0)).find("cid/save").is_some(), "the guide fits a small window");
+        let rt = render("client-id-saved", (1280.0, 800.0));
+        assert!(rt.find("cid-saved").is_some() && rt.find("no-client-id").is_none());
+        let rt = render("settings-page", (1280.0, 800.0));
+        assert!(rt.find("set/cid-masked").is_some() && rt.find("set/cid-change").is_some() && rt.find("set/cid/input").is_none());
+        let rt = render("settings-client-id-change", (1280.0, 800.0));
+        assert!(rt.find("set/cid/input").is_some() && rt.find("set/cid/error").is_some() && rt.find("set/cid-cancel").is_some());
+        assert!(render("settings-no-client-id", (1280.0, 800.0)).find("set/cid-change").is_some());
+        let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("rows").is_none() && rt.find("account").is_none());
         let rt = render("signed-out", (1280.0, 800.0));
         assert!(rt.find("welcome").is_some() && rt.find("sign-in").is_some() && rt.find("no-client-id").is_none());

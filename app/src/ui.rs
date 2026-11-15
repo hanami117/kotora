@@ -154,7 +154,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
 }
 
 /// "just now", "2 min ago", "3 h ago", "2 days ago".
-fn sync_age(secs: i64) -> String {
+pub(crate) fn sync_age(secs: i64) -> String {
     match secs.max(0) {
         0..=59 => "just now".into(),
         60..=3599 => format!("{} min ago", secs / 60),
@@ -280,7 +280,7 @@ fn main(s: &State, wide: bool) -> El {
 }
 
 /// The page's top bar: title, count, and (on the list) search and sort.
-fn top(s: &State, title: &str, count: Option<usize>, tools: bool) -> El {
+pub(crate) fn top(s: &State, title: &str, count: Option<usize>, tools: bool) -> El {
     let mut t = row().key("top").gap(12.0).center_y().px(theme::PAGE_PAD).pt(18.0).pb(14.0).child(
         row()
             .gap(6.0)
@@ -580,12 +580,12 @@ fn plus_button(id: u32) -> El {
 // -------------------------------------------------------------------------------- inline editor
 
 /// A labelled group in the editor.
-fn field(label: &str, body: El) -> El {
+pub(crate) fn field(label: &str, body: El) -> El {
     col().gap(6.0).child(text(label.to_uppercase()).font(theme::CAPTION).color(PAL.faint)).child(body)
 }
 
 /// A small pressable cell (status chips, score cells, stepper buttons).
-fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) + 'static) -> El {
+pub(crate) fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) + 'static) -> El {
     let c = row()
         .key(key)
         .role("button")
@@ -608,7 +608,7 @@ fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) + 'static) 
 
 /// Under an open row: status, progress and score, then Cancel / Save. Nothing is queued until
 /// Save, and then as one change.
-fn editor(e: &Entry, ed: &Editor) -> El {
+pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
     let mut statuses = row().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -703,7 +703,7 @@ fn step_button(key: &str, label: &str, delta: i32) -> El {
         .child(text(label.to_string()).font(TextStyle::new(15.0, 500.0)).color(PAL.dim))
 }
 
-fn tag(label: &str, c: Color, dot: bool) -> El {
+pub(crate) fn tag(label: &str, c: Color, dot: bool) -> El {
     let mut t = row().h(18.0).px(6.0).gap(4.0).center_y().radius(theme::R_XS).fill(c.alpha(0.12));
     if dot {
         t = t.child(el().size(5.0, 5.0).radius(2.5).fill(c));
@@ -711,7 +711,7 @@ fn tag(label: &str, c: Color, dot: bool) -> El {
     t.child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
 }
 
-fn tag_tinted(label: &str, fg: Color, bg: Color) -> El {
+pub(crate) fn tag_tinted(label: &str, fg: Color, bg: Color) -> El {
     row().h(18.0).px(6.0).center_y().radius(theme::R_XS).fill(bg).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(fg))
 }
 
@@ -729,12 +729,12 @@ const TILES: [(&str, &str); 10] = [
     ("#7fae5a", "#22381f"),
 ];
 
-fn hex(s: &str) -> Color {
+pub(crate) fn hex(s: &str) -> Color {
     rune::color::hex(s).unwrap_or(Color::BLACK)
 }
 
 /// The generated tile: a 160° gradient and the title's initials.
-fn cover(id: u32, title: &str, w: f32, h: f32, size: f32) -> El {
+pub(crate) fn cover(id: u32, title: &str, w: f32, h: f32, size: f32) -> El {
     let (a, b) = TILES[id as usize % TILES.len()];
     el().size(w, h)
         .radius(theme::R_XS)
@@ -746,7 +746,7 @@ fn cover(id: u32, title: &str, w: f32, h: f32, size: f32) -> El {
 
 /// A row's cover: the generated tile, with the real cover over it once it is in memory (a
 /// cover still in Rune's decoder paints nothing, so the tile shows until then).
-fn row_cover(s: &State, e: &Entry) -> El {
+pub(crate) fn row_cover(s: &State, e: &Entry) -> El {
     let (w, h) = (34.0, 48.0);
     let tile = cover(e.id, &e.title, w, h, 12.0);
     match s.covers.get(e.id, e.cover_url.as_deref(), w, h) {
@@ -799,7 +799,7 @@ fn loading() -> El {
 // ------------------------------------------------------------------------------------ queue
 
 /// A button whose press needs a value (an op id): `button` takes plain fns only.
-fn action(key: String, label: &str, primary: bool, f: impl Fn(&mut State, &mut Tx) + 'static) -> El {
+pub(crate) fn action(key: String, label: &str, primary: bool, f: impl Fn(&mut State, &mut Tx) + 'static) -> El {
     let (fg, fill) = if primary { (PAL.on_accent, PAL.accent) } else { (PAL.text, PAL.raised) };
     let b = el()
         .key(key)
@@ -963,7 +963,7 @@ fn queue_row(op: &Op, now: i64) -> El {
     if op.state == OpState::Done { r.opacity(0.6) } else { r }
 }
 
-fn pill(label: &str, c: Color) -> El {
+pub(crate) fn pill(label: &str, c: Color) -> El {
     row().h(20.0).px(8.0).center_y().radius(10.0).fill(c.alpha(0.10)).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
 }
 
@@ -1041,7 +1041,7 @@ fn conflict_card(op: &Op, now: i64) -> El {
 
 // ------------------------------------------------------------------- alerts, sign-in, settings
 
-fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
+pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
     let (fg, fill) = match (primary, on.is_some()) {
         (true, true) => (PAL.on_accent, PAL.accent),
         (_, false) => (PAL.faint, PAL.field),
@@ -1072,7 +1072,7 @@ fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> 
 }
 
 /// A tinted bar with a message and an optional button (design-spec §7).
-fn alert(key: &str, c: Color, message: String, action: Option<El>) -> El {
+pub(crate) fn alert(key: &str, c: Color, message: String, action: Option<El>) -> El {
     let mut r = row()
         .key(key.to_string())
         .gap(12.0)
@@ -1127,25 +1127,16 @@ fn welcome(s: &State) -> El {
     match s.auth {
         Auth::NoClientId => {
             c = c
-                .child(text("To sign in, Kotora needs a MyAnimeList Client ID.").font(theme::BODY).color(PAL.dim))
+                .child(text("To sign in, Kotora needs a MyAnimeList Client ID. It is free and takes a minute.").font(theme::BODY).color(PAL.dim))
+                .child(crate::clientid::guide(s))
                 .child(
-                    col()
-                        .key("no-client-id")
-                        .gap(6.0)
-                        .padding(16.0)
+                    row()
+                        .gap(8.0)
                         .mt(6.0)
-                        .radius(theme::R_MD)
-                        .fill(PAL.status(Status::Dropped).alpha(0.08))
-                        .border(1.0, PAL.status(Status::Dropped).alpha(0.3))
-                        .child(text("Add this to ~/.config/kotora/config.toml:").font(theme::LABEL).color(PAL.dim))
-                        .child(text("[mal]\nclient_id = \"your client id\"").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text))
-                        .child(
-                            text("Register a free ID at myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback.")
-                                .font(theme::LABEL)
-                                .color(PAL.dim),
-                        ),
-                )
-                .child(row().gap(8.0).mt(6.0).child(button("sign-in", "Sign in", true, None)).child(button("check-again", "Check again", false, Some(online::recheck_config))));
+                        .center_y()
+                        .child(button("sign-in", "Sign in", true, None))
+                        .child(ghost("check-again", "Check config.toml again", online::recheck_config)),
+                );
         }
         Auth::SigningIn => {
             c = c
@@ -1153,8 +1144,18 @@ fn welcome(s: &State) -> El {
                 .child(row().mt(6.0).child(button("cancel", "Cancel", false, Some(online::cancel_sign_in))));
         }
         _ => {
+            if s.client_id.saved {
+                c = c.child(
+                    row()
+                        .key("cid-saved")
+                        .gap(6.0)
+                        .center_y()
+                        .child(icon(&icons::CHECK, 14.0).color(PAL.ok()))
+                        .child(text("Client ID saved.").font(theme::LABEL).color(PAL.ok())),
+                );
+            }
             c = c
-                .child(text("Sign in to MyAnimeList to see your list. Kotora only reads it for now.").font(theme::BODY).color(PAL.dim))
+                .child(text("Sign in to MyAnimeList to see and update your list.").font(theme::BODY).color(PAL.dim))
                 .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in))));
         }
     }
@@ -1191,7 +1192,7 @@ fn settings(s: &State, wide: bool) -> El {
         )
 }
 
-fn card(key: &str, title: &str) -> El {
+pub(crate) fn card(key: &str, title: &str) -> El {
     col()
         .key(key.to_string())
         .padding(16.0)
@@ -1230,11 +1231,10 @@ fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: Stri
 fn accounts_card(s: &State) -> El {
     let (line, action) = match (&s.account, s.auth) {
         (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(online::sign_out))),
-        (None, Auth::NoClientId) => ("No Client ID in config.toml".to_string(), small_button("sign-in", "Sign in", true, None)),
+        (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
         (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(online::cancel_sign_in))),
         (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(online::sign_in))),
     };
-    let client_id = if s.auth == Auth::NoClientId { "not set yet (the Welcome page shows how)" } else { "set" };
     let note = row()
         .key("token-note")
         .gap(10.0)
@@ -1247,9 +1247,7 @@ fn accounts_card(s: &State) -> El {
         .border(1.0, PAL.st_completed.alpha(0.28))
         .child(icon(&icons::LOCK, 16.0).color(PAL.st_completed))
         .child(
-            text(format!(
-                "Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it, your saved list and changes not yet sent. The Client ID comes from config.toml: {client_id}."
-            ))
+            text("Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it, your saved list and changes not yet sent.")
             .font(theme::LABEL)
             .color(PAL.text)
             .wrap()
@@ -1259,7 +1257,9 @@ fn accounts_card(s: &State) -> El {
     card("account-card", "Accounts")
         .child(service_row("acct/mal", "MAL", hex("#2e51a2"), "MyAnimeList", line, action, true))
         .child(el().w_full().h(1.0).fill(PAL.border))
-        .child(service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.2".into(), small_button("anilist", "Sign in", false, None), false))
+        .child(crate::clientid::settings_row(s))
+        .child(el().w_full().h(1.0).fill(PAL.border))
+        .child(service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.3".into(), small_button("anilist", "Sign in", false, None), false))
         .child(note)
 }
 
@@ -1315,7 +1315,7 @@ fn about_card(s: &State) -> El {
 }
 
 /// The `sm` button (26 high) of the settings rows.
-fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
+pub(crate) fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
     button(key, label, primary, on).h(26.0).px(10.0)
 }
 
@@ -1323,7 +1323,7 @@ fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)
 
 /// The id (for the tile) and the title to show for what plays: the list entry, the search hit,
 /// the parsed title, or the file name.
-fn now_title(s: &State, n: &Now) -> (u32, String) {
+pub(crate) fn now_title(s: &State, n: &Now) -> (u32, String) {
     if let Some(id) = n.media_id()
         && let Some(e) = s.entries.iter().find(|e| e.id == id)
     {
@@ -1350,12 +1350,12 @@ fn now_cover(s: &State, n: &Now, w: f32, h: f32, size: f32) -> El {
 }
 
 /// Mixes `a` toward `b` by `t` (linear colours).
-fn mix(a: Color, b: Color, t: f32) -> Color {
+pub(crate) fn mix(a: Color, b: Color, t: f32) -> Color {
     Color { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t, a: 1.0 }
 }
 
 /// A ghost button (no fill, dim text): "Wrong anime…".
-fn ghost(key: &str, label: &str, f: impl Fn(&mut State) + 'static) -> El {
+pub(crate) fn ghost(key: &str, label: &str, f: impl Fn(&mut State) + 'static) -> El {
     el().key(key.to_string())
         .role("button")
         .label(label.to_string())
@@ -1444,7 +1444,7 @@ fn banner(s: &State) -> El {
     .child(ghost("banner/wrong", "Wrong anime\u{2026}", State::wrong_anime))
 }
 
-fn led_color(led: Led) -> Color {
+pub(crate) fn led_color(led: Led) -> Color {
     match led {
         Led::Playing => PAL.ok(),
         Led::Idle => PAL.warn(),
@@ -1477,7 +1477,7 @@ fn players_status_card(s: &State) -> El {
 }
 
 /// A label and a value in the Now Playing card.
-fn kv(label: &str, value: El) -> El {
+pub(crate) fn kv(label: &str, value: El) -> El {
     row().gap(12.0).py(3.0).items_start().child(text(label.to_string()).font(theme::LABEL).color(PAL.faint).w(110.0)).child(value.grow(1.0).min_w(0.0))
 }
 
@@ -1734,7 +1734,7 @@ fn now_page(s: &State, wide: bool) -> El {
 // --------------------------------------------------------------------- settings: updates, players
 
 /// The 36 × 20 switch (design-spec §4): off `border_strong`, on `accent`.
-fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
+pub(crate) fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
     let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.text });
     let track = row()
         .key(key)
@@ -1753,7 +1753,7 @@ fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + '
 }
 
 /// A settings line: title and help on the left, the control on the right.
-fn option(title: &str, help: String, control: El) -> El {
+pub(crate) fn option(title: &str, help: String, control: El) -> El {
     row()
         .gap(12.0)
         .py(10.0)

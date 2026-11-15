@@ -9,6 +9,7 @@
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
 mod art;
+mod clientid;
 mod ctl;
 mod detect;
 mod icons;
@@ -119,6 +120,7 @@ fn main() {
     let _ctl = ctl::start(handle.clone());
     let app = app.init(move || {
         let mut s = State::start(online::initial_auth());
+        s.client_id.hint = clientid::saved_hint();
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
         s.handle = Some(handle);
         s.window = !hidden;

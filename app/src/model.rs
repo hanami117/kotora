@@ -258,6 +258,8 @@ pub enum Msg {
     Reached { key: String, file: String },
     /// The players' states.
     Players(Vec<SourceStatus>),
+    /// The Client ID was written (its last four characters and the sign-in state now), or not.
+    ClientIdSaved(Result<(String, Auth), String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -317,6 +319,8 @@ pub struct State {
     pub logo_big: Option<Image>,
     /// Covers in the list, and Rune's image cache (`art.rs`).
     pub covers: Covers,
+    /// The MyAnimeList Client ID field (Welcome and Settings).
+    pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
 }
 
@@ -354,6 +358,7 @@ impl State {
             logo: None,
             logo_big: None,
             covers: Covers::default(),
+            client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
         };
         s.queue_changed();
@@ -375,6 +380,7 @@ impl State {
         s.players.clear();
         s.loading = matches!(auth, Auth::SignedIn);
         s.handle = None;
+        s.client_id.hint = None;
         s.refresh();
         s
     }
@@ -755,6 +761,7 @@ impl State {
             Msg::Now(seen) => self.now_seen(seen.map(|b| *b)),
             Msg::Reached { key, file } => self.now_reached(&key, &file),
             Msg::Players(v) => self.players_seen(v),
+            Msg::ClientIdSaved(r) => self.client_id_saved(r),
             Msg::SignedOut => {
                 self.covers.clear();
                 self.auth = Auth::SignedOut;
