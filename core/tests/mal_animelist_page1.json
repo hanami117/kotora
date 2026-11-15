@@ -1,0 +1,48 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 1001,
+        "title": "Lanterns of Kirigaoka",
+        "main_picture": { "medium": "https://cdn.example.invalid/1001m.jpg", "large": "https://cdn.example.invalid/1001l.jpg" },
+        "alternative_titles": { "synonyms": ["Kirigaoka no Tomoshibi"], "en": "Lanterns of Kirigaoka (English)", "ja": "" },
+        "num_episodes": 12,
+        "media_type": "tv",
+        "status": "currently_airing"
+      },
+      "list_status": {
+        "status": "watching",
+        "score": 8,
+        "num_episodes_watched": 5,
+        "is_rewatching": false,
+        "updated_at": "2018-02-24T05:34:20+00:00"
+      }
+    },
+    {
+      "node": {
+        "id": 1002,
+        "title": "Tidepool Radio",
+        "main_picture": { "large": "https://cdn.example.invalid/1002l.jpg" },
+        "alternative_titles": { "synonyms": [], "en": "", "ja": "タイドプール" },
+        "num_episodes": 0,
+        "media_type": "ona",
+        "status": "not_yet_aired"
+      },
+      "list_status": {
+        "status": "plan_to_watch",
+        "score": 0,
+        "num_episodes_watched": 0,
+        "is_rewatching": true,
+        "updated_at": "2019-01-01T00:00:00Z"
+      }
+    },
+    {
+      "node": { "id": 1003, "title": "Orphan Entry Without Status" }
+    },
+    {
+      "node": { "id": 1004, "title": "Mecha Bento Club", "num_episodes": 10, "media_type": "movie", "status": "finished_airing" },
+      "list_status": { "status": "on_hold", "score": 6, "num_episodes_watched": 4, "is_rewatching": false, "updated_at": "2020-06-30T12:00:00+02:00" }
+    }
+  ],
+  "paging": { "next": "https://api.myanimelist.net/v2/users/@me/animelist?offset=100&limit=100" }
+}

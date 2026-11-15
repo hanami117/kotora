@@ -1,7 +1,21 @@
 //! Kotora's core: no UI and no platform code.
 //!
-//! Stage 1 holds only the list statuses the UI and `kot` share. The SQLite store, the services
-//! (MyAnimeList first), the sync queue and recognition arrive in later stages (docs/ROADMAP.md).
+//! Stage 2: the data model, the SQLite store (the local cache of the user's list), paths, the config
+//! file, the token file, and the MyAnimeList client (read only). The sync queue and recognition
+//! arrive in later stages (docs/ROADMAP.md). Nothing here touches a UI or starts a thread of its own.
+
+pub mod config;
+pub mod loopback;
+pub mod mal;
+pub mod model;
+pub mod paths;
+pub mod ratelimit;
+pub mod service;
+pub mod store;
+pub mod time;
+pub mod tokens;
+
+pub use model::{ListItem, Media};
 
 /// A list status. Kotora's own enum, mapped per service later (MAL `plan_to_watch` / `on_hold`,
 /// AniList `PLANNING` / `PAUSED`).
@@ -29,6 +43,21 @@ impl Status {
         }
     }
 
+    /// MyAnimeList's `list_status.status` value.
+    pub fn mal_name(self) -> &'static str {
+        match self {
+            Status::Watching => "watching",
+            Status::PlanToWatch => "plan_to_watch",
+            Status::Completed => "completed",
+            Status::OnHold => "on_hold",
+            Status::Dropped => "dropped",
+        }
+    }
+
+    pub fn from_mal(s: &str) -> Option<Status> {
+        Status::ALL.into_iter().find(|st| st.mal_name() == s)
+    }
+
     /// A stable lower-case name (scene names, the wire).
     pub fn slug(self) -> &'static str {
         match self {
@@ -44,6 +73,14 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mal_names_round_trip() {
+        for st in Status::ALL {
+            assert_eq!(Status::from_mal(st.mal_name()), Some(st));
+        }
+        assert_eq!(Status::from_mal("nope"), None);
+    }
 
     #[test]
     fn slugs_are_unique() {
