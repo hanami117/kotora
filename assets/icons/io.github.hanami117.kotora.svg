@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- C2: faceted geometric tiger head, bokken slanting under the chin. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a5c"/><stop offset="1" stop-color="#1b2640"/></linearGradient>
+    <g id="bokken">
+      <path d="M-260 -22 L380 -26 C430 -26 460 -12 476 8 C440 18 410 22 380 22 L-260 22 Z" fill="#d4a568"/>
+      <path d="M-260 6 L380 8 C420 8 450 10 476 8 C440 18 410 22 380 22 L-260 22 Z" fill="#b8854a"/>
+      <rect x="-450" y="-26" width="196" height="52" rx="20" fill="#7a4a26"/>
+      <rect x="-276" y="-62" width="28" height="124" rx="12" fill="#2b1d16"/>
+    </g>
+    <path id="head" d="M512 230 L700 270 L800 430 L760 600 L512 740 L264 600 L224 430 L324 270 Z"/>
+    <clipPath id="hc"><use href="#head"/></clipPath>
+    <g id="ear"><path d="M238 410 L282 168 L450 266 Z" fill="#f28a22"/><path d="M296 316 L312 230 L384 272 Z" fill="#ffe9cf"/></g>
+    <g id="feat">
+      <path d="M210 440 L380 500 L210 540 Z" fill="#26170f"/>
+      <path d="M230 580 L360 590 L260 640 Z" fill="#26170f"/>
+      <path d="M420 250 L460 370 L380 270 Z" fill="#26170f"/>
+      <path d="M346 470 L452 520 L420 572 L364 552 Z" fill="#26170f"/>
+    </g>
+  </defs>
+  <rect x="54" y="54" width="916" height="916" rx="224" fill="url(#bg)"/>
+  <use href="#bokken" transform="translate(512 770) rotate(-14) scale(0.88 1.5)"/>
+  <use href="#ear"/><use href="#ear" transform="translate(1024 0) scale(-1 1)"/>
+  <use href="#head" fill="#f28a22"/>
+  <path d="M512 230 L700 270 L800 430 L760 600 L512 740 Z" fill="#e57a18"/>
+  <g clip-path="url(#hc)">
+    <use href="#feat"/><use href="#feat" transform="translate(1024 0) scale(-1 1)"/>
+    <path d="M482 250 L542 250 L512 390 Z" fill="#26170f"/>
+    <path d="M512 590 L640 640 L512 770 L384 640 Z" fill="#fff0dc"/>
+  </g>
+  <path d="M470 600 L554 600 L512 650 Z" fill="#26170f"/>
+</svg>

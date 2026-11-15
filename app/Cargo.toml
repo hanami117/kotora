@@ -1,0 +1,14 @@
+[package]
+name = "kotora"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+description = "Kotora: a native anime tracker for Linux and macOS (Rune UI)"
+
+[dependencies]
+# Rune is pre-release: pin a rev of its dev branch. Same rev as Uzumaki; bump both apps together.
+rune = { git = "https://github.com/anomalyco/rune", rev = "f3d04f3f2069d177d04c963b0ba9f6b2065e46eb" }
+kotora-core = { path = "../core" }
+# The `kot` protocol and socket (the app answers, `kot` asks).
+kotora-ctl = { path = "../ctl" }
