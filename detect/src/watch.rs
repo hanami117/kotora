@@ -9,6 +9,19 @@
 //! Or when the player stops or changes file after at least half of it, with the same play time
 //! (DESIGN.md §4: "or the player stops after at least 50 %").
 //!
+//! A process source (`Via::Process`, see `procfs.rs`) knows neither position nor pause, only that
+//! the file is open. For it the time the file stays open counts as time played, and the file
+//! counts as watched once it was open for:
+//! - the threshold share of the duration, when a duration is known, else
+//! - [`Watch::open_secs`]: `[players] process_minutes`, default [`OPEN_MINUTES`] (15). That is
+//!   about 60 % of a 24-minute episode: the OP and ED are often skipped, and since a pause can't
+//!   be seen, a lower bar would count an episode left paused. Shorter episodes (5-minute shorts)
+//!   need the IPC socket. The stop rule uses the same time.
+//!
+//! When an IPC or MPRIS source shows the same file (same file name) as a process source, the
+//! process slot is hidden for that file: never followed, never reported as reached. The
+//! sources that know the position win, and nothing is counted twice.
+//!
 //! Positions between two reports are worked out from the clock and the speed. Sources report
 //! every pause, seek and speed change, so this stays right without asking the player again.
 //! [`Watch::next_wake`] says when the next crossing is due; the runner sleeps until then.
@@ -41,6 +54,8 @@ pub enum Report {
 pub const STOP_SHARE: f64 = 0.5;
 /// The longest play time asked for (seconds).
 const MIN_PLAYED_CAP: f64 = 120.0;
+/// Process sources: minutes a file must stay open when its duration is unknown (default).
+pub const OPEN_MINUTES: u32 = 15;
 
 fn min_played(duration: f64) -> f64 {
     (duration * 0.25).min(MIN_PLAYED_CAP)
@@ -54,6 +69,8 @@ struct Slot {
     reached: bool,
     /// When this player last started playing (the most recent one is followed).
     started: f64,
+    /// A process slot whose file an IPC or MPRIS source also shows: ignored for this file.
+    hidden: bool,
 }
 
 impl Slot {
@@ -66,7 +83,23 @@ impl Slot {
         if self.p.state == PlayState::Playing { self.played + (t - self.counted_to).max(0.0) } else { self.played }
     }
 
-    fn passes(&self, t: f64, share: f64) -> bool {
+    /// No position: the time the file stays open stands for the time played.
+    fn by_open_time(&self) -> bool {
+        self.p.via == Via::Process && self.p.position.is_none()
+    }
+
+    /// For [`Slot::by_open_time`]: how long the file must stay open.
+    fn open_needed(&self, share: f64, open_secs: f64) -> f64 {
+        match self.p.duration {
+            Some(d) if d > 0.0 => share * d,
+            _ => open_secs,
+        }
+    }
+
+    fn passes(&self, t: f64, share: f64, open_secs: f64) -> bool {
+        if self.by_open_time() {
+            return self.played_at(t) >= self.open_needed(share, open_secs);
+        }
         match (self.position_at(t), self.p.duration) {
             (Some(pos), Some(d)) if d > 0.0 => pos >= share * d && self.played_at(t) >= min_played(d),
             _ => false,
@@ -81,6 +114,8 @@ impl Slot {
 pub struct Watch {
     /// 0–1: the share of the episode after which it counts.
     pub threshold: f64,
+    /// Process sources: seconds a file must stay open when its duration is unknown.
+    pub open_secs: f64,
     /// Players switched off in Settings: their reports are ignored.
     pub off: HashSet<Switch>,
     slots: HashMap<String, Slot>,
@@ -90,7 +125,7 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(threshold: f64) -> Watch {
-        Watch { threshold, off: HashSet::new(), slots: HashMap::new(), current: None, sources: Vec::new() }
+        Watch { threshold, open_secs: f64::from(OPEN_MINUTES) * 60.0, off: HashSet::new(), slots: HashMap::new(), current: None, sources: Vec::new() }
     }
 
     /// A source's new snapshot of one player.
@@ -100,14 +135,14 @@ impl Watch {
         }
         let mut out = Vec::new();
         let key = p.key.clone();
-        let threshold = self.threshold;
+        let (threshold, open_secs) = (self.threshold, self.open_secs);
         match self.slots.get_mut(&key) {
             Some(slot) if slot.p.file() == p.file() => {
                 // The same file: count the play time up to now, then take the new snapshot.
                 slot.played = slot.played_at(now);
                 slot.counted_to = now;
                 if p.state == PlayState::Stopped {
-                    stop_rule(slot, now, &mut out);
+                    stop_rule(slot, now, open_secs, &mut out);
                 }
                 if p.state == PlayState::Playing && slot.p.state != PlayState::Playing {
                     slot.started = now;
@@ -116,16 +151,17 @@ impl Watch {
             }
             old => {
                 if let Some(slot) = old {
-                    stop_rule(slot, now, &mut out);
+                    stop_rule(slot, now, open_secs, &mut out);
                 }
                 let started = if p.state == PlayState::Playing { now } else { f64::MIN };
-                self.slots.insert(key.clone(), Slot { p, played: 0.0, counted_to: now, reached: false, started });
+                self.slots.insert(key.clone(), Slot { p, played: 0.0, counted_to: now, reached: false, started, hidden: false });
             }
         }
+        self.hide_shadowed();
         if let Some(slot) = self.slots.get_mut(&key)
             && !slot.reached
             && slot.p.state != PlayState::Stopped
-            && slot.passes(now, threshold)
+            && slot.passes(now, threshold, open_secs)
         {
             slot.reached = true;
             out.push(reached(slot));
@@ -138,7 +174,7 @@ impl Watch {
     pub fn gone(&mut self, key: &str, now: f64) -> Vec<Report> {
         let mut out = Vec::new();
         if let Some(mut slot) = self.slots.remove(key) {
-            stop_rule(&mut slot, now, &mut out);
+            stop_rule(&mut slot, now, self.open_secs, &mut out);
         }
         self.follow(now, &mut out, None);
         out
@@ -158,10 +194,10 @@ impl Watch {
     /// Called at [`Watch::next_wake`]: the crossings due by now.
     pub fn tick(&mut self, now: f64) -> Vec<Report> {
         let mut out = Vec::new();
-        let threshold = self.threshold;
+        let (threshold, open_secs) = (self.threshold, self.open_secs);
         let mut touched = None;
         for slot in self.slots.values_mut() {
-            if !slot.reached && slot.p.state == PlayState::Playing && slot.passes(now, threshold) {
+            if !slot.reached && !slot.hidden && slot.p.state == PlayState::Playing && slot.passes(now, threshold, open_secs) {
                 slot.reached = true;
                 out.push(reached(slot));
                 touched = Some(slot.p.key.clone());
@@ -177,8 +213,11 @@ impl Watch {
     pub fn next_wake(&self, now: f64) -> Option<f64> {
         self.slots
             .values()
-            .filter(|s| !s.reached && s.p.state == PlayState::Playing && s.p.rate > 0.0)
+            .filter(|s| !s.reached && !s.hidden && s.p.state == PlayState::Playing && s.p.rate > 0.0)
             .filter_map(|s| {
+                if s.by_open_time() {
+                    return Some((s.open_needed(self.threshold, self.open_secs) - s.played_at(now)).max(0.05));
+                }
                 let d = s.p.duration.filter(|d| *d > 0.0)?;
                 let pos = s.position_at(now)?;
                 let by_pos = (self.threshold * d - pos) / s.p.rate;
@@ -215,12 +254,12 @@ impl Watch {
     /// followed so far, while it is still there; else any. Reports `Now` when it, or what it
     /// shows, changed.
     fn follow(&mut self, now: f64, out: &mut Vec<Report>, touched: Option<&str>) {
-        let playing = self.slots.values().filter(|s| s.p.state == PlayState::Playing && s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started));
+        let playing = self.slots.values().filter(|s| !s.hidden && s.p.state == PlayState::Playing && s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started));
         let pick = match playing {
             Some(s) => Some(s.p.key.clone()),
             None => match &self.current {
-                Some(k) if self.slots.get(k).is_some_and(|s| s.p.file().is_some()) => Some(k.clone()),
-                _ => self.slots.values().filter(|s| s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started)).map(|s| s.p.key.clone()),
+                Some(k) if self.slots.get(k).is_some_and(|s| !s.hidden && s.p.file().is_some()) => Some(k.clone()),
+                _ => self.slots.values().filter(|s| !s.hidden && s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started)).map(|s| s.p.key.clone()),
             },
         };
         if pick != self.current || (pick.is_some() && pick.as_deref() == touched) {
@@ -230,13 +269,33 @@ impl Watch {
     }
 }
 
+impl Watch {
+    /// Hides the process slots whose file another kind of source shows. Once hidden, a slot
+    /// stays hidden for that file (so the IPC source going first can't make it count later).
+    fn hide_shadowed(&mut self) {
+        let names: HashSet<String> = self.slots.values().filter(|s| s.p.via != Via::Process).filter_map(|s| s.p.file().map(|f| file_name(f).to_string())).collect();
+        if names.is_empty() {
+            return;
+        }
+        for s in self.slots.values_mut() {
+            if s.p.via == Via::Process && !s.hidden && s.p.file().is_some_and(|f| names.contains(file_name(f))) {
+                s.hidden = true;
+            }
+        }
+    }
+}
+
+fn file_name(f: &str) -> &str {
+    f.rsplit('/').next().unwrap_or(f)
+}
+
 fn reached(slot: &Slot) -> Report {
     Report::Reached { key: slot.p.key.clone(), file: slot.p.file().unwrap_or_default().to_string() }
 }
 
 /// A stop or a new file: half watched (and really played) still counts.
-fn stop_rule(slot: &mut Slot, now: f64, out: &mut Vec<Report>) {
-    if !slot.reached && slot.p.file().is_some() && slot.passes(now, STOP_SHARE) {
+fn stop_rule(slot: &mut Slot, now: f64, open_secs: f64, out: &mut Vec<Report>) {
+    if !slot.reached && !slot.hidden && slot.p.file().is_some() && slot.passes(now, STOP_SHARE, open_secs) {
         slot.reached = true;
         out.push(reached(slot));
     }
@@ -369,6 +428,72 @@ mod tests {
         w.update(p, 0.0);
         // 800 s of video at 2x: 400 s.
         assert!((w.next_wake(0.0).unwrap() - 400.0).abs() < 0.01);
+    }
+
+    fn proc_snap(pid: u32, file: &str, at: f64) -> Playing {
+        crate::procfs::snapshot(pid, crate::procfs::kind_of("mpv").unwrap(), file, at)
+    }
+
+    #[test]
+    fn a_process_source_counts_the_time_the_file_stays_open() {
+        let mut w = Watch::new(0.8);
+        let r = w.update(proc_snap(9, "/v/Show - 05.mkv", 0.0), 0.0);
+        assert!(matches!(r.as_slice(), [Report::Now(Some(t))] if t.playing.via == Via::Process));
+        // Unknown duration: 15 minutes open.
+        assert!((w.next_wake(0.0).unwrap() - 900.0).abs() < 0.01);
+        assert!(w.tick(899.0).is_empty());
+        // The same file again (the source sends changes only, but it is harmless).
+        assert!(reached_files(&w.update(proc_snap(9, "/v/Show - 05.mkv", 500.0), 500.0)).is_empty());
+        assert!((w.next_wake(500.0).unwrap() - 400.0).abs() < 0.01);
+        assert_eq!(reached_files(&w.tick(900.0)), ["/v/Show - 05.mkv"]);
+        assert_eq!(w.next_wake(900.0), None);
+
+        // The minutes come from the settings.
+        let mut w = Watch::new(0.8);
+        w.open_secs = 600.0;
+        w.update(proc_snap(9, "f.mkv", 0.0), 0.0);
+        assert!((w.next_wake(0.0).unwrap() - 600.0).abs() < 0.01);
+
+        // A known duration: the threshold share of it.
+        let mut w = Watch::new(0.8);
+        let mut p = proc_snap(9, "f.mkv", 0.0);
+        p.duration = Some(1440.0);
+        w.update(p, 0.0);
+        assert!((w.next_wake(0.0).unwrap() - 1152.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_file_closed_early_by_a_process_source_does_not_count() {
+        let mut w = Watch::new(0.8);
+        w.update(proc_snap(9, "a.mkv", 0.0), 0.0);
+        // Next file of the playlist after 10 minutes: a.mkv doesn't count.
+        let r = w.update(proc_snap(9, "b.mkv", 600.0), 600.0);
+        assert!(reached_files(&r).is_empty());
+        // b.mkv open 16 minutes, then the player quits before a tick: the stop rule counts it.
+        assert_eq!(reached_files(&w.gone("proc:9", 1560.0)), ["b.mkv"]);
+    }
+
+    #[test]
+    fn ipc_and_mpris_win_over_a_process_source_for_the_same_file() {
+        let mut w = Watch::new(0.8);
+        w.update(proc_snap(9, "/media/anime/Show - 06.mkv", 0.0), 0.0);
+        assert_eq!(w.current(0.0).unwrap().playing.key, "proc:9");
+        // mpv's IPC shows the same file through a symlinked folder.
+        let r = w.update(snap("mpv:/run/mpv.sock", "/home/u/anime/Show - 06.mkv", 2.0, 1440.0, PlayState::Playing, 3.0), 3.0);
+        assert!(matches!(r.as_slice(), [Report::Now(Some(t))] if t.playing.via == Via::MpvIpc));
+        // Only the IPC crossing is due (1152 s of video, from 2 s), the process one is ignored.
+        assert!((w.next_wake(3.0).unwrap() - 1150.0).abs() < 0.01);
+        // A rescan of the process changes nothing.
+        assert!(w.update(proc_snap(9, "/media/anime/Show - 06.mkv", 8.0), 8.0).is_empty());
+        // Paused at 40 % for a long time, then mpv quits: no report from either.
+        w.update(snap("mpv:/run/mpv.sock", "/home/u/anime/Show - 06.mkv", 576.0, 1440.0, PlayState::Paused, 600.0), 600.0);
+        assert!(w.tick(5000.0).is_empty());
+        assert!(reached_files(&w.gone("mpv:/run/mpv.sock", 5000.0)).is_empty());
+        assert!(w.current(5000.0).is_none(), "the hidden process slot is not followed");
+        assert!(reached_files(&w.gone("proc:9", 5005.0)).is_empty());
+        // Another file in the same process is not hidden.
+        w.update(proc_snap(9, "/media/anime/Show - 07.mkv", 5010.0), 5010.0);
+        assert_eq!(w.current(5010.0).unwrap().playing.key, "proc:9");
     }
 
     #[test]

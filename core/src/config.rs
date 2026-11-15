@@ -12,6 +12,8 @@
 //! [players]
 //! mpv = true                   # also iina, vlc, mpc_qt, other_mpris
 //! mpv_sockets = ["/run/user/1000/mpv.sock"]
+//! process_scan = true          # see players' open files, no setup (no position)
+//! process_minutes = 15         # open this long counts as watched (process scan only)
 //!
 //! [vlc]                        # macOS: VLC's web interface
 //! port = 8080
@@ -59,11 +61,15 @@ pub struct Players {
     pub other_mpris: bool,
     /// Empty: the default paths (`kotora_detect::mpv::default_sockets`).
     pub mpv_sockets: Vec<String>,
+    /// The process source (players' open files; `kotora_detect::procfs`).
+    pub process_scan: bool,
+    /// Process source: minutes open after which a file counts, when its duration is unknown.
+    pub process_minutes: u32,
 }
 
 impl Default for Players {
     fn default() -> Self {
-        Players { mpv: true, iina: true, vlc: true, mpc_qt: true, other_mpris: true, mpv_sockets: Vec::new() }
+        Players { mpv: true, iina: true, vlc: true, mpc_qt: true, other_mpris: true, mpv_sockets: Vec::new(), process_scan: true, process_minutes: 15 }
     }
 }
 

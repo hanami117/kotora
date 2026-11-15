@@ -8,6 +8,11 @@
 //!   accessibility already builds, so there is one. Signals only.
 //! - [`vlc`] (macOS): VLC's web interface. VLC has no events there, so this source polls, slowly,
 //!   and only when the user set it up (it needs VLC's password). See `vlc.rs` for the timings.
+//! - [`procfs`] (Linux; macOS through `libproc`): no setup at all. Which video file a known
+//!   player has open, from the process table, every 5 s. No position, so the hub counts the time
+//!   the file stays open, and ignores it when an IPC or MPRIS source shows the same file.
+//! - [`mpvconf`]: reads and extends the user's `mpv.conf` for the IPC socket ("precise mode"),
+//!   only when the user asks.
 //!
 //! Every source reports [`Playing`] snapshots to the [`watch::Watch`] hub. The hub picks the
 //! player to follow and works out, from the last position and the clock, when the episode passes
@@ -16,11 +21,14 @@
 //! Nothing here knows about anime, the list or the UI: the app gets [`Report`]s.
 
 pub mod dirwatch;
+#[cfg(target_os = "macos")]
+pub mod libproc;
 pub mod mpv;
 pub mod mpvconf;
 #[cfg(target_os = "linux")]
 pub mod mpris;
 pub mod notify;
+pub mod procfs;
 pub mod run;
 pub mod vlc;
 pub mod watch;
@@ -37,6 +45,8 @@ pub enum Via {
     MpvIpc,
     Mpris,
     VlcHttp,
+    /// The open files of the player's process (`procfs`): no position, duration or pause.
+    Process,
 }
 
 impl Via {
@@ -45,6 +55,7 @@ impl Via {
             Via::MpvIpc => "IPC socket",
             Via::Mpris => "MPRIS",
             Via::VlcHttp => "web interface",
+            Via::Process => "process",
         }
     }
 }
