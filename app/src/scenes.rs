@@ -632,6 +632,28 @@ mod tests {
         assert!(rt.find("np-no-position").is_some() && rt.find("np-bar").is_none());
     }
 
+    /// A press on a row's title opens the details page; elsewhere on the row, the editor.
+    #[test]
+    fn the_title_opens_details_and_the_row_the_editor() {
+        let mut rt = render("list", (1280.0, 800.0));
+        let (x, y) = rt.find("title-link").expect("a title link");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("page/details").is_some() && rt.find("editor").is_none());
+        let (bx, by) = rt.find("det/back").unwrap();
+        rt.pointer_down(bx, by);
+        rt.pointer_up(bx, by);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("page/details").is_none() && rt.find("rows").is_some(), "Back returns to the list");
+        // The progress column of the first row: the editor opens under it.
+        let (_, ry) = rt.find("title-link").unwrap();
+        rt.pointer_down(800.0, ry);
+        rt.pointer_up(800.0, ry);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.find("editor").is_some() && rt.find("page/details").is_none());
+    }
+
     /// The type column hides below 1100 pt.
     #[test]
     fn narrow_window_drops_the_type_column() {
