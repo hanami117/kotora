@@ -6,14 +6,22 @@ v0.1 is MyAnimeList; AniList comes in v0.2.
 
 ## Status
 
-- **Stage 0, design:** decisions recorded 2026-11-14 (branch `design`); waiting for the merge. No code yet.
+- **Stage 0, design:** decisions recorded 2026-11-14. No code yet.
+- **Stage 0.5, look:** mockup and design spec on branch `mockup` (2026-11-15), waiting for review.
 
-## Stage 0: design (current)
+## Stage 0: design
 
 - [x] Research: Taiga today, alternatives, building blocks, service terms, detection on Wayland and macOS
 - [x] docs/DESIGN.md, docs/ROADMAP.md, CLAUDE.md
 - [x] The user answers the open questions (DESIGN.md §12, "Decisions (2026-11-14)"); the design is updated
 - [ ] Merge the `design` branch (the user's call)
+
+## Stage 0.5: look (current)
+
+- [x] `mockup/kotora.html`: static mockup of every v0.1 screen, Linux and macOS chrome
+- [x] `docs/design-spec.md`: palette from the C2 icon, type, spacing, states, Rune tokens
+- [x] `mockup/shots/`: screenshots for review
+- [ ] Review by the user
 
 ## Stage 1: skeleton
 

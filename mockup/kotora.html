@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kotora mockup (Stage 0.5)</title>
+<!--
+  Kotora UI mockup. Static, self-contained: no external fonts, images or scripts.
+  All titles, names, files and numbers are made up. Covers are generated gradient tiles.
+  Everything drawn here maps to Rune primitives: rounded rects, borders, linear gradients,
+  soft shadows, text and SVG-subset icons. See docs/design-spec.md.
+  URL hash picks the screen (#list, #playing, #detail, #queue, #settings, #states, #signin, #signin-noid).
+  Add "?shot" to hide the mockup tab strip, "?mac" for macOS window chrome.
+-->
+<style>
+:root {
+  /* Surfaces (navy family from the C2 tile #2a3a5c -> #1b2640) */
+  --bg: #0f1626;
+  --side: #121b2e;
+  --surface: #182238;
+  --raised: #1f2b45;
+  --field: #141d31;
+  --border: #26324d;
+  --border-strong: #34446a;
+  --hover: rgba(255,255,255,.05);
+  --press: rgba(255,255,255,.09);
+  /* Text */
+  --text: #edf0f7;
+  --dim: #a4afc6;
+  --faint: #7d89a4;
+  /* Accent (tiger orange from C2) */
+  --accent: #f28a22;
+  --accent-hi: #ff9d3f;
+  --accent-lo: #e57a18;
+  --accent-tint: rgba(242,138,34,.14);
+  --on-accent: #1d1208;
+  --cream: #fff0dc;
+  /* Status */
+  --st-watching: #4cc38a;
+  --st-completed: #6ea8ff;
+  --st-onhold: #f2c94c;
+  --st-dropped: #f0646c;
+  --st-plan: #a78bfa;
+  --airing: #4fd1e0;
+  /* Semantic */
+  --ok: #4cc38a;
+  --warn: #f2c94c;
+  --err: #f0646c;
+  /* Radii, spacing */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px;
+  --font: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "DejaVu Sans Mono", monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #070b14; color: var(--text); font: 400 13px/1.4 var(--font); }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- mockup frame (not part of the app) ---------- */
+.mock-bar { display: flex; gap: 6px; align-items: center; padding: 10px 16px; background: #05080f; border-bottom: 1px solid #1a2236; position: sticky; top: 0; z-index: 9; flex-wrap: wrap; }
+.mock-bar b { color: var(--accent); margin-right: 8px; font-weight: 600; }
+.mock-bar button { padding: 5px 10px; border-radius: 6px; color: var(--dim); }
+.mock-bar button:hover { background: var(--hover); color: var(--text); }
+.mock-bar button.on { background: var(--accent-tint); color: var(--accent-hi); }
+.mock-bar .sep { flex: 1; }
+.stage { padding: 24px; display: flex; justify-content: center; }
+body.shot .mock-bar { display: none; }
+body.shot .stage { padding: 0; display: block; }
+body.ql .win { zoom: 0.8; } /* Quick Look renders 1024 css px into 1280 px; 0.8 x 1.25 = 1:1 */
+.note { border: 1px dashed #6b5a2a; color: #d9c58a; background: rgba(242,201,76,.06); border-radius: 6px; padding: 6px 10px; font-size: 11px; }
+
+/* ---------- window + chrome ---------- */
+.win { width: 1280px; height: 800px; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; border-radius: 6px; box-shadow: 0 20px 60px rgba(0,0,0,.55); border: 1px solid #000; }
+body.shot .win { border-radius: 0; box-shadow: none; border: 0; }
+.chrome { height: 32px; flex: none; display: flex; align-items: center; position: relative; background: #1b1e24; border-bottom: 1px solid #0b0d11; color: #c9ccd2; font-size: 12px; }
+.chrome .title { position: absolute; left: 0; right: 0; text-align: center; pointer-events: none; }
+.chrome .kde-icon { margin-left: 8px; width: 18px; height: 18px; }
+.chrome .kde-btns { margin-left: auto; display: flex; gap: 6px; padding-right: 8px; }
+.chrome .kde-btns span { width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; color: #c9ccd2; }
+.chrome .kde-btns span.x { background: #da4453; color: #fff; }
+.chrome .lights { display: none; gap: 8px; padding-left: 14px; }
+.chrome .lights i { width: 12px; height: 12px; border-radius: 6px; display: block; }
+.win.mac .chrome { height: 28px; background: var(--side); border-bottom: 1px solid var(--border); color: var(--dim); font-weight: 500; }
+.win.mac .chrome .kde-icon, .win.mac .chrome .kde-btns { display: none; }
+.win.mac .chrome .lights { display: flex; }
+.app { flex: 1; display: flex; min-height: 0; }
+
+/* ---------- sidebar ---------- */
+.side { width: 224px; flex: none; background: var(--side); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 14px 10px 12px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 14px; }
+.brand svg { width: 28px; height: 28px; }
+.brand b { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+.brand small { margin-left: auto; color: var(--faint); font-size: 11px; }
+.acct { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); margin-bottom: 14px; }
+.acct .av { width: 24px; height: 24px; border-radius: 12px; background: linear-gradient(160deg,#2e51a2,#1d3170); display: grid; place-items: center; font-size: 10px; font-weight: 600; }
+.acct div { line-height: 1.2; }
+.acct small { color: var(--faint); font-size: 11px; display: block; }
+.navh { color: var(--faint); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .6px; padding: 6px 8px; }
+.nav a { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: var(--r-sm); color: var(--dim); text-decoration: none; cursor: pointer; }
+.nav a:hover { background: var(--hover); color: var(--text); }
+.nav a .dot { width: 8px; height: 8px; border-radius: 4px; flex: none; margin: 0 4px; }
+.nav a .cnt { margin-left: auto; color: var(--faint); font-size: 12px; }
+.nav a .badge { margin-left: auto; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 600; min-width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; padding: 0 5px; }
+.win[data-screen=list] .nav a[data-on~=list], .win[data-screen=detail] .nav a[data-on~=detail], .win[data-screen=playing] .nav a[data-on~=playing],
+.win[data-screen=queue] .nav a[data-on~=queue], .win[data-screen=settings] .nav a[data-on~=settings], .win[data-screen=states] .nav a[data-on~=states],
+.nav a.on { background: var(--raised); color: var(--text); font-weight: 500; }
+.nav a[data-on] .cnt { color: inherit; }
+.nav + .navh { margin-top: 12px; }
+.side .np-mini { margin-top: auto; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); padding: 8px; display: flex; gap: 8px; align-items: center; }
+.np-mini .cv { width: 26px; height: 38px; font-size: 9px; }
+.np-mini div { min-width: 0; line-height: 1.25; }
+.np-mini b { font-weight: 500; font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-mini small { color: var(--faint); font-size: 11px; }
+.syncline { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; padding: 10px 8px 0; }
+.syncline i { width: 6px; height: 6px; border-radius: 3px; background: var(--ok); }
+.win[data-screen=queue] .syncline i { background: var(--warn); }
+.syncline .offline, .win[data-screen=queue] .syncline .online { display: none; }
+.win[data-screen=queue] .syncline .offline { display: inline; }
+
+/* ---------- content ---------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.screen { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.win[data-screen=list] #s-list, .win[data-screen=playing] #s-playing, .win[data-screen=detail] #s-detail,
+.win[data-screen=queue] #s-queue, .win[data-screen=settings] #s-settings, .win[data-screen=states] #s-states { display: flex; }
+.win[data-screen^=signin] .app { display: none; }
+.win[data-screen^=signin] #s-signin { display: flex; }
+.top { display: flex; align-items: center; gap: 12px; padding: 18px 24px 14px; }
+.top h1 { font-size: 20px; font-weight: 600; }
+.top h1 .num { color: var(--faint); font-weight: 400; margin-left: 6px; }
+.top .grow { flex: 1; }
+.search { width: 260px; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--field); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--faint); }
+.search kbd { margin-left: auto; font: 500 10px var(--font); color: var(--faint); border: 1px solid var(--border-strong); border-radius: 4px; padding: 1px 5px; }
+.select { height: 32px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--field); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text); }
+.select .lbl { color: var(--faint); }
+.chips { display: flex; gap: 6px; padding: 0 24px 10px; }
+.chip { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--border); color: var(--dim); display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.chip.on { background: var(--accent-tint); border-color: transparent; color: var(--accent-hi); }
+
+/* buttons */
+.btn { height: 32px; padding: 0 14px; border-radius: var(--r-sm); font-weight: 500; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.btn.pri { background: var(--accent); color: var(--on-accent); }
+.btn.pri:hover { background: var(--accent-hi); }
+.btn.sec { background: var(--raised); border: 1px solid var(--border-strong); }
+.btn.sec:hover { background: #26345a; }
+.btn.ghost { color: var(--dim); }
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.btn[disabled] { opacity: .45; cursor: default; }
+.link { color: var(--accent-hi); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+
+/* covers: generated gradient tiles with initials */
+.cv { width: 34px; height: 48px; border-radius: var(--r-xs); flex: none; display: grid; place-items: center; font-weight: 600; font-size: 12px; color: rgba(255,255,255,.88); background: linear-gradient(160deg, var(--a), var(--b)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); letter-spacing: .3px; }
+
+/* list table */
+.thead, .row { display: grid; grid-template-columns: 34px minmax(0,1fr) 250px 64px 92px 76px; column-gap: 14px; align-items: center; padding: 0 24px; }
+.thead { height: 30px; color: var(--faint); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+.thead .sorted { color: var(--dim); }
+.rows { overflow: hidden; flex: 1; }
+.row { height: 56px; border-bottom: 1px solid rgba(38,50,77,.6); }
+.row:hover, .row.hov { background: var(--hover); }
+.row .t { min-width: 0; line-height: 1.3; }
+.row .t b { font-weight: 500; font-size: 14px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .t small { color: var(--faint); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.tag { font-size: 11px; font-weight: 500; height: 18px; padding: 0 6px; border-radius: var(--r-xs); display: inline-flex; align-items: center; gap: 4px; }
+.tag.air { color: var(--airing); background: rgba(79,209,224,.12); }
+.tag.air::before { content: ""; width: 5px; height: 5px; border-radius: 3px; background: var(--airing); }
+.tag.new { color: var(--accent-hi); background: var(--accent-tint); }
+.tag.re { color: var(--st-completed); background: rgba(110,168,255,.12); }
+.tag.wait { color: var(--warn); background: rgba(242,201,76,.10); }
+.prog { display: flex; align-items: center; gap: 10px; }
+.bar { flex: 1; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 2px; background: var(--st-watching); }
+.prog .num { width: 54px; text-align: right; color: var(--dim); }
+.prog .num b { color: var(--text); font-weight: 500; }
+.plus { height: 26px; width: 38px; border-radius: var(--r-sm); border: 1px solid var(--border-strong); color: var(--dim); font-size: 12px; font-weight: 600; }
+.plus:hover, .row.hov .plus { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.score { color: var(--text); font-weight: 500; }
+.score.none { color: var(--faint); font-weight: 400; }
+.cell-dim { color: var(--dim); font-size: 12px; }
+
+/* inline editor (row expanded) */
+.editor { margin: 0 24px; padding: 12px 14px 12px 62px; background: var(--surface); border: 1px solid var(--border-strong); border-top: 0; border-radius: 0 0 var(--r-md) var(--r-md); display: flex; gap: 18px; align-items: center; }
+.row.open { background: var(--surface); border-radius: var(--r-md) var(--r-md) 0 0; margin: 0 24px; padding: 0; border: 1px solid var(--border-strong); border-bottom: 1px solid var(--border); }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > span { color: var(--faint); font-size: 11px; }
+.stepper { display: inline-flex; align-items: center; height: 32px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--field); }
+.stepper button { width: 30px; height: 30px; color: var(--dim); font-size: 15px; }
+.stepper .num { min-width: 64px; text-align: center; font-weight: 500; }
+.sdot { width: 8px; height: 8px; border-radius: 4px; display: inline-block; }
+
+/* now playing banner */
+.banner { margin: 14px 24px 0; padding: 12px 14px; display: flex; gap: 14px; align-items: center; border-radius: var(--r-lg); background: linear-gradient(90deg, rgba(242,138,34,.18), rgba(242,138,34,.06) 60%, rgba(242,138,34,.03)), var(--surface); border: 1px solid rgba(242,138,34,.35); }
+.banner .cv { width: 36px; height: 52px; }
+.banner .msg { flex: 1; min-width: 0; line-height: 1.35; }
+.banner .msg b { font-weight: 600; }
+.banner .msg small { color: var(--dim); font-size: 12px; display: flex; gap: 10px; align-items: center; }
+.banner .q { font-size: 14px; font-weight: 600; color: var(--cream); margin-right: 4px; white-space: nowrap; }
+.pulse { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 0 4px rgba(242,138,34,.2); flex: none; }
+
+/* cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; }
+.card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 .aside { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--faint); }
+.card h3 { font-size: 13px; font-weight: 600; }
+.muted { color: var(--dim); }
+.faint { color: var(--faint); }
+.small { font-size: 12px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; row-gap: 6px; font-size: 12px; }
+.kv dt { color: var(--faint); }
+.status-line { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.status-line:last-child { border-bottom: 0; }
+.status-line .led { width: 8px; height: 8px; border-radius: 4px; flex: none; }
+.status-line b { font-weight: 500; font-size: 13px; width: 70px; }
+.status-line .r { margin-left: auto; color: var(--faint); }
+
+/* switch */
+.sw { width: 36px; height: 20px; border-radius: 10px; background: var(--border-strong); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 8px; background: #cdd4e3; }
+.sw.on { background: var(--accent); }
+.sw.on::after { left: 18px; background: #fff; }
+.radio { width: 16px; height: 16px; border-radius: 8px; border: 1.5px solid var(--border-strong); flex: none; display: grid; place-items: center; }
+.radio.on { border-color: var(--accent); }
+.radio.on::after { content: ""; width: 8px; height: 8px; border-radius: 4px; background: var(--accent); }
+.opt { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.opt:last-child { border-bottom: 0; }
+.opt .txt { flex: 1; line-height: 1.35; }
+.opt .txt b { font-weight: 500; display: block; }
+.opt .txt small { color: var(--dim); font-size: 12px; }
+.seg { display: inline-flex; padding: 2px; border-radius: var(--r-sm); background: var(--field); border: 1px solid var(--border); }
+.seg span { padding: 3px 10px; border-radius: 4px; color: var(--dim); font-size: 12px; cursor: pointer; }
+.seg span.on { background: var(--raised); color: var(--text); }
+.alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-md); font-size: 12px; line-height: 1.4; }
+.alert.warn { background: rgba(242,201,76,.08); border: 1px solid rgba(242,201,76,.28); color: #f5dc8f; }
+.alert.err { background: rgba(240,100,108,.08); border: 1px solid rgba(240,100,108,.32); color: #f7a5aa; }
+.alert.info { background: rgba(110,168,255,.08); border: 1px solid rgba(110,168,255,.28); color: #b4d0ff; }
+.scroll { overflow: hidden; flex: 1; padding: 0 24px 24px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="logo" viewBox="54 54 916 916">
+      <defs>
+        <linearGradient id="lbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3a5c"/><stop offset="1" stop-color="#1b2640"/></linearGradient>
+        <g id="lbok">
+          <path d="M-260 -22 L380 -26 C430 -26 460 -12 476 8 C440 18 410 22 380 22 L-260 22 Z" fill="#d4a568"/>
+          <path d="M-260 6 L380 8 C420 8 450 10 476 8 C440 18 410 22 380 22 L-260 22 Z" fill="#b8854a"/>
+          <rect x="-450" y="-26" width="196" height="52" rx="20" fill="#7a4a26"/>
+          <rect x="-276" y="-62" width="28" height="124" rx="12" fill="#2b1d16"/>
+        </g>
+        <path id="lhead" d="M512 230 L700 270 L800 430 L760 600 L512 740 L264 600 L224 430 L324 270 Z"/>
+        <clipPath id="lhc"><use href="#lhead"/></clipPath>
+        <g id="lear"><path d="M238 410 L282 168 L450 266 Z" fill="#f28a22"/><path d="M296 316 L312 230 L384 272 Z" fill="#ffe9cf"/></g>
+        <g id="lfeat">
+          <path d="M210 440 L380 500 L210 540 Z" fill="#26170f"/><path d="M230 580 L360 590 L260 640 Z" fill="#26170f"/>
+          <path d="M420 250 L460 370 L380 270 Z" fill="#26170f"/><path d="M346 470 L452 520 L420 572 L364 552 Z" fill="#26170f"/>
+        </g>
+      </defs>
+      <rect x="54" y="54" width="916" height="916" rx="224" fill="url(#lbg)"/>
+      <use href="#lbok" transform="translate(512 770) rotate(-14) scale(0.88 1.5)"/>
+      <use href="#lear"/><use href="#lear" transform="translate(1024 0) scale(-1 1)"/>
+      <use href="#lhead" fill="#f28a22"/>
+      <path d="M512 230 L700 270 L800 430 L760 600 L512 740 Z" fill="#e57a18"/>
+      <g clip-path="url(#lhc)">
+        <use href="#lfeat"/><use href="#lfeat" transform="translate(1024 0) scale(-1 1)"/>
+        <path d="M482 250 L542 250 L512 390 Z" fill="#26170f"/>
+        <path d="M512 590 L640 640 L512 770 L384 640 Z" fill="#fff0dc"/>
+      </g>
+      <path d="M470 600 L554 600 L512 650 Z" fill="#26170f"/>
+    </symbol>
+    <!-- Icons: 24 viewBox, 1.6 stroke, round caps. Rune draws these as icon SVG subset. -->
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 4v5h-5M20 12a8 8 0 0 1-13.7 5.6L4 15M4 20v-5h5"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-off" viewBox="0 0 24 24"><path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5-2.6M19 13a10 10 0 0 0-2.3-1.7M2 9.5a15 15 0 0 1 4.5-2.8M22 9.5A15 15 0 0 0 11 5.1"/><circle cx="12" cy="20" r=".6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.4v.2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/><path d="M12 15v-5M9.5 12.5L12 10l2.5 2.5"/></symbol>
+  </defs>
+</svg>
+
+<div class="mock-bar" id="mockbar">
+  <b>Kotora mockup</b>
+  <button data-go="list">a. List</button>
+  <button data-go="playing">b. Now Playing</button>
+  <button data-go="detail">c. Detail</button>
+  <button data-go="queue">d. Sync queue</button>
+  <button data-go="settings">e. Settings</button>
+  <button data-go="signin">f. First run</button>
+  <button data-go="signin-noid">f2. No Client ID</button>
+  <button data-go="states">States</button>
+  <span class="sep"></span>
+  <button id="chromeL" class="on">Linux (KDE)</button>
+  <button id="chromeM">macOS</button>
+</div>
+
+<div class="stage">
+<div class="win" id="win" data-screen="list">
+  <div class="chrome">
+    <svg class="kde-icon"><use href="#logo"/></svg>
+    <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div class="title">Kotora</div>
+    <div class="kde-btns">
+      <span><svg class="i" style="width:12px;height:12px"><use href="#i-down"/></svg></span>
+      <span><svg class="i" style="width:12px;height:12px;transform:rotate(180deg)"><use href="#i-down"/></svg></span>
+      <span class="x"><svg class="i" style="width:11px;height:11px;stroke-width:2.2"><use href="#i-x"/></svg></span>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="side">
+      <div class="brand"><svg><use href="#logo"/></svg><b>Kotora</b><small>0.1</small></div>
+      <div class="acct"><div class="av">D</div><div>demo_user<small>MyAnimeList</small></div></div>
+      <div class="navh">My list</div>
+      <nav class="nav">
+        <a data-go="list" data-on="list detail"><span class="dot" style="background:var(--st-watching)"></span>Watching<span class="cnt num">12</span></a>
+        <a data-go="list"><span class="dot" style="background:var(--st-plan)"></span>Plan to watch<span class="cnt num">48</span></a>
+        <a data-go="list"><span class="dot" style="background:var(--st-completed)"></span>Completed<span class="cnt num">236</span></a>
+        <a data-go="list"><span class="dot" style="background:var(--st-onhold)"></span>On hold<span class="cnt num">7</span></a>
+        <a data-go="states" data-on="states"><span class="dot" style="background:var(--st-dropped)"></span>Dropped<span class="cnt num">0</span></a>
+      </nav>
+      <div class="navh">Kotora</div>
+      <nav class="nav">
+        <a data-go="playing" data-on="playing"><svg class="i"><use href="#i-play"/></svg>Now Playing</a>
+        <a data-go="queue" data-on="queue"><svg class="i"><use href="#i-sync"/></svg>Sync queue<span class="badge num">4</span></a>
+        <a data-go="settings" data-on="settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
+      </nav>
+      <div class="np-mini">
+        <div class="cv" style="--a:#e0794a;--b:#5b2a6e">LK</div>
+        <div><b>Lanterns of Kirigaoka</b><small>Ep 6 · mpv · 82%</small></div>
+      </div>
+      <div class="syncline"><i></i><span class="online">Synced 2 min ago</span><span class="offline">Offline · 4 changes waiting</span></div>
+    </aside>
+
+    <div class="main">
+    <!-- ================= a. LIST ================= -->
+    <section class="screen" id="s-list">
+      <div class="top">
+        <h1>Watching<span class="num">12</span></h1>
+        <span class="grow"></span>
+        <div class="search"><svg class="i"><use href="#i-search"/></svg>Search titles<kbd>Ctrl F</kbd></div>
+        <div class="select"><span class="lbl">Sort</span>Last updated<svg class="i" style="width:14px"><use href="#i-down"/></svg></div>
+      </div>
+      <div class="chips">
+        <span class="chip on">All 12</span><span class="chip">Airing 5</span><span class="chip">Finished airing 7</span><span class="chip">New episode 3</span>
+      </div>
+      <div class="thead"><span></span><span>Title</span><span class="sorted">Progress</span><span>Score</span><span>Type</span><span class="sorted">Updated ▾</span></div>
+      <div class="rows">
+        <div class="row hov">
+          <div class="cv" style="--a:#e0794a;--b:#5b2a6e">LK</div>
+          <div class="t"><b>Lanterns of Kirigaoka</b><small><span class="tag air">Airing</span>Ep 7 on Sat<span class="tag new">Ep 6 out</span></small></div>
+          <div class="prog"><div class="bar"><i style="width:41.6%"></i></div><span class="num"><b>5</b> / 12</span><button class="plus">+1</button></div>
+          <div class="score num">8</div><div class="cell-dim">TV</div><div class="cell-dim">now</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#3b7dd8;--b:#1b2b5c">SD</div>
+          <div class="t"><b>Starfall Delivery Service</b><small><span class="tag air">Airing</span>Ep 9 on Wed</small></div>
+          <div class="prog"><div class="bar"><i style="width:61.5%"></i></div><span class="num"><b>8</b> / 13</span><button class="plus">+1</button></div>
+          <div class="score num">9</div><div class="cell-dim">TV</div><div class="cell-dim">2 h</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#d9b44a;--b:#7a3b1e">MS</div>
+          <div class="t"><b>Mikan Street Detectives</b><small><span class="tag wait">Waiting to sync</span>Conflict in queue</small></div>
+          <div class="prog"><div class="bar"><i style="width:29%"></i></div><span class="num"><b>7</b> / 24</span><button class="plus">+1</button></div>
+          <div class="score none">–</div><div class="cell-dim">TV</div><div class="cell-dim">yesterday</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#41b39a;--b:#173f47">SL</div>
+          <div class="t"><b>Slow Life on Hoshizora Island</b><small><span class="tag air">Airing</span>Ep 4 on Sun</small></div>
+          <div class="prog"><div class="bar"><i style="width:25%"></i></div><span class="num"><b>3</b> / 12</span><button class="plus">+1</button></div>
+          <div class="score num">7</div><div class="cell-dim">TV</div><div class="cell-dim">2 days</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#e04a6a;--b:#2a1340">NR</div>
+          <div class="t"><b>Neon Ronin 2099</b><small>Finished airing</small></div>
+          <div class="prog"><div class="bar"><i style="width:84.6%"></i></div><span class="num"><b>22</b> / 26</span><button class="plus">+1</button></div>
+          <div class="score num">8</div><div class="cell-dim">TV</div><div class="cell-dim">3 days</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#8a7ae0;--b:#2a2160">NS</div>
+          <div class="t"><b>The Ninth Shrine Maiden</b><small><span class="tag re">Rewatching</span>Finished airing</small></div>
+          <div class="prog"><div class="bar"><i style="width:50%"></i></div><span class="num"><b>6</b> / 12</span><button class="plus">+1</button></div>
+          <div class="score num">10</div><div class="cell-dim">TV</div><div class="cell-dim">5 days</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#c96b3c;--b:#3b1f1a">MB</div>
+          <div class="t"><b>Mecha Bento Club</b><small><span class="tag air">Airing</span>Ep 11 on Fri</small></div>
+          <div class="prog"><div class="bar"><i style="width:40%"></i></div><span class="num"><b>4</b> / 10</span><button class="plus">+1</button></div>
+          <div class="score none">–</div><div class="cell-dim">TV</div><div class="cell-dim">1 week</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#5fa0c8;--b:#1d3346">GL</div>
+          <div class="t"><b>Ghost of the Library Stacks</b><small>Finished airing</small></div>
+          <div class="prog"><div class="bar"><i style="width:91%"></i></div><span class="num"><b>11</b> / 12</span><button class="plus">+1</button></div>
+          <div class="score num">7</div><div class="cell-dim">TV</div><div class="cell-dim">2 weeks</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#d27ab0;--b:#40204a">PC</div>
+          <div class="t"><b>Paper Crane Racing: Second Lap</b><small>Finished airing</small></div>
+          <div class="prog"><div class="bar"><i style="width:8%"></i></div><span class="num"><b>1</b> / 12</span><button class="plus">+1</button></div>
+          <div class="score none">–</div><div class="cell-dim">TV</div><div class="cell-dim">1 month</div>
+        </div>
+        <div class="row">
+          <div class="cv" style="--a:#7fae5a;--b:#22381f">KK</div>
+          <div class="t"><b>Kumo to Kaze no Ryokan</b><small>Finished airing</small></div>
+          <div class="prog"><div class="bar"><i style="width:0%"></i></div><span class="num"><b>0</b> / 1</span><button class="plus">+1</button></div>
+          <div class="score none">–</div><div class="cell-dim">Movie</div><div class="cell-dim">2 months</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= b. NOW PLAYING ================= -->
+    <section class="screen" id="s-playing">
+      <div class="banner">
+        <span class="pulse"></span>
+        <div class="cv" style="--a:#e0794a;--b:#5b2a6e">LK</div>
+        <div class="msg">Watching <b>Lanterns of Kirigaoka</b> episode 6 in mpv
+          <small><span>82% watched</span><span>·</span><span>Matched in your list</span></small></div>
+        <span class="q">Update to <span class="num">6 / 12</span>?</span>
+        <button class="btn pri">Update</button>
+        <button class="btn sec">Not now</button>
+        <button class="btn ghost">Wrong anime…</button>
+      </div>
+      <div class="top"><h1>Now Playing</h1></div>
+      <div class="scroll" style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-content:start">
+        <div class="card" style="display:flex;gap:18px">
+          <div class="cv" style="--a:#e0794a;--b:#5b2a6e;width:120px;height:170px;font-size:28px;border-radius:8px">LK</div>
+          <div style="flex:1;min-width:0">
+            <div class="faint small" style="text-transform:uppercase;letter-spacing:.5px;font-weight:500">Playing in mpv · IPC socket</div>
+            <div style="font-size:20px;font-weight:600;margin:4px 0 2px">Lanterns of Kirigaoka</div>
+            <div class="muted">Episode 6 of 12 · TV · Fall 2026</div>
+            <div style="margin:16px 0 6px;display:flex;justify-content:space-between" class="small"><span class="num">18:52 / 23:40</span><span class="faint">Offer at 80%</span></div>
+            <div style="position:relative;height:6px;border-radius:3px;background:var(--border)">
+              <div style="width:79.7%;height:6px;border-radius:3px;background:var(--accent)"></div>
+              <div style="position:absolute;left:80%;top:-4px;width:2px;height:14px;border-radius:1px;background:var(--cream)"></div>
+            </div>
+            <div style="margin-top:14px;display:flex;gap:8px;align-items:center" class="mono faint"><svg class="i" style="width:14px"><use href="#i-file"/></svg>[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv</div>
+            <dl class="kv" style="margin-top:14px">
+              <dt>Parsed title</dt><dd>Lanterns of Kirigaoka</dd>
+              <dt>Episode</dt><dd class="num">6</dd>
+              <dt>Group</dt><dd>Hoshi · 1080p</dd>
+              <dt>Match</dt><dd><span style="color:var(--ok)">In your list (Watching), confident</span></dd>
+              <dt>Your progress</dt><dd class="num">5 / 12 → 6 after update</dd>
+            </dl>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <h2>Players <span class="aside">Linux</span></h2>
+            <div class="status-line"><span class="led" style="background:var(--ok)"></span><b>mpv</b>socket: playing<span class="r">IPC</span></div>
+            <div class="status-line"><span class="led" style="background:var(--faint)"></span><b>VLC</b>MPRIS: not running<span class="r">MPRIS</span></div>
+            <div class="status-line"><span class="led" style="background:var(--warn)"></span><b>mpc-qt</b>MPRIS: idle<span class="r">MPRIS</span></div>
+          </div>
+          <div class="card">
+            <h2>Not sure <span class="aside">low confidence</span></h2>
+            <div style="display:flex;gap:12px">
+              <div class="cv" style="--a:#3b7dd8;--b:#1b2b5c;width:40px;height:56px">SD</div>
+              <div class="small" style="line-height:1.4">From <span class="mono">starfall_s2_e03.mp4</span>: is this <b>Starfall Delivery Service</b> season 2, episode 3?</div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px"><button class="btn sec sm">Yes, that one</button><button class="btn ghost sm">Pick another…</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= c. DETAIL ================= -->
+    <section class="screen" id="s-detail">
+      <div class="top"><a class="link" data-go="list" style="color:var(--dim)"><svg class="i"><use href="#i-back"/></svg>Watching</a></div>
+      <div class="scroll" style="display:grid;grid-template-columns:200px 1fr;gap:24px;align-content:start">
+        <div>
+          <div class="cv" style="--a:#3b7dd8;--b:#1b2b5c;width:200px;height:284px;font-size:44px;border-radius:12px">SD</div>
+          <a class="btn sec" style="margin-top:12px;width:100%;justify-content:center">Open on MyAnimeList<svg class="i" style="width:14px"><use href="#i-ext"/></svg></a>
+        </div>
+        <div style="min-width:0">
+          <h1 style="font-size:24px;font-weight:600">Starfall Delivery Service</h1>
+          <div class="muted" style="margin-top:2px">Hoshifuri Haitatsubin · 星降り配達便</div>
+          <div style="display:flex;gap:6px;margin:12px 0 16px">
+            <span class="tag air">Airing</span><span class="chip">TV</span><span class="chip">13 episodes</span><span class="chip">Fall 2026</span><span class="chip">Studio Kumoya</span>
+          </div>
+          <div class="card" style="display:flex;gap:22px;align-items:flex-end">
+            <div class="field"><span>Status</span><div class="select" style="width:160px"><span class="sdot" style="background:var(--st-watching)"></span>Watching<svg class="i" style="width:14px;margin-left:auto"><use href="#i-down"/></svg></div></div>
+            <div class="field"><span>Progress</span><div class="stepper"><button>−</button><span class="num">8 / 13</span><button>+</button></div></div>
+            <div class="field"><span>Score</span><div class="select" style="width:150px"><span class="num">9</span><span class="faint">Great</span><svg class="i" style="width:14px;margin-left:auto"><use href="#i-down"/></svg></div></div>
+            <label class="field" style="flex-direction:row;align-items:center;gap:8px;height:32px"><span class="sw"></span><span class="muted" style="font-size:12px">Rewatching</span></label>
+            <span class="small faint" style="margin-left:auto;height:32px;display:flex;align-items:center;gap:6px"><svg class="i" style="width:14px;color:var(--ok)"><use href="#i-check"/></svg>Synced</span>
+          </div>
+          <h3 style="margin:20px 0 8px">Episodes</h3>
+          <div style="display:grid;grid-template-columns:repeat(13,1fr);gap:6px">
+            <span class="ep w">1</span><span class="ep w">2</span><span class="ep w">3</span><span class="ep w">4</span><span class="ep w">5</span><span class="ep w">6</span><span class="ep w">7</span><span class="ep w">8</span><span class="ep n">9</span><span class="ep u">10</span><span class="ep u">11</span><span class="ep u">12</span><span class="ep u">13</span>
+          </div>
+          <div class="small faint" style="margin-top:8px">Watched 8 · Episode 9 airs Wed 23:30 · 4 not aired</div>
+          <h3 style="margin:20px 0 8px">Synopsis</h3>
+          <p class="muted" style="line-height:1.55;max-width:680px">A courier who rides falling stars delivers letters between floating towns, and each parcel carries a small secret. (Stub: the real synopsis comes from MyAnimeList, shown as plain text, three lines with a "More" link.)</p>
+          <div class="note" style="margin-top:20px;display:inline-block">Mockup note: v0.1 edits in the inline row editor (same fields). This full page is v0.4.</div>
+        </div>
+      </div>
+      <style>
+        .ep { height: 30px; border-radius: var(--r-sm); display: grid; place-items: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+        .ep.w { background: rgba(76,195,138,.16); color: var(--st-watching); }
+        .ep.n { border: 1.5px solid var(--accent); color: var(--accent-hi); font-weight: 600; }
+        .ep.u { border: 1px dashed var(--border-strong); color: var(--faint); }
+      </style>
+    </section>
+
+    <!-- ================= d. SYNC QUEUE ================= -->
+    <section class="screen" id="s-queue">
+      <div class="top"><h1>Sync queue<span class="num">4</span></h1><span class="grow"></span><button class="btn sec">Sync now</button></div>
+      <div class="scroll" style="display:flex;flex-direction:column;gap:14px">
+        <div class="alert warn"><svg class="i"><use href="#i-off"/></svg>
+          <div style="flex:1"><b style="font-weight:600">You are offline.</b> Your changes are saved here and sync when the connection is back. Next try in <span class="num">1:40</span>.</div>
+          <button class="btn sm sec">Try now</button></div>
+
+        <div class="card" style="border-color:rgba(242,138,34,.45)">
+          <h2><svg class="i" style="color:var(--accent)"><use href="#i-alert"/></svg>Conflict: Mikan Street Detectives<span class="aside">changed on another device</span></h2>
+          <div class="small muted" style="margin:-4px 0 12px">MyAnimeList changed after your edit. Kotora did not overwrite it. Pick one.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="ccard on"><div class="faint small">Yours · edited here, 21:04</div><div class="big">Progress <span class="num">7</span> / 24</div><button class="btn pri sm">Keep mine</button></div>
+            <div class="ccard"><div class="faint small">MyAnimeList · changed 21:30</div><div class="big">Progress <span class="num">8</span> / 24</div><button class="btn sec sm">Take theirs</button></div>
+          </div>
+          <div class="small faint" style="margin-top:10px">Progress conflicts where yours is higher resolve on their own (Settings → Updates).</div>
+        </div>
+
+        <div class="card" style="padding:6px 16px">
+          <div class="qh">Waiting <span class="num">2</span></div>
+          <div class="qrow"><div class="cv" style="--a:#e0794a;--b:#5b2a6e;width:26px;height:36px;font-size:9px">LK</div><b>Lanterns of Kirigaoka</b><span>Progress <span class="num">3 → 5</span> <span class="faint">(2 edits merged)</span></span><span class="st wait">Waiting</span><span class="faint num">20:58</span></div>
+          <div class="qrow"><div class="cv" style="--a:#d27ab0;--b:#40204a;width:26px;height:36px;font-size:9px">PC</div><b>Paper Crane Racing</b><span>Status → Completed, score <span class="num">8</span></span><span class="st wait">Waiting</span><span class="faint num">20:41</span></div>
+          <div class="qh">Failed <span class="num">1</span></div>
+          <div class="qrow"><div class="cv" style="--a:#5fa0c8;--b:#1d3346;width:26px;height:36px;font-size:9px">GL</div><b>Ghost of the Library Stacks</b><span>Progress <span class="num">13</span> <span style="color:var(--err)">· MyAnimeList: episode is out of range (12)</span></span><span style="display:flex;gap:6px"><button class="btn sm sec">Edit</button><button class="btn sm ghost">Discard</button></span><span class="faint num">19:12</span></div>
+          <div class="qh">Sent today</div>
+          <div class="qrow done"><div class="cv" style="--a:#3b7dd8;--b:#1b2b5c;width:26px;height:36px;font-size:9px">SD</div><b>Starfall Delivery Service</b><span>Progress <span class="num">7 → 8</span></span><span class="st ok"><svg class="i" style="width:13px"><use href="#i-check"/></svg>Sent</span><span class="faint num">18:30</span></div>
+          <div class="qrow done"><div class="cv" style="--a:#41b39a;--b:#173f47;width:26px;height:36px;font-size:9px">SL</div><b>Slow Life on Hoshizora Island</b><span>Score <span class="num">6 → 7</span></span><span class="st ok"><svg class="i" style="width:13px"><use href="#i-check"/></svg>Sent</span><span class="faint num">17:02</span></div>
+        </div>
+      </div>
+      <style>
+        .ccard { background: var(--field); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+        .ccard.on { border-color: rgba(242,138,34,.5); }
+        .ccard .big { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+        .qh { color: var(--faint); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; padding: 12px 0 4px; }
+        .qrow { display: grid; grid-template-columns: 26px 240px 1fr auto 52px; gap: 14px; align-items: center; height: 48px; border-top: 1px solid var(--border); font-size: 12px; }
+        .qh + .qrow { border-top: 0; }
+        .qrow b { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .qrow .faint.num { text-align: right; }
+        .qrow.done { opacity: .6; }
+        .st { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; }
+        .st.wait { color: var(--warn); background: rgba(242,201,76,.10); }
+        .st.ok { color: var(--ok); }
+      </style>
+    </section>
+
+    <!-- ================= e. SETTINGS ================= -->
+    <section class="screen" id="s-settings">
+      <div class="top"><h1>Settings</h1></div>
+      <div class="scroll" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-content:start">
+        <div class="card">
+          <h2>Accounts</h2>
+          <div class="opt" style="align-items:center">
+            <div class="av" style="width:32px;height:32px;border-radius:8px;background:#2e51a2;display:grid;place-items:center;font-weight:600;font-size:11px">MAL</div>
+            <div class="txt"><b>MyAnimeList</b><small>Signed in as demo_user</small></div>
+            <button class="btn sec sm">Sign out</button>
+          </div>
+          <div class="opt" style="align-items:center;opacity:.55">
+            <div style="width:32px;height:32px;border-radius:8px;background:#1d3550;display:grid;place-items:center;font-weight:600;font-size:11px">AL</div>
+            <div class="txt"><b>AniList</b><small>Coming in v0.2</small></div>
+            <button class="btn sec sm" disabled>Sign in</button>
+          </div>
+          <div class="alert info" style="margin-top:8px"><svg class="i"><use href="#i-lock"/></svg><div>Your sign-in token is kept in a file only you can read. It is not encrypted. Sign out deletes it. The Client ID comes from <span class="mono">config.toml</span>: set.</div></div>
+        </div>
+
+        <div class="card">
+          <h2>Updates</h2>
+          <div class="opt"><span class="radio on"></span><div class="txt"><b>Ask before updating</b><small>Show a banner and a notification. Nothing changes until you click Update. (Default)</small></div></div>
+          <div class="opt" style="align-items:center"><div class="txt"><b>Update automatically</b><small>Record confident matches without asking. Unsure matches still ask. Off by default.</small></div><span class="sw"></span></div>
+          <div class="opt" style="align-items:center"><div class="txt"><b>Offer the update at</b><small>Share of the episode watched</small></div><div class="select" style="height:28px"><span class="num">80%</span><svg class="i" style="width:14px"><use href="#i-down"/></svg></div></div>
+          <div class="opt" style="align-items:center"><div class="txt"><b>Keep the higher progress in conflicts</b><small>When only progress differs</small></div><span class="sw on"></span></div>
+        </div>
+
+        <div class="card">
+          <h2>Players <span class="aside"><span class="seg" id="plat"><span class="on" data-p="linux">Linux</span><span data-p="mac">macOS</span></span></span></h2>
+          <div class="plat-linux">
+            <div class="opt" style="align-items:center"><div class="txt"><b>mpv</b><small>IPC socket <span class="mono">$XDG_RUNTIME_DIR/mpv.sock</span> · <span style="color:var(--ok)">playing</span></small></div><span class="sw on"></span></div>
+            <div class="opt" style="align-items:center"><div class="txt"><b>VLC</b><small>MPRIS · <span class="faint">not running</span></small></div><span class="sw on"></span></div>
+            <div class="opt" style="align-items:center"><div class="txt"><b>mpc-qt</b><small>MPRIS · <span style="color:var(--warn)">idle</span></small></div><span class="sw on"></span></div>
+            <div class="opt" style="align-items:center"><div class="txt"><b>Other MPRIS players</b><small>Haruna, Celluloid and others that report a file</small></div><span class="sw on"></span></div>
+          </div>
+          <div class="plat-mac" style="display:none">
+            <div class="opt" style="align-items:center"><div class="txt"><b>mpv</b><small>IPC socket · <span style="color:var(--ok)">found</span></small></div><span class="sw on"></span></div>
+            <div class="opt" style="align-items:center"><div class="txt"><b>IINA</b><small>mpv IPC through "additional mpv options" · <span class="faint">not running</span></small></div><span class="sw on"></span></div>
+            <div class="opt" style="align-items:center"><div class="txt"><b>VLC</b><small>Web interface (opt-in, needs its password) · <span style="color:var(--warn)">not set up</span></small></div><span class="sw"></span></div>
+          </div>
+          <div class="small faint" style="margin-top:6px">Streaming sites in the browser: use MAL-Sync.</div>
+        </div>
+
+        <div class="card" style="display:flex;gap:16px">
+          <svg style="width:56px;height:56px;flex:none"><use href="#logo"/></svg>
+          <div style="line-height:1.5">
+            <h2 style="margin-bottom:2px">About Kotora <span class="aside num">0.1.0</span></h2>
+            <div class="small muted">A tribute to <b style="color:var(--text);font-weight:500">Taiga</b>, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.</div>
+            <div class="small faint" style="margin-top:8px">GPL-3.0-or-later · Uses anitomy (MPL-2.0), Anisthesia player data (MIT), anime-relations (CC0). Not affiliated with MyAnimeList.</div>
+            <div style="margin-top:8px;display:flex;gap:14px" class="small"><a class="link">kotora.moe</a><a class="link">Source code</a><a class="link">Licences</a></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= STATES ================= -->
+    <section class="screen" id="s-states">
+      <div class="top"><h1>Dropped<span class="num">0</span></h1><span class="grow"></span><span class="note">Mockup: empty, loading, error and sign-in-again states</span></div>
+      <div class="scroll" style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:16px">
+        <div class="card" style="display:grid;place-items:center;text-align:center">
+          <div><div style="font-size:15px;font-weight:600">No anime in Dropped</div><div class="small muted" style="margin-top:4px">Entries you drop on MyAnimeList show up here.</div></div>
+        </div>
+        <div class="card">
+          <div class="faint small" style="margin-bottom:10px">Loading your list…</div>
+          <div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:12px;justify-content:center">
+          <div class="alert err"><svg class="i"><use href="#i-alert"/></svg><div style="flex:1"><b style="font-weight:600">Can't reach MyAnimeList.</b> Showing your saved list from 21:30.</div><button class="btn sm sec">Retry</button></div>
+          <div class="small faint">Errors say what failed and what still works. They never block the list.</div>
+        </div>
+        <div class="card" style="display:flex;flex-direction:column;gap:12px;justify-content:center">
+          <div class="alert warn"><svg class="i"><use href="#i-lock"/></svg><div style="flex:1"><b style="font-weight:600">Sign in again.</b> Your MyAnimeList sign-in expired. 3 changes wait in the queue.</div><button class="btn sm pri">Sign in</button></div>
+          <div class="small faint">The queue is kept. Nothing is lost.</div>
+        </div>
+      </div>
+      <style>
+        .skel { height: 44px; border-radius: var(--r-md); margin-bottom: 8px; background: linear-gradient(90deg, var(--raised), #26345a 50%, var(--raised)); background-size: 200% 100%; animation: sk 1.4s linear infinite; }
+        @keyframes sk { to { background-position: -200% 0; } }
+        @media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+      </style>
+    </section>
+    </div>
+  </div>
+
+  <!-- ================= f. FIRST RUN / SIGN-IN ================= -->
+  <section class="screen" id="s-signin" style="align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 20%, #1b2640, var(--bg) 70%)">
+    <svg style="width:96px;height:96px"><use href="#logo"/></svg>
+    <div style="font-size:28px;font-weight:600;margin-top:14px">Welcome to Kotora</div>
+    <div class="muted" style="margin-top:6px;font-size:14px">Keep your anime list up to date while you watch.</div>
+    <div class="card" style="width:440px;margin-top:28px;padding:22px">
+      <div class="noid-hide">
+        <button class="btn pri" style="width:100%;height:40px;justify-content:center;font-size:14px">Sign in with MyAnimeList</button>
+        <div class="small muted" style="margin-top:10px;line-height:1.5">Opens MyAnimeList in your browser. Kotora never sees your password. It keeps a sign-in token in a file only you can read.</div>
+      </div>
+      <div class="noid-show" style="display:none">
+        <div class="alert err"><svg class="i"><use href="#i-alert"/></svg><div><b style="font-weight:600">No MyAnimeList Client ID.</b> Kotora needs one to sign in. Get a free one at MyAnimeList (API settings), then add it to <span class="mono">~/.config/kotora/config.toml</span>:
+          <div class="mono" style="margin-top:6px;color:var(--text)">[mal]<br>client_id = "…"</div></div></div>
+        <button class="btn pri" disabled style="width:100%;height:40px;justify-content:center;font-size:14px;margin-top:12px">Sign in with MyAnimeList</button>
+        <div style="margin-top:8px" class="small"><a class="link">How to get a Client ID<svg class="i" style="width:13px"><use href="#i-ext"/></svg></a></div>
+      </div>
+      <button class="btn sec" disabled style="width:100%;height:36px;justify-content:center;margin-top:14px">AniList · coming in v0.2</button>
+    </div>
+    <div style="display:flex;gap:28px;margin-top:28px" class="small muted">
+      <span><b class="stepn">1</b>Sign in</span><span><b class="stepn">2</b>Play an episode in mpv, VLC or mpc-qt</span><span><b class="stepn">3</b>Confirm the update</span>
+    </div>
+    <div class="small faint" style="margin-top:36px">A tribute to Taiga.</div>
+    <style>
+      .stepn { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 10px; background: var(--accent-tint); color: var(--accent-hi); font-size: 11px; font-weight: 600; margin-right: 8px; }
+      .win[data-screen=signin-noid] .noid-hide { display: none; }
+      .win[data-screen=signin-noid] .noid-show { display: block !important; }
+    </style>
+  </section>
+</div>
+</div>
+
+<script>
+// Tiny screen switcher for the mockup only.
+const win = document.getElementById('win');
+const q = location.search;
+if (q.includes('shot')) document.body.classList.add('shot');
+function go(s) {
+  win.dataset.screen = s;
+  document.querySelectorAll('.mock-bar [data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === s));
+  if (location.hash !== '#' + s) history.replaceState(null, '', q + '#' + s);
+}
+document.addEventListener('click', e => { const t = e.target.closest('[data-go]'); if (t) go(t.dataset.go); });
+function chrome(mac) {
+  win.classList.toggle('mac', mac);
+  document.getElementById('chromeM').classList.toggle('on', mac);
+  document.getElementById('chromeL').classList.toggle('on', !mac);
+}
+document.getElementById('chromeL').onclick = () => chrome(false);
+document.getElementById('chromeM').onclick = () => chrome(true);
+document.querySelectorAll('#plat span').forEach(s => s.onclick = () => {
+  const mac = s.dataset.p === 'mac';
+  document.querySelectorAll('#plat span').forEach(x => x.classList.toggle('on', x === s));
+  document.querySelector('.plat-linux').style.display = mac ? 'none' : '';
+  document.querySelector('.plat-mac').style.display = mac ? '' : 'none';
+});
+chrome(q.includes('mac'));
+go((location.hash || '#list').slice(1));
+</script>
+</body>
+</html>
