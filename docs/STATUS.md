@@ -1,6 +1,6 @@
 # Kotora: project status
 
-Last updated: 2026-11-15 (stage 1). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
+Last updated: 2026-11-15 (stage 2). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
 and `docs/ROADMAP.md` before starting work on a new machine.
 
 ## Where things are
@@ -13,7 +13,15 @@ and `docs/ROADMAP.md` before starting work on a new machine.
   - `kot status | show | quit`
   - `install.sh`, `scripts/linux-check/`, `deny.toml`
   - lightness budgets measured (docs/ROADMAP.md)
-- Still open from stage 1: the SQLite store and the anitomy decision.
+- `stage-2` (on top of `stage-1`, not merged, not pushed): MyAnimeList read only.
+  - `core`: SQLite store (migrations by `user_version`), config, token file, PKCE sign-in, MAL client with
+    rate limiter and 429 handling, `ListService` trait, loopback listener
+  - `app`: the real list from the store and MAL (fake data only in the headless scenes), search, sort,
+    Refresh, sign-in and sign-out, sign-in screens, Settings account card
+  - read only: no write to the MAL account; `+1` is hidden in the real app
+  - tested against recorded JSON only; **not yet run against the real MAL**
+- Still open: the anitomy decision (left open on purpose), covers, the 15-minute refresh, the build-time
+  Client ID default (see docs/ROADMAP.md, Stage 2).
 
 ## Git rules (the repository will be public)
 
@@ -70,9 +78,31 @@ Uzumaki's `assets/icons` pipeline (`rsvg-convert`).
 
 `kotora.moe` (homepage; a privacy page can go there later).
 
+## Live test of stage 2 (the user)
+
+The agent never signed in. On the Mac (then on Arch), from the `stage-2` checkout:
+
+1. Put the Client ID in `~/.config/kotora/config.toml`:
+   ```
+   [mal]
+   client_id = "your client id"
+   ```
+   The app registration needs the redirect `http://127.0.0.1:47321/callback`.
+2. `cargo run --release -p kotora` (or build and start `kotora`). Click **Sign in**: the browser opens, you
+   approve, the tab says "Kotora is signed in", and the list loads.
+3. Check: the five status counts match MyAnimeList, search and Sort work, **Refresh** works, the sidebar says
+   "Synced just now". Quit and start again with the network off (`KOTORA_OFFLINE=1 kotora`): the saved list
+   shows at once.
+4. Settings: **Sign out** removes `~/.local/share/kotora/tokens.json` and the saved list.
+   `ls -l ~/.local/share/kotora/` should show `tokens.json` as `-rw-------`.
+5. Tell the agent what you see. If MAL answers an error, copy the red line; it never contains a token.
+
+The first real call also confirms two guesses: the `fields=` list of the animelist request, and that a
+403 or 429 does not appear on a normal list of a few hundred entries.
+
 ## Next steps
 
-1. The user reviews `stage-1`, builds it on Arch and the Mac, and measures the live budgets
-   (window memory, first frame).
-2. Finish stage 1: the SQLite store and the anitomy decision.
-3. Stage 2: MyAnimeList, read only.
+1. The user reviews `stage-1` and `stage-2`, builds them on Arch and the Mac, runs the live test above and
+   measures the live budgets (window memory, first frame).
+2. Decide on anitomy (still open), covers, and the 15-minute refresh.
+3. Stage 3: edits and the sync queue (the first writes to the account; each needs approval).
