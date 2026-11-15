@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
-use crate::service::{ListService, SearchHit, ServiceError};
+use crate::service::{AnimeHit, Details, ListService, MyEntry, SearchHit, ServiceError};
 use crate::time;
 use crate::tokens::{Token, TokenStore};
 
@@ -313,6 +313,23 @@ impl<T: Transport> Client<T> {
         parse_search(&r.body).map_err(ServiceError::Other)
     }
 
+    /// The search bar's search, `GET /anime?q=` with what a result row shows (`limit` up to 20).
+    /// Under 3 characters nothing is asked.
+    pub fn browse_anime(&mut self, access: &str, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        let q: String = query.trim().chars().take(64).collect();
+        if q.chars().count() < 3 {
+            return Ok(Vec::new());
+        }
+        let r = self.get(format!("{API}/anime?q={}&limit={}&fields={BROWSE_FIELDS}", pct_encode(&q), limit.clamp(1, 20)), access)?;
+        parse_hits(&r.body).map_err(ServiceError::Other)
+    }
+
+    /// One anime's information page (`GET /anime/{id}?fields=…`), with the user's entry.
+    pub fn fetch_details(&mut self, access: &str, id: u32) -> Result<Details, ServiceError> {
+        let r = self.get(format!("{API}/anime/{id}?fields={DETAIL_FIELDS}"), access)?;
+        parse_details(&r.body).map_err(ServiceError::Other)
+    }
+
     pub fn fetch_user_name(&mut self, access: &str) -> Result<String, ServiceError> {
         let r = self.get(format!("{API}/users/@me"), access)?;
         let me: Me = serde_json::from_str(&r.body).map_err(|_| ServiceError::Other("can't read the user answer".into()))?;
@@ -362,6 +379,161 @@ fn api_message(body: &str) -> String {
 }
 
 // ----------------------------------------------------------------------------------- JSON shapes
+
+/// What a search result row shows (the cover comes by default).
+const BROWSE_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean";
+/// The details page.
+const DETAIL_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean,rank,popularity,num_list_users,\
+start_date,end_date,synopsis,source,average_episode_duration,studios,genres,my_list_status";
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct FullNode {
+    id: u32,
+    title: String,
+    main_picture: Option<Picture>,
+    alternative_titles: Option<Alt>,
+    num_episodes: Option<u32>,
+    media_type: Option<String>,
+    status: Option<String>,
+    start_season: Option<Season>,
+    mean: Option<f32>,
+    rank: Option<u32>,
+    popularity: Option<u32>,
+    num_list_users: Option<u32>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+    synopsis: Option<String>,
+    source: Option<String>,
+    /// Seconds.
+    average_episode_duration: Option<u32>,
+    studios: Vec<Named>,
+    genres: Vec<Named>,
+    my_list_status: Option<FullListStatus>,
+}
+
+#[derive(Deserialize)]
+struct Season {
+    year: u16,
+    season: String,
+}
+
+#[derive(Deserialize)]
+struct Named {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct FullListStatus {
+    status: Option<String>,
+    #[serde(default)]
+    score: u8,
+    #[serde(default)]
+    num_episodes_watched: u32,
+    #[serde(default)]
+    is_rewatching: bool,
+    start_date: Option<String>,
+    finish_date: Option<String>,
+}
+
+impl FullNode {
+    fn alt(&self) -> (Option<String>, Option<String>, Vec<String>) {
+        match &self.alternative_titles {
+            Some(a) => (
+                non_empty(a.en.clone()),
+                non_empty(a.ja.clone()),
+                a.synonyms.iter().filter(|s| !s.trim().is_empty()).cloned().collect(),
+            ),
+            None => (None, None, Vec::new()),
+        }
+    }
+
+    fn season(&self) -> Option<(u16, String)> {
+        self.start_season.as_ref().map(|s| (s.year, s.season.clone()))
+    }
+
+    fn hit(self) -> AnimeHit {
+        let (title_en, title_ja, synonyms) = self.alt();
+        AnimeHit {
+            id: self.id,
+            season: self.season(),
+            title: self.title,
+            title_en,
+            title_ja,
+            synonyms,
+            format: self.media_type.unwrap_or_default(),
+            episodes: self.num_episodes.filter(|&e| e > 0),
+            air_status: self.status.unwrap_or_default(),
+            mean: self.mean.filter(|m| *m > 0.0),
+            cover_url: self.main_picture.and_then(|p| p.medium.or(p.large)),
+        }
+    }
+}
+
+/// The answer of the search bar's `GET /anime?q=…&fields=…`.
+pub fn parse_hits(body: &str) -> Result<Vec<AnimeHit>, String> {
+    #[derive(Deserialize)]
+    struct Page {
+        #[serde(default)]
+        data: Vec<Item>,
+    }
+    #[derive(Deserialize)]
+    struct Item {
+        node: FullNode,
+    }
+    let page: Page = serde_json::from_str(body).map_err(|e| format!("can't read the search answer ({})", e.classify_name()))?;
+    Ok(page.data.into_iter().map(|i| i.node.hit()).collect())
+}
+
+/// The answer of `GET /anime/{id}?fields=…`.
+pub fn parse_details(body: &str) -> Result<Details, String> {
+    let n: FullNode = serde_json::from_str(body).map_err(|e| format!("can't read the anime's information ({})", e.classify_name()))?;
+    if n.id == 0 || n.title.is_empty() {
+        return Err("MyAnimeList sent no anime".into());
+    }
+    let (title_en, title_ja, synonyms) = n.alt();
+    let season = n.season();
+    let mine = n.my_list_status.and_then(|m| {
+        let status = m.status.filter(|s| Status::from_mal(s).is_some())?;
+        Some(MyEntry {
+            status,
+            progress: m.num_episodes_watched,
+            score: (m.score > 0).then_some(m.score.min(10)),
+            rewatching: m.is_rewatching,
+            start_date: non_empty(m.start_date),
+            finish_date: non_empty(m.finish_date),
+        })
+    });
+    let (cover_url, cover_small) = match n.main_picture {
+        Some(p) => (p.large.clone().or(p.medium.clone()), p.medium.or(p.large)),
+        None => (None, None),
+    };
+    Ok(Details {
+        id: n.id,
+        title: n.title,
+        title_en,
+        title_ja,
+        synonyms,
+        format: n.media_type.unwrap_or_default(),
+        episodes: n.num_episodes.filter(|&e| e > 0),
+        air_status: n.status.unwrap_or_default(),
+        start_date: non_empty(n.start_date),
+        end_date: non_empty(n.end_date),
+        season,
+        studios: n.studios.into_iter().map(|s| s.name).filter(|s| !s.is_empty()).collect(),
+        genres: n.genres.into_iter().map(|g| g.name).filter(|g| !g.is_empty()).collect(),
+        source: n.source.unwrap_or_default(),
+        minutes: n.average_episode_duration.filter(|&d| d > 0).map(|d| d.div_ceil(60)),
+        mean: n.mean.filter(|m| *m > 0.0),
+        rank: n.rank.filter(|&r| r > 0),
+        popularity: n.popularity.filter(|&r| r > 0),
+        members: n.num_list_users,
+        synopsis: n.synopsis.unwrap_or_default().trim().to_string(),
+        cover_url,
+        cover_small,
+        mine,
+    })
+}
 
 #[derive(Deserialize)]
 struct TokenReply {
@@ -613,6 +785,14 @@ impl<T: Transport> ListService for Mal<T> {
 
     fn search(&mut self, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         self.authed(|c, a| c.search_anime(a, query))
+    }
+
+    fn browse(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        self.authed(|c, a| c.browse_anime(a, query, limit))
+    }
+
+    fn details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
+        self.authed(|c, a| c.fetch_details(a, media_id))
     }
 }
 
@@ -916,6 +1096,62 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3);
         assert_eq!((seen[2].0.as_str(), seen[2].2.as_deref()), ("PATCH", Some("new")));
+    }
+
+    const HITS: &str = include_str!("../tests/mal_search_browse.json");
+    const DETAILS: &str = include_str!("../tests/mal_anime_details.json");
+
+    #[test]
+    fn browse_reads_rows_and_asks_for_their_fields() {
+        let (f, seen) = fake(vec![ok(HITS)]);
+        let (mut c, _) = client(f);
+        let hits = c.browse_anime("fake-access", "  velvet orchard ", 10).unwrap();
+        let url = seen.lock().unwrap()[0].1.clone();
+        assert!(url.starts_with("https://api.myanimelist.net/v2/anime?q=velvet%20orchard&limit=10&fields="), "{url}");
+        assert!(url.contains("start_season") && url.contains("mean") && url.contains("num_episodes"));
+        assert_eq!(hits.len(), 2);
+        let h = &hits[0];
+        assert_eq!((h.id, h.title.as_str(), h.format.as_str(), h.episodes), (9001, "Velvet Orchard Chronicle", "tv", Some(12)));
+        assert_eq!(h.season_text().as_deref(), Some("Fall 2025"));
+        assert_eq!(h.mean, Some(8.12));
+        assert_eq!(h.title_en.as_deref(), Some("Velvet Orchard"));
+        assert_eq!(h.cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001.jpg"));
+        assert_eq!(h.media().title, "Velvet Orchard Chronicle");
+        // Unknown count and no score: none, not zero.
+        assert_eq!((hits[1].episodes, hits[1].mean, hits[1].season.as_ref()), (None, None, None));
+        assert!(c.browse_anime("fake-access", "ab", 10).unwrap().is_empty(), "under 3 characters nothing is asked");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn details_read_every_field_and_the_users_entry() {
+        let (f, seen) = fake(vec![ok(DETAILS)]);
+        let (mut c, _) = client(f);
+        let d = c.fetch_details("fake-access", 9001).unwrap();
+        let url = seen.lock().unwrap()[0].1.clone();
+        assert!(url.starts_with("https://api.myanimelist.net/v2/anime/9001?fields=") && url.contains("my_list_status") && url.contains("synopsis"), "{url}");
+        assert_eq!(d.title, "Velvet Orchard Chronicle");
+        assert_eq!(d.title_ja.as_deref(), Some("ベルベット果樹園"));
+        assert_eq!(d.synonyms, ["VOC"]);
+        assert_eq!((d.episodes, d.format.as_str(), d.air_status.as_str()), (Some(12), "tv", "finished_airing"));
+        assert_eq!((d.start_date.as_deref(), d.end_date.as_deref()), (Some("2025-10-03"), Some("2025-12-19")));
+        assert_eq!(d.studios, ["Studio Example"]);
+        assert_eq!(d.genres, ["Drama", "Slice of Life"]);
+        assert_eq!((d.mean, d.rank, d.popularity, d.members), (Some(8.12), Some(312), Some(1450), Some(98765)));
+        assert_eq!(d.minutes, Some(24));
+        assert_eq!(d.source, "light_novel");
+        assert!(d.synopsis.starts_with("A made-up story"));
+        assert_eq!(d.cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001l.jpg"));
+        assert_eq!(d.media().cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001.jpg"), "rows use the small cover");
+        let m = d.mine.unwrap();
+        assert_eq!((m.status(), m.progress, m.score, m.rewatching), (Some(Status::Watching), 5, Some(8), false));
+        assert_eq!((m.start_date.as_deref(), m.finish_date), (Some("2025-10-10"), None));
+        // Not on the list: no entry.
+        let mut v: serde_json::Value = serde_json::from_str(DETAILS).unwrap();
+        v.as_object_mut().unwrap().remove("my_list_status");
+        assert!(parse_details(&v.to_string()).unwrap().mine.is_none());
+        assert!(parse_details("{}").is_err());
+        assert!(parse_details("<html>").is_err());
     }
 
     #[test]

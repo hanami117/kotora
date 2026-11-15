@@ -920,7 +920,7 @@ fn changes(n: u32) -> String {
 fn queue_row(op: &Op, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
-    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe(&op.change, &op.old)).font(theme::LABEL_NUM).color(PAL.text));
+    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
     if op.edits > 1 && op.state.is_open() {
         line = line.child(text(format!("({} edits merged)", op.edits)).font(theme::LABEL).color(PAL.faint));
     }

@@ -8,6 +8,8 @@
 //!   changed after our base (`updated_at`), it is a conflict and nothing is overwritten. A change
 //!   that only raises the progress wins on its own. Then it sends (`PATCH my_list_status` on MAL)
 //!   and saves what the service answered.
+//! - **Adding:** [`Store::add_to_list`] puts an anime on the saved list and queues it with the
+//!   `added` mark: the service not having it is then no conflict, and Discard takes it off again.
 //! - **Errors:** no network or rate limit: try again later (30 s doubling to 15 min). The sign-in
 //!   is gone: [`Step::SignInAgain`], the queue is kept. Anything else: `failed`, with the
 //!   service's words, until the user edits or discards it.
@@ -18,7 +20,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::service::{ListService, ServiceError};
 use crate::store::{Result, Store, StoreError};
-use crate::{Change, Remote, Status, Values};
+use crate::{Change, Media, Remote, Status, Values};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpState {
@@ -92,6 +94,8 @@ pub struct Op {
     pub sent_at: Option<i64>,
     /// In a conflict: the service's entry; `None` when it was removed there.
     pub remote: Option<Remote>,
+    /// The change puts the anime on the list (it wasn't there).
+    pub added: bool,
 }
 
 impl Op {
@@ -125,6 +129,22 @@ pub fn describe(change: &Change, old: &Values) -> String {
     text
 }
 
+/// [`describe`] for a queued change: an add says so ("Add as Watching, progress 12").
+pub fn describe_op(op: &Op) -> String {
+    if !op.added {
+        return describe(&op.change, &op.old);
+    }
+    let status = op.change.status.unwrap_or(op.old.status);
+    let mut text = format!("Add as {}", status.label());
+    if let Some(p) = op.change.progress.filter(|p| *p > 0) {
+        text.push_str(&format!(", progress {p}"));
+    }
+    if let Some(Some(n)) = op.change.score {
+        text.push_str(&format!(", score {n}"));
+    }
+    text
+}
+
 /// Sent changes stay this long on the queue page.
 const KEEP_DONE: i64 = 86_400;
 /// The longest wait between tries.
@@ -152,7 +172,7 @@ fn status_in(s: Option<String>) -> Option<Status> {
 
 const OP_SELECT: &str = "SELECT o.id, o.media_id, COALESCE(m.title, ''), m.episodes, o.status, o.progress, o.score,
         o.old_status, o.old_progress, o.old_score, o.base_updated_at, o.created_at, o.edited_at, o.edits,
-        o.state, o.attempts, o.next_try, o.error, o.sent_at, o.r_status, o.r_progress, o.r_score, o.r_updated_at
+        o.state, o.attempts, o.next_try, o.error, o.sent_at, o.r_status, o.r_progress, o.r_score, o.r_updated_at, o.added
  FROM pending_op o LEFT JOIN media m ON m.service = o.service AND m.id = o.media_id";
 
 fn op_row(r: &Row) -> rusqlite::Result<Op> {
@@ -185,6 +205,7 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
         error: r.get(17)?,
         sent_at: r.get(18)?,
         remote,
+        added: r.get(23)?,
     })
 }
 
@@ -228,6 +249,16 @@ pub(crate) fn lay_over(c: &Connection, service: &str) -> Result<()> {
 }
 
 fn lay_over_where(c: &Connection, service: &str, media_id: Option<u32>) -> Result<()> {
+    // An anime added here and not yet on the service is not in a fetched list: put it back.
+    c.execute(
+        "INSERT INTO entry (service, media_id, status, progress, score, rewatching, updated_at)
+         SELECT o.service, o.media_id, o.old_status, 0, NULL, 0, o.created_at FROM pending_op o
+         WHERE o.service = ?1 AND (?2 IS NULL OR o.media_id = ?2) AND o.added = 1 AND o.state != 'done'
+           AND o.media_id IN (SELECT id FROM media WHERE service = ?1)
+           AND NOT EXISTS (SELECT 1 FROM entry e WHERE e.service = o.service AND e.media_id = o.media_id)
+         GROUP BY o.media_id",
+        params![service, media_id],
+    )?;
     c.execute(
         "UPDATE entry SET
             status = COALESCE((SELECT o.status FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
@@ -390,10 +421,65 @@ impl Store {
         }
         tx.execute("DELETE FROM pending_op WHERE id = ?1", [id])?;
         let alone = !has_other_open(&tx, service, op.media_id, id)?;
-        set_entry(&tx, service, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
+        if op.added && alone {
+            // It was never on the list: it leaves again.
+            tx.execute("DELETE FROM entry WHERE service = ?1 AND media_id = ?2", params![service, op.media_id])?;
+        } else {
+            set_entry(&tx, service, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
+        }
         lay_over_where(&tx, service, Some(op.media_id))?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Search and add: puts `media` on the saved list with `status` and queues the add, in one
+    /// transaction. Completed starts at the last episode (when the count is known), anything else
+    /// at 0. An anime already on the list gets a status change instead. Returns the queued
+    /// change's id (`None`: nothing to send).
+    pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, now: i64) -> Result<Option<i64>> {
+        if entry_values(&self.conn, service, media.id)?.is_some() {
+            return self.enqueue(service, media.id, Change { status: Some(status), ..Default::default() }, now);
+        }
+        let progress = match (status, media.episodes) {
+            (Status::Completed, Some(n)) => n,
+            _ => 0,
+        };
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT (service, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
+               title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
+               format = excluded.format, air_status = excluded.air_status,
+               cover_url = COALESCE(excluded.cover_url, media.cover_url), fetched_at = excluded.fetched_at",
+            params![
+                service,
+                media.id,
+                media.title,
+                media.title_en,
+                media.title_ja,
+                serde_json::to_string(&media.synonyms).unwrap_or_else(|_| "[]".into()),
+                media.episodes,
+                media.format,
+                media.air_status,
+                media.cover_url,
+                now
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO entry (service, media_id, status, progress, score, rewatching, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5)",
+            params![service, media.id, status.mal_name(), progress, now],
+        )?;
+        // `old_*` hold the added status and 0: the change always sends the status.
+        tx.execute(
+            "INSERT INTO pending_op (service, media_id, status, progress, score, old_status, old_progress, old_score,
+                base_updated_at, created_at, edited_at, added)
+             VALUES (?1, ?2, ?3, ?4, NULL, ?3, 0, 0, 0, ?5, ?5, 1)",
+            params![service, media.id, status.mal_name(), (progress > 0).then_some(progress), now],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(Some(id))
     }
 }
 
@@ -409,7 +495,11 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
         .optional()?;
     let id = match waiting {
         Some(op) => {
-            let merged = op.change.merge(change).without_same(&op.old);
+            let mut merged = op.change.merge(change).without_same(&op.old);
+            if op.added {
+                // An add always sends a status (the service has no entry to keep one from).
+                merged.status = Some(op.change.merge(change).status.unwrap_or(op.old.status));
+            }
             if merged.is_empty() {
                 // Back where it started: nothing to send.
                 tx.execute("DELETE FROM pending_op WHERE id = ?1", [op.id])?;
@@ -504,7 +594,7 @@ pub enum Decision {
 /// where ours is higher sends ours (Settings → Updates, on by default).
 pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
     match remote {
-        None if op.base_updated_at < 0 => Decision::Send,
+        None if op.base_updated_at < 0 || op.added => Decision::Send,
         // Removed on the service after our edit: ask.
         None => Decision::Conflict,
         Some(r) if op.base_updated_at < 0 || r.updated_at <= op.base_updated_at => Decision::Send,

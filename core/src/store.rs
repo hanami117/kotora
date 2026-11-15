@@ -8,6 +8,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::service::Details;
 use crate::{ListItem, Media, Status};
 
 /// Each entry is one migration; the schema version is the number of entries applied.
@@ -91,7 +92,24 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         used_at INTEGER NOT NULL,
         PRIMARY KEY (service, key)
      );",
+    // 4: search and add, details (stage 5). `pending_op.added`: the change puts an anime on the
+    // list that wasn't there (Discard removes it again; "not on the service" is no conflict).
+    // `details`: an anime's information page as JSON (`service::Details`), kept for titles on
+    // the list, and for others only a week, at most `DETAILS_KEEP` of them (no hoarding).
+    "ALTER TABLE pending_op ADD COLUMN added INTEGER NOT NULL DEFAULT 0;
+     CREATE TABLE details (
+        service TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (service, media_id)
+     );",
 ];
+
+/// Details of titles not on the list kept at most (the newest).
+pub const DETAILS_KEEP: i64 = 100;
+/// How long details of a title not on the list are kept.
+pub const DETAILS_MAX_AGE: i64 = 7 * 86_400;
 
 #[derive(Debug)]
 pub struct StoreError(pub String);
@@ -180,6 +198,7 @@ impl Store {
             "DELETE FROM account WHERE service = ?1",
             "DELETE FROM kv WHERE key LIKE ?1 || ':%'",
             "DELETE FROM recognition WHERE service = ?1",
+            "DELETE FROM details WHERE service = ?1",
         ] {
             tx.execute(sql, [service])?;
         }
@@ -278,6 +297,62 @@ impl Store {
         Ok(self.conn.query_row(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.media_id = ?2"), params![service, media_id], item_row).optional()?)
     }
 
+
+    /// Updates the saved media row of an anime on the list (titles, count, cover) from fresher
+    /// data, e.g. its details page. Nothing happens for an anime not on the list.
+    pub fn refresh_media(&self, service: &str, m: &Media, now: i64) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE media SET title = ?3, title_en = ?4, title_ja = ?5, synonyms = ?6, episodes = ?7, format = ?8,
+               air_status = ?9, cover_url = COALESCE(?10, cover_url), fetched_at = ?11
+             WHERE service = ?1 AND id = ?2 AND id IN (SELECT media_id FROM entry WHERE service = ?1)",
+            params![
+                service,
+                m.id,
+                m.title,
+                m.title_en,
+                m.title_ja,
+                serde_json::to_string(&m.synonyms).unwrap_or_else(|_| "[]".into()),
+                m.episodes,
+                m.format,
+                m.air_status,
+                m.cover_url,
+                now
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    // ---------------------------------------------------------------------------- details
+
+    /// The saved information page of an anime, and when it was fetched.
+    pub fn details(&self, service: &str, media_id: u32) -> Result<Option<(Details, i64)>> {
+        let row: Option<(String, i64)> = self
+            .conn
+            .query_row("SELECT body, fetched_at FROM details WHERE service = ?1 AND media_id = ?2", params![service, media_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        Ok(row.and_then(|(body, at)| serde_json::from_str(&body).ok().map(|d| (d, at))))
+    }
+
+    /// Saves an information page, then forgets old ones of titles not on the list: older than
+    /// a week, or past the newest [`DETAILS_KEEP`].
+    pub fn save_details(&self, service: &str, d: &Details, now: i64) -> Result<()> {
+        let body = serde_json::to_string(d).map_err(|e| StoreError(e.to_string()))?;
+        self.conn.execute(
+            "INSERT INTO details (service, media_id, body, fetched_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (service, media_id) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at",
+            params![service, d.id, body, now],
+        )?;
+        const OFF_LIST: &str = "service = ?1 AND media_id NOT IN (SELECT media_id FROM entry WHERE service = ?1)";
+        self.conn.execute(&format!("DELETE FROM details WHERE {OFF_LIST} AND fetched_at < ?2"), params![service, now - DETAILS_MAX_AGE])?;
+        self.conn.execute(
+            &format!(
+                "DELETE FROM details WHERE {OFF_LIST} AND media_id NOT IN
+                   (SELECT media_id FROM details WHERE {OFF_LIST} ORDER BY fetched_at DESC, media_id LIMIT ?2)"
+            ),
+            params![service, DETAILS_KEEP],
+        )?;
+        Ok(())
+    }
 
     // --------------------------------------------------------------------------------- kv
 
@@ -426,5 +501,44 @@ pub(crate) mod tests {
         assert!(s.load_list("mal").unwrap().is_empty());
         assert_eq!(s.synced_at("mal").unwrap(), None);
         assert_eq!(s.kv_get("other").unwrap().as_deref(), Some("keep"));
+    }
+
+    fn details(id: u32) -> crate::service::Details {
+        crate::service::Details { id, title: format!("Show {id}"), synopsis: "made up".into(), episodes: Some(12), ..Default::default() }
+    }
+
+    #[test]
+    fn details_are_kept_for_the_list_and_briefly_for_the_rest() {
+        let mut s = Store::open_memory().unwrap();
+        s.replace_list("mal", &[item(1, "On the list", Status::Watching, 1, 1)], 1).unwrap();
+        s.save_details("mal", &details(1), 100).unwrap();
+        s.save_details("mal", &details(2), 100).unwrap();
+        let (d, at) = s.details("mal", 2).unwrap().unwrap();
+        assert_eq!((d.title.as_str(), d.episodes, at), ("Show 2", Some(12), 100));
+        // A week later, another save drops the one not on the list.
+        s.save_details("mal", &details(3), 100 + DETAILS_MAX_AGE + 1).unwrap();
+        assert!(s.details("mal", 2).unwrap().is_none());
+        assert!(s.details("mal", 1).unwrap().is_some(), "on the list: kept");
+        // At most DETAILS_KEEP off the list, the newest.
+        for id in 10..(10 + DETAILS_KEEP as u32 + 5) {
+            s.save_details("mal", &details(id), 1_000_000 + i64::from(id)).unwrap();
+        }
+        let n: i64 = s.conn.query_row("SELECT COUNT(*) FROM details WHERE media_id != 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, DETAILS_KEEP);
+        assert!(s.details("mal", 10).unwrap().is_none() && s.details("mal", 10 + DETAILS_KEEP as u32 + 4).unwrap().is_some());
+        // Sign out forgets them.
+        s.clear_service("mal").unwrap();
+        assert!(s.details("mal", 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn refresh_media_touches_only_the_list() {
+        let mut s = Store::open_memory().unwrap();
+        s.replace_list("mal", &[item(1, "Old title", Status::Watching, 1, 1)], 1).unwrap();
+        let mut m = details(1).media();
+        m.episodes = Some(24);
+        assert!(s.refresh_media("mal", &m, 5).unwrap());
+        assert_eq!(s.load_item("mal", 1).unwrap().unwrap().media.episodes, Some(24));
+        assert!(!s.refresh_media("mal", &details(9).media(), 5).unwrap(), "not on the list: nothing saved");
     }
 }

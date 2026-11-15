@@ -605,7 +605,7 @@ impl State {
             .iter()
             .map(|o| kotora_ctl::QueueItem {
                 title: o.title.clone(),
-                change: kotora_core::queue::describe(&o.change, &o.old),
+                change: kotora_core::queue::describe_op(o),
                 state: o.state.label().into(),
                 note: match o.state {
                     OpState::Conflict => Some(match &o.remote {
@@ -854,6 +854,7 @@ fn fake_ops() -> Vec<Op> {
         error: None,
         sent_at: (state == OpState::Done).then_some(FAKE_NOW - ago),
         remote: None,
+        added: false,
     };
     let w = |progress, score| Values { status: Status::Watching, progress, score };
     let progress = |p| Change { progress: Some(p), ..Default::default() };

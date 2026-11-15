@@ -1,7 +1,9 @@
 //! What the app needs from an online list service. MyAnimeList implements it in v0.1; AniList
 //! can in v0.2 without the store or the queue changing.
 
-use crate::{Change, ListItem, Remote};
+use serde::{Deserialize, Serialize};
+
+use crate::{Change, ListItem, Media, Remote, Status};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
@@ -35,6 +37,137 @@ pub struct SearchHit {
     pub other_titles: Vec<String>,
 }
 
+/// One anime of an online search, with what a result row shows (search and add).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnimeHit {
+    pub id: u32,
+    pub title: String,
+    pub title_en: Option<String>,
+    pub title_ja: Option<String>,
+    pub synonyms: Vec<String>,
+    /// The service's raw format: `tv`, `movie`, …
+    pub format: String,
+    /// `None`: unknown.
+    pub episodes: Option<u32>,
+    /// The service's raw airing status (`currently_airing`, …).
+    pub air_status: String,
+    /// The season it started: year and `winter` / `spring` / `summer` / `fall`.
+    pub season: Option<(u16, String)>,
+    /// The service's mean score, 1-10.
+    pub mean: Option<f32>,
+    /// A small cover (rows).
+    pub cover_url: Option<String>,
+}
+
+impl AnimeHit {
+    /// The media row an add saves (the cover is the small one).
+    pub fn media(&self) -> Media {
+        Media {
+            id: self.id,
+            title: self.title.clone(),
+            title_en: self.title_en.clone(),
+            title_ja: self.title_ja.clone(),
+            synonyms: self.synonyms.clone(),
+            episodes: self.episodes,
+            format: self.format.clone(),
+            air_status: self.air_status.clone(),
+            cover_url: self.cover_url.clone(),
+        }
+    }
+
+    /// "Fall 2024".
+    pub fn season_text(&self) -> Option<String> {
+        season_text(self.season.as_ref())
+    }
+}
+
+/// "Fall 2024" from (2024, "fall").
+pub fn season_text(season: Option<&(u16, String)>) -> Option<String> {
+    let (year, name) = season?;
+    let mut name = name.clone();
+    if let Some(first) = name.get(..1) {
+        name = first.to_uppercase() + &name[1..];
+    }
+    Some(format!("{name} {year}"))
+}
+
+/// The user's list entry as the details page shows it (MAL `my_list_status`), with the dates the
+/// list page doesn't keep.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MyEntry {
+    pub status: String,
+    pub progress: u32,
+    pub score: Option<u8>,
+    pub rewatching: bool,
+    /// `2024-10-03` (MAL may give only `2024-10` or `2024`).
+    pub start_date: Option<String>,
+    pub finish_date: Option<String>,
+}
+
+impl MyEntry {
+    pub fn status(&self) -> Option<Status> {
+        Status::from_mal(&self.status)
+    }
+}
+
+/// One anime's information page (MAL `GET /anime/{id}`). Saved as JSON in the store's
+/// `details` table for titles on the list or recently shown (see `Store::save_details`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Details {
+    pub id: u32,
+    pub title: String,
+    pub title_en: Option<String>,
+    pub title_ja: Option<String>,
+    pub synonyms: Vec<String>,
+    pub format: String,
+    pub episodes: Option<u32>,
+    pub air_status: String,
+    /// `2024-10-04` (or a shorter date).
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub season: Option<(u16, String)>,
+    pub studios: Vec<String>,
+    pub genres: Vec<String>,
+    /// `manga`, `original`, `light_novel`, …
+    pub source: String,
+    /// Minutes per episode.
+    pub minutes: Option<u32>,
+    pub mean: Option<f32>,
+    pub rank: Option<u32>,
+    pub popularity: Option<u32>,
+    pub members: Option<u32>,
+    pub synopsis: String,
+    /// The large cover (the details page draws it at 200 x 284).
+    pub cover_url: Option<String>,
+    /// The small cover (rows), for an add from the details page.
+    pub cover_small: Option<String>,
+    /// The user's entry when the anime is on the list.
+    pub mine: Option<MyEntry>,
+}
+
+impl Details {
+    /// The media row an add (or a refresh of the saved one) uses.
+    pub fn media(&self) -> Media {
+        Media {
+            id: self.id,
+            title: self.title.clone(),
+            title_en: self.title_en.clone(),
+            title_ja: self.title_ja.clone(),
+            synonyms: self.synonyms.clone(),
+            episodes: self.episodes,
+            format: self.format.clone(),
+            air_status: self.air_status.clone(),
+            cover_url: self.cover_small.clone().or_else(|| self.cover_url.clone()),
+        }
+    }
+
+    pub fn season_text(&self) -> Option<String> {
+        season_text(self.season.as_ref())
+    }
+}
+
 /// The user's own list: read it, read one entry, change one entry.
 pub trait ListService {
     /// Machine name, the `service` column of the store: `mal`.
@@ -52,5 +185,13 @@ pub trait ListService {
     /// A title search (recognition's one search for a file not matched on the list).
     fn search(&mut self, _query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         Ok(Vec::new())
+    }
+    /// A title search for the search bar: up to `limit` results with what a row shows.
+    fn browse(&mut self, _query: &str, _limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        Ok(Vec::new())
+    }
+    /// One anime's information page, with the user's entry if it is on the list.
+    fn details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
+        Err(ServiceError::Other("this service has no details page".into()))
     }
 }
