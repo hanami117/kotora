@@ -15,6 +15,9 @@ v0.1 is MyAnimeList; AniList comes in v0.2.
 - **Polish after Stage 2** (2026-11-15, same branch): macOS traffic lights moved off the logo, Settings
   page redone (Accounts and About cards), real covers in the list, Rune's `dbus` feature dropped
   (binary size), the anitomy decision recorded.
+- **Stage 3, edits and sync queue:** built on branch `stage-3` (2026-11-15, on top of `stage-2`), waiting
+  for review and the user's live write test. Every write path is tested against recorded-shape JSON
+  and fake services only; nothing has written to the real MAL account.
 
 ## Stage 0: design
 
@@ -36,15 +39,19 @@ Kotora has no Electron, no bridge and no audio, so it must stay small. Measure i
 of every stage and write the numbers here. A stage that breaks a budget explains why or fixes it.
 The first numbers are targets; Stage 1 measures the real baseline and may adjust them once, with a reason.
 
-| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) |
-|---|---|---|---|---|---|
-| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below) | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB |
-| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured |
-| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) |
-| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) |
-| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle |
-| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured |
-| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured |
+| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) | Stage 3 (2026-11-15) |
+|---|---|---|---|---|---|---|
+| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below) | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB | macOS arm64 23.5 MB (23,538,104 bytes; +0.2 MB: queue, editor, queue page). Linux arm64 (Docker) 27.6 MB (27,561,088 bytes; +0.2 MB). `kot` 0.5 MB |
+| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured |
+| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user |
+| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) |
+| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls |
+| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured |
+| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) |
+
+Stage 3 changes no target and adds no dependency: +0.2 MB on macOS and on Linux, where the binary is
+2.4 MB under the 30 MB target. `cargo bloat` on Linux: .text 18.5 MiB (18.3 before); `kotora` and
+`kotora_core` together 0.34 MiB. Stage 4 (anitomy, MPRIS on the zbus Rune already has) must check again.
 
 Stage 2 changes no target. The binary grew from 19.2 to 23.1 MB on macOS (SQLite and ureq with rustls were
 the expected few MB), so the 30 MB target holds on macOS. On Linux it is 29.3 MB, only 0.7 MB below it: Stage 3 and 4 (anitomy, zbus
@@ -121,11 +128,44 @@ real sign-in and sync are the user's live test (STATUS.md says what to run).
 
 ## Stage 3: edits and sync queue
 
-- [ ] Inline editor (progress, status, score) and `+1`.
-- [ ] `pending_op` queue: coalescing, a worker (`PATCH my_list_status`), backoff, the 401 / failed-refresh
-  "sign in again" state, conflict detection on the remote `updated_at`.
-- [ ] Queue page with badge and per-op errors; conflict choice.
-- [ ] `kot list`, `kot +1`, `kot set`, `kot queue`, `kot sync`.
+Built 2026-11-15 on `stage-3`. Tested with recorded-shape JSON, fake services and a hidden test copy with
+`KOTORA_OFFLINE=1`; the first real write is the user's live test, after their OK (STATUS.md).
+
+- [x] Inline editor (progress, status, score) and `+1`. A press on a row opens the editor under it
+  (status chips, a progress stepper capped at the episode count, score 1–10 or none); Save queues one
+  change, Cancel or Escape closes. Picking Completed fills the progress. `+1` is back in the real app and
+  hides at the last episode. Scenes: `list-editor`, `list-editor-changed`, `list-editor-unknown-count`,
+  `list-plus-one`.
+- [x] `pending_op` queue (schema 2, `core/src/queue.rs`): an edit changes the saved entry and queues the
+  change in one transaction; edits to a waiting change merge (3→4→5 is one "progress 5"), and an edit back
+  to the old value drops it. The worker (`app/src/queue.rs`) is a thread that starts with work and ends
+  when nothing is left. For each change it reads the entry (`GET /anime/{id}?fields=my_list_status`),
+  compares the remote `updated_at` with the base the edit started from, and sends
+  `PATCH /anime/{id}/my_list_status` with the changed fields only. A change made elsewhere is a conflict,
+  except when only the progress differs and ours is higher (ours is sent). No network or 429: backoff
+  30 s doubling to 15 min. 401 with a refused refresh: "sign in again", the queue is held and kept; signing in
+  sends it. Other refusals: `failed` with MAL's words. A full sync lays waiting changes over the fetched list.
+  One rate budget (20 a minute) is now shared by every MAL client in the app.
+- [x] Queue page with badge and per-op errors; conflict choice. Conflict cards (Yours / MyAnimeList, Keep
+  mine / Take theirs; "Remove here too" when it was removed there), Waiting (with merged-edit count and
+  the retry reason), Failed (MAL's words, Edit, Discard), Sent today; offline alert with Try now,
+  sign-in-again alert, Sync now. Rows say "Waiting to sync", "Conflict in queue" or "Sync failed". Scenes:
+  `queue-page`, `queue-empty`, `queue-offline`, `queue-sign-in-again`, `queue-conflict-removed`,
+  `queue-sending`.
+- [x] `kot list [STATUS|all]`, `kot +1 TITLE`, `kot set TITLE EP [--status S] [--score N|none]`,
+  `kot queue`, `kot sync`. TITLE is any part of a title (all titles searched) and must match one entry.
+- [ ] Live test by the user: the first real writes (STATUS.md). Needs the user's OK each time.
+
+Open after Stage 3:
+- The "keep the higher progress" rule is always on; the Settings switch (mockup) comes with the Updates
+  card in Stage 4.
+- `+1` to the last episode does not set Completed by itself (MAL's site does); to be decided.
+- The editor's progress is a stepper only; long shows are faster with `kot set`. A typed number could follow.
+- A full sync that fetched the list just before a change was sent can show the old value until the next
+  sync (the change itself is on MAL). Rare; the 15-minute refresh would fix it.
+- Sign out deletes waiting changes together with the saved list (the MAL licence rule); the Settings note
+  says so. A confirmation when changes wait could follow.
+- The queue shows ages ("1 h"), not clock times.
 
 ## Stage 4: detection (completes v0.1)
 

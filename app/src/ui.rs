@@ -1230,7 +1230,7 @@ fn accounts_card(s: &State) -> El {
         .child(icon(&icons::LOCK, 16.0).color(PAL.st_completed))
         .child(
             text(format!(
-                "Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it and your saved list. The Client ID comes from config.toml: {client_id}."
+                "Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it, your saved list and changes not yet sent. The Client ID comes from config.toml: {client_id}."
             ))
             .font(theme::LABEL)
             .color(PAL.text)

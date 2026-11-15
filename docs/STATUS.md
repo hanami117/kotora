@@ -1,6 +1,6 @@
 # Kotora: project status
 
-Last updated: 2026-11-15 (stage 2). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
+Last updated: 2026-11-15 (stage 3). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
 and `docs/ROADMAP.md` before starting work on a new machine.
 
 ## Where things are
@@ -23,7 +23,14 @@ and `docs/ROADMAP.md` before starting work on a new machine.
   - polish (2026-11-15): macOS traffic lights in a band above the logo, Settings with Accounts and
     About cards, real covers in the list (disk cache, decoded at display size), Rune's `dbus` feature
     dropped to save size on Linux
-- Decided: anitomy = an existing Rust port (MPL-2.0), added and measured in Stage 3/4 (ROADMAP, Stage 1).
+- `stage-3` (on top of `stage-2`, not merged, not pushed): edits and the sync queue.
+  - `core`: `pending_op` (schema 2) and `queue.rs` (merge, conflict check on `updated_at`, backoff, sign in
+    again), MAL `GET /anime/{id}?fields=my_list_status` and `PATCH /anime/{id}/my_list_status`, one shared
+    rate budget
+  - `app`: inline editor, `+1`, waiting tags, the Sync queue page, the worker thread (only while there is work)
+  - `kot list | +1 | set | queue | sync`
+  - tested against recorded-shape JSON and fake services; **nothing has written to the real MAL yet**
+- Decided: anitomy = an existing Rust port (MPL-2.0), added and measured with recognition in Stage 4 (ROADMAP, Stage 1).
 - Still open: the 15-minute refresh, the build-time Client ID default (see docs/ROADMAP.md, Stage 2).
 
 ## Git rules (the repository will be public)
@@ -115,9 +122,37 @@ The first real call also confirms two guesses: the `fields=` list of the animeli
 5. Memory with the window open on a long list (Completed), after scrolling to the end and back:
    `footprint $(pgrep -x kotora)` (Mac) or `grep Pss /proc/$(pgrep -x kotora)/smaps_rollup` (Arch).
 
+## Live test of stage 3 (the user)
+
+**These are the first writes to your real MyAnimeList list. Nothing is sent until you do it, and only for
+the entries you pick.** Use an entry you don't mind changing and changing back. The agent never wrote to
+the account.
+
+Build from the `stage-3` checkout: `cargo build --release -p kotora -p kotora-ctl`, then start
+`target/release/kotora` (quit any other copy first).
+
+1. Read only first: the list loads as in stage 2. The sidebar shows no Sync queue badge.
+2. One `+1` on a Watching entry. At once: the number goes up, the row says "Waiting to sync", the badge
+   says 1. Within a few seconds the badge goes away. Open the entry on myanimelist.net and reload: the
+   episode count matches. Then set it back (row press → editor → `−` → Save) and check MAL again.
+3. The editor: press a row, change the score, Save. Check MAL. Change it back.
+4. Offline: quit, start with `KOTORA_OFFLINE=1`, press `+1` twice on one entry. The queue page shows one
+   change "Progress N → N+2 (2 edits merged)". Quit, start normally: it goes out by itself. Check MAL, set it
+   back.
+5. Conflict: start with `KOTORA_OFFLINE=1`, change a score in Kotora; then change the same entry's score on
+   myanimelist.net. Quit, start normally: the queue page shows a conflict card with both values and sends
+   nothing. Pick **Take theirs** (or Keep mine) and check MAL.
+6. `kot`: `kot list`, `kot list all`, `kot +1 <part of a title>`, `kot set <title> <ep>`, `kot queue`,
+   `kot sync`. Set anything you changed back.
+7. Tell the agent what you saw. If a change fails, the queue page shows MAL's words in red; copy them (they
+   never contain a token).
+
+The first real call also confirms the two guesses of this stage: `GET /anime/{id}?fields=my_list_status`
+returns the list status, and `PATCH` answers with the saved entry and its new `updated_at`.
+
 ## Next steps
 
-1. The user reviews `stage-1` and `stage-2`, builds them on Arch and the Mac, runs the live tests above and
-   measures the live budgets (window memory, first frame).
-2. Decide on the 15-minute refresh.
-3. Stage 3: edits and the sync queue (the first writes to the account; each needs approval).
+1. The user reviews `stage-1`, `stage-2` and `stage-3`, builds them on Arch and the Mac, runs the live tests
+   above (stage 3 writes need the user's OK) and measures the live budgets (window memory, first frame).
+2. Decide on the 15-minute refresh, and the open points of Stage 3 (docs/ROADMAP.md).
+3. Stage 4: detection, recognition (anitomy), the Now Playing banner, Settings Updates and Players.
