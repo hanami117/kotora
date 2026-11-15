@@ -62,6 +62,31 @@ unprivileged program gets no kernel notification for new processes (the proc con
 need root). A scan reads a process name only for a new pid and open files only for players: about
 0.2 ms of CPU per scan, ~0.02 % CPU measured on Linux. Turning the switch off in Settings stops it.
 
+Stage 5 and the position tick (2026-11-15). Now Playing showed the position but it stood still,
+because nothing redrew while a file played. `ui::poll` now calls `now::tick`: only while a followed
+player is playing with a known position, and the window is on screen (`AppHandle::is_visible`), it
+asks for one `wake_after` for the next time what is drawn changes, as Uzumaki's player bar does.
+On the Now Playing page that is the next whole second of the position (never faster than once a
+second, even at 2x). On any other page only the sidebar card's rounded percent shows the position,
+so the wake is for the next percent (about 14 s for a 24 min episode). Paused, idle, a hidden
+window, a process-only source (no position) and the end of the file set no wake at all. Showing the
+window, a page change and every player report run `poll` first, so the timer restarts by itself.
+A minimised window still counts as shown for Rune, so it ticks without drawing (the poll is a few
+microseconds; Rune skips the frame). Tests in `now.rs`: playing and shown has a wake within a
+second; paused, hidden, no position, nothing playing and the end have none.
+- Idle, re-measured on Linux x86_64 release, `--hidden`, test instance, detection on, no player,
+  60 s: the main thread 0 context switches and 0 ticks of CPU, so 0 wakes from the app's own timers.
+  The whole process: 1 tick of CPU, from the process scan (12 wakes, the known exception above).
+  A zbus helper thread (`blocking-1`) wakes every 500 ms on a futex timeout (120 in 60 s, 0 CPU);
+  the same at the commit before this change, so it is not from this change. To look at later.
+- Playing and visible: the app cannot be opened windowed from an agent, so the CPU of a tick is
+  measured headless (`cargo test --release -p kotora tick_cost -- --ignored --nocapture`: poll,
+  view, layout and draw list, no GPU). Now Playing page: 4–7 ms a tick, so 0.4–0.7 % of one core at
+  one tick a second. Other pages: 0.3 ms a tick, one tick in about 14 s, so under 0.01 %. The live
+  number (`pidstat -p $(pgrep -x kotora) 60 1` with a file playing and the page open) is the user's.
+  If it is too high, the next step is Rune's `LiveText` and `Live` rect for the clock and bar, which
+  skip the view (see Uzumaki's `player_bar.rs`).
+
 Stage 5 and the binary target (user decision, 2026-11-15): the 30 MB target is indicative, not a hard
 limit. `codegen-units = 1` stays, since it costs only build time. This is the first measurement on Linux x86_64 (the earlier Linux
 numbers were arm64 in Docker). The same Stage 4 code is 33.5 MB stripped on x86_64 against 29.2 MB on

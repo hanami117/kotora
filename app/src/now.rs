@@ -10,7 +10,7 @@ use kotora_core::recognize::{Found, Parsed};
 use kotora_core::{Change, Status};
 use kotora_detect::{PlayState, SourceStatus, Switch, Track};
 
-use crate::model::{Entry, State};
+use crate::model::{Entry, Page, State};
 
 /// The followed player and its file.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,7 +24,8 @@ pub struct Now {
     pub position: Option<f64>,
     pub duration: Option<f64>,
     /// When `position` was true (`kotora_detect::clock`), and the speed: the position is worked
-    /// out from the clock whenever it is drawn or asked for (nothing ticks). `None` in scenes.
+    /// out from the clock whenever it is drawn or asked for. While it plays and shows, `tick` redraws it
+    /// once a second. `None` in scenes.
     pub at: Option<f64>,
     pub rate: f64,
     pub playing: bool,
@@ -152,6 +153,45 @@ impl Now {
         Some(self.duration.map_or(p, |d| p.min(d)))
     }
 
+    /// What the screen shows of the position now: the whole second on the Now Playing page
+    /// (`seconds`), else the sidebar's rounded percent. `None` with no position (or no length,
+    /// for the percent).
+    pub fn shown(&self, seconds: bool) -> Option<(bool, u64)> {
+        let p = self.position_now()?;
+        if seconds {
+            return Some((true, p as u64));
+        }
+        let d = self.duration.filter(|d| *d > 0.0)?;
+        Some((false, (p / d * 100.0).round() as u64))
+    }
+
+    /// Seconds from now until [`Now::shown`] next changes, only while the file plays and its
+    /// position is known (not for paused, idle or process-only sources). The seconds are
+    /// aligned to the player's own, and never come faster than once a second.
+    pub fn next_change(&self, seconds: bool) -> Option<f64> {
+        if !self.playing || self.at.is_none() || self.rate <= 0.0 {
+            return None;
+        }
+        let p = self.position_now()?;
+        let end = self.duration.filter(|d| *d > 0.0);
+        if end.is_some_and(|d| p >= d) {
+            return None;
+        }
+        let next = if seconds {
+            p.floor() + 1.0
+        } else {
+            // The percent is rounded: it turns over half way between two.
+            let d = end?;
+            ((p / d * 100.0 + 0.5).floor() + 0.5) / 100.0 * d
+        };
+        if end.is_some_and(|d| next > d) {
+            return None;
+        }
+        let wait = (next - p) / self.rate;
+        // A hair past the turn, so the draw shows the new value.
+        Some(if seconds && self.rate > 1.0 { wait.max(1.0) } else { wait } + 0.002)
+    }
+
     /// 0–1 watched, by position.
     pub fn fraction(&self) -> Option<f32> {
         let (p, d) = (self.position_now()?, self.duration.filter(|d| *d > 0.0)?);
@@ -175,11 +215,32 @@ impl Now {
     }
 }
 
+/// Runs in `poll`: while a followed player is playing with a known position and a window shows
+/// it, asks for the next poll when the shown value turns over (the whole second on the Now
+/// Playing page, else the sidebar's percent), and says whether it changed. Paused, idle, hidden
+/// or process-only: no wake at all. Showing the window, a page change or a player report all
+/// run `poll` first, so the timer starts again by itself.
+pub fn tick(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let seconds = s.page == Page::NowPlaying;
+    let next = if s.on_screen() { s.now.as_ref().and_then(|n| Some((n.shown(seconds)?, n.next_change(seconds)?))) } else { None };
+    let Some((sig, wait)) = next else {
+        s.tick = None;
+        return false;
+    };
+    tx.wake_after(std::time::Duration::from_secs_f64(wait));
+    s.tick.replace(sig) != Some(sig)
+}
+
 fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 impl State {
+    /// A window shows (not hidden). No handle (scenes, tests): `window` says.
+    fn on_screen(&self) -> bool {
+        self.handle.as_ref().map_or(self.window, |h| h.is_visible())
+    }
+
     /// The entry and the episode the banner offers now, if any.
     pub fn offer(&self) -> Option<(usize, u32)> {
         let now = self.now.as_ref()?;
@@ -662,5 +723,115 @@ mod tests {
         s.next_threshold();
         s.next_threshold();
         assert_eq!(s.prefs.threshold, 70);
+    }
+
+    // ---- the position tick: a wake only while a shown position moves ----
+
+    /// A state with the fake mpv playing at 12:30 of 24:00, as reported just now.
+    fn playing_state(page: Page) -> State {
+        let mut s = State::fake();
+        let n = s.now.as_mut().unwrap();
+        n.position = Some(750.0);
+        n.duration = Some(1440.0);
+        n.at = Some(kotora_detect::clock());
+        n.playing = true;
+        s.page = page;
+        s.window = true;
+        s
+    }
+
+    /// The next wake a `poll` left, as a headless runtime sees it (seconds from the last frame).
+    fn wake_after_poll(s: State) -> Option<f64> {
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 800.0), rune::Env { system_dark: true, scale: 1.0 });
+        rt.poll = Some(crate::ui::poll);
+        rt.frame(1.0 / 60.0);
+        let at = rt.wake_deadline()?;
+        Some(at - 1.0 / 60.0)
+    }
+
+    #[test]
+    fn playing_and_shown_wakes_within_a_second() {
+        // The Now Playing page: the next whole second.
+        let w = wake_after_poll(playing_state(Page::NowPlaying)).expect("a wake is scheduled");
+        assert!(w > 0.0 && w <= 1.1, "within a second, got {w}");
+        // Another page: the sidebar's percent (52 % here: the next turn is about 14 s away).
+        let w = wake_after_poll(playing_state(Page::Queue)).expect("the sidebar percent still moves");
+        assert!(w > 1.0 && w < 15.0, "got {w}");
+    }
+
+    #[test]
+    fn paused_hidden_or_without_position_never_wakes() {
+        let mut s = playing_state(Page::NowPlaying);
+        s.now.as_mut().unwrap().playing = false;
+        assert_eq!(wake_after_poll(s), None, "paused");
+        let mut s = playing_state(Page::NowPlaying);
+        s.window = false;
+        assert_eq!(wake_after_poll(s), None, "window hidden");
+        let mut s = playing_state(Page::NowPlaying);
+        s.now.as_mut().unwrap().position = None;
+        assert_eq!(wake_after_poll(s), None, "no position (process source)");
+        let mut s = playing_state(Page::NowPlaying);
+        s.now = None;
+        assert_eq!(wake_after_poll(s), None, "nothing playing");
+        // At the very end there is nothing left to move.
+        let mut s = playing_state(Page::NowPlaying);
+        s.now.as_mut().unwrap().position = Some(1440.0);
+        assert_eq!(wake_after_poll(s), None, "at the end");
+    }
+
+    #[test]
+    fn the_tick_reports_a_change_once_per_turn() {
+        let mut s = playing_state(Page::NowPlaying);
+        let mut tx = rune::Tx::default();
+        assert!(tick(&mut s, &mut tx), "first time: the second is new");
+        assert!(!tick(&mut s, &mut tx), "same second: no redraw");
+        // A second later the shown second differs.
+        s.now.as_mut().unwrap().position = Some(751.0);
+        assert!(tick(&mut s, &mut tx));
+        // Pausing clears it, so playing again draws once.
+        s.now.as_mut().unwrap().playing = false;
+        assert!(!tick(&mut s, &mut tx) && s.tick.is_none());
+    }
+
+    #[test]
+    fn seconds_align_to_the_players_and_never_come_faster_than_one_a_second() {
+        let mut s = playing_state(Page::NowPlaying);
+        let n = s.now.as_mut().unwrap();
+        n.position = Some(750.25);
+        n.at = Some(kotora_detect::clock());
+        let w = n.next_change(true).unwrap();
+        assert!((w - 0.752).abs() < 0.01, "to the next whole second, got {w}");
+        n.rate = 2.0;
+        assert!(n.next_change(true).unwrap() >= 1.0, "double speed: still at most once a second");
+        // The percent turns over half way: 750 of 1440 s is 52.08 %, so 52.5 % is next.
+        n.rate = 1.0;
+        n.position = Some(750.0);
+        let w = n.next_change(false).unwrap();
+        assert!((w - (0.525 * 1440.0 - 750.0)).abs() < 0.01, "got {w}");
+    }
+
+    /// Not a check: `cargo test --release -p kotora tick_cost -- --ignored --nocapture` prints the
+    /// CPU one tick costs (poll, view, layout, draw list; no GPU), for the budgets in ROADMAP.md.
+    #[test]
+    #[ignore]
+    fn tick_cost() {
+        for page in [Page::NowPlaying, Page::Queue] {
+            let mut rt = rune::Runtime::new(playing_state(page), crate::ui::view, (1280.0, 800.0), rune::Env { system_dark: true, scale: 1.0 });
+            rt.poll = Some(crate::ui::poll);
+            for _ in 0..3 {
+                rt.frame(1.0 / 60.0);
+            }
+            let n = 600;
+            let start = std::time::Instant::now();
+            for i in 0..n {
+                rt.update(move |s, _| {
+                    let now = s.now.as_mut().unwrap();
+                    now.position = Some(750.0 + i as f64);
+                });
+                rt.frame(1.0);
+            }
+            let each = start.elapsed().as_secs_f64() / n as f64;
+            println!("{page:?}: {:.2} ms a tick, {:.3} % of one core at one tick a second", each * 1e3, each * 100.0);
+        }
     }
 }

@@ -332,6 +332,8 @@ pub struct State {
     /// The MyAnimeList Client ID field (Welcome and Settings).
     pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
+    /// What the last position tick showed (`now::tick`); `None` while nothing ticks.
+    pub tick: Option<(bool, u64)>,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -373,6 +375,7 @@ impl State {
             online: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
+            tick: None,
         };
         s.queue_changed();
         s.refresh();

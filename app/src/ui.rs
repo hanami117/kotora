@@ -35,9 +35,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(main(s, wide))
 }
 
-/// Nothing ticks: workers report through `update_if`, so `poll` never has a visible change.
-pub fn poll(_s: &mut State, _t: f64, _tx: &mut Tx) -> bool {
-    false
+/// Workers report through `update_if`. The one timer is the position of a playing file, only
+/// while a window shows it (`now::tick`); at rest `poll` has no change and asks for no wake.
+pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
+    crate::now::tick(s, tx)
 }
 
 /// Ctrl F (Cmd F on macOS) jumps to the search box; Escape closes the inline editor.
