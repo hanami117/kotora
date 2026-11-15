@@ -335,6 +335,15 @@ fn main(s: &State, wide: bool) -> El {
 
 /// The page's top bar: title, count, and (on the list) search and sort.
 pub(crate) fn top(s: &State, title: &str, count: Option<usize>, tools: bool) -> El {
+    top_with(s, title, count, None, tools)
+}
+
+/// A list page's top bar with a note after the count ("+ 1 rewatching").
+fn top_extra(s: &State, title: &str, count: usize, extra: String) -> El {
+    top_with(s, title, Some(count), Some(extra), true)
+}
+
+fn top_with(s: &State, title: &str, count: Option<usize>, extra: Option<String>, tools: bool) -> El {
     let mut t = row().key("top").gap(12.0).center_y().px(theme::PAGE_PAD).pt(18.0).pb(14.0).child(
         row()
             .gap(6.0)
@@ -342,6 +351,10 @@ pub(crate) fn top(s: &State, title: &str, count: Option<usize>, tools: bool) -> 
             .child(text(title.to_string()).font(theme::TITLE).color(PAL.text))
             .child(match count {
                 Some(n) => text(n.to_string()).font(theme::TITLE_NUM).color(PAL.faint),
+                None => el(),
+            })
+            .child(match extra {
+                Some(x) => text(x).key("top/extra").font(theme::LABEL).color(PAL.faint).pb(3.0),
                 None => el(),
             }),
     );
@@ -440,7 +453,15 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
         return search_page(s, st, wide);
     }
     let count = s.count(st);
-    let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(top(s, st.label(), (!s.loading).then_some(count), true));
+    // The Watching page shows rewatches too; the sidebar counts MAL's status only, so the page
+    // says how many more it shows.
+    let rewatches = if st == Status::Watching { s.rewatch_count() } else { 0 };
+    let mut head = top(s, st.label(), (!s.loading).then_some(count), true);
+    if rewatches > 0 && !s.loading {
+        head = top_extra(s, st.label(), count, format!("+ {rewatches} rewatching"));
+    }
+    let count = count + rewatches;
+    let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(head);
     if let Some(a) = status_alert(s) {
         page = page.child(a);
     }
@@ -583,7 +604,7 @@ fn search_hint() -> El {
 fn chips(s: &State, st: Status) -> El {
     let mut r = row().key("chips").gap(6.0).px(theme::PAGE_PAD).pb(10.0);
     for f in Filter::ALL {
-        let n = s.entries.iter().filter(|e| e.status == st && f.keeps(e)).count();
+        let n = s.entries.iter().filter(|e| e.on_page(st) && f.keeps(e)).count();
         if n == 0 && f != Filter::All {
             continue;
         }
@@ -786,7 +807,7 @@ pub(crate) fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) 
 /// Under an open row: status, progress and score, then Cancel / Save. Nothing is queued until
 /// Save, and then as one change.
 pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
-    let mut statuses = row().gap(6.0);
+    let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
         statuses = statuses.child(
@@ -795,6 +816,7 @@ pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
                 .child(text(st.label()).font(theme::LABEL).color(if on { PAL.text } else { PAL.dim })),
         );
     }
+    statuses = statuses.child(rewatch_cell(e));
     let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
     let stepper = row()
         .key("ed/progress")
@@ -862,6 +884,32 @@ pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
                         )),
                 ),
         )
+}
+
+/// After the statuses: "Rewatch" for a completed entry, "Stop rewatching" during one. Acts at
+/// once (no Save), like `+1`.
+pub(crate) fn rewatch_cell(e: &Entry) -> El {
+    let id = e.id;
+    if e.rewatching {
+        return cell("ed/stop-rewatch".into(), "Stop rewatching".into(), false, move |s| {
+            if let Err(m) = s.stop_rewatch(id) {
+                s.error = Some(m);
+            }
+        })
+        .ml(10.0)
+        .child(text("Stop rewatching").font(theme::LABEL).color(PAL.dim));
+    }
+    if e.status != Status::Completed {
+        return el();
+    }
+    cell("ed/rewatch".into(), "Rewatch from episode 1".into(), false, move |s| {
+        if let Err(m) = s.start_rewatch(id) {
+            s.error = Some(m);
+        }
+    })
+    .ml(10.0)
+    .child(icon(&icons::SYNC, 13.0).color(PAL.st_completed))
+    .child(text("Rewatch").font(theme::LABEL).color(PAL.text))
 }
 
 pub(crate) fn step_button(key: &str, label: &str, delta: i32) -> El {
@@ -1572,15 +1620,22 @@ fn banner(s: &State) -> El {
         .border(1.0, PAL.accent.alpha(0.35))
         .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
         .child(now_cover(s, n, 36.0, 52.0, 12.0));
+    // In a narrow window the line fades out at its end instead of running under the buttons.
     let line = |lead: &str, bold: String, tail: String| {
         row()
+            .w_full()
             .min_w(0.0)
+            .clip_fade(0.0, 0.0, 16.0, 0.0)
             .child(text(lead.to_string()).font(theme::BODY).color(PAL.text))
             .child(text(bold).font(TextStyle::new(13.0, 600.0)).color(PAL.text).truncate().min_w(0.0))
             .child(text(tail).font(theme::BODY).color(PAL.text))
     };
     if let Some(r) = n.recorded {
+        let finished = r.old_rewatching && s.entries.iter().any(|e| e.id == r.id && !e.rewatching);
         let how = match (r.auto, r.completed) {
+            _ if r.rewatch => "Rewatch started",
+            (true, _) if finished => "Updated automatically \u{b7} Rewatch finished",
+            (false, _) if finished => "Updated \u{b7} Rewatch finished",
             (true, true) => "Updated automatically \u{b7} Completed",
             (false, true) => "Updated \u{b7} Completed",
             (true, false) => "Updated automatically",
@@ -1602,6 +1657,34 @@ fn banner(s: &State) -> El {
             }));
         return b;
     }
+    if s.offer().is_none()
+        && let Some((i, ep)) = s.rewatch_offer()
+    {
+        let e = &s.entries[i];
+        let times = match e.times_rewatched {
+            0 => "Completed".to_string(),
+            n => format!("Completed, rewatched {}", kotora_core::queue::times(n)),
+        };
+        let small = [pct.as_deref(), Some(times.as_str())].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+        return b
+            .key("banner")
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
+                    .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
+            )
+            .child(text("Watching it again?").key("banner/rewatch-ask").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
+            .child(action("banner/rewatch".into(), &format!("Start rewatch at episode {ep}"), true, |s, _| {
+                let _ = s.start_rewatch_playing();
+            }).h(32.0).px(12.0))
+            .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
+                s.dismiss_now();
+            })))
+            .child(ghost("banner/wrong", "Wrong anime\u{2026}", State::wrong_anime));
+    }
     let ep = s.offer().map_or(0, |(_, ep)| ep);
     let total = s.offer().and_then(|(i, _)| s.entries[i].episodes).map_or("?".to_string(), |n| n.to_string());
     let matched = if n.sure() { "Matched in your list" } else { "Not sure it's this one" };
@@ -1612,7 +1695,7 @@ fn banner(s: &State) -> El {
             .min_w(0.0)
             .gap(3.0)
             .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
-            .child(text(small).font(theme::LABEL).color(PAL.dim)),
+            .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
     )
     .child(text(format!("Update to {ep} / {total}?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
     .child(button("banner/update", "Update", true, Some(|s: &mut State| {

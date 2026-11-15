@@ -43,6 +43,7 @@ Commands:
   now                   what plays, and the episode Kotora offers
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
+  rewatch TITLE|ID      watch a completed anime again from episode 1
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   MyAnimeList for (it must find one), or its id
   config client-id ID   save your MyAnimeList Client ID
@@ -73,6 +74,7 @@ fn main() -> ExitCode {
         ["list", "all"] => Request::List { status: None },
         ["list", st] => Request::List { status: Some((*st).to_string()) },
         ["+1", title @ ..] if !title.is_empty() => Request::PlusOne { title: title.join(" ") },
+        ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
             eprintln!("kot: use kot config client-id ID (try kot help)");
@@ -260,6 +262,9 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
         }
         let score = e.score.map_or("\u{2013}".to_string(), |n| n.to_string());
         let mut line = format!("  {:>9}  {score:>2}  {}", progress_text(e), e.title);
+        if e.rewatching {
+            line.push_str("  (rewatching)");
+        }
         if let Some(w) = &e.waiting {
             line.push_str(&format!("  ({})", w.to_lowercase()));
         }
@@ -272,7 +277,8 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
 fn edited_text(e: &Entry) -> String {
     let score = e.score.map_or("no score".to_string(), |n| format!("score {n}"));
     let state = e.waiting.as_deref().map_or("synced".to_string(), str::to_lowercase);
-    format!("{}: {} · {} · {score} ({state})", e.title, progress_text(e), e.status)
+    let status = if e.rewatching { format!("{}, rewatching", e.status) } else { e.status.clone() };
+    format!("{}: {} · {status} · {score} ({state})", e.title, progress_text(e))
 }
 
 fn queue_text(ops: &[QueueItem]) -> String {
@@ -352,7 +358,7 @@ mod tests {
     }
 
     fn e(title: &str, status: &str, progress: u32, score: Option<u8>, waiting: Option<&str>) -> Entry {
-        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, waiting: waiting.map(Into::into) }
+        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, waiting: waiting.map(Into::into), rewatching: false, times_rewatched: 0 }
     }
 
     #[test]

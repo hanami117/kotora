@@ -104,6 +104,16 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         fetched_at INTEGER NOT NULL,
         PRIMARY KEY (service, media_id)
      );",
+    // 5: rewatching. `entry.times_rewatched`: MAL `num_times_rewatched`. In `pending_op`, like the
+    // other fields: `rewatching` and `times_rewatched` NULL when unchanged, `old_*` before the
+    // first edit, `r_*` the service's in a conflict.
+    "ALTER TABLE entry ADD COLUMN times_rewatched INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE pending_op ADD COLUMN rewatching INTEGER;
+     ALTER TABLE pending_op ADD COLUMN times_rewatched INTEGER;
+     ALTER TABLE pending_op ADD COLUMN old_rewatching INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE pending_op ADD COLUMN old_times_rewatched INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE pending_op ADD COLUMN r_rewatching INTEGER;
+     ALTER TABLE pending_op ADD COLUMN r_times_rewatched INTEGER;",
 ];
 
 /// Details of titles not on the list kept at most (the newest).
@@ -252,8 +262,8 @@ impl Store {
                    fetched_at = excluded.fetched_at",
             )?;
             let mut entry = tx.prepare(
-                "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, times_rewatched, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for it in items {
                 let m = &it.media;
@@ -270,7 +280,7 @@ impl Store {
                     m.cover_url,
                     now
                 ])?;
-                entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.updated_at])?;
+                entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at])?;
             }
         }
         crate::queue::lay_over(&tx, service)?;
@@ -385,7 +395,7 @@ impl Store {
 }
 
 const ITEM_SELECT: &str = "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
-        e.status, e.progress, e.score, e.rewatching, e.updated_at
+        e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched
  FROM entry e JOIN media m ON m.service = e.service AND m.id = e.media_id";
 
 fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
@@ -407,6 +417,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
         progress: r.get(10)?,
         score: r.get(11)?,
         rewatching: r.get(12)?,
+        times_rewatched: r.get(14)?,
         updated_at: r.get(13)?,
     })
 }
@@ -432,8 +443,40 @@ pub(crate) mod tests {
             progress,
             score: (progress > 3).then_some(8),
             rewatching: false,
+            times_rewatched: 0,
             updated_at,
         }
+    }
+
+    /// A database from before rewatching (schema 4), with a list and a waiting change, opens
+    /// with both kept: no rewatch, never rewatched.
+    #[test]
+    fn schema_4_upgrades_with_its_list_and_queue() {
+        let dir = std::env::temp_dir().join(format!("kotora-db4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("kotora.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for (i, m) in MIGRATIONS[..4].iter().enumerate() {
+                conn.execute_batch(m).unwrap();
+                conn.pragma_update(None, "user_version", i + 1).unwrap();
+            }
+            conn.execute_batch(
+                "INSERT INTO media (service, id, title, fetched_at) VALUES ('mal', 1, 'Show 1', 1);
+                 INSERT INTO entry (service, media_id, status, progress, score, rewatching, updated_at) VALUES ('mal', 1, 'completed', 12, 8, 0, 5);
+                 INSERT INTO pending_op (service, media_id, score, old_status, old_progress, old_score, base_updated_at, created_at, edited_at)
+                   VALUES ('mal', 1, 9, 'completed', 12, 8, 5, 6, 6);",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
+        let it = s.load_item("mal", 1).unwrap().unwrap();
+        assert_eq!((it.status, it.progress, it.rewatching, it.times_rewatched), (Status::Completed, 12, false, 0));
+        let q = s.queue("mal", 10).unwrap();
+        assert_eq!((q[0].change.score, q[0].change.rewatching, q[0].old.times_rewatched), (Some(Some(9)), None, 0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -75,8 +75,17 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 Some(name) => Some(parse_status(name)?),
                 None => None,
             };
-            let change = Change { status, progress, score: score.map(|n| (n > 0).then_some(n)) };
+            let change = Change { status, progress, score: score.map(|n| (n > 0).then_some(n)), ..Default::default() };
             let i = s.edit(s.entries[i].id, change)?;
+            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+        })),
+        Request::Rewatch { title } => reply(on_ui(handle, true, move |s| {
+            // A MyAnimeList id, or a part of the title.
+            let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
+                Some(i) => i,
+                None => s.find(&title)?,
+            };
+            let i = s.start_rewatch(s.entries[i].id)?;
             Ok(Reply::Edited { entry: s.entries[i].ctl() })
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),

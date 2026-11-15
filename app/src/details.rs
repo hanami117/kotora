@@ -18,7 +18,7 @@ use rune::{El, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
 use crate::icons;
 use crate::model::{Entry, Page, State, kind_label};
 use crate::theme::{self, PAL};
-use crate::ui::{button, card, cell, cover, ghost, kv, plus_button, step_button, tag, tag_tinted};
+use crate::ui::{action, button, card, cell, cover, ghost, kv, plus_button, step_button, tag, tag_tinted};
 
 /// Saved information younger than this is shown without asking MyAnimeList again.
 pub const FRESH_SECS: i64 = 3 * 86_400;
@@ -536,16 +536,37 @@ fn mine_column(s: &State, d: &Detail) -> El {
             let date = |v: Option<&String>| text(v.map_or("\u{2013}".into(), |d| date_text(d))).font(theme::LABEL_NUM).color(PAL.text);
             let mut facts = col().pt(8.0).child(kv("Score", text(e.score.map_or("No score".into(), |n| n.to_string())).font(theme::LABEL_NUM).color(PAL.text)));
             facts = facts.child(kv("Started", date(mine.and_then(|m| m.start_date.as_ref())))).child(kv("Finished", date(mine.and_then(|m| m.finish_date.as_ref()))));
+            if e.status == Status::Completed || e.times_rewatched > 0 {
+                let times = match e.times_rewatched {
+                    0 => "Not yet".to_string(),
+                    n => kotora_core::queue::times(n),
+                };
+                facts = facts.child(kv("Rewatched", text(times).key("det/rewatched").font(theme::LABEL_NUM).color(PAL.text)));
+            }
             c = c.child(facts);
             match s.editor.filter(|ed| ed.id == id) {
                 Some(ed) => c = c.child(compact_editor(e, &ed)),
                 None => {
-                    c = c.child(row().pt(10.0).child(button("det/edit", "Edit", false, Some(|s: &mut State| {
+                    let mut actions = row().pt(10.0).gap(8.0).child(button("det/edit", "Edit", false, Some(|s: &mut State| {
                         if let Some(d) = &s.detail {
                             let id = d.id();
                             s.toggle_editor(id);
                         }
-                    }))))
+                    })));
+                    if e.status == Status::Completed && !e.rewatching {
+                        actions = actions.child(action("det/rewatch".into(), "Rewatch", false, move |s, _| {
+                            if let Err(m) = s.start_rewatch(id) {
+                                s.error = Some(m);
+                            }
+                        }).h(32.0).px(12.0));
+                    } else if e.rewatching {
+                        actions = actions.child(ghost("det/stop-rewatch", "Stop rewatching", move |s| {
+                            if let Err(m) = s.stop_rewatch(id) {
+                                s.error = Some(m);
+                            }
+                        }));
+                    }
+                    c = c.child(actions)
                 }
             }
         }
@@ -656,6 +677,7 @@ pub fn fake_details(id: u32, title: &str, mine: bool) -> Details {
             progress: 5,
             score: Some(8),
             rewatching: false,
+            times_rewatched: 0,
             start_date: Some("2026-10-04".into()),
             finish_date: None,
         }),

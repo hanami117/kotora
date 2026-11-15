@@ -122,11 +122,27 @@ pub fn describe(change: &Change, old: &Values) -> String {
         Some(None) => parts.push("score removed".into()),
         None => {}
     }
+    match (change.rewatching, change.times_rewatched) {
+        (Some(true), _) => parts.push("rewatch started".into()),
+        (Some(false), Some(n)) if n > old.times_rewatched => parts.push(format!("rewatch finished ({})", times(n))),
+        (Some(false), _) => parts.push("rewatch stopped".into()),
+        (None, Some(n)) => parts.push(format!("rewatched {}", times(n))),
+        (None, None) => {}
+    }
     let mut text = parts.join(", ");
     if let Some(first) = text.get(..1) {
         text = first.to_uppercase() + &text[1..];
     }
     text
+}
+
+/// "once", "twice", "3 times".
+pub fn times(n: u32) -> String {
+    match n {
+        1 => "once".into(),
+        2 => "twice".into(),
+        n => format!("{n} times"),
+    }
 }
 
 /// [`describe`] for a queued change: an add says so ("Add as Watching, progress 12").
@@ -172,7 +188,8 @@ fn status_in(s: Option<String>) -> Option<Status> {
 
 const OP_SELECT: &str = "SELECT o.id, o.media_id, COALESCE(m.title, ''), m.episodes, o.status, o.progress, o.score,
         o.old_status, o.old_progress, o.old_score, o.base_updated_at, o.created_at, o.edited_at, o.edits,
-        o.state, o.attempts, o.next_try, o.error, o.sent_at, o.r_status, o.r_progress, o.r_score, o.r_updated_at, o.added
+        o.state, o.attempts, o.next_try, o.error, o.sent_at, o.r_status, o.r_progress, o.r_score, o.r_updated_at, o.added,
+        o.rewatching, o.times_rewatched, o.old_rewatching, o.old_times_rewatched, o.r_rewatching, o.r_times_rewatched
  FROM pending_op o LEFT JOIN media m ON m.service = o.service AND m.id = o.media_id";
 
 fn op_row(r: &Row) -> rusqlite::Result<Op> {
@@ -180,8 +197,13 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
     let r_updated: Option<i64> = r.get(22)?;
     let remote = match (status_in(r.get(19)?), r_updated) {
         (Some(status), Some(updated_at)) => Some(Remote {
-            values: Values { status, progress: r.get(20)?, score: score_in(r.get(21)?).flatten() },
-            rewatching: false,
+            values: Values {
+                status,
+                progress: r.get(20)?,
+                score: score_in(r.get(21)?).flatten(),
+                rewatching: r.get::<_, Option<bool>>(28)?.unwrap_or(false),
+                times_rewatched: r.get::<_, Option<u32>>(29)?.unwrap_or(0),
+            },
             updated_at,
         }),
         _ => None,
@@ -193,8 +215,14 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
         media_id,
         title: if title.is_empty() { format!("Anime {media_id}") } else { title },
         episodes: r.get(3)?,
-        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?) },
-        old: Values { status: status_in(r.get(7)?).unwrap_or(Status::PlanToWatch), progress: r.get(8)?, score: score_in(r.get(9)?).flatten() },
+        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?), rewatching: r.get(24)?, times_rewatched: r.get(25)? },
+        old: Values {
+            status: status_in(r.get(7)?).unwrap_or(Status::PlanToWatch),
+            progress: r.get(8)?,
+            score: score_in(r.get(9)?).flatten(),
+            rewatching: r.get(26)?,
+            times_rewatched: r.get(27)?,
+        },
         base_updated_at: r.get(10)?,
         created_at: r.get(11)?,
         edited_at: r.get(12)?,
@@ -211,11 +239,18 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
 
 fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(Values, i64)>> {
     Ok(c.query_row(
-        "SELECT status, progress, score, updated_at FROM entry WHERE service = ?1 AND media_id = ?2",
+        "SELECT status, progress, score, updated_at, rewatching, times_rewatched FROM entry WHERE service = ?1 AND media_id = ?2",
         params![service, media_id],
         |r| {
             let st: String = r.get(0)?;
-            Ok((Values { status: Status::from_mal(&st).unwrap_or(Status::PlanToWatch), progress: r.get(1)?, score: r.get(2)? }, r.get(3)?))
+            let v = Values {
+                status: Status::from_mal(&st).unwrap_or(Status::PlanToWatch),
+                progress: r.get(1)?,
+                score: r.get(2)?,
+                rewatching: r.get(4)?,
+                times_rewatched: r.get(5)?,
+            };
+            Ok((v, r.get(3)?))
         },
     )
     .optional()?)
@@ -223,8 +258,9 @@ fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(
 
 fn set_entry(c: &Connection, service: &str, media_id: u32, v: &Values, updated_at: Option<i64>) -> Result<()> {
     c.execute(
-        "UPDATE entry SET status = ?3, progress = ?4, score = ?5, updated_at = COALESCE(?6, updated_at) WHERE service = ?1 AND media_id = ?2",
-        params![service, media_id, v.status.mal_name(), v.progress, v.score, updated_at],
+        "UPDATE entry SET status = ?3, progress = ?4, score = ?5, rewatching = ?7, times_rewatched = ?8, updated_at = COALESCE(?6, updated_at)
+         WHERE service = ?1 AND media_id = ?2",
+        params![service, media_id, v.status.mal_name(), v.progress, v.score, updated_at, v.rewatching, v.times_rewatched],
     )?;
     Ok(())
 }
@@ -269,6 +305,10 @@ fn lay_over_where(c: &Connection, service: &str, media_id: Option<u32>) -> Resul
                                AND o.state != 'done' AND o.score IS NOT NULL ORDER BY o.id DESC LIMIT 1),
                              CASE WHEN (SELECT o.score FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.score IS NOT NULL ORDER BY o.id DESC LIMIT 1) = 0 THEN NULL ELSE score END),
+            rewatching = COALESCE((SELECT o.rewatching FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+                               AND o.state != 'done' AND o.rewatching IS NOT NULL ORDER BY o.id DESC LIMIT 1), rewatching),
+            times_rewatched = COALESCE((SELECT o.times_rewatched FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+                               AND o.state != 'done' AND o.times_rewatched IS NOT NULL ORDER BY o.id DESC LIMIT 1), times_rewatched),
             updated_at = MAX(updated_at, COALESCE((SELECT MAX(o.edited_at) FROM pending_op o WHERE o.service = entry.service
                                AND o.media_id = entry.media_id AND o.state != 'done'), 0))
          WHERE service = ?1 AND (?2 IS NULL OR media_id = ?2)
@@ -355,13 +395,16 @@ impl Store {
 
     fn mark_conflict(&self, id: i64, remote: Option<&Remote>) -> Result<()> {
         self.conn.execute(
-            "UPDATE pending_op SET state = 'conflict', error = NULL, r_status = ?2, r_progress = ?3, r_score = ?4, r_updated_at = ?5 WHERE id = ?1",
+            "UPDATE pending_op SET state = 'conflict', error = NULL, r_status = ?2, r_progress = ?3, r_score = ?4, r_updated_at = ?5,
+                r_rewatching = ?6, r_times_rewatched = ?7 WHERE id = ?1",
             params![
                 id,
                 remote.map(|r| r.values.status.mal_name()),
                 remote.map(|r| r.values.progress),
                 remote.map(|r| r.values.score.unwrap_or(0)),
-                remote.map(|r| r.updated_at)
+                remote.map(|r| r.updated_at),
+                remote.map(|r| r.values.rewatching),
+                remote.map(|r| r.values.times_rewatched)
             ],
         )?;
         Ok(())
@@ -377,7 +420,6 @@ impl Store {
             params![service, op.media_id, remote.updated_at, op.id],
         )?;
         set_entry(&tx, service, op.media_id, &remote.values, Some(remote.updated_at))?;
-        tx.execute("UPDATE entry SET rewatching = ?3 WHERE service = ?1 AND media_id = ?2", params![service, op.media_id, remote.rewatching])?;
         lay_over_where(&tx, service, Some(op.media_id))?;
         tx.commit()?;
         Ok(())
@@ -509,13 +551,13 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
             }
             // A failed change edited again gets a fresh start; a conflict stays a conflict.
             tx.execute(
-                "UPDATE pending_op SET status = ?2, progress = ?3, score = ?4, edits = edits + 1, edited_at = ?5,
+                "UPDATE pending_op SET status = ?2, progress = ?3, score = ?4, rewatching = ?6, times_rewatched = ?7, edits = edits + 1, edited_at = ?5,
                     attempts = CASE WHEN state = 'failed' THEN 0 ELSE attempts END,
                     next_try = CASE WHEN state = 'failed' THEN 0 ELSE next_try END,
                     error = CASE WHEN state = 'conflict' THEN error ELSE NULL END,
                     state = CASE WHEN state = 'failed' THEN 'queued' ELSE state END
                  WHERE id = ?1",
-                params![op.id, merged.status.map(Status::mal_name), merged.progress, score_out(merged.score), now],
+                params![op.id, merged.status.map(Status::mal_name), merged.progress, score_out(merged.score), now, merged.rewatching, merged.times_rewatched],
             )?;
             op.id
         }
@@ -534,8 +576,8 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
                 .optional()?;
             tx.execute(
                 "INSERT INTO pending_op (service, media_id, status, progress, score, old_status, old_progress, old_score,
-                    base_updated_at, created_at, edited_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                    base_updated_at, created_at, edited_at, rewatching, times_rewatched, old_rewatching, old_times_rewatched)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     service,
                     media_id,
@@ -546,7 +588,11 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
                     cur.progress,
                     cur.score.unwrap_or(0),
                     sending.unwrap_or(cur_updated),
-                    now
+                    now,
+                    c.rewatching,
+                    c.times_rewatched,
+                    cur.rewatching,
+                    cur.times_rewatched
                 ],
             )?;
             tx.last_insert_rowid()
@@ -601,7 +647,7 @@ pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
         Some(r) if op.change.is_in(&r.values) => Decision::AlreadyThere(*r),
         Some(r) => {
             // Only the progress, and ours is higher: the higher number wins (DESIGN.md §5.4).
-            let progress_only = op.change.status.is_none() && op.change.score.is_none();
+            let progress_only = op.change.status.is_none() && op.change.score.is_none() && op.change.rewatching.is_none() && op.change.times_rewatched.is_none();
             if keep_higher && progress_only && op.change.progress.is_some_and(|p| p > r.values.progress) { Decision::Send } else { Decision::Conflict }
         }
     }

@@ -177,6 +177,9 @@ pub enum Request {
     Dismiss,
     /// Saves the MyAnimeList Client ID (as the Welcome page's field does). Replies `Done`.
     SetClientId { id: String },
+    /// Starts a rewatch of a completed entry: a part of its title, or its MyAnimeList id.
+    /// Replies `Edited`.
+    Rewatch { title: String },
     /// Puts an anime on the list: a MyAnimeList id, or a title MyAnimeList is searched for
     /// (it must find one). `status` as in `List`; Watching when `None`. Replies `Edited`.
     Add {
@@ -251,6 +254,16 @@ pub struct Entry {
     /// "Waiting to sync", "Conflict in queue", "Sync failed"; `None` when synced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting: Option<String>,
+    /// Watching it again (still Completed).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rewatching: bool,
+    /// Finished rewatches.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub times_rewatched: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// One change in the sync queue.

@@ -136,7 +136,10 @@ pub struct Entry {
     pub airing_note: Option<&'static str>,
     /// A released episode past the progress.
     pub new_episode: Option<u32>,
+    /// Watching it again: the status stays Completed (MAL `is_rewatching`).
     pub rewatching: bool,
+    /// Finished rewatches (MAL `num_times_rewatched`).
+    pub times_rewatched: u32,
     /// A change for this entry waits in the queue.
     pub waiting: Option<&'static str>,
     /// The service's cover image (`None` in the fake list, and for shows without one).
@@ -182,9 +185,16 @@ impl Entry {
             airing_note: None,
             new_episode: None,
             rewatching: it.rewatching,
+            times_rewatched: it.times_rewatched,
             waiting: None,
             cover_url: m.cover_url.clone(),
         }
+    }
+
+    /// Whether the entry shows on the status page `st`: its own status, and the Watching page
+    /// also shows rewatches (Completed on MAL), as Taiga's Currently Watching list does.
+    pub fn on_page(&self, st: Status) -> bool {
+        self.status == st || (st == Status::Watching && self.rewatching)
     }
 
     /// The grey line after the tags.
@@ -198,7 +208,7 @@ impl Entry {
     }
 
     pub fn values(&self) -> Values {
-        Values { status: self.status, progress: self.progress, score: self.score }
+        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched }
     }
 
     /// The entry as `kot` prints it.
@@ -211,6 +221,8 @@ impl Entry {
             episodes: self.episodes,
             score: self.score,
             waiting: self.waiting.map(Into::into),
+            rewatching: self.rewatching,
+            times_rewatched: self.times_rewatched,
         }
     }
 
@@ -435,8 +447,14 @@ impl State {
         self.fixed_now.unwrap_or_else(kotora_core::time::now_unix)
     }
 
+    /// Entries with this status on MAL (the sidebar's count).
     pub fn count(&self, s: Status) -> usize {
         self.entries.iter().filter(|e| e.status == s).count()
+    }
+
+    /// Completed entries being rewatched (the Watching page shows them too).
+    pub fn rewatch_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.rewatching && e.status != Status::Watching).count()
     }
 
     /// Whether the list pages show a list (rather than the sign-in screen).
@@ -472,7 +490,7 @@ impl State {
         let mut rows: Vec<usize> = (0..self.entries.len())
             .filter(|&i| {
                 let e = &self.entries[i];
-                if q.is_empty() { e.status == st && self.filter.keeps(e) } else { e.search.contains(&q) }
+                if q.is_empty() { e.on_page(st) && self.filter.keeps(e) } else { e.search.contains(&q) }
             })
             .collect();
         let e = &self.entries;
@@ -527,17 +545,9 @@ impl State {
         {
             return Err("A score goes from 1 to 10.".into());
         }
-        // Like the MAL website: the last episode completes the entry (when the total is known and
-        // the change doesn't pick a status itself).
-        if change.status.is_none()
-            && let (Some(p), Some(n)) = (change.progress, e.episodes)
-            && n > 0
-            && p == n
-            && e.progress < n
-            && e.status != Status::Completed
-        {
-            change.status = Some(Status::Completed);
-        }
+        // Like the MAL website: the last episode completes the entry, or ends a rewatch (one more
+        // in the count), when the total is known and the change doesn't pick it itself.
+        change = change.completes(&e.values(), e.episodes);
         let after = change.apply(e.values());
         if after == e.values() {
             return Ok(i);
@@ -545,6 +555,8 @@ impl State {
         e.status = after.status;
         e.progress = after.progress;
         e.score = after.score;
+        e.rewatching = after.rewatching;
+        e.times_rewatched = after.times_rewatched;
         e.updated_at = now;
         if e.new_episode.is_some_and(|n| e.progress >= n) {
             e.new_episode = None;
@@ -565,6 +577,30 @@ impl State {
         Ok(i)
     }
 
+    /// "Rewatch" (the row editor, the details page, `kot rewatch`): a completed anime is watched
+    /// again from episode 0; it stays Completed on MAL, and the last episode ends the rewatch.
+    pub fn start_rewatch(&mut self, id: u32) -> Result<usize, String> {
+        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        if e.rewatching {
+            return Err(format!("{} is being rewatched already.", e.title));
+        }
+        let change = Change::start_rewatch(&e.values()).ok_or_else(|| format!("{} is not completed: only a completed anime can be rewatched.", e.title))?;
+        self.editor = None;
+        self.edit(id, change)
+    }
+
+    /// "Stop rewatching": the rewatch ends without counting; the progress goes back to the last
+    /// episode (the entry is still Completed).
+    pub fn stop_rewatch(&mut self, id: u32) -> Result<usize, String> {
+        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        if !e.rewatching {
+            return Err(format!("{} is not being rewatched.", e.title));
+        }
+        let progress = e.episodes.unwrap_or(e.progress);
+        self.editor = None;
+        self.edit(id, Change { rewatching: Some(false), progress: Some(progress), ..Default::default() })
+    }
+
     /// Search and add, the details page, Now Playing: puts an anime on the list with `status`
     /// (the list shows it at once, waiting to sync) and queues the add. One already on the list
     /// gets the status instead. Returns the entry's index.
@@ -579,7 +615,7 @@ impl State {
             (Status::Completed, Some(n)) => n,
             _ => 0,
         };
-        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, updated_at: self.clock() };
+        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock() };
         let mut e = Entry::from_item(&item);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
@@ -664,7 +700,7 @@ impl State {
             self.editor = None;
             return Ok(());
         };
-        let change = Change { status: Some(ed.status), progress: Some(ed.progress), score: Some(ed.score) }.without_same(&e.values());
+        let change = Change { status: Some(ed.status), progress: Some(ed.progress), score: Some(ed.score), ..Default::default() }.without_same(&e.values());
         self.edit(ed.id, change)?;
         self.editor = None;
         Ok(())
@@ -992,15 +1028,15 @@ fn fake_ops() -> Vec<Op> {
         remote: None,
         added: false,
     };
-    let w = |progress, score| Values { status: Status::Watching, progress, score };
+    let w = |progress, score| Values::new(Status::Watching, progress, score);
     let progress = |p| Change { progress: Some(p), ..Default::default() };
     vec![
         Op {
-            remote: Some(Remote { values: w(8, None), rewatching: false, updated_at: FAKE_NOW - 3_000 }),
+            remote: Some(Remote { values: w(8, None), updated_at: FAKE_NOW - 3_000 }),
             ..op(1, 2, progress(7), w(6, None), OpState::Conflict, 4_500)
         },
         Op { edits: 2, ..op(2, 0, progress(5), w(3, Some(8)), OpState::Queued, 900) },
-        op(3, 8, Change { progress: Some(1), score: Some(Some(8)), status: None }, w(0, None), OpState::Queued, 1_900),
+        op(3, 8, Change { progress: Some(1), score: Some(Some(8)), ..Default::default() }, w(0, None), OpState::Queued, 1_900),
         Op {
             error: Some("MyAnimeList answered HTTP 400 (invalid_content: num_watched_episodes)".into()),
             ..op(4, 7, progress(11), w(10, Some(7)), OpState::Failed, 6_000)
@@ -1075,7 +1111,8 @@ fn fake_entries() -> Vec<Entry> {
         .map(|(i, f)| Entry {
             id: i as u32,
             title: f.title.into(),
-            status: Status::Watching,
+            // A rewatch is Completed on MAL; the Watching page shows it too.
+            status: if f.rewatching { Status::Completed } else { Status::Watching },
             progress: f.progress,
             episodes: Some(f.episodes),
             score: f.score,
@@ -1086,13 +1123,15 @@ fn fake_entries() -> Vec<Entry> {
             airing_note: f.airing,
             new_episode: f.new_episode,
             rewatching: f.rewatching,
+            times_rewatched: u32::from(f.rewatching),
             waiting: None,
             cover_url: None,
         })
         .collect();
     const UPDATED: [&str; 6] = ["3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year"];
     let mut id = out.len() as u32;
-    for (status, n) in [(Status::PlanToWatch, 48), (Status::Completed, 236), (Status::OnHold, 7)] {
+    // Completed: 235 here and the one rewatched above make the mockup's 236.
+    for (status, n) in [(Status::PlanToWatch, 48), (Status::Completed, 235), (Status::OnHold, 7)] {
         for k in 0..n {
             let h = id.wrapping_mul(2_654_435_761);
             let c = WORDS_C[(h >> 8) as usize % WORDS_C.len()];
@@ -1119,6 +1158,7 @@ fn fake_entries() -> Vec<Entry> {
                 airing_note: None,
                 new_episode: None,
                 rewatching: false,
+                times_rewatched: 0,
                 waiting: None,
                 cover_url: None,
             });
@@ -1151,6 +1191,7 @@ mod tests {
             progress,
             score,
             rewatching: false,
+            times_rewatched: 0,
             updated_at,
         }
     }
@@ -1319,6 +1360,29 @@ mod tests {
         assert_eq!(Sort::Progress.next(), Sort::Updated);
     }
 
+    /// Rewatches: start on a completed entry only, stop without counting, and the Watching page
+    /// shows them while the sidebar counts MAL's status.
+    #[test]
+    fn rewatch_start_stop_and_the_watching_page() {
+        let mut s = State::fake();
+        let watching = s.count(Status::Watching);
+        assert!(s.start_rewatch(0).unwrap_err().contains("not completed"));
+        let id = s.entries.iter().find(|e| e.status == Status::Completed && !e.rewatching).unwrap().id;
+        s.start_rewatch(id).unwrap();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.status, e.progress, e.rewatching, e.waiting), (Status::Completed, 0, true, Some("Waiting to sync")));
+        assert!(s.start_rewatch(id).is_err(), "once");
+        assert_eq!(s.count(Status::Watching), watching, "the sidebar counts MAL's status");
+        s.go(Page::List(Status::Watching));
+        assert!(s.rows.iter().any(|&i| s.entries[i].id == id), "the Watching page shows it");
+        s.go(Page::List(Status::Completed));
+        assert!(s.rows.iter().any(|&i| s.entries[i].id == id), "and the Completed page still does");
+        s.stop_rewatch(id).unwrap();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((Some(e.progress), e.rewatching, e.times_rewatched), (e.episodes, false, 0), "back at the last episode, not counted");
+        assert!(s.stop_rewatch(id).is_err());
+    }
+
     #[test]
     fn searches_every_title_case_blind() {
         let mut s = loaded();
@@ -1371,7 +1435,7 @@ mod tests {
         let mut s = State::fake();
         assert!(s.apply(Msg::SyncFailed(Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into()))));
         assert!(s.offline && s.error.is_some() && !s.syncing);
-        assert_eq!(s.entries.len(), 303, "the saved list stays");
+        assert_eq!(s.entries.len(), 302, "the saved list stays");
         assert_eq!(s.queue, 4);
         s.apply(Msg::SyncFailed(Fail::SignInAgain));
         assert_eq!(s.auth, Auth::Expired);

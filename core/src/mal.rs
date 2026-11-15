@@ -266,10 +266,11 @@ impl<T: Transport> Client<T> {
         self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None })
     }
 
-    /// The user's list entry for one anime (`GET /anime/{id}?fields=my_list_status`); `None` when
+    /// The user's list entry for one anime (`GET /anime/{id}?fields=my_list_status{num_times_rewatched}`,
+    /// the braces percent-encoded: MAL leaves the rewatch count out unless asked); `None` when
     /// the anime is not on the list.
     pub fn fetch_entry(&mut self, access: &str, id: u32) -> Result<Option<Remote>, ServiceError> {
-        let r = self.get(format!("{API}/anime/{id}?fields=my_list_status"), access)?;
+        let r = self.get(format!("{API}/anime/{id}?fields=my_list_status%7Bnum_times_rewatched%7D"), access)?;
         #[derive(Deserialize)]
         struct One {
             my_list_status: Option<ListStatus>,
@@ -291,6 +292,12 @@ impl<T: Transport> Client<T> {
         }
         if let Some(sc) = change.score {
             pairs.push(("score", sc.unwrap_or(0).min(10).to_string()));
+        }
+        if let Some(r) = change.rewatching {
+            pairs.push(("is_rewatching", r.to_string()));
+        }
+        if let Some(n) = change.times_rewatched {
+            pairs.push(("num_times_rewatched", n.to_string()));
         }
         if pairs.is_empty() {
             return Err(ServiceError::Other("nothing to send".into()));
@@ -342,7 +349,7 @@ impl<T: Transport> Client<T> {
     /// The whole list, 100 entries a page, following `paging.next`.
     pub fn fetch_list(&mut self, access: &str) -> Result<Vec<ListItem>, ServiceError> {
         let mut url = format!(
-            "{API}/users/@me/animelist?fields=list_status,num_episodes,media_type,status,alternative_titles&limit=100&nsfw=true"
+            "{API}/users/@me/animelist?fields=list_status%7Bnum_times_rewatched%7D,num_episodes,media_type,status,alternative_titles&limit=100&nsfw=true"
         );
         let mut items = Vec::new();
         // A real list is a few pages; the cap only stops a loop of links.
@@ -387,7 +394,7 @@ fn api_message(body: &str) -> String {
 const BROWSE_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean";
 /// The details page.
 const DETAIL_FIELDS: &str = "alternative_titles,media_type,num_episodes,status,start_season,mean,rank,popularity,num_list_users,\
-start_date,end_date,synopsis,source,average_episode_duration,studios,genres,my_list_status";
+start_date,end_date,synopsis,source,average_episode_duration,studios,genres,my_list_status%7Bnum_times_rewatched%7D";
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -435,6 +442,8 @@ struct FullListStatus {
     num_episodes_watched: u32,
     #[serde(default)]
     is_rewatching: bool,
+    #[serde(default)]
+    num_times_rewatched: u32,
     start_date: Option<String>,
     finish_date: Option<String>,
 }
@@ -503,6 +512,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
             progress: m.num_episodes_watched,
             score: (m.score > 0).then_some(m.score.min(10)),
             rewatching: m.is_rewatching,
+            times_rewatched: m.num_times_rewatched,
             start_date: non_empty(m.start_date),
             finish_date: non_empty(m.finish_date),
         })
@@ -604,6 +614,8 @@ struct ListStatus {
     num_episodes_watched: u32,
     #[serde(default)]
     is_rewatching: bool,
+    #[serde(default)]
+    num_times_rewatched: u32,
     updated_at: Option<String>,
 }
 
@@ -611,8 +623,13 @@ impl ListStatus {
     fn remote(self) -> Option<Remote> {
         let status = self.status.as_deref().and_then(Status::from_mal)?;
         Some(Remote {
-            values: Values { status, progress: self.num_episodes_watched, score: (self.score > 0).then_some(self.score.min(10)) },
-            rewatching: self.is_rewatching,
+            values: Values {
+                status,
+                progress: self.num_episodes_watched,
+                score: (self.score > 0).then_some(self.score.min(10)),
+                rewatching: self.is_rewatching,
+                times_rewatched: self.num_times_rewatched,
+            },
             updated_at: self.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
         })
     }
@@ -689,6 +706,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
             progress: ls.num_episodes_watched,
             score: (ls.score > 0).then_some(ls.score.min(10)),
             rewatching: ls.is_rewatching,
+            times_rewatched: ls.num_times_rewatched,
             updated_at: ls.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
         });
     }
@@ -950,7 +968,8 @@ mod tests {
         assert_eq!(items.len(), 4);
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
-        assert!(seen[0].1.starts_with("https://api.myanimelist.net/v2/users/@me/animelist?fields=list_status,"));
+        assert!(seen[0].1.starts_with("https://api.myanimelist.net/v2/users/@me/animelist?fields=list_status%7Bnum_times_rewatched%7D,"));
+        assert_eq!(items.iter().map(|i| i.times_rewatched).collect::<Vec<_>>(), [0, 0, 0, 2], "the count when MAL sends it, else 0");
         assert!(seen[0].1.contains("limit=100"));
         assert!(seen[1].1.contains("offset=100"));
         assert!(seen.iter().all(|s| s.2.as_deref() == Some("fake-access")));
@@ -1062,11 +1081,11 @@ mod tests {
         let (f, seen) = fake(vec![ok(ENTRY), ok(NOT_ON_LIST)]);
         let (mut c, _) = client(f);
         let r = c.fetch_entry("acc", 1001).unwrap().unwrap();
-        assert_eq!(r.values, Values { status: Status::Watching, progress: 5, score: Some(8) });
+        assert_eq!(r.values, Values::new(Status::Watching, 5, Some(8)));
         assert_eq!(r.updated_at, 1_519_450_460);
         assert_eq!(c.fetch_entry("acc", 1003).unwrap(), None);
         let seen = seen.lock().unwrap();
-        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "https://api.myanimelist.net/v2/anime/1001?fields=my_list_status"));
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "https://api.myanimelist.net/v2/anime/1001?fields=my_list_status%7Bnum_times_rewatched%7D"));
         assert_eq!(seen[0].2.as_deref(), Some("acc"));
     }
 
@@ -1084,6 +1103,23 @@ mod tests {
         assert_eq!(seen[1].3.as_deref(), Some("status=completed&score=0"));
         assert_eq!(seen[1].2.as_deref(), Some("acc"));
         assert!(c.patch_entry("acc", 1, &Change::default()).is_err(), "an empty change is never sent");
+    }
+
+    /// A rewatch goes as MAL's form fields, and its answer is read back.
+    #[test]
+    fn patch_sends_the_rewatch() {
+        let started = r#"{"status":"completed","score":8,"num_episodes_watched":0,"is_rewatching":true,"num_times_rewatched":1,"updated_at":"2026-11-15T10:00:00+00:00"}"#;
+        let ended = r#"{"status":"completed","score":8,"num_episodes_watched":12,"is_rewatching":false,"num_times_rewatched":2,"updated_at":"2026-11-15T11:00:00+00:00"}"#;
+        let (f, seen) = fake(vec![ok(started), ok(ended)]);
+        let (mut c, _) = client(f);
+        let r = c.patch_entry("acc", 1001, &Change { progress: Some(0), rewatching: Some(true), ..Default::default() }).unwrap();
+        assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, Some(8)) });
+        let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None };
+        let r = c.patch_entry("acc", 1001, &end).unwrap();
+        assert_eq!((r.values.rewatching, r.values.times_rewatched, r.values.progress), (false, 2, 12));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].3.as_deref(), Some("num_watched_episodes=0&is_rewatching=true"));
+        assert_eq!(seen[1].3.as_deref(), Some("status=completed&num_watched_episodes=12&is_rewatching=false&num_times_rewatched=2"));
     }
 
     #[test]

@@ -100,6 +100,9 @@ pub struct MyEntry {
     pub progress: u32,
     pub score: Option<u8>,
     pub rewatching: bool,
+    /// Finished rewatches (older saved details have none: 0).
+    #[serde(default)]
+    pub times_rewatched: u32,
     /// `2024-10-03` (MAL may give only `2024-10` or `2024`).
     pub start_date: Option<String>,
     pub finish_date: Option<String>,

@@ -60,6 +60,11 @@ pub struct Recorded {
     /// The episode was the last one: the entry is now Completed.
     pub completed: bool,
     pub auto: bool,
+    /// The rewatch state before, for Undo (a rewatch started or finished from here).
+    pub old_rewatching: bool,
+    pub old_times: u32,
+    /// This record started a rewatch.
+    pub rewatch: bool,
 }
 
 /// What the detection glue sends with each report of the followed player.
@@ -110,6 +115,16 @@ impl Prefs {
 
 /// The thresholds the Settings control cycles through.
 pub const THRESHOLDS: [u8; 4] = [70, 80, 90, 100];
+
+/// A completed entry (not being rewatched) plays again: the episode a rewatch would start at.
+/// Asked, never recorded by itself.
+pub fn rewatch_for(e: &Entry, episode: Option<u32>) -> Option<u32> {
+    if e.status != Status::Completed || e.rewatching {
+        return None;
+    }
+    let ep = episode.or((e.episodes == Some(1)).then_some(1))?;
+    (ep > 0 && e.episodes.is_none_or(|n| ep <= n)).then_some(ep)
+}
 
 /// The episode to offer for an entry on the list (as `recognize::offer`).
 pub fn offer_for(e: &Entry, episode: Option<u32>) -> Option<u32> {
@@ -260,14 +275,23 @@ impl State {
         Some((i, ep))
     }
 
+    /// "Watching it again?": a completed entry plays, with the episode a rewatch starts at.
+    pub fn rewatch_offer(&self) -> Option<(usize, u32)> {
+        let now = self.now.as_ref()?;
+        let id = now.media_id()?;
+        let i = self.entries.iter().position(|e| e.id == id)?;
+        let ep = rewatch_for(&self.entries[i], now.episode())?;
+        Some((i, ep))
+    }
+
     /// The banner shows: an episode recorded from here (with Undo), or an offer once the file
-    /// counts as watched.
+    /// counts as watched (an episode, or a rewatch).
     pub fn banner(&self) -> bool {
         let Some(now) = &self.now else { return false };
         if now.dismissed || !self.has_list() {
             return false;
         }
-        now.recorded.is_some() || (now.reached && self.offer().is_some())
+        now.recorded.is_some() || (now.reached && (self.offer().is_some() || self.rewatch_offer().is_some()))
     }
 
     /// A report about the followed player. Keeps the banner's state while the file stays.
@@ -313,7 +337,17 @@ impl State {
         if !now.reached || now.acted || now.recognizing || now.dismissed || !self.has_list() {
             return;
         }
-        let Some((i, ep)) = self.offer() else { return };
+        let Some((i, ep)) = self.offer() else {
+            // A completed anime plays again: always ask, even with "Update automatically" on.
+            if let Some((i, ep)) = self.rewatch_offer() {
+                let title = self.entries[i].title.clone();
+                if let Some(n) = &mut self.now {
+                    n.acted = true;
+                }
+                crate::detect::notify(&format!("Watching {title} again?"), &format!("Start a rewatch at episode {ep}: open Kotora, or run kot confirm."), self.handle.is_some());
+            }
+            return;
+        };
         let title = self.entries[i].title.clone();
         // A player seen by its open file only knows no position or pause: the time open is a
         // guess, so it always asks, even with "Update automatically" on.
@@ -333,9 +367,13 @@ impl State {
 
     /// Update (the banner, `kot confirm`): the offered episode goes to the queue.
     pub fn record(&mut self, auto: bool) -> Result<(String, u32), String> {
+        if self.offer().is_none() && !auto && self.rewatch_offer().is_some() {
+            return self.start_rewatch_playing();
+        }
         let (i, ep) = self.offer().ok_or("Nothing to update: no recognised new episode is playing.")?;
         let e = &self.entries[i];
         let (id, title, old_progress, old_status) = (e.id, e.title.clone(), e.progress, e.status);
+        let (old_rewatching, old_times) = (e.rewatching, e.times_rewatched);
         // A show you planned to watch is now one you watch. The last episode completes it instead
         // (`edit` does that when the total is known).
         let last = e.episodes.is_some_and(|n| n > 0 && ep == n);
@@ -343,7 +381,26 @@ impl State {
         self.edit(id, Change { progress: Some(ep), status, ..Default::default() })?;
         let completed = old_status != Status::Completed && self.entries.iter().any(|e| e.id == id && e.status == Status::Completed);
         if let Some(n) = &mut self.now {
-            n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed, auto });
+            n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed, auto, old_rewatching, old_times, rewatch: false });
+            n.acted = true;
+            n.picking = false;
+        }
+        Ok((title, ep))
+    }
+
+    /// "Start rewatch" on the banner (or `kot confirm`): the completed entry is rewatched from
+    /// here, at the playing episode, as one queued change. Undo puts it back.
+    pub fn start_rewatch_playing(&mut self) -> Result<(String, u32), String> {
+        let (i, ep) = self.rewatch_offer().ok_or("Nothing to rewatch: no completed anime is playing.")?;
+        let e = &self.entries[i];
+        let (id, title, old_progress, old_status, old_times) = (e.id, e.title.clone(), e.progress, e.status, e.times_rewatched);
+        let start = Change::start_rewatch(&e.values()).ok_or("That anime is not completed.")?;
+        // One edit: the rewatch and the episode (the last one ends it again, counted).
+        let cur = start.apply(e.values());
+        let change = start.merge(Change { progress: Some(ep), ..Default::default() }.completes(&cur, e.episodes));
+        self.edit(id, change)?;
+        if let Some(n) = &mut self.now {
+            n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed: false, auto: false, old_rewatching: false, old_times, rewatch: true });
             n.acted = true;
             n.picking = false;
         }
@@ -353,7 +410,14 @@ impl State {
     /// Undo on the banner: the entry goes back (the queue drops the change if it hasn't left).
     pub fn undo_record(&mut self) {
         let Some(r) = self.now.as_ref().and_then(|n| n.recorded) else { return };
-        let _ = self.edit(r.id, Change { progress: Some(r.old_progress), status: Some(r.old_status), ..Default::default() });
+        let back = Change {
+            progress: Some(r.old_progress),
+            status: Some(r.old_status),
+            rewatching: Some(r.old_rewatching),
+            times_rewatched: Some(r.old_times),
+            ..Default::default()
+        };
+        let _ = self.edit(r.id, back);
         if let Some(n) = &mut self.now {
             n.recorded = None;
             n.dismissed = true;
@@ -580,6 +644,42 @@ mod tests {
         s.undo_record();
         assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 5);
         assert!(!s.banner());
+    }
+
+    /// A completed anime plays again: the banner asks to start a rewatch (never by itself,
+    /// even with "Update automatically" on); then episodes count as usual, and the last one ends
+    /// the rewatch in the same queued change.
+    #[test]
+    fn a_completed_anime_playing_again_offers_a_rewatch() {
+        let mut s = fresh();
+        s.prefs.auto = true;
+        let id = s.entries.iter().find(|e| e.status == Status::Completed && !e.rewatching && e.episodes == Some(12)).unwrap().id;
+        let times = s.entries.iter().find(|e| e.id == id).unwrap().times_rewatched;
+        s.now_seen(Some(seen("Some Show - 03.mkv", Some(id), true, true)));
+        assert_eq!(s.offer(), None, "no plain episode offer: it is completed");
+        assert_eq!(s.rewatch_offer().map(|(_, ep)| ep), Some(3));
+        assert!(s.banner() && s.now.as_ref().unwrap().recorded.is_none(), "asked, not recorded");
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.progress, e.rewatching), (12, false), "asking changes nothing");
+        s.start_rewatch_playing().unwrap();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.status, e.progress, e.rewatching), (Status::Completed, 3, true));
+        assert!(s.now.as_ref().unwrap().recorded.is_some_and(|r| r.rewatch));
+        // Undo: back to completed, not rewatching.
+        s.undo_record();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.progress, e.rewatching, e.times_rewatched), (12, false, times));
+        // `kot confirm` answers the question too; then the last episode ends the rewatch.
+        let mut s = fresh();
+        s.now_seen(Some(seen("Some Show - 11.mkv", Some(id), true, true)));
+        s.record(false).unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == id).unwrap().progress, 11);
+        s.now_seen(Some(seen("Some Show - 12.mkv", Some(id), true, false)));
+        assert!(s.now_reached("mpv:/tmp/mpv.sock", "/v/Some Show - 12.mkv"));
+        assert_eq!(s.offer().map(|(_, ep)| ep), Some(12), "during the rewatch: normal counting");
+        s.record(false).unwrap();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.status, e.progress, e.rewatching, e.times_rewatched), (Status::Completed, 12, false, times + 1));
     }
 
     #[test]

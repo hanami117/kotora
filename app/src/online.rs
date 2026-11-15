@@ -308,6 +308,7 @@ mod tests {
             progress: 1,
             score: None,
             rewatching: false,
+            times_rewatched: 0,
             updated_at: 10,
         }
     }

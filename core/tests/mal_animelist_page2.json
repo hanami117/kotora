@@ -2,7 +2,7 @@
   "data": [
     {
       "node": { "id": 1005, "title": "Neon Ronin 2099", "num_episodes": 26, "media_type": "tv", "status": "finished_airing" },
-      "list_status": { "status": "completed", "score": 10, "num_episodes_watched": 26, "is_rewatching": false, "updated_at": "2021-03-03T03:03:03+00:00" }
+      "list_status": { "status": "completed", "score": 10, "num_episodes_watched": 26, "is_rewatching": false, "num_times_rewatched": 2, "updated_at": "2021-03-03T03:03:03+00:00" }
     }
   ],
   "paging": {}

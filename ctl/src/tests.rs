@@ -35,7 +35,7 @@ fn wire_format_is_readable() {
 #[test]
 fn requests_and_replies_round_trip() {
     let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0) };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }] {
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -198,7 +198,7 @@ fn stage_3_wire_format() {
     );
     assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);
     assert_eq!(serde_json::to_string(&Request::Sync).unwrap(), r#"{"cmd":"sync"}"#);
-    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, waiting: None };
+    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, waiting: None, rewatching: false, times_rewatched: 0 };
     let text = serde_json::to_string(&Reply::Edited { entry: e.clone() }).unwrap();
     assert_eq!(text, r#"{"reply":"edited","entry":{"id":7,"title":"Neon","status":"Watching","progress":3,"episodes":12}}"#);
     assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), Reply::Edited { entry: e });

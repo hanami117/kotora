@@ -251,6 +251,17 @@ pub const SCENES: &[Scene] = &[
         s.now = None;
         s.go(Page::NowPlaying);
     }),
+    // A completed anime plays again: the banner asks to start a rewatch at the playing episode.
+    ("now-playing-rewatch-offer", |s| {
+        rewatch_playing(s);
+        reached(s);
+    }),
+    // "Start rewatch" pressed: rewatching from episode 3, Undo in the banner.
+    ("now-playing-rewatch-started", |s| {
+        rewatch_playing(s);
+        reached(s);
+        let _ = s.start_rewatch_playing();
+    }),
     // The queue as in the mockup: a conflict, two waiting, one failed, two sent today.
     ("queue-page", |s| s.go(Page::Queue)),
     ("queue-empty", |s| {
@@ -330,6 +341,26 @@ pub const SCENES: &[Scene] = &[
         search(s, "41590", false);
         s.online.show("41590", vec![]);
     }),
+    // Rewatches: the Watching page shows one (Completed on MAL; "+ 1 rewatching" by the count),
+    // the Completed page's editor offers "Rewatch", the details page counts them.
+    ("list-rewatching", |s| {
+        fake_covers(s);
+        s.go(Page::List(Status::Watching));
+    }),
+    ("list-editor-rewatch", |s| {
+        s.go(Page::List(Status::Completed));
+        let id = s.rows.first().map(|&i| s.entries[i].id).unwrap_or(0);
+        s.toggle_editor(id);
+    }),
+    ("details-rewatch", |s| {
+        let id = completed_id(s);
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == id) {
+            e.times_rewatched = 2;
+        }
+        details(s, id, true);
+    }),
+    // During a rewatch: the tag, "Rewatched once" and Stop rewatching.
+    ("details-rewatching", |s| details(s, 5, true)),
     // The details page of an anime on the list, opened from its row.
     ("details-on-list", |s| details(s, 0, true)),
     ("details-editor", |s| {
@@ -466,6 +497,21 @@ fn details(s: &mut State, id: u32, on_list: bool) {
         d.rank = None;
     }
     s.details_answer(crate::details::Answer { id, result: Ok(d), item: None, done: true });
+}
+
+/// A completed anime on the list (not rewatched now), the first by id.
+fn completed_id(s: &State) -> u32 {
+    s.entries.iter().filter(|e| e.status == Status::Completed && !e.rewatching && e.episodes == Some(12)).map(|e| e.id).min().unwrap_or(0)
+}
+
+/// The fake player shows episode 3 of a completed anime.
+fn rewatch_playing(s: &mut State) {
+    let id = completed_id(s);
+    let title = s.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
+    playing_file(s, &format!("[Hoshi] {title} - 03 (1080p).mkv"));
+    if let Some(n) = &mut s.now {
+        n.found = Found::List { media_id: id, sure: true, why: "same title in your list".into() };
+    }
 }
 
 /// mpv is seen by its open file only, and nothing plays in a known way.
@@ -738,6 +784,14 @@ mod tests {
         assert!(render("search-online", (960.0, 600.0)).find("add").is_some(), "the add button fits a small window");
         assert!(render("search-mal-id", (960.0, 600.0)).find("sr/id/41590").is_some());
         assert!(render("now-playing-relation-not-on-list", (1280.0, 800.0)).find("np-relation").is_some());
+        let rt = render("now-playing-rewatch-offer", (960.0, 600.0));
+        assert!(rt.find("banner/rewatch").is_some() && rt.find("banner/rewatch-ask").is_some() && rt.find("banner/update").is_none());
+        assert!(render("now-playing-rewatch-started", (1280.0, 800.0)).find("banner/undo").is_some());
+        assert!(render("list-rewatching", (1280.0, 800.0)).find("top/extra").is_some());
+        assert!(render("list-editor-rewatch", (1280.0, 800.0)).find("ed/rewatch").is_some());
+        let rt = render("details-rewatch", (1280.0, 800.0));
+        assert!(rt.find("det/rewatch").is_some() && rt.find("det/rewatched").is_some());
+        assert!(render("details-rewatching", (1280.0, 800.0)).find("det/stop-rewatch").is_some());
         assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-relation").is_none());
         assert!(render("search-online", (1280.0, 800.0)).find("sr/id/").is_none());
     }
