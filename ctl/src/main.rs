@@ -11,6 +11,8 @@
 //! kot now        what plays, and the episode Kotora offers to record
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
+//! kot add QUERY|ID [--status S]
+//! kot config client-id ID
 //! kot show       shows the window
 //! kot quit       quits the app
 //! kot --version
@@ -41,6 +43,9 @@ Commands:
   now                   what plays, and the episode Kotora offers
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
+  add QUERY|ID          put an anime on your list: a title to search
+      [--status STATUS]   MyAnimeList for (it must find one), or its id
+  config client-id ID   save your MyAnimeList Client ID
   show                  show the window
   quit                  quit Kotora
   help                  this text
@@ -68,6 +73,18 @@ fn main() -> ExitCode {
         ["list", "all"] => Request::List { status: None },
         ["list", st] => Request::List { status: Some((*st).to_string()) },
         ["+1", title @ ..] if !title.is_empty() => Request::PlusOne { title: title.join(" ") },
+        ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
+        ["config", ..] => {
+            eprintln!("kot: use kot config client-id ID (try kot help)");
+            return ExitCode::from(2);
+        }
+        ["add", rest @ ..] => match parse_add(rest) {
+            Ok(r) => r,
+            Err(m) => {
+                eprintln!("kot: {m} (try kot help)");
+                return ExitCode::from(2);
+            }
+        },
         ["set", rest @ ..] => match parse_set(rest) {
             Ok(r) => r,
             Err(m) => {
@@ -111,6 +128,10 @@ fn main() -> ExitCode {
         }
         Ok(Reply::Now { now }) => {
             print!("{}", now_text(now.as_ref()));
+            ExitCode::SUCCESS
+        }
+        Ok(Reply::Done { message }) => {
+            println!("{message}");
             ExitCode::SUCCESS
         }
         Ok(Reply::Error { message }) if message.starts_with("bad request") => {
@@ -194,6 +215,26 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
         return Err("set needs an episode number, --status or --score".into());
     }
     Ok(Request::Set { title: title.join(" "), progress, status, score })
+}
+
+/// `add QUERY… [--status S]`.
+fn parse_add(words: &[&str]) -> Result<Request, String> {
+    let (mut query, mut status) = (Vec::new(), None);
+    let mut i = 0;
+    while i < words.len() {
+        match words[i] {
+            "--status" => {
+                status = Some(words.get(i + 1).ok_or("--status needs a status")?.to_string());
+                i += 1;
+            }
+            w => query.push(w),
+        }
+        i += 1;
+    }
+    if query.is_empty() {
+        return Err("add needs a title or a MyAnimeList id".into());
+    }
+    Ok(Request::Add { query: query.join(" "), status })
 }
 
 fn progress_text(e: &Entry) -> String {
@@ -299,6 +340,15 @@ mod tests {
         assert!(parse_set(&["6"]).is_err(), "a lone number is a title with nothing to set");
         assert!(parse_set(&["Neon", "--score", "11"]).is_err());
         assert!(parse_set(&["Neon", "--status"]).is_err());
+    }
+
+    #[test]
+    fn add_reads_the_query_and_the_status() {
+        assert_eq!(parse_add(&["Velvet", "Orchard"]), Ok(Request::Add { query: "Velvet Orchard".into(), status: None }));
+        assert_eq!(parse_add(&["9001", "--status", "plan"]), Ok(Request::Add { query: "9001".into(), status: Some("plan".into()) }));
+        assert!(parse_add(&[]).is_err());
+        assert!(parse_add(&["--status", "plan"]).is_err());
+        assert!(parse_add(&["x", "--status"]).is_err());
     }
 
     fn e(title: &str, status: &str, progress: u32, score: Option<u8>, waiting: Option<&str>) -> Entry {

@@ -175,6 +175,15 @@ pub enum Request {
     Confirm,
     /// Not now: hides the offer for this file. Replies `Now`.
     Dismiss,
+    /// Saves the MyAnimeList Client ID (as the Welcome page's field does). Replies `Done`.
+    SetClientId { id: String },
+    /// Puts an anime on the list: a MyAnimeList id, or a title MyAnimeList is searched for
+    /// (it must find one). `status` as in `List`; Watching when `None`. Replies `Edited`.
+    Add {
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -190,6 +199,8 @@ pub enum Reply {
     Queue { ops: Vec<QueueItem> },
     /// `None`: nothing plays.
     Now { now: Option<NowInfo> },
+    /// Done, in a sentence.
+    Done { message: String },
 }
 
 /// What plays, as `kot now` prints it.

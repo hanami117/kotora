@@ -35,12 +35,12 @@ fn wire_format_is_readable() {
 #[test]
 fn requests_and_replies_round_trip() {
     let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0) };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss] {
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
     let signed_out = Status { account: None, service: String::new(), ..sample() };
-    for reply in [Reply::Status(sample()), Reply::Status(signed_out), Reply::Status(Status::default()), Reply::Error { message: "x".into() }] {
+    for reply in [Reply::Status(sample()), Reply::Status(signed_out), Reply::Status(Status::default()), Reply::Error { message: "x".into() }, Reply::Done { message: "Saved.".into() }] {
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), reply);
     }

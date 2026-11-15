@@ -93,6 +93,35 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             s.dismiss_now();
             Ok(Reply::Now { now: s.ctl_now() })
         })),
+        Request::SetClientId { id } => match kotora_core::config::save_client_id(&kotora_core::paths::config_file(), &id) {
+            Err(message) => Reply::Error { message },
+            Ok(id) => {
+                let hint = kotora_core::config::client_id_hint(&id);
+                let auth = crate::online::initial_auth();
+                let signed_in = auth == crate::model::Auth::SignedIn;
+                let _ = on_ui(handle, true, move |s| s.client_id_saved(Ok((hint, auth))));
+                Reply::Done {
+                    message: if signed_in {
+                        "Saved the Client ID. A new ID needs a new sign-in when the current one runs out.".into()
+                    } else {
+                        "Saved the Client ID. Sign in from Kotora's window now.".into()
+                    },
+                }
+            }
+        },
+        Request::Add { query, status: st } => {
+            let status = match st.as_deref().map(parse_status).transpose() {
+                Ok(s) => s.unwrap_or(Status::Watching),
+                Err(message) => return Reply::Error { message },
+            };
+            match find_online(&query) {
+                Ok(media) => reply(on_ui(handle, true, move |s| {
+                    let i = s.add_media(media, status)?;
+                    Ok(Reply::Edited { entry: s.entries[i].ctl() })
+                })),
+                Err(message) => Reply::Error { message },
+            }
+        }
         Request::Sync => reply(on_ui(handle, true, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());
@@ -100,6 +129,32 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             s.sync_now();
             Ok(Reply::Status(s.ctl_status()))
         })),
+    }
+}
+
+/// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
+/// a title that matches one result exactly, or a single result. Runs on the connection's thread.
+fn find_online(query: &str) -> Result<kotora_core::Media, String> {
+    use kotora_core::service::ListService;
+    let mut mal = crate::online::mal_service().ok_or("kot add needs MyAnimeList: sign in first (and be online).")?;
+    let q = query.trim();
+    if let Ok(id) = q.parse::<u32>() {
+        return mal.details(id).map(|d| d.media()).map_err(crate::online::error_text);
+    }
+    let hits = mal.browse(q, 10).map_err(crate::online::error_text)?;
+    let lower = q.to_lowercase();
+    let exact: Vec<_> = hits
+        .iter()
+        .filter(|h| std::iter::once(&h.title).chain(h.title_en.iter()).chain(h.title_ja.iter()).chain(h.synonyms.iter()).any(|t| t.to_lowercase() == lower))
+        .collect();
+    match (exact.as_slice(), hits.as_slice()) {
+        ([one], _) => Ok(one.media()),
+        ([], [one]) => Ok(one.media()),
+        (_, []) => Err(format!("MyAnimeList found nothing for \u{201c}{q}\u{201d}.")),
+        _ => {
+            let names: Vec<String> = hits.iter().take(6).map(|h| format!("  {:>6}  {}", h.id, h.title)).collect();
+            Err(format!("Several anime match \u{201c}{q}\u{201d}; give the id:\n{}", names.join("\n")))
+        }
     }
 }
 
