@@ -1,13 +1,13 @@
 # Kotora design
 
-Status: design updated with the user's decisions of 2026-11-14 (section 12); no code yet. Researched
+Status: design updated with the user's decisions of 2026-11-14 and 2026-11-15 (section 12). Researched
 2026-11-14; facts about outside projects and services are dated and sourced at the end, and things not
 confirmed are marked **(unverified)**.
 
 Kotora (小虎, "little tiger") is a native anime tracker for Linux and macOS, written in Rust with the
 [Rune](https://github.com/anomalyco/rune) GPU UI framework. It is a tribute to
 [Taiga](https://taiga.moe/): it keeps your list on an online service up to date (MyAnimeList first, AniList
-from v0.2), notices the episode you are watching in your own media player and offers to record it.
+from v0.3), notices the episode you are watching in your own media player and offers to record it.
 
 ---------------------------------------------------------------------------------------------------
 
@@ -41,7 +41,7 @@ exactly where Kotora should be strongest.
 4. **Recognition you can see and correct.** Kotora shows why a file matched, and "this file is X"
    corrections are remembered.
 5. **Scriptable.** `kot`, a command line over a Unix socket (like Uzumaki's `uzu`), plus an mpv script.
-6. **Honest packaging:** install.sh and AUR for v0.1; AppImage and DMG from v0.2. Same tooling as
+6. **Honest packaging:** install.sh and AUR for v0.1; AppImage and DMG from v0.3. Same tooling as
    Uzumaki.
 
 ## 3. Non-goals
@@ -94,15 +94,22 @@ exactly where Kotora should be strongest.
   `queue`, `sync`, `quit`.
 - **Headless checks:** `--snap/--scene/--tree` scenes for every view, with fake data.
 
+**Added to v0.1 after the first live test (Stage 5, decided 2026-11-15, section 12.12):**
+- **Client ID from the app:** the Welcome page and Settings have a field for the MAL Client ID with a
+  three-step guide; nobody edits `config.toml` by hand. `kot config client-id ID` does the same.
+- **Zero-config detection:** a fallback detector finds mpv, VLC, mpc-qt, Celluloid and Haruna by their
+  open video file (Linux `/proc/<pid>/fd`; macOS `libproc` if it fits, else later), with no player
+  setup. When mpv is found this way, Kotora offers once to turn on precise mode (one line in the
+  user's `mpv.conf`, written only on a click).
+- **Search and add:** the search bar also searches MAL and adds a title to the list through the queue.
+- **Details page:** a title's MAL information and the user's entry, in the main area.
+
 ### Later (roughly in order; see docs/ROADMAP.md)
-- **AniList** (v0.2; implicit grant, section 8.2) as a second service. Any number of accounts, one
+- **AniList** (v0.3; implicit grant, section 8.2) as a second service. Any number of accounts, one
   primary. Still a pure client of the user's own list (AniList terms clause 5).
 - **The mpv Lua script:** reports file, position and end to `kot`, so no IPC socket setup is needed.
-- **Fallback detectors:**
-  - Linux: `/proc/<pid>/fd` of known players.
-  - macOS: `libproc` open files.
-  - Window titles where a compositor allows it: X11, Hyprland, sway or wlroots foreign-toplevel. These
-    are opt-in.
+- **Window-title detectors** where a compositor allows it: X11, Hyprland, sway or wlroots
+  foreign-toplevel. These are opt-in. (The open-file detectors moved into v0.1, above.)
 - **Recognition corrections UI:** "this file / folder is X", episode offsets, and anime-relations
   (CC0) for numbering that continues across seasons.
 - **History:** a local log of what was watched and when, with undo.
@@ -110,7 +117,6 @@ exactly where Kotora should be strongest.
   /anime/season/{year}/{season}`), fetched on demand. Add to Plan to watch.
 - **Library folders:** scan for which episodes are available locally; play the next episode in your
   player.
-- **Search and add** any anime. Entry details page.
 - **Statistics:** time watched, score distribution.
 - **Sharing:** Discord Rich Presence (opt-in).
 - **Streaming sites:** use MAL-Sync (browser extension). No extension of our own for now.
@@ -127,7 +133,7 @@ exactly where Kotora should be strongest.
 Cargo.toml          workspace, resolver 3, edition 2024; one [workspace.package] version and license
 BUILD               build number (Uzumaki's scheme: versions plus package rebuilds)
 core/               kotora-core: no UI, no platform code. Data model, SQLite store, services
-                    (MAL first, AniList from v0.2), sync engine and queue, recognition (parse, match,
+                    (MAL first, AniList from v0.3), sync engine and queue, recognition (parse, match,
                     cache).
                     Most tests live here.
 detect/             kotora-detect: now-playing sources behind one trait. MPRIS (zbus), mpv IPC,
@@ -155,7 +161,7 @@ reads (as `uzu` reads Uzumaki's cache).
  core::Store (SQLite, single writer thread) ◀──── enqueue op ──── sync worker (per account, rate limit)
                                                                       │ HTTP (ureq, blocking, own thread)
                                                                       ▼
-                                                               MAL REST (v0.1) / AniList GraphQL (v0.2)
+                                                               MAL REST (v0.1) / AniList GraphQL (v0.3)
 ```
 
 - The Rune state lives on the UI thread. Workers report through `AppHandle::update_if`, the pattern in
@@ -169,8 +175,8 @@ reads (as `uzu` reads Uzumaki's cache).
 
 | table | purpose |
 |---|---|
-| `account` | service (`mal` in v0.1, `anilist` from v0.2), user id and name, primary flag; the token is in the 0600 token file, not here |
-| `media` | keyed by (service, id); MAL id is the native key in v0.1, and from v0.2 AniList rows carry `idMal` for cross-mapping; titles (main, English, Japanese, synonyms), episodes, format, season/year, status, cover URL, `fetched_at`. Only media on the user's list or recently shown are kept (no hoarding) |
+| `account` | service (`mal` in v0.1, `anilist` from v0.3), user id and name, primary flag; the token is in the 0600 token file, not here |
+| `media` | keyed by (service, id); MAL id is the native key in v0.1, and from v0.3 AniList rows carry `idMal` for cross-mapping; titles (main, English, Japanese, synonyms), episodes, format, season/year, status, cover URL, `fetched_at`. Only media on the user's list or recently shown are kept (no hoarding) |
 | `entry` | the cached remote list entry: account, media, status, progress, score, rewatching flag, started/completed dates, remote `updated_at` (the base for conflict checks; MAL's `list_status.updated_at`). The status enum is Kotora's own, mapped per service (MAL `plan_to_watch` / `on_hold`, AniList `PLANNING` / `PAUSED`); scores are stored as 0-10 integers and converted per service later |
 | `pending_op` | the queue: account, media, kind (`progress`, `status`, `score`, `delete`, …), new value, the base `updated_at` seen, created, attempts, `next_try`, last error, state (`queued`/`sending`/`conflict`/`failed`) |
 | `recognition` | cache: normalised parsed title (+ season, group) → media id, source (`auto`/`user`), confidence, last used |
@@ -186,7 +192,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
 - **Coalescing:** consecutive ops of the same kind on the same entry merge. Progress 3→4→5 becomes one
   "progress = 5" while queued.
 - **Worker:** per account, serial. It sends the oldest op, using `PATCH /v2/anime/{id}/my_list_status`
-  (form-encoded) on MAL and, from v0.2, `SaveMediaListEntry` on AniList. On success it stores the
+  (form-encoded) on MAL and, from v0.3, `SaveMediaListEntry` on AniList. On success it stores the
   returned entry (new `updated_at`) and drops the op. A service is a trait in `core`, so the queue and
   worker know nothing about MAL or AniList.
 - **Conflicts:** if the remote entry changed after our base, for example from the phone, we neither
@@ -202,7 +208,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
   - **MAL (v0.1):** the API documents no limit **(unverified)**, but it is known to answer 429 or block
     on bursts. Budget 20 requests a minute, at least 1 second between requests, and back off on 429 or
     403. Refreshing the token counts as a request.
-  - **AniList (v0.2):** officially 90 a minute but currently 30 "degraded", with burst limiting, so
+  - **AniList (v0.3):** officially 90 a minute but currently 30 "degraded", with burst limiting, so
     budget 25 a minute.
 - **Pull:** the full list is fetched at start (MAL: `GET /users/@me/animelist` with `limit=100`, paged
   with `paging.next`, fields chosen to carry list status and alternative titles), on demand, and every
@@ -220,8 +226,8 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
    | MPRIS (zbus) | Linux | `xesam:url` (file URI for VLC, mpv-mpris, …), title, position, length | watch `NameOwnerChanged` + `PropertiesChanged`; browsers give title only (weak hint). v0.1 |
    | VLC HTTP interface | macOS | file name (`information.category.meta.filename`), time, length, state from `/requests/status.json` | VLC has no MPRIS on macOS. The user enables the web interface and sets a password in VLC's preferences; Kotora stores that password in the config, so it is opt-in and the Settings page says so. Field names **(unverified)**; check against a live VLC in stage 4. A `libproc` open-files fallback comes later. v0.1 |
    | mpv Lua script → `kot report` | Linux, macOS | path, position, end | no socket setup (mpv Lua has no sockets, so the script runs `kot` as a subprocess). Later |
-   | `/proc/<pid>/fd` | Linux | open video files of known players | same user, no permissions; several open files possible (prefetch). Later |
-   | `libproc` open files | macOS | same | believed to need no permission for the same user **(unverified)**. Later |
+   | `/proc/<pid>/fd` | Linux | open video files of known players | same user, no permissions; several open files possible (prefetch). Stage 5 (v0.1) |
+   | `libproc` open files | macOS | same | believed to need no permission for the same user **(unverified)**. Stage 5 if it fits, else later |
    | window titles | X11, Hyprland, sway, wlroots (foreign-toplevel) | title | **not available on GNOME or KDE Wayland** without an extension or KWin script; opt-in. Later |
    | browser extension | all | URL, page title | native messaging. Later |
 
@@ -282,7 +288,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
 ### 5.7 UI (v0.1)
 
 - **Sidebar:** the list statuses with counts, Now Playing, Queue (badge), Settings. The service is not
-  hard-wired into the UI: v0.2 adds AniList as a second account without a redesign.
+  hard-wired into the UI: v0.3 adds AniList as a second account without a redesign.
 - **List page:** virtual rows (`virtual_rows`, ~56 pt), sortable by title, progress, score or last
   updated. Each row has `+1`; clicking a row opens an inline editor.
 - **Now Playing** banner on top of every page while something is recognised: cover, "*Title*, episode N
@@ -383,7 +389,7 @@ bugs we find in Taiga or its data upstream when they are relevant.
   `num_watched_episodes`, `status`, `score` (0-10) and `is_rewatching`, search `GET /anime?q=` (query of
   at least 3 characters **(unverified)**). Rate limit: section 5.4.
 
-### 8.2 AniList (v0.2)
+### 8.2 AniList (v0.3)
 - **Terms clause 5 (changed 2026-08-18):** "Use of the AniList API within competing, non-complementary
   services of the same nature is prohibited. This includes … anime and manga list or tracker services.
   The restriction applies to all data provided through the API, including both user data and media data."
@@ -395,7 +401,7 @@ bugs we find in Taiga or its data upstream when they are relevant.
   - **So Kotora:** never keeps its own list. It never exports AniList data as a backup (clause 2), never
     hoards (clause 3), and never uses AniList media data for a local-only or other-service list.
   - This is a real risk for the project, and one reason AniList is second (section 12.1). Check the
-    terms again before v0.2 starts.
+    terms again before v0.3 starts.
 - **Naming:** "Kotora" is fine. "for AniList" would be required only if we used the name.
 - **OAuth:** no PKCE and no refresh tokens. Tokens last 1 year. The code grant needs the client secret,
   which an open-source desktop app can't keep, so the plan is the **implicit grant**:
@@ -416,7 +422,7 @@ bugs we find in Taiga or its data upstream when they are relevant.
   a minute.
 
 ### 8.4 Mapping data
-- v0.1 is MAL only and needs no mapping. From v0.2, AniList `idMal` covers AniList↔MAL.
+- v0.1 is MAL only and needs no mapping. From v0.3, AniList `idMal` covers AniList↔MAL.
 - For offline titles and synonyms and other services, later: **anime-offline-database**.
   - manami-project archived it on 2026-07-04; the continuation is `cedya77/anime-offline-database`.
   - It is ODbL-1.0 + DbCL-1.0, released weekly.
@@ -477,7 +483,7 @@ The user answered the open questions. These are decided; the rest of this docume
 
 1. **MyAnimeList first.** The user uses MAL. v0.1 is MAL sign-in (OAuth 2 PKCE `plain`; the user or
    packager registers a free MAL Client ID, section 8.1), the MAL list view and MAL progress updates.
-   AniList moves to v0.2, still a pure client of the user's own list (AniList terms clause 5). This
+   AniList moves to v0.2 (v0.3 since 2026-11-15, item 12), still a pure client of the user's own list (AniList terms clause 5). This
    changed auth (8.1), rate limits and data model (5.3, 5.4), recognition search (5.5), the roadmap
    stages and the scenes (10). The AniList terms question is no longer blocking; re-check the terms
    before v0.2.
@@ -490,7 +496,7 @@ The user answered the open questions. These are decided; the rest of this docume
 6. **macOS paths:** XDG, like Uzumaki: confirmed.
 7. **No keyring:** the token is in a 0600 file, with a warning (section 11): confirmed.
 8. **Streaming sites:** recommend MAL-Sync (browser extension). No extension of our own for now.
-9. **v0.1 packaging:** install.sh and AUR. AppImage and DMG from v0.2.
+9. **v0.1 packaging:** install.sh and AUR. AppImage and DMG from v0.2 (v0.3 since 2026-11-15, item 12).
 10. **Taiga:** stay separate, credit it clearly (README and About), and report upstream bugs when
     relevant.
 11. **Last episode completes (2026-11-15):** like the MAL website, when progress reaches the last
@@ -499,8 +505,18 @@ The user answered the open questions. These are decided; the rest of this docume
     status itself. Plan to watch still becomes Watching on the first recorded episode (unless that
     episode is the last). The banner says "Completed"; Undo restores progress and status.
 
+12. **Stage 5 before the release (2026-11-15):** the user's first live test of Stage 4 on Arch (KDE
+    Wayland) showed that v0.1 is not usable as planned: the Client ID had to be typed into a file by
+    hand, and nothing was detected because their mpv had neither an IPC socket nor mpv-mpris. So a new
+    Stage 5 comes before the release (now Stage 6): the Client ID from the app, zero-config detection
+    (open files, plus the "precise mode" offer for mpv), search and add, and the details page. These
+    come forward from v0.3/v0.4. To make room, AniList, library folders with "play next", the
+    corrections UI, and AppImage/DMG move to v0.3. The seasons browser, statistics, Discord and the
+    tray stay later (v0.4).
+
 **Players for v0.1:** mpv (IPC socket and MPRIS), VLC (MPRIS on Linux), mpc-qt (MPRIS; `xesam:url`
-unverified). macOS: mpv, IINA, VLC (HTTP interface). MPC-HC is Windows-only. Details in section 5.5.
+unverified), and from Stage 5 all of them (plus Celluloid and Haruna) through their open files on
+Linux. macOS: mpv, IINA, VLC (HTTP interface). MPC-HC is Windows-only. Details in section 5.5.
 
 ## 13. Sources
 

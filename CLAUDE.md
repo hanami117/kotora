@@ -1,7 +1,7 @@
 # Kotora: a native anime tracker for Linux and macOS (Rust + Rune)
 
 Kotora (小虎, "little tiger") is a tribute to Taiga, the Windows anime tracker. It keeps the user's list on
-an online service (MyAnimeList first, AniList from v0.2) up to date, recognises the episode playing in the user's
+an online service (MyAnimeList first, AniList from v0.3) up to date, recognises the episode playing in the user's
 own media player, and asks before it records the episode.
 
 - App id, desktop entry, icon name, Wayland `app_id` and macOS bundle id: `io.github.hanami117.kotora`.
@@ -40,7 +40,7 @@ own media player, and asks before it records the episode.
 ## Constraints
 
 - **Service terms.**
-  - AniList (v0.2) clause 5 (2026-08-18) forbids use in competing list or tracker services. Kotora is only a
+  - AniList (v0.3) clause 5 (2026-08-18) forbids use in competing list or tracker services. Kotora is only a
     client for the user's own account: never keep a list of our own built from AniList data, never
     export AniList data as a backup, never crawl or hoard, and respect the rate limit (budget 25 requests
     a minute).

@@ -58,7 +58,7 @@ and `docs/ROADMAP.md` before starting work on a new machine.
 
 Full details in `docs/DESIGN.md` section 12.
 
-1. MyAnimeList first (v0.1). AniList in v0.2, strictly as a client of the
+1. MyAnimeList first (v0.1). AniList in v0.2 (v0.3 since 2026-11-15), strictly as a client of the
    user's own list (AniList API terms, clause 5, 2026-08-18).
 2. Torrent/RSS feeds: later, opt-in, no default sources.
 3. Automatic progress updates: a Settings switch, off by default.
@@ -67,7 +67,11 @@ Full details in `docs/DESIGN.md` section 12.
 6. macOS uses XDG paths, like Uzumaki.
 7. Tokens in a 0600 file with a warning; no keyring.
 8. Streaming sites in the browser: recommend MAL-Sync.
-9. v0.1 packaging: `install.sh` + AUR. AppImage and DMG from v0.2.
+9. v0.1 packaging: `install.sh` + AUR. AppImage and DMG from v0.2 (v0.3 since 2026-11-15).
+11. (2026-11-15) Last episode sets Completed.
+12. (2026-11-15, after the first live test on Arch) Stage 5 comes before the release: the Client ID
+    from the app, zero-config detection, search and add, details page. AniList, library folders,
+    corrections UI, AppImage/DMG move to v0.3. DESIGN.md §12.12.
 10. Separate project from Taiga, with clear credit (README + About).
 
 Players for v0.1: mpv (IPC socket + MPRIS), VLC (MPRIS), mpc-qt (MPRIS) on
@@ -217,4 +221,4 @@ entry you don't mind changing back.
 2. Decide on the 15-minute refresh, and the open points of Stage 3 (docs/ROADMAP.md).
 3. Stage 4 review and the live player tests above; then the open points of Stage 4 (docs/ROADMAP.md),
    among them whether the last episode sets Completed.
-4. Stage 5: release 0.1.
+4. Stage 5 (after the first live test), then Stage 6: release 0.1.

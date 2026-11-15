@@ -2,7 +2,7 @@
 
 The plan, in stages. Each stage ends with a review by the user before the next one starts. The design and
 its reasons are in [DESIGN.md](DESIGN.md); the user's decisions of 2026-11-14 are in its section 12.
-v0.1 is MyAnimeList; AniList comes in v0.2.
+v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see Stage 5).
 
 ## Status
 
@@ -21,6 +21,8 @@ v0.1 is MyAnimeList; AniList comes in v0.2.
 - **Stage 4, detection (completes v0.1):** built on branch `stage-4` (2026-11-15, on top of `stage-3`),
   waiting for review and the user's live player tests on Arch and the Mac. Detectors are tested with
   recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus (Docker).
+- **Stage 5, after the first live test:** added 2026-11-15 from the user's feedback; on branch `stage-5`
+  (on top of `stage-4`). The release moves to Stage 6.
 
 ## Stage 0: design
 
@@ -129,7 +131,7 @@ real sign-in and sync are the user's live test (STATUS.md says what to run).
   *Open:* the 15-minute refresh while the window is visible (DESIGN.md §5.4). It needs a timer, so it waits
   until we decide how to keep CPU at 0. Today: sync at start, after sign-in, and on the Refresh button / Retry.
 - [x] Rate limiter (20 requests a minute, 1 s apart) with 429 handling (`Retry-After`, at most 3 retries).
-- [x] A service trait in `core` (`ListService`), so AniList can be added in v0.2 without touching the queue.
+- [x] A service trait in `core` (`ListService`), so AniList can be added in v0.3 without touching the queue.
 - [x] Scenes: signed out, no Client ID, signing in, sign-in failed, loading, empty, list, offline, syncing,
   sign in again, search, no match, sort, Settings (signed in and out).
 - [ ] Live test by the user: sign in with the real MAL account, read the list (STATUS.md).
@@ -205,7 +207,7 @@ real players are the user's live test (STATUS.md).
   "Season 2", "S2", "II") is sure, a close one (letter-pair similarity ≥ 75 %) or an episode past the
   count is unsure. The user's pick and "not an anime" are cached (schema 3, `recognition`); with no match
   on the list, one MAL search (`GET /anime?q=`, shared rate budget, signed in and online only), cached
-  30 days. A hit on the list is unsure; a hit elsewhere shows "not on your list" (adding is v0.4).
+  30 days. A hit on the list is unsure; a hit elsewhere shows "not on your list" (adding comes in Stage 5).
   anitomy check: 240 made-up names (10 titles × 8 patterns × 3 episodes) all right; upstream anitomy's
   own `test/data.json` (run by hand, not in the repo): 160 of 182 with upstream's title and episode.
 - [x] Update decision, Now Playing banner (on every page), desktop notification, Update / Not now /
@@ -230,39 +232,71 @@ Open after Stage 4:
 - Recording an episode of a Plan to watch entry sets Watching (decided here, as MAL's site does; easy to
   drop).
 - The notification has no buttons: Update is in the app or `kot confirm`. On macOS, `osascript` may show
-  it as "Script Editor" until there is an app bundle (v0.2).
+  it as "Script Editor" until there is an app bundle (v0.3).
 - VLC's web password and the mpv socket paths are set in `config.toml`, not in Settings; socket path
   changes need a restart.
-- "Wrong anime…" lists the closest titles only, no search; the corrections UI is v0.2.
+- "Wrong anime…" lists the closest titles only, no search; the corrections UI is v0.3.
 - The page's position is worked out from the clock when the page is drawn; it doesn't move by itself
   (no timer).
 
-## Stage 5: release 0.1
+## Stage 5: after the first live test (part of v0.1)
+
+Why (user feedback, 2026-11-15): the user's first live test of Stage 4 on Arch (KDE Wayland) showed two
+blockers and two gaps. The Welcome page asked them to edit `~/.config/kotora/config.toml` by hand for
+the Client ID, and their mpv had neither an IPC socket nor mpv-mpris, so nothing was detected. And
+without search-and-add and a details page, a show found by detection but missing from the list was a
+dead end. These items come forward from v0.3/v0.4 into v0.1; AniList, library folders with "play next",
+the corrections UI and AppImage/DMG move to v0.3 to make room (DESIGN.md §12.12).
+
+- [ ] **Client ID from the app:** a three-step guide on the Welcome page (open MAL's API page, create an
+  app of type "other" with the redirect URL and a Copy button, paste the ID), a field with Save that
+  writes `config.toml` (comments kept, 0600) and enables Sign in at once, an inline error for a bad ID.
+  The same field in Settings (masked, with Change). `kot config client-id ID`.
+- [ ] **Zero-config detection:**
+  - Linux: a process detector that finds mpv, VLC, mpc-qt, Celluloid and Haruna owned by the user and
+    reads their open video file from `/proc/<pid>/fd`. Light: a cheap scan every few seconds, measured.
+    No position: the file counts as watched after it has been open for a set time.
+  - IPC/MPRIS data wins when the same player gives both; no double counting.
+  - macOS: the same through `libproc` if it fits in the stage, else a stub and a note here.
+  - "Precise mode": when mpv is found by its process but has no socket, a banner offers once to add
+    `input-ipc-server=…` to `~/.config/mpv/mpv.conf` (one click, never twice, shows what was written).
+  - Settings shows each player's real state ("mpv · process · playing", "IPC socket").
+- [ ] **Search and add:** the search bar shows the list's matches first, then MAL results (debounced,
+  shared rate budget, signed in and online only, cached briefly) with cover, type, episodes, season,
+  score, "+ Watching" and the other statuses. Adding goes through the queue. `kot add QUERY|ID`.
+- [ ] **Details page:** a click on a title (list row, search result, Now Playing) opens its MAL
+  information and the user's entry (or "Add to list") in the main area, with Back and "Open on
+  MyAnimeList". Details are cached in SQLite only for titles on the list or recently shown.
+- [ ] Scenes for every new view and state; budgets measured.
+- [ ] Live test by the user on Arch.
+
+## Stage 6: release 0.1
 
 - [ ] `install.sh` (copy Uzumaki's: `~/.local`, desktop file, icons, `--uninstall`).
 - [ ] Icon (placeholder until the separate icon work: a tiger that cites Taiga's), README with screenshots
   from `--snap` scenes and a clear credit to Taiga, About page credits, CHANGELOG.
-- [ ] AUR PKGBUILD (source). AppImage and DMG are not part of v0.1 (v0.2).
+- [ ] AUR PKGBUILD (source). AppImage and DMG are not part of v0.1 (v0.3).
 - [ ] Live test by the user on Arch (Wayland and X11) and on the Mac.
 - [ ] Make the repo public (the user's call).
 
 ## Later (v0.2 and on, order to be agreed)
 
+Reordered 2026-11-15 after the first live test (Stage 5): the open-file detectors, search and add and
+the details page moved into v0.1; AniList, AppImage/DMG, the corrections UI and library folders moved
+to v0.3.
+
 - **v0.2:**
-  - AniList (implicit grant; re-check the terms first) and several accounts
-  - AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed)
   - the mpv Lua script (`extras/mpv/kotora.lua` → `kot report`)
-  - corrections UI ("this file / folder is X")
   - local history with undo
 - **v0.3:**
-  - fallback detectors: Linux `/proc/<pid>/fd`, macOS `libproc`, opt-in window titles on X11, Hyprland,
-    sway and wlroots
-  - anime-relations episode mapping
+  - AniList (implicit grant; re-check the terms first) and several accounts
+  - AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed)
+  - corrections UI ("this file / folder is X")
   - library folders and "play next episode"
+  - opt-in window-title detectors on X11, Hyprland, sway and wlroots
+  - anime-relations episode mapping
 - **v0.4:**
   - seasons browser
-  - search and add
-  - details page
   - statistics
   - Discord Rich Presence
   - tray, hidden start, auto-start
