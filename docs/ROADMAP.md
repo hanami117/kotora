@@ -6,22 +6,43 @@ v0.1 is MyAnimeList; AniList comes in v0.2.
 
 ## Status
 
-- **Stage 0, design:** decisions recorded 2026-11-14. No code yet.
-- **Stage 0.5, look:** mockup and design spec on branch `mockup` (2026-11-15), waiting for review.
+- **Stage 0, design:** done; `design` merged into `main` 2026-11-15.
+- **Stage 0.5, look:** mockup and design spec approved by the user 2026-11-15.
+- **Stage 1, skeleton:** next.
 
 ## Stage 0: design
 
 - [x] Research: Taiga today, alternatives, building blocks, service terms, detection on Wayland and macOS
 - [x] docs/DESIGN.md, docs/ROADMAP.md, CLAUDE.md
 - [x] The user answers the open questions (DESIGN.md §12, "Decisions (2026-11-14)"); the design is updated
-- [ ] Merge the `design` branch (the user's call)
+- [x] Merge the `design` branch (2026-11-15)
 
-## Stage 0.5: look (current)
+## Stage 0.5: look
 
 - [x] `mockup/kotora.html`: static mockup of every v0.1 screen, Linux and macOS chrome
 - [x] `docs/design-spec.md`: palette from the C2 icon, type, spacing, states, Rune tokens
 - [x] `mockup/shots/`: screenshots for review
-- [ ] Review by the user
+- [x] Review by the user (2026-11-15: approved)
+
+## Lightness budgets (from Stage 1 on)
+
+Kotora has no Electron, no bridge and no audio, so it must stay small. Measure in release builds at the end
+of every stage and write the numbers here. A stage that breaks a budget explains why or fixes it.
+The first numbers are targets; Stage 1 measures the real baseline and may adjust them once, with a reason.
+
+| what | target | how to measure |
+|---|---|---|
+| release binary (`kotora`, stripped) | 25 MB or less | `ls -l target/release/kotora` |
+| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output |
+| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` |
+| memory at rest, window closed (tray / hidden) | 50 MB or less | same |
+| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll |
+| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log |
+| `kot status` round trip | 20 ms or less | `time kot status` |
+
+Rules that keep it there: no async runtime, no web view, workers only when there is work, covers decoded at
+display size and evicted, detection by events (MPRIS signals, mpv IPC) not by polling, and every new
+dependency checked for its size (`cargo bloat` when in doubt).
 
 ## Stage 1: skeleton
 
