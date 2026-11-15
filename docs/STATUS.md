@@ -30,7 +30,7 @@ Full details in `docs/DESIGN.md` section 12.
 2. Torrent/RSS feeds: later, opt-in, no default sources.
 3. Automatic progress updates: a Settings switch, off by default.
 4. Own identity with a tiger icon that nods to Taiga (see below).
-5. CLI name: still open (see below).
+5. CLI name: `kot` (decided 2026-11-15).
 6. macOS uses XDG paths, like Uzumaki.
 7. Tokens in a 0600 file with a warning; no keyring.
 8. Streaming sites in the browser: recommend MAL-Sync.
@@ -42,28 +42,32 @@ Linux; mpv, IINA and VLC on macOS.
 
 ## Icon
 
-Finalists in `assets/icons/concepts/`:
-
-- `C2.svg`: angular "ninja" tiger head with a bokken, navy tile.
-- `A2.svg`: feisty tiger cub, night-blue tile.
+Chosen 2026-11-15: **`C2.svg`**, the angular "ninja" tiger head with a bokken, navy tile.
+The other finalist was `A2.svg` (feisty tiger cub, night-blue tile). Both stay in `assets/icons/concepts/`.
 - `sheet-v1.png`: all first-round concepts on light and dark backgrounds.
 
 Two refinements of C2 were rejected (one too intimidating, one too childish).
-The final icon still needs a simplified small variant for 16-32 px, following
+C2 still needs a simplified small variant for 16-32 px (the bokken may drop out there), following
 Uzumaki's `assets/icons` pipeline (`rsvg-convert`).
 
 ## Open questions
 
-- CLI name: `kot` (free), `tora` (clashes with the AUR package `tora`, the TOra
-  SQL IDE, which owns `/usr/bin/tora`), or `kotora`.
 - VLC on macOS: detect it through its local HTTP interface (user enables it)?
-- Final icon: C2 or A2.
-- A MyAnimeList Client ID must be registered (free, myanimelist.net).
 - README still lists AniList, MyAnimeList and Kitsu; update it to MAL first.
+
+## MyAnimeList app registration (2026-11-15)
+
+- Registered as app type "other" (no client secret), non-commercial, homepage `https://kotora.moe`.
+- Redirect: `http://127.0.0.1:47321/callback`. Port 47321 is fixed; sign-in must use exactly this URL.
+- The Client ID is NOT in the repo (DESIGN.md 8.1). It lives in the user's local
+  `~/.config/kotora/config.toml` (`[mal] client_id`) on each machine.
+
+## Domain
+
+`kotora.moe` (homepage; a privacy page can go there later).
 
 ## Next steps
 
-1. Pick the icon and the CLI name.
-2. Merge `design` into `main`.
-3. Stage 1: workspace skeleton based on Uzumaki (pinned Rune revision, app and
+1. Merge `design` into `main`.
+2. Stage 1: workspace skeleton based on Uzumaki (pinned Rune revision, app and
    ctl crates, headless `--snap` scenes, `install.sh`).

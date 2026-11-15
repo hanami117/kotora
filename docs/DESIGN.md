@@ -359,7 +359,7 @@ bugs we find in Taiga or its data upstream when they are relevant.
   crate's typed API assumes S256, so hand-roll this small flow). The `code_verifier` (43 to 128
   characters) is also the `code_challenge`. Register the app type "other" (no client secret; the
   exchange then sends only the client id and the verifier) with a loopback redirect, for example
-  `http://127.0.0.1:<fixed port>/callback`. The exact redirect must be registered, so the port is fixed
+  `http://127.0.0.1:47321/callback` (registered 2026-11-15). The exact redirect must be registered, so the port is fixed
   and shown in the docs.
   1. Open the browser at the authorize URL with `client_id`, `code_challenge`, `state`, `redirect_uri`.
   2. Our loopback listener receives `code`, checks `state`, and exchanges it with the verifier.
@@ -484,8 +484,8 @@ The user answered the open questions. These are decided; the rest of this docume
 2. **Torrent and RSS feeds:** later, opt-in, no default sources.
 3. **Auto-update without confirmation:** a Settings switch, off by default. The default flow is the
    confirmation banner.
-4. **Identity:** Kotora's own, with a tiger icon that cites Taiga. Icon work is separate; a placeholder
-   stays until then.
+4. **Identity:** Kotora's own, with a tiger icon that cites Taiga. Icon chosen 2026-11-15: concept C2
+   (angular tiger head with a bokken); a small 16-32 px variant is still to do.
 5. **CLI name `kot`:** confirmed.
 6. **macOS paths:** XDG, like Uzumaki: confirmed.
 7. **No keyring:** the token is in a 0600 file, with a warning (section 11): confirmed.
