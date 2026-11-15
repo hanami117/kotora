@@ -57,6 +57,7 @@ pub fn start(s: &mut State) {
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
+    crate::precise::check_conf(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
     let detector = kotora_detect::start(settings(&c), move |r| {

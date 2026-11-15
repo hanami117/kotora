@@ -295,7 +295,7 @@ pub const SCENES: &[Scene] = &[
     }),
     ("precise-already-set", |s| {
         process_only(s);
-        s.precise_written(crate::precise::Precise::AlreadySet { file: "~/.config/mpv/mpv.conf".into(), socket: "/tmp/mpvsocket".into() });
+        s.precise_written(crate::precise::Precise::AlreadySet { file: "~/.config/mpv/mpv.conf".into(), socket: "/tmp/mpvsocket".into(), watched: false });
     }),
     ("precise-failed", |s| {
         process_only(s);
@@ -567,7 +567,7 @@ mod tests {
     fn settings_has_updates_and_players() {
         for size in [(1360.0, 860.0), (960.0, 600.0)] {
             let rt = render("settings-page", size);
-            for key in ["updates-card", "set/auto", "set/threshold", "set/keep-higher", "set/asks-on", "players-card", "set/switch/mpv"] {
+            for key in ["updates-card", "set/auto", "set/threshold", "set/keep-higher", "set/asks-on", "players-card", "set/switch/mpv", "set/process-scan", "set/process-minutes/plus"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }

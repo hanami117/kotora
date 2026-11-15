@@ -21,7 +21,7 @@ use crate::model::State;
 use crate::theme::{self, PAL};
 use crate::ui::{button, ghost, small_button};
 
-/// The process source's label (`kotora_detect::Via::Process.label()` on the detection branch).
+/// The process source's label (`kotora_detect::Via::Process.label()`).
 pub const VIA_PROCESS: &str = "process";
 /// mpv's IPC source's label (`Via::MpvIpc.label()`).
 pub const VIA_IPC: &str = "IPC socket";
@@ -51,8 +51,8 @@ fn live(led: Led) -> bool {
 pub enum Precise {
     /// Lines appended to the file.
     Wrote { file: String, text: String },
-    /// `mpv.conf` already sets a socket: nothing written.
-    AlreadySet { file: String, socket: String },
+    /// `mpv.conf` already sets a socket: nothing written. `watched`: Kotora watches that path.
+    AlreadySet { file: String, socket: String, watched: bool },
     Failed(String),
 }
 
@@ -64,6 +64,9 @@ pub struct Offer {
     /// Writing `mpv.conf` now.
     pub busy: bool,
     pub done: Option<Precise>,
+    /// `mpv.conf` already sets a socket Kotora watches (checked at start and after a write):
+    /// mpv only needs a restart, so nothing is offered.
+    pub conf_watched: bool,
 }
 
 /// `/home/x/.config/mpv/mpv.conf` → `~/.config/mpv/mpv.conf` (shown, never saved).
@@ -75,8 +78,14 @@ fn tilde(path: &str) -> String {
 }
 
 impl State {
-    /// mpv is seen by its process only: no IPC socket answers.
+    /// mpv is seen by its process only (no IPC socket answers) and `mpv.conf` doesn't set a
+    /// socket Kotora watches yet: precise detection is worth offering.
     pub fn mpv_process_only(&self) -> bool {
+        self.mpv_seen_by_process() && !self.precise.conf_watched
+    }
+
+    /// mpv is seen by its process only: no IPC socket answers.
+    fn mpv_seen_by_process(&self) -> bool {
         self.prefs.players.mpv
             && self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
             && !self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led))
@@ -108,6 +117,9 @@ impl State {
 
     pub fn precise_written(&mut self, r: Precise) -> bool {
         self.precise.busy = false;
+        if matches!(r, Precise::Wrote { .. } | Precise::AlreadySet { watched: true, .. }) {
+            self.precise.conf_watched = true;
+        }
         self.precise.done = Some(r);
         true
     }
@@ -137,16 +149,41 @@ impl State {
     }
 }
 
-/// Appends mpv's IPC socket to the user's `mpv.conf`. Runs on a short thread.
+/// The socket paths Kotora watches for mpv (`[players] mpv_sockets`, else the default).
+fn watched_sockets() -> Vec<std::path::PathBuf> {
+    let c = config::Config::load(&paths::config_file()).unwrap_or_default();
+    crate::detect::settings(&c).mpv_sockets
+}
+
+/// At start (never headless; on a short thread): does `mpv.conf` already set a socket Kotora
+/// watches? Then mpv only needs a restart and no offer is shown.
+pub fn check_conf(h: crate::model::Handle) {
+    let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
+        let watched = kotora_detect::mpvconf::check().is_ok_and(|c| c.watched(&watched_sockets()));
+        h.update_if(move |s, _| {
+            let changed = s.precise.conf_watched != watched;
+            s.precise.conf_watched = watched;
+            changed
+        });
+    });
+}
+
+/// Appends mpv's IPC socket (the first path Kotora watches) to the user's `mpv.conf`. Runs on a
+/// short thread.
 fn write_mpv_conf() -> Precise {
-    // TODO(stage-5-detect): wire to the detection branch once merged:
-    //   let socket = <the first of `[players] mpv_sockets`, else kotora_detect::mpv::default_sockets()[0]>;
-    //   match kotora_detect::mpvconf::enable(&socket) {
-    //       Ok(Enabled::Wrote { file, text }) => Precise::Wrote { file: file.display().to_string(), text },
-    //       Ok(Enabled::AlreadySet { file, socket }) => Precise::AlreadySet { file: file.display().to_string(), socket: socket.display().to_string() },
-    //       Err(e) => Precise::Failed(format!("Can't write mpv.conf: {e}")),
-    //   }
-    Precise::Failed("This build can't write mpv.conf yet (the mpv.conf helper comes with the detection work).".into())
+    use kotora_detect::mpvconf::{self, Enabled};
+    let sockets = watched_sockets();
+    let Some(socket) = sockets.first() else {
+        return Precise::Failed("No mpv socket path is set: add one to [players] mpv_sockets in config.toml.".into());
+    };
+    match mpvconf::enable(socket) {
+        Ok(Enabled::Wrote { file, text }) => Precise::Wrote { file: file.display().to_string(), text },
+        Ok(Enabled::AlreadySet { file, socket }) => {
+            let watched = sockets.contains(&socket);
+            Precise::AlreadySet { file: file.display().to_string(), socket: socket.display().to_string(), watched }
+        }
+        Err(e) => Precise::Failed(format!("Can't write mpv.conf: {e}")),
+    }
 }
 
 /// The banner on top of the pages (below the Now Playing banner, never with it).
@@ -176,11 +213,15 @@ pub fn banner(s: &State) -> El {
                     .child(text(lines.trim_end().to_string()).key("precise/written").font(mono).color(PAL.text).wrap()),
             ))
             .child(button("precise/ok", "OK", false, Some(State::close_precise))),
-        Some(Precise::AlreadySet { file, socket }) => base
+        Some(Precise::AlreadySet { file, socket, watched }) => base
             .child(icon(&icons::CHECK, 18.0).color(PAL.ok()))
             .child(words(
                 "mpv.conf already sets an IPC socket",
-                text(format!("{} has input-ipc-server={}. Nothing was changed. If Kotora doesn't see it, add that path to [players] mpv_sockets in config.toml, and restart mpv.", tilde(file), tilde(socket)))
+                text(if *watched {
+                    format!("{} has input-ipc-server={}, which Kotora watches. Nothing was changed. Restart mpv to use it.", tilde(file), tilde(socket))
+                } else {
+                    format!("{} has input-ipc-server={}, which Kotora doesn't watch. Nothing was changed. Add that path to [players] mpv_sockets in config.toml, then restart Kotora and mpv.", tilde(file), tilde(socket))
+                })
                     .font(theme::LABEL)
                     .color(PAL.dim)
                     .wrap(),
@@ -212,12 +253,12 @@ pub fn banner(s: &State) -> El {
 
 /// Settings → Players, under mpv: what precise detection would add, with Turn on.
 pub fn settings_hint(s: &State) -> Option<El> {
-    if !s.mpv_process_only() {
+    if !s.mpv_seen_by_process() {
         return None;
     }
-    let (line, action) = match &s.precise.done {
-        Some(Precise::Wrote { .. }) => ("Precise detection is set; restart mpv to use it.".to_string(), None),
-        _ => ("Seen by its open file only: no position. Precise detection adds its IPC socket to mpv.conf.".to_string(), Some(small_button("set/precise-on", "Turn on", false, Some(State::enable_precise)))),
+    let (line, action) = match s.precise.conf_watched {
+        true => ("mpv.conf sets the IPC socket Kotora watches; restart mpv to use it.".to_string(), None),
+        false => ("Seen by its open file only: no position. Precise detection adds its IPC socket to mpv.conf.".to_string(), Some(small_button("set/precise-on", "Turn on", false, Some(State::enable_precise)))),
     };
     let mut r = row()
         .key("set/precise")
@@ -287,15 +328,30 @@ mod tests {
         s.enable_precise();
         assert!(s.prefs.precise_answered);
         s.precise_written(Precise::Wrote { file: "/tmp/mpv/mpv.conf".into(), text: "input-ipc-server=/run/user/1000/mpv.sock\n".into() });
-        assert!(s.precise_banner());
+        assert!(s.precise_banner() && s.precise.conf_watched);
         s.close_precise();
         assert!(!s.precise_banner());
+        // Settings now says to restart mpv, with no button.
+        assert!(settings_hint(&s).is_some() && !s.mpv_process_only());
+    }
+
+    #[test]
+    fn no_offer_when_mpv_conf_already_sets_a_watched_socket() {
+        let mut s = process_only();
+        s.precise.conf_watched = true;
+        assert!(!s.mpv_process_only() && !s.precise_banner());
+        // A socket Kotora doesn't watch: the answer says so and the offer stays possible.
+        let mut s = process_only();
+        s.precise_written(Precise::AlreadySet { file: "/tmp/mpv.conf".into(), socket: "/tmp/other.sock".into(), watched: false });
+        assert!(!s.precise.conf_watched);
     }
 
     #[test]
     fn source_states_keep_their_label() {
         let p = PlayerState::from(SourceStatus { switch: Switch::Vlc, via: kotora_detect::Via::Mpris, line: "playing".into(), led: Led::Playing });
         assert_eq!(p.via, "MPRIS");
+        assert_eq!(VIA_PROCESS, kotora_detect::Via::Process.label());
+        assert_eq!(VIA_IPC, kotora_detect::Via::MpvIpc.label());
         assert_eq!(tilde("/nowhere/x"), "/nowhere/x");
     }
 }

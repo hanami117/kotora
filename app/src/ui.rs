@@ -1893,7 +1893,7 @@ fn updates_card(s: &State) -> El {
         )
         .child(option(
             "Update automatically",
-            "Record confident matches without asking. Unsure matches still ask. Off by default.".into(),
+            "Record confident matches without asking. Unsure matches, and players seen by their open file only, still ask. Off by default.".into(),
             switch("set/auto".into(), "Update automatically", p.auto, State::set_auto),
         ))
         .child(option("Offer the update at", "Share of the episode watched (or half, when the player stops)".into(), threshold))
@@ -1938,6 +1938,29 @@ fn players_card(s: &State) -> El {
             c = c.child(h);
         }
     }
+    let p = &s.prefs.players;
+    let minutes = p.process_minutes.clamp(1, 180);
+    let stepper = row()
+        .key("set/process-minutes")
+        .h(28.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border_strong)
+        .child(cell("set/process-minutes/minus".into(), "Fewer minutes".into(), false, |s| s.step_process_minutes(false)).child(text("\u{2212}").font(theme::LABEL).color(PAL.dim)))
+        .child(row().min_w(64.0).center().child(text(format!("{minutes} min")).font(theme::LABEL_NUM).color(PAL.text)))
+        .child(cell("set/process-minutes/plus".into(), "More minutes".into(), false, |s| s.step_process_minutes(true)).child(text("+").font(theme::LABEL).color(PAL.dim)));
+    c = c
+        .child(option(
+            "Find players by their open files",
+            "No setup, but no position or pause: a file counts after it stays open long enough, and Kotora always asks.".into(),
+            switch("set/process-scan".into(), "Find players by their open files", p.process_scan, State::set_process_scan),
+        ))
+        .child(option(
+            "Count a file after it stays open",
+            "Open files only, when the episode's length is unknown (default 15 minutes).".into(),
+            if p.process_scan { stepper } else { stepper.opacity(0.5) },
+        ));
     c.child(
         text("Players are found by their open files with no setup; \u{201c}process\u{201d} means no position, so a file counts after it stays open a while. Socket paths and VLC's web password: config.toml ([players] mpv_sockets, [vlc]). Streaming sites in the browser: use MAL-Sync.")
             .font(theme::LABEL)

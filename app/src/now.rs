@@ -244,7 +244,9 @@ impl State {
         }
         let Some((i, ep)) = self.offer() else { return };
         let title = self.entries[i].title.clone();
-        let auto = self.prefs.auto && now.sure();
+        // A player seen by its open file only knows no position or pause: the time open is a
+        // guess, so it always asks, even with "Update automatically" on.
+        let auto = self.prefs.auto && now.sure() && now.via != crate::precise::VIA_PROCESS;
         if let Some(n) = &mut self.now {
             n.acted = true;
         }
@@ -393,6 +395,23 @@ impl State {
         crate::detect::save_setting(self, "updates", "keep_higher_progress", on.to_string());
     }
 
+    pub fn set_process_scan(&mut self, on: bool) {
+        self.prefs.players.process_scan = on;
+        crate::detect::save_setting(self, "players", "process_scan", on.to_string());
+    }
+
+    /// Settings' minutes stepper: 1, 5, 10, … 180.
+    pub fn step_process_minutes(&mut self, up: bool) {
+        let m = self.prefs.players.process_minutes.clamp(1, 180);
+        let next = if up { if m < 5 { 5 } else { m + 5 } } else if m <= 5 { 1 } else { m - 5 };
+        let next = next.clamp(1, 180);
+        if next == m {
+            return;
+        }
+        self.prefs.players.process_minutes = next;
+        crate::detect::save_setting(self, "players", "process_minutes", next.to_string());
+    }
+
     pub fn set_player(&mut self, sw: Switch, on: bool) {
         self.prefs.players.set(sw.config_key(), on);
         crate::detect::save_setting(self, "players", sw.config_key(), on.to_string());
@@ -401,11 +420,16 @@ impl State {
     /// The source line for a switch: "IPC socket · playing".
     pub fn player_line(&self, sw: Switch) -> (String, kotora_detect::Led) {
         let mine: Vec<&crate::precise::PlayerState> = self.players.iter().filter(|s| s.switch == sw).collect();
-        let best = mine.iter().max_by_key(|s| match s.led {
-            kotora_detect::Led::Playing => 3,
-            kotora_detect::Led::Idle => 2,
-            kotora_detect::Led::Problem => 1,
-            kotora_detect::Led::Off => 0,
+        // The liveliest source; on a tie (both not running, say) the one that knows the position
+        // (IPC socket, MPRIS, web interface) over the process scan.
+        let best = mine.iter().max_by_key(|s| {
+            let led = match s.led {
+                kotora_detect::Led::Playing => 3,
+                kotora_detect::Led::Idle => 2,
+                kotora_detect::Led::Problem => 1,
+                kotora_detect::Led::Off => 0,
+            };
+            (led, s.via != crate::precise::VIA_PROCESS)
         });
         match best {
             Some(s) => (format!("{} \u{b7} {}", s.via, s.line), s.led),
@@ -495,6 +519,50 @@ mod tests {
         s.now_seen(Some(seen("Lantern of Kirigaoka - 06.mkv", Some(0), false, true)));
         assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 5, "unsure: asks");
         assert!(s.banner());
+
+        // Seen by its open file only (no position or pause): a sure match still asks.
+        let mut s = fresh();
+        s.prefs.auto = true;
+        let mut v = seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true);
+        v.track.playing.via = kotora_detect::Via::Process;
+        v.track.playing.position = None;
+        v.track.playing.duration = None;
+        s.now_seen(Some(v));
+        assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 5, "process: asks");
+        assert!(s.banner() && s.now.as_ref().unwrap().recorded.is_none());
+    }
+
+    #[test]
+    fn the_source_that_knows_the_position_wins_a_tie() {
+        use crate::precise::{PlayerState, VIA_IPC, VIA_PROCESS};
+        use kotora_detect::Led;
+        let p = |via, led| PlayerState { switch: Switch::Mpv, via, line: "not running".into(), led };
+        let mut s = fresh();
+        s.players = vec![p(VIA_IPC, Led::Off), p(VIA_PROCESS, Led::Off)];
+        assert!(s.player_line(Switch::Mpv).0.starts_with("IPC socket"));
+        s.players = vec![p(VIA_PROCESS, Led::Off), p(VIA_IPC, Led::Off)];
+        assert!(s.player_line(Switch::Mpv).0.starts_with("IPC socket"));
+        s.players = vec![p(VIA_IPC, Led::Off), p(VIA_PROCESS, Led::Playing)];
+        assert!(s.player_line(Switch::Mpv).0.starts_with("process"));
+    }
+
+    #[test]
+    fn process_minutes_step_within_1_to_180() {
+        let mut s = fresh();
+        assert_eq!(s.prefs.players.process_minutes, 15);
+        s.step_process_minutes(false);
+        s.step_process_minutes(false);
+        assert_eq!(s.prefs.players.process_minutes, 5);
+        s.step_process_minutes(false);
+        s.step_process_minutes(false);
+        assert_eq!(s.prefs.players.process_minutes, 1);
+        s.step_process_minutes(true);
+        assert_eq!(s.prefs.players.process_minutes, 5);
+        s.prefs.players.process_minutes = 178;
+        s.step_process_minutes(true);
+        assert_eq!(s.prefs.players.process_minutes, 180);
+        s.step_process_minutes(true);
+        assert_eq!(s.prefs.players.process_minutes, 180);
     }
 
     #[test]
