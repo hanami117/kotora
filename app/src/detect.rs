@@ -46,6 +46,8 @@ pub fn settings(c: &Config) -> Settings {
         mpv_sockets: if c.players.mpv_sockets.is_empty() { d.mpv_sockets } else { c.players.mpv_sockets.iter().map(PathBuf::from).collect() },
         vlc_port: c.vlc.port,
         vlc_password: c.vlc.password.clone(),
+        processes: c.players.process_scan,
+        process_minutes: c.players.process_minutes.clamp(1, 180),
     }
 }
 
@@ -211,5 +213,8 @@ mod tests {
         assert_eq!(s.mpv_sockets, vec![PathBuf::from("/tmp/x.sock")]);
         assert_eq!((s.vlc_port, s.vlc_password.as_str()), (9090, "p"));
         assert_eq!(settings(&Config::default()).mpv_sockets, Settings::default().mpv_sockets);
+        assert!(s.processes && s.process_minutes == 15);
+        let c = Config::parse("[players]\nprocess_scan = false\nprocess_minutes = 0\n").unwrap();
+        assert_eq!((settings(&c).processes, settings(&c).process_minutes), (false, 1));
     }
 }

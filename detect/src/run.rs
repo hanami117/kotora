@@ -32,11 +32,15 @@ pub struct Settings {
     pub vlc_port: u16,
     /// VLC's web password (macOS); empty: not set up.
     pub vlc_password: String,
+    /// The process source (`procfs`): players' open files, no setup needed.
+    pub processes: bool,
+    /// Process source: minutes a file must stay open to count when its duration is unknown.
+    pub process_minutes: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { threshold: 0.8, off: Vec::new(), mpv_sockets: crate::mpv::default_sockets(), vlc_port: 8080, vlc_password: String::new() }
+        Settings { threshold: 0.8, off: Vec::new(), mpv_sockets: crate::mpv::default_sockets(), vlc_port: 8080, vlc_password: String::new(), processes: true, process_minutes: crate::watch::OPEN_MINUTES }
     }
 }
 
@@ -55,6 +59,11 @@ impl Shared {
         let s = self.get();
         (!s.off.contains(&Switch::Vlc), s.vlc_port, s.vlc_password)
     }
+
+    /// The process source is on.
+    pub fn processes(&self) -> bool {
+        self.get().processes
+    }
 }
 
 /// The running detection. Dropping it leaves the threads blocked and idle until the app ends.
@@ -62,6 +71,7 @@ pub struct Detector {
     tx: Sender<Input>,
     shared: Arc<Shared>,
     vlc_wake: Option<Sender<()>>,
+    proc_wake: Option<Sender<()>>,
 }
 
 impl Detector {
@@ -69,7 +79,7 @@ impl Detector {
     pub fn set(&self, s: Settings) {
         *self.shared.settings.lock().unwrap_or_else(|e| e.into_inner()) = s;
         let _ = self.tx.send(Input::Settings);
-        if let Some(w) = &self.vlc_wake {
+        for w in [&self.vlc_wake, &self.proc_wake].into_iter().flatten() {
             let _ = w.send(());
         }
     }
@@ -97,9 +107,18 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
     } else {
         None
     };
+    let proc_wake = if cfg!(any(target_os = "linux", target_os = "macos")) {
+        let (wtx, wrx) = mpsc::channel();
+        let (sh, tx) = (shared.clone(), tx.clone());
+        let _ = std::thread::Builder::new().name("kotora-procs".into()).spawn(move || crate::procfs::run(sh, wrx, tx));
+        Some(wtx)
+    } else {
+        None
+    };
     let sh = shared.clone();
     let _ = std::thread::Builder::new().name("kotora-watch".into()).spawn(move || {
         let mut w = Watch::new(settings.threshold);
+        w.open_secs = f64::from(settings.process_minutes) * 60.0;
         w.off = settings.off.iter().copied().collect();
         loop {
             let now = crate::clock();
@@ -115,6 +134,7 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
                 Ok(Input::Settings) => {
                     let s = sh.get();
                     w.threshold = s.threshold;
+                    w.open_secs = f64::from(s.process_minutes) * 60.0;
                     w.off = s.off.iter().copied().collect();
                     let mut out = w.drop_off(now);
                     out.extend(w.tick(now));
@@ -128,5 +148,5 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
             }
         }
     });
-    Detector { tx, shared, vlc_wake }
+    Detector { tx, shared, vlc_wake, proc_wake }
 }
