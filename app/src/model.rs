@@ -819,6 +819,12 @@ impl State {
             Msg::ClientIdSaved(r) => self.client_id_saved(r),
             Msg::SignedOut => {
                 self.covers.clear();
+                // MyAnimeList's answers go with the account (search results, the open page).
+                self.online = Default::default();
+                if self.page == Page::Details {
+                    self.page = self.lit_page();
+                }
+                self.detail = None;
                 self.auth = Auth::SignedOut;
                 self.account = None;
                 self.entries.clear();
@@ -1221,8 +1227,11 @@ mod tests {
         assert!(s.worker.hold.load(Ordering::Relaxed));
         s.apply(Msg::SignedIn { user: "demo_user".into() });
         assert!(!s.worker.hold.load(Ordering::Relaxed));
+        s.open_details(crate::details::Stub::bare(9001, "x"));
+        s.online.show("x", crate::search::fake_hits());
         s.apply(Msg::SignedOut);
         assert!(s.ops.is_empty() && s.queue == 0);
+        assert!(s.detail.is_none() && s.page != Page::Details && s.online.hits.is_empty());
     }
 
     #[test]
