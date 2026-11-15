@@ -20,3 +20,6 @@ kotora-ctl = { path = "../ctl" }
 # Cover decoding at display size. Rune already builds this crate with these features, so it adds
 # no code of its own (the same version and features, one copy in the tree).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# WebP covers (MAL serves some as `.webp`): the pure-Rust decoder alone (MIT OR Apache-2.0).
+# `image`'s own `webp` feature links the encoder too: +0.56 MB stripped against +0.23 MB this way.
+image-webp = "0.2"

@@ -230,8 +230,29 @@ fn spawn_worker(queue: Arc<Mutex<Queue>>, handle: Handle, online: bool, prune: b
 /// Decodes a cover and shrinks it to fill `w` x `h` pixels exactly (cropping the overhang), so
 /// memory holds only what is drawn. Straight-alpha sRGB RGBA, as `ImageCache::rgba` takes it.
 fn decode(bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+    let img = if is_webp(bytes) { decode_webp(bytes)? } else { image::load_from_memory(bytes).map_err(|e| e.to_string())? };
     Ok(img.resize_to_fill(w, h, image::imageops::FilterType::Triangle).to_rgba8().into_raw())
+}
+
+/// A RIFF container holding WebP (MAL serves some covers as `.webp`).
+fn is_webp(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
+}
+
+/// WebP through `image-webp`'s decoder alone: `image`'s `webp` feature would also link the
+/// encoder (about 0.5 MB more in the release binary for the same decoder).
+fn decode_webp(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let (w, h) = d.dimensions();
+    let alpha = d.has_alpha();
+    let mut buf = vec![0; d.output_buffer_size().ok_or("WebP too large")?];
+    d.read_image(&mut buf).map_err(|e| e.to_string())?;
+    let img = if alpha {
+        image::RgbaImage::from_raw(w, h, buf).map(image::DynamicImage::ImageRgba8)
+    } else {
+        image::RgbImage::from_raw(w, h, buf).map(image::DynamicImage::ImageRgb8)
+    };
+    img.ok_or_else(|| "bad WebP buffer".into())
 }
 
 /// A made-up cover for the scenes: a two-colour diagonal poster with a pale band, unlike the
@@ -268,6 +289,21 @@ mod tests {
         let rgba = decode(&jpeg, 68, 96).unwrap();
         assert_eq!(rgba.len(), 68 * 96 * 4);
         assert!(decode(b"not an image", 68, 96).is_err());
+    }
+
+    /// MAL serves some covers as WebP: lossy (VP8) and lossless with alpha (VP8L), both 24 x 36.
+    #[test]
+    fn decode_webp_covers() {
+        for (bytes, name) in [(&include_bytes!("../tests/cover.webp")[..], "lossy"), (&include_bytes!("../tests/cover-alpha.webp")[..], "alpha")] {
+            assert!(is_webp(bytes), "{name}");
+            let rgba = decode(bytes, 68, 96).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(rgba.len(), 68 * 96 * 4, "{name}");
+            // The top is the orange end of the gradient.
+            assert!(rgba[0] > rgba[2], "{name}: {:?}", &rgba[..4]);
+        }
+        let alpha = decode(include_bytes!("../tests/cover-alpha.webp"), 24, 36).unwrap();
+        assert!((100..160).contains(&alpha[3]), "half transparent: {}", alpha[3]);
+        assert!(decode(b"RIFF\0\0\0\0WEBPVP8 broken", 68, 96).is_err());
     }
 
     /// Covers are kept at display size, and the memory budget holds however many are asked for.
