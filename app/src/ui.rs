@@ -333,13 +333,19 @@ fn search_box(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder("Search titles", PAL.faint)
+                .placeholder("Search titles or a MAL id", PAL.faint)
                 .on_edit(|s: &mut State| &mut s.query)
                 .on_input_change(|s: &mut State, tx: &mut Tx| {
                     tx.instant();
                     s.search_changed();
                 })
-                .on_submit(|_s: &mut State, tx: &mut Tx| tx.blur()),
+                .on_submit(|s: &mut State, tx: &mut Tx| {
+                    // A bare MyAnimeList id opens its page; otherwise Enter only leaves the box.
+                    if s.search_submit() {
+                        tx.instant();
+                    }
+                    tx.blur();
+                }),
         )
         .child(
             el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(kbd).font(TextStyle::new(10.0, 500.0)).color(PAL.faint)),

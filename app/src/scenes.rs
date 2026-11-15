@@ -236,6 +236,11 @@ pub const SCENES: &[Scene] = &[
         search(s, "zzzz", false);
         s.online.show("zzzz", vec![]);
     }),
+    // A bare number may be a MyAnimeList id: the "Open" line on top (Enter opens it).
+    ("search-mal-id", |s| {
+        search(s, "41590", false);
+        s.online.show("41590", vec![]);
+    }),
     // The details page of an anime on the list, opened from its row.
     ("details-on-list", |s| details(s, 0, true)),
     ("details-editor", |s| {
@@ -609,6 +614,8 @@ mod tests {
         assert!(render("search-online-error", (1280.0, 800.0)).find("sr/retry").is_some());
         assert!(render("search-online-none", (1280.0, 800.0)).find("sr/list-none").is_some());
         assert!(render("search-online", (960.0, 600.0)).find("add").is_some(), "the add button fits a small window");
+        assert!(render("search-mal-id", (960.0, 600.0)).find("sr/id/41590").is_some());
+        assert!(render("search-online", (1280.0, 800.0)).find("sr/id/").is_none());
     }
 
     #[test]

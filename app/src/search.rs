@@ -7,6 +7,10 @@
 //! asks only if its number is still the newest. Answers are kept [`CACHE_SECS`] in memory (the
 //! last [`CACHE_MAX`] queries), so going back and forth costs nothing. Every request goes through
 //! the app's one MAL rate budget. Adding goes through the sync queue, so it works offline too.
+//!
+//! A MyAnimeList id in the box opens that anime's details page: a pasted
+//! `myanimelist.net/anime/<id>[/slug]` link at once, a bare number (it may also be a title,
+//! such as "86") with Enter or the "Open" line above the results ([`mal_id`]).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +61,31 @@ impl Online {
     }
 }
 
+/// A MyAnimeList anime id in the search box: `Some((id, true))` for a pasted link
+/// (`https://myanimelist.net/anime/41590/slug`, with or without the scheme or `www.`, or
+/// `anime.php?id=41590`), `Some((id, false))` for a bare number.
+pub fn mal_id(q: &str) -> Option<(u32, bool)> {
+    let q = q.trim();
+    let num = |t: &str| t.parse::<u32>().ok().filter(|&n| n > 0 && !t.starts_with('+'));
+    if !q.is_empty() && q.len() <= 9 && q.bytes().all(|b| b.is_ascii_digit()) {
+        return num(q).map(|id| (id, false));
+    }
+    let rest = q.strip_prefix("https://").or_else(|| q.strip_prefix("http://")).unwrap_or(q);
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let path = rest.strip_prefix("myanimelist.net/")?;
+    let digits = |t: &str| -> Option<u32> {
+        let end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+        num(&t[..end])
+    };
+    if let Some(t) = path.strip_prefix("anime/") {
+        let end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+        // `anime/41590`, `anime/41590/slug`, `anime/41590?…`; not `anime/season`.
+        return (end > 0 && matches!(t[end..].chars().next(), None | Some('/' | '?' | '#'))).then(|| digits(t)).flatten().map(|id| (id, true));
+    }
+    let query = path.strip_prefix("anime.php?")?;
+    query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(digits).map(|id| (id, true))
+}
+
 fn norm(q: &str) -> String {
     q.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
@@ -77,8 +106,15 @@ pub fn blocked(s: &State) -> Option<String> {
 }
 
 impl State {
-    /// Every edit of the search box: the list part at once, MyAnimeList after a pause.
+    /// Every edit of the search box: the list part at once, MyAnimeList after a pause. A pasted
+    /// MyAnimeList link opens its details page at once (and leaves the box empty).
     pub fn search_changed(&mut self) {
+        if let Some((id, true)) = mal_id(&self.query.text) {
+            self.query.replace_text("");
+            self.refresh();
+            self.open_mal_id(id);
+            return;
+        }
         self.refresh();
         let q = norm(&self.query.text);
         let blocked = blocked(self).is_some() || self.auth != Auth::SignedIn;
@@ -157,6 +193,25 @@ impl State {
         }
     }
 
+    /// The details page of a MyAnimeList id (works for anime not on the list): the entry's or
+    /// the result's title until the information arrives.
+    pub fn open_mal_id(&mut self, id: u32) {
+        self.online.menu = None;
+        let stub = match (self.entries.iter().find(|e| e.id == id), self.online.hits.iter().find(|h| h.id == id)) {
+            (Some(e), _) => crate::details::Stub::from_entry(e),
+            (None, Some(h)) => crate::details::Stub::from_hit(h),
+            (None, None) => crate::details::Stub::bare(id, &format!("MyAnimeList #{id}")),
+        };
+        self.open_details(stub);
+    }
+
+    /// Enter in the search box: a bare id opens its page. Returns whether it did.
+    pub fn search_submit(&mut self) -> bool {
+        let Some((id, _)) = mal_id(&self.query.text) else { return false };
+        self.open_mal_id(id);
+        true
+    }
+
     /// Results that are not on the list (those are shown above them).
     pub fn new_hits(&self) -> Vec<&AnimeHit> {
         self.online.hits.iter().filter(|h| !self.entries.iter().any(|e| e.id == h.id)).collect()
@@ -166,6 +221,8 @@ impl State {
 /// One line of the search results.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SRow {
+    /// The box holds a bare number: open that MyAnimeList id.
+    Id(u32),
     /// "On your list" and the count.
     ListHead,
     /// Nothing on the list matches.
@@ -182,7 +239,11 @@ pub enum SRow {
 
 /// The lines of the search results, top to bottom.
 pub fn layout(s: &State) -> Vec<SRow> {
-    let mut v = vec![SRow::ListHead];
+    let mut v = Vec::new();
+    if let Some((id, false)) = mal_id(&s.query.text) {
+        v.push(SRow::Id(id));
+    }
+    v.push(SRow::ListHead);
     if s.rows.is_empty() {
         v.push(SRow::ListNone);
     }
@@ -199,6 +260,7 @@ pub fn layout(s: &State) -> Vec<SRow> {
 /// A line's key (stable, unique). List rows use the media id, as on the list page.
 pub fn key(s: &State, r: SRow) -> String {
     match r {
+        SRow::Id(id) => format!("sr/id/{id}"),
         SRow::ListHead => "sr/list-head".into(),
         SRow::ListNone => "sr/list-none".into(),
         SRow::List(i) => s.rows.get(i).map_or_else(|| format!("gone-{i}"), |&k| s.entries[k].id.to_string()),
@@ -226,6 +288,7 @@ fn head(key: &str, label: String, end: Option<String>) -> El {
 /// A line that is not a list entry (`ui::list_row` draws those).
 pub fn line(s: &State, r: SRow) -> El {
     match r {
+        SRow::Id(id) => id_line(s, id),
         SRow::ListHead => head("sr/list-head-line", format!("On your list \u{b7} {}", s.rows.len()), None),
         SRow::ListNone => text(format!("Nothing on your list matches \u{201c}{}\u{201d}.", s.query.text.trim()))
             .key("sr/list-none-line")
@@ -250,6 +313,32 @@ pub fn line(s: &State, r: SRow) -> El {
         },
         SRow::List(_) => el(),
     }
+}
+
+/// "MyAnimeList #41590 · Open (Enter)": a bare number may be an id as well as a title.
+fn id_line(s: &State, id: u32) -> El {
+    let known = s.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).or_else(|| s.online.hits.iter().find(|h| h.id == id).map(|h| h.title.clone()));
+    let what = match known {
+        Some(t) => format!("MyAnimeList #{id}: {t}"),
+        None => format!("MyAnimeList #{id}"),
+    };
+    row()
+        .key("sr/id-line")
+        .h(44.0)
+        .px(theme::PAGE_PAD)
+        .gap(10.0)
+        .center_y()
+        .role("button")
+        .label(format!("Open MyAnimeList anime {id}"))
+        .hover(PAL.hover())
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.open_mal_id(id);
+        })
+        .child(icon(&icons::ARROW, 16.0).color(PAL.accent_hi))
+        .child(text(format!("Open {what}")).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
+        .child(spacer())
+        .child(el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text("Enter").font(rune::TextStyle::new(10.0, 500.0)).color(PAL.faint)))
 }
 
 fn note(s: &State) -> El {
@@ -450,6 +539,50 @@ mod tests {
         s.query.replace_text(q);
         s.search_changed();
         s
+    }
+
+    #[test]
+    fn mal_ids_and_links() {
+        assert_eq!(mal_id("41590"), Some((41590, false)));
+        assert_eq!(mal_id(" 86 "), Some((86, false)));
+        for link in [
+            "https://myanimelist.net/anime/41590",
+            "https://myanimelist.net/anime/41590/Some_Title_2nd_Season",
+            "http://www.myanimelist.net/anime/41590/",
+            "myanimelist.net/anime/41590?q=x",
+            "https://myanimelist.net/anime.php?id=41590",
+        ] {
+            assert_eq!(mal_id(link), Some((41590, true)), "{link}");
+        }
+        for not in ["", "0", "86 Eighty-Six", "+12", "1234567890", "https://myanimelist.net/manga/2", "https://myanimelist.net/anime/season", "https://example.org/anime/5", "https://myanimelist.net/anime/12abc"] {
+            assert_eq!(mal_id(not), None, "{not}");
+        }
+    }
+
+    /// A pasted link opens the page at once and empties the box; a number keeps the search
+    /// and offers the id, which Enter opens. Both work for anime not on the list.
+    #[test]
+    fn an_id_opens_the_details_page() {
+        let mut s = searching("https://myanimelist.net/anime/41590/Velvet_Orchard");
+        assert_eq!(s.page, Page::Details);
+        assert!(s.query.text.is_empty());
+        let d = s.detail.as_ref().unwrap();
+        assert_eq!((d.id(), d.stub.title.as_str()), (41590, "MyAnimeList #41590"));
+        s.details_back();
+        assert!(matches!(s.page, Page::List(_)));
+
+        let mut s = searching("41590");
+        assert!(matches!(s.page, Page::List(_)));
+        assert_eq!(layout(&s).first(), Some(&SRow::Id(41590)));
+        assert!(s.search_submit());
+        assert_eq!(s.detail.as_ref().map(|d| d.id()), Some(41590));
+
+        // An id on the list opens with the entry's title.
+        let mut s = searching("3");
+        assert!(s.search_submit());
+        assert_eq!(s.detail.as_ref().map(|d| d.stub.title.as_str()), Some("Slow Life on Hoshizora Island"));
+        let mut s = searching("kirigaoka");
+        assert!(!s.search_submit() && !layout(&s).iter().any(|r| matches!(r, SRow::Id(_))));
     }
 
     #[test]
