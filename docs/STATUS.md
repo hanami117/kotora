@@ -1,15 +1,19 @@
 # Kotora: project status
 
-Last updated: 2026-11-15. Read this together with `CLAUDE.md`, `docs/DESIGN.md`
+Last updated: 2026-11-15 (stage 1). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
 and `docs/ROADMAP.md` before starting work on a new machine.
 
 ## Where things are
 
 - Repository: `hanami117/kotora`, **private** until we publish it.
-- `main`: initial commit only (README, LICENSE GPL-3.0-or-later, .gitignore).
-- `design` (this branch): design document, roadmap, agent rules, user decisions,
-  icon concepts. Not merged into `main` yet.
-- No code yet. Stage 1 (workspace skeleton) has not started.
+- `main`: design, roadmap, look (stages 0 and 0.5).
+- `stage-1`: the workspace skeleton (not merged; waiting for the user's review and live test):
+  - `core`, `detect`, `app`, `ctl` crates; Rune pinned to Uzumaki's rev
+  - the app: sidebar and list page on fake data, scenes, `--hidden`, single instance
+  - `kot status | show | quit`
+  - `install.sh`, `scripts/linux-check/`, `deny.toml`
+  - lightness budgets measured (docs/ROADMAP.md)
+- Still open from stage 1: the SQLite store and the anitomy decision.
 
 ## Git rules (the repository will be public)
 
@@ -68,6 +72,7 @@ Uzumaki's `assets/icons` pipeline (`rsvg-convert`).
 
 ## Next steps
 
-1. Merge `design` into `main`.
-2. Stage 1: workspace skeleton based on Uzumaki (pinned Rune revision, app and
-   ctl crates, headless `--snap` scenes, `install.sh`).
+1. The user reviews `stage-1`, builds it on Arch and the Mac, and measures the live budgets
+   (window memory, first frame).
+2. Finish stage 1: the SQLite store and the anitomy decision.
+3. Stage 2: MyAnimeList, read only.
