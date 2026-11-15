@@ -353,12 +353,24 @@ Open after Stage 5:
 
 ## Stage 6: release 0.1
 
-- [ ] `install.sh` (copy Uzumaki's: `~/.local`, desktop file, icons, `--uninstall`).
-- [ ] Icon (placeholder until the separate icon work: a tiger that cites Taiga's), README with screenshots
-  from `--snap` scenes and a clear credit to Taiga, About page credits, CHANGELOG.
-- [ ] AUR PKGBUILD (source). AppImage and DMG are not part of v0.1 (v0.3).
+- [x] `install.sh` (from Uzumaki's: `~/.local`, desktop file, PNG and SVG icons, `--uninstall`, refuses
+  to run while Kotora runs). Tested only with a scratch `HOME`: install, then uninstall leaves no file.
+- [x] Final icon (tiger head with bokken, `assets/icons/`), PNG sizes 16 to 512 in `assets/icons/hicolor/`.
+- [x] Desktop entry: `packaging/linux/io.github.hanami117.kotora.desktop` (no AppStream metainfo: Uzumaki has none).
+- [x] README with screenshots from `--snap` scenes (`docs/screenshots/*.webp`, 376 KB) and the credit to Taiga.
+- [x] CHANGELOG (0.1.0, date to be set), `THIRD_PARTY_NOTICES.md` (from `cargo metadata`; `cargo deny` is not
+  installed here, so run `cargo deny check licenses` once before the tag).
+- [x] AUR `packaging/aur/PKGBUILD` (source package, sha256 `SKIP` until the tag) and `.SRCINFO`.
+- [ ] About page credits (check the text against the README).
+- [ ] `packaging/release.sh` (tarball and its sha256; copy Uzumaki's), then tag `v0.1.0`, fill in the sha256
+  and the CHANGELOG date, regenerate `.SRCINFO`.
+- [ ] Test the AUR package (`makepkg`, `namcap`, `extra-x86_64-build`) and push it to the AUR.
+- [ ] Check that `/usr/bin/kot` is free in Arch's file lists (`pacman -Fy; pacman -F usr/bin/kot`). No package or
+  AUR name `kot` or `kotora` was found on 2026-11-15.
+- [ ] Merge `stage-5` into `stage-6` (the live Now Playing position fix), then rebuild the screenshots.
 - [ ] Live test by the user on Arch (Wayland and X11) and on the Mac.
 - [ ] Make the repo public (the user's call).
+- AppImage and DMG are not part of v0.1 (v0.3).
 
 ## Later (v0.2 and on, order to be agreed)
 
