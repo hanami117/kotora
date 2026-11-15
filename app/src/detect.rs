@@ -107,6 +107,7 @@ struct Current {
     parsed: Option<Parsed>,
     found: Found,
     candidates: Vec<(u32, String)>,
+    cover_url: Option<String>,
 }
 
 fn run(h: &Handle, rx: &Receiver<In>) {
@@ -124,7 +125,7 @@ fn run(h: &Handle, rx: &Receiver<In>) {
                     current = Some(recognise(&mut store, &file));
                 }
                 let Some(c) = &current else { continue };
-                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone() }))));
+                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone() }))));
             }
             In::Report(Report::Reached { key, file }) => send(h, Msg::Reached { key, file }),
             In::Report(Report::Sources(v)) => send(h, Msg::Players(v)),
@@ -159,7 +160,7 @@ fn open(store: &mut Option<Store>) -> Option<&mut Store> {
 }
 
 fn recognise(store: &mut Option<Store>, file: &str) -> Current {
-    let nothing = |parsed| Current { file: file.to_string(), parsed, found: Found::Nothing, candidates: Vec::new() };
+    let nothing = |parsed| Current { file: file.to_string(), parsed, found: Found::Nothing, candidates: Vec::new(), cover_url: None };
     let Some(parsed) = recognize::parse(file) else { return nothing(None) };
     let Some(st) = open(store) else { return nothing(Some(parsed)) };
     let items = st.load_list(SERVICE).unwrap_or_default();
@@ -176,7 +177,22 @@ fn recognise(store: &mut Option<Store>, file: &str) -> Current {
             None => search(st, &parsed, &items, &key),
         },
     };
-    Current { file: file.to_string(), parsed: Some(parsed), found, candidates }
+    let cover_url = match &found {
+        Found::NotOnList { media_id, .. } => not_on_list_cover(st, *media_id),
+        _ => None,
+    };
+    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url }
+}
+
+/// The cover of an anime that isn't on the list: from its saved details, else one details
+/// fetch (signed in and online), saved like the details page's, so the next file asks nothing.
+fn not_on_list_cover(st: &Store, id: u32) -> Option<String> {
+    if let Some((d, _)) = st.details(SERVICE, id).ok().flatten() {
+        return d.cover_url;
+    }
+    let d = crate::online::mal_service()?.details(id).ok()?;
+    let _ = st.save_details(SERVICE, &d, now_unix());
+    d.cover_url
 }
 
 /// The one MAL search (signed in and online only). The answer is cached either way.

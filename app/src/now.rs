@@ -37,6 +37,8 @@ pub struct Now {
     pub recognizing: bool,
     /// The closest titles on the list, for "Wrong anime…".
     pub candidates: Vec<(u32, String)>,
+    /// The cover of a match that isn't on the list (a list entry has its own).
+    pub cover_url: Option<String>,
     /// "Not now".
     pub dismissed: bool,
     /// The banner acted already (notified, or recorded automatically).
@@ -65,6 +67,8 @@ pub struct Seen {
     pub parsed: Option<Parsed>,
     pub found: Found,
     pub candidates: Vec<(u32, String)>,
+    /// The cover of an anime found on MyAnimeList but not on the list (saved details).
+    pub cover_url: Option<String>,
 }
 
 /// Settings → Updates and Players, as `config.toml` has them.
@@ -136,6 +140,7 @@ impl Now {
             found: seen.found,
             recognizing: false,
             candidates: seen.candidates,
+            cover_url: seen.cover_url,
             dismissed: false,
             acted: false,
             recorded: None,
@@ -539,6 +544,7 @@ mod tests {
                 None => Found::Nothing,
             },
             candidates: vec![],
+            cover_url: None,
         }
     }
 

@@ -104,7 +104,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings))
         .child(spacer());
     if let Some(now) = &s.now {
-        let (id, title) = now_title(s, now);
+        let (_, title) = now_title(s, now);
         let mut bits = Vec::new();
         if let Some(ep) = now.episode() {
             bits.push(format!("Ep {ep}"));
@@ -127,7 +127,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
                 .border(1.0, PAL.border)
                 .hover(PAL.hover())
                 .on_press(|s: &mut State| s.go(Page::NowPlaying))
-                .child(cover(id, &title, 26.0, 38.0, 9.0))
+                .child(now_cover(s, now, 26.0, 38.0, 9.0))
                 .child(
                     col()
                         .grow(1.0)
@@ -1388,14 +1388,30 @@ pub(crate) fn now_title(s: &State, n: &Now) -> (u32, String) {
     }
 }
 
-/// A cover for the matched entry: the real one when loaded, else the tile.
+/// The cover URL of what plays: the list entry's, else the one found with a match that isn't
+/// on the list, else an open details page's for the same anime.
+pub(crate) fn now_cover_url<'a>(s: &'a State, n: &'a Now) -> Option<&'a str> {
+    let id = match &n.found {
+        Found::List { media_id, .. } | Found::NotOnList { media_id, .. } => *media_id,
+        _ => return None,
+    };
+    s.entries
+        .iter()
+        .find(|e| e.id == id)
+        .and_then(|e| e.cover_url.as_deref())
+        .or(n.cover_url.as_deref())
+        .or_else(|| s.detail.as_ref().filter(|d| d.id() == id).and_then(|d| d.info.as_ref()).and_then(|i| i.cover_url.as_deref()))
+}
+
+/// A cover for what plays: the real one when loaded (at its own pixel size), else the tile.
 fn now_cover(s: &State, n: &Now, w: f32, h: f32, size: f32) -> El {
     let (id, title) = now_title(s, n);
-    let tile = cover(id, &title, w, h, size).radius(if w > 60.0 { theme::R_LG } else { theme::R_XS });
-    let url = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id)).and_then(|e| e.cover_url.as_deref());
+    let r = if w > 60.0 { theme::R_LG } else { theme::R_XS };
+    let tile = cover(id, &title, w, h, size).radius(r);
+    let url = now_cover_url(s, n);
     match s.covers.get(id, url, w, h) {
-        Some(img) if url.is_some() => tile.child(el().absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
-        _ => tile,
+        Some(img) => tile.child(el().key("np-cover-img").absolute(0.0, 0.0).size(w, h).radius(r).pixels(img.pixels())),
+        None => tile,
     }
 }
 
@@ -1984,5 +2000,22 @@ mod tests {
         assert_eq!(initials("Neon Ronin 2099"), "NR");
         assert_eq!(initials("The"), "T");
         assert_eq!(initials(""), "");
+    }
+
+    /// The playing anime's cover: the entry's, else the one found with a match off the list.
+    #[test]
+    fn now_cover_url_from_the_entry_or_the_match() {
+        let mut s = crate::model::State::fake();
+        let n = s.now.clone().unwrap();
+        assert_eq!(super::now_cover_url(&s, &n), None, "the fake entry has no cover");
+        s.entries.iter_mut().find(|e| e.id == 0).unwrap().cover_url = Some("https://cdn.example.invalid/0.jpg".into());
+        assert_eq!(super::now_cover_url(&s, &n), Some("https://cdn.example.invalid/0.jpg"));
+        let mut n = n;
+        n.found = kotora_core::recognize::Found::NotOnList { media_id: 9001, title: "Velvet".into() };
+        assert_eq!(super::now_cover_url(&s, &n), None);
+        n.cover_url = Some("https://cdn.example.invalid/9001l.jpg".into());
+        assert_eq!(super::now_cover_url(&s, &n), Some("https://cdn.example.invalid/9001l.jpg"));
+        n.found = kotora_core::recognize::Found::Nothing;
+        assert_eq!(super::now_cover_url(&s, &n), None, "nothing matched: the tile");
     }
 }

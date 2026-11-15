@@ -132,6 +132,21 @@ pub const SCENES: &[Scene] = &[
     }),
     // "Wrong anime…": the closest titles on the list.
     ("now-playing-picking", |s| s.wrong_anime()),
+    // Real covers (made up here) in the Now Playing card and the sidebar's card.
+    ("now-playing-covers", |s| {
+        fake_covers(s);
+        s.go(Page::NowPlaying);
+    }),
+    // Not on the list: the cover comes with the match (its saved details).
+    ("now-playing-not-on-list-cover", |s| {
+        s.covers.fake();
+        playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
+        if let Some(n) = &mut s.now {
+            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+            n.cover_url = Some("https://cdn.example.invalid/9001l.jpg".into());
+        }
+        s.go(Page::NowPlaying);
+    }),
     // One MyAnimeList search found it, but it isn't on the list.
     ("now-playing-not-on-list", |s| {
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
