@@ -23,8 +23,8 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus (Docker).
 - **Stage 5, after the first live test:** added 2026-11-15 from the user's feedback. Built on branch
   `stage-5` (on top of `stage-4`): Client ID from the app, search and add, details page, and the
-  detection GUI. The detection engine is on `stage-5-detect`, to be merged into `stage-5`. Waiting for
-  the merge and the user's live test. The release moves to Stage 6.
+  detection GUI. The detection engine (`stage-5-detect`) was merged into `stage-5` on 2026-11-15 and
+  wired. Waiting for the user's live test. The release moves to Stage 6.
 
 ## Stage 0: design
 
@@ -52,11 +52,18 @@ The first numbers are targets; Stage 1 measures the real baseline and may adjust
 | package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured | not re-measured |not re-measured |
 | memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user | live only; to be measured by the user |live only; to be measured by the user |
 | memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) | macOS `--hidden`, scratch config, detection on (one mpv socket watched): 13 MB footprint (peak 89 MB during start) |Linux x86_64 `--hidden`, scratch config, players off, offline: PSS 19.6 MB (RSS 27.3 MB) |
-| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls | macOS `--hidden`, detection on, no player: 0.00 s CPU in 60 s, 0 idle wakeups. A fake mpv playing for 27 s: 0.00 s CPU (no position polling; one wake at the threshold). VLC's web interface (macOS, opt-in, off until its password is set) is the one poll: 60 s while VLC is not running, 30 s idle, 15 s playing |Linux `--hidden`: 0 ticks of CPU in 60 s, 0 context switches of the main thread. A search thread starts with a pause in typing and ends with the answer; a details thread with the page; no timer |
+| CPU at rest | 0 %, no timers waking more than once a minute (one exception since Stage 5: the process scan, see below) | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls | macOS `--hidden`, detection on, no player: 0.00 s CPU in 60 s, 0 idle wakeups. A fake mpv playing for 27 s: 0.00 s CPU (no position polling; one wake at the threshold). VLC's web interface (macOS, opt-in, off until its password is set) is the one poll: 60 s while VLC is not running, 30 s idle, 15 s playing |Linux `--hidden`: 0 ticks of CPU in 60 s, 0 context switches of the main thread. A search thread starts with a pause in typing and ends with the answer; a details thread with the page; no timer |
 | start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured | not re-measured |not re-measured |
 | `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) | not re-measured |1.3 ms median, 2.1 ms max (50 runs, hidden app, Linux) |
 
-Stage 5 and the binary target: this is the first measurement on Linux x86_64 (the earlier Linux
+Stage 5 and the process scan: the one timer that wakes more than once a minute. The process source
+(`detect/src/procfs.rs`) scans every 5 s while `[players] process_scan` is on (the default), because an
+unprivileged program gets no kernel notification for new processes (the proc connector and fanotify
+need root). A scan reads a process name only for a new pid and open files only for players: about
+0.2 ms of CPU per scan, ~0.02 % CPU measured on Linux. Turning the switch off in Settings stops it.
+
+Stage 5 and the binary target (user decision, 2026-11-15): the 30 MB target is indicative, not a hard
+limit. `codegen-units = 1` stays, since it costs only build time. This is the first measurement on Linux x86_64 (the earlier Linux
 numbers were arm64 in Docker). The same Stage 4 code is 33.5 MB stripped on x86_64 against 29.2 MB on
 arm64: x86_64 code for this stack (Rune, wgpu, naga, zbus) is about 14 % larger, so the 30 MB target was
 already over on x86_64 before Stage 5, which adds 0.40 MB. `.text` is 24.4 MB; by symbols, Rune about
@@ -277,8 +284,12 @@ nothing has talked to MAL.
   with Change. `kot config client-id ID` does the same through the running app. Scenes:
   `no-client-id`, `no-client-id-error`, `client-id-saved`, `settings-client-id-change`,
   `settings-no-client-id`.
-- [ ] **Zero-config detection:** on `stage-5-detect` (see that branch's notes for the process scan,
-  its CPU and the watched-time rule).
+- [x] **Zero-config detection** (from `stage-5-detect`, merged 2026-11-15): the process source
+  (`detect/src/procfs.rs`, macOS `libproc.rs`) sees mpv, VLC, mpc-qt, Celluloid, Haruna and SMPlayer
+  (IINA on macOS) by their open video file, with no setup. It knows no position or pause, so the watch
+  hub counts the time the file stays open: the threshold share of the duration when known, else
+  `[players] process_minutes` (default 15). When an IPC or MPRIS source shows the same file, it wins.
+  `detect/src/mpvconf.rs` finds `mpv.conf` the way mpv does and appends `input-ipc-server` on request.
   - [x] GUI (`app/src/precise.rs`): each player's line keeps its source's label, so it reads
     "mpv · process · playing" or "IPC socket · …"; Now Playing says "No position from the player" for
     a process source instead of an empty bar. When mpv is seen by its process only (and its IPC
@@ -288,8 +299,14 @@ nothing has talked to MAL.
     mpv_precise = true`); Settings keeps a Turn on button under mpv. Scenes: `precise-offer`,
     `precise-written`, `precise-already-set`, `precise-failed`, `settings-players-process`,
     `now-playing-process`.
-  - [ ] Wiring after the merge: `write_mpv_conf` in `precise.rs` calls
-    `kotora_detect::mpvconf::enable` with the first watched mpv socket (the TODO says how).
+  - [x] Wiring after the merge: `write_mpv_conf` calls `kotora_detect::mpvconf::enable` with the
+    first watched mpv socket and shows what it did (lines written, or the socket already set and
+    whether Kotora watches it). At start `mpvconf::check` runs on a short thread; when `mpv.conf`
+    already sets a watched socket, no banner is offered and Settings says to restart mpv.
+  - [x] A player line prefers the IPC or MPRIS source over "process" when they tie (both not
+    running). With "Update automatically" on, a process track still asks (no position or pause).
+  - [x] Settings → Players: "Find players by their open files" (`process_scan`) and "Count a file
+    after it stays open" (`process_minutes`, a 1–180 stepper in steps of 5).
 - [x] **Search and add** (`app/src/search.rs`, `core::mal::browse_anime`): with a query, the list
   page becomes search results: the list's matches across every status (the page's own first, each
   with its status tag), then MAL's results that are not on the list. MAL is asked only signed in and
@@ -319,7 +336,7 @@ nothing has talked to MAL.
   tests that find their parts; a press on a row's title opens details, elsewhere the editor.
 - [x] Budgets measured (table above; Linux x86_64 from this stage on; `codegen-units = 1` keeps the
   binary under 30 MB there).
-- [ ] Live test by the user on Arch, after `stage-5-detect` is merged (STATUS.md).
+- [ ] Live test by the user on Arch (STATUS.md).
 
 Decided in this stage (easy to change):
 - The search box searches the whole list, not only the page's status, once it holds a query; the chips
@@ -331,7 +348,8 @@ Decided in this stage (easy to change):
 Open after Stage 5:
 - Start and finish dates and the rewatching flag show on the details page but are not editable yet.
 - The details page has no related anime or recommendations (more MAL fields, more requests).
-- If `stage-5-detect` adds a database migration too, it must come after schema 4 here (merge note).
+- The merge needed no database migration: `stage-5-detect` only added `[players]` keys.
+- `mpv.conf` is checked once at start; a change made by hand while Kotora runs shows after a restart.
 
 ## Stage 6: release 0.1
 
@@ -371,3 +389,11 @@ to v0.3.
   - update notice
   - torrent feeds: opt-in, no default sources
   - streaming sites: MAL-Sync is recommended; no extension of our own for now
+  - **Manga (experimental)**, added 2026-11-15:
+    - YACReader first: read its library database (`<library>/.yacreaderlibrary/library.ydb`) read
+      only, for the current page, page count and read flag
+    - generic fallback for other readers: count a chapter when the next chapter file opens, or after
+      N minutes open (the `/proc` detector)
+    - a manga file name parser (`v03`, `c021`, `Ch.21.5`)
+    - MAL manga list sync
+    - Komga and Kavita server APIs later still

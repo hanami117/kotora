@@ -49,9 +49,9 @@ and `docs/ROADMAP.md` before starting work on a new machine.
     player lines, the one-time precise-detection banner)
   - `kot config client-id ID`, `kot add QUERY|ID [--status S]`
   - tested with recorded-shape JSON, fake services and scenes; **nothing has talked to MAL**
-- `stage-5-detect` (another session, same base): the detection engine (process scan, watched-time
-  rule, macOS `libproc`, `mpv.conf` helper). Merge it into `stage-5`, then wire the one
-  `TODO(stage-5-detect)` in `app/src/precise.rs`.
+  - merged 2026-11-15: `stage-5-detect`, the detection engine (process scan every 5 s, watched-time
+    rule, macOS `libproc`, `mpv.conf` helper), wired to the precise-detection banner and Settings
+    (process scan switch, minutes stepper)
 - Decided: anitomy = `anitomy-ng` 1.0.10 (MPL-2.0), added in Stage 4: +1.0 MB on macOS, +1.6 MB on Linux
   with its `regex` (ROADMAP budgets).
 - Still open: the 15-minute refresh, the build-time Client ID default (see docs/ROADMAP.md, Stage 2).
@@ -228,8 +228,7 @@ entry you don't mind changing back.
 
 ## Live test of stage 5 (the user, on Arch)
 
-First merge `stage-5-detect` into `stage-5` and wire the TODO in `app/src/precise.rs` (the detection
-parts below need it). Build: `cargo build --release -p kotora -p kotora-ctl`, quit any running Kotora,
+`stage-5-detect` is merged and wired. Build: `cargo build --release -p kotora -p kotora-ctl`, quit any running Kotora,
 start `target/release/kotora`. **Adding and editing write to MAL** like `+1`: use titles you don't mind
 adding (Kotora can't remove an entry yet; remove a test add on myanimelist.net, then Refresh).
 
@@ -256,7 +255,7 @@ adding (Kotora can't remove an entry yet; remove a test add on myanimelist.net, 
    "Add as Watching" and the other statuses. Open the same title again with `KOTORA_OFFLINE=1`: it
    shows from the saved copy.
 6. `kot add EXACT TITLE` adds one (writes to MAL); `kot add` with a common word lists ids to choose.
-7. Detection (needs the merge): start mpv with no `input-ipc-server` and no mpv-mpris and play an
+7. Detection: start mpv with no `input-ipc-server` and no mpv-mpris and play an
    episode. Settings → Players says "mpv · process · playing"; Now Playing says "No position from the
    player". A blue banner offers precise detection. **This edits your mpv.conf**; back it up first
    (`cp ~/.config/mpv/mpv.conf ~/.config/mpv/mpv.conf.bak`, if you have one). Click "Turn on precise
@@ -276,5 +275,4 @@ adding (Kotora can't remove an entry yet; remove a test add on myanimelist.net, 
 2. Decide on the 15-minute refresh, and the open points of Stage 3 (docs/ROADMAP.md).
 3. Stage 4 review and the live player tests above; then the open points of Stage 4 (docs/ROADMAP.md),
    among them whether the last episode sets Completed.
-4. Stage 5: merge `stage-5-detect` into `stage-5`, wire the precise-detection TODO, run the live test
-   above, then Stage 6: release 0.1.
+4. Stage 5: run the live test above, then Stage 6: release 0.1.
