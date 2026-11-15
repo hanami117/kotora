@@ -168,6 +168,13 @@ impl Details {
     }
 }
 
+/// The signed-in user: name and profile picture URL (none set, or a service without one).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct User {
+    pub name: String,
+    pub picture: Option<String>,
+}
+
 /// The user's own list: read it, read one entry, change one entry.
 pub trait ListService {
     /// Machine name, the `service` column of the store: `mal`.
@@ -176,6 +183,10 @@ pub trait ListService {
     fn title(&self) -> &'static str;
     /// The signed-in user's name.
     fn user_name(&mut self) -> Result<String, ServiceError>;
+    /// The signed-in user with the profile picture, in one request where the service allows.
+    fn user(&mut self) -> Result<User, ServiceError> {
+        Ok(User { name: self.user_name()?, picture: None })
+    }
     /// The whole list.
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError>;
     /// The service's copy of one entry now; `None` when it is not on the list.

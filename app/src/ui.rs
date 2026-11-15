@@ -87,7 +87,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
     };
     let mut side = side.child(brand(s));
     if let Some((name, service)) = &s.account {
-        side = side.child(account(name, service));
+        side = side.child(account(s, name, service));
     }
     let lit = s.lit_page();
     if s.has_list() {
@@ -208,8 +208,21 @@ fn brand(s: &State) -> El {
         .child(text(env!("CARGO_PKG_VERSION").rsplit_once('.').map_or("", |(v, _)| v)).font(theme::SMALL).color(PAL.faint))
 }
 
-fn account(name: &str, service: &str) -> El {
+/// The cover cache's id for the profile picture (no anime has it).
+pub(crate) const AVATAR_ID: u32 = u32::MAX;
+
+fn account(s: &State, name: &str, service: &str) -> El {
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    // The profile picture, round, over the initial (shown while it loads, offline or with none).
+    let mut face = el()
+        .size(24.0, 24.0)
+        .radius(12.0)
+        .linear_gradient(160.0 * PI / 180.0, [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))])
+        .center()
+        .child(text(initial).font(rune::TextStyle::new(10.0, 600.0)).color(PAL.text));
+    if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), 24.0, 24.0) {
+        face = face.child(el().key("avatar-img").absolute(0.0, 0.0).size(24.0, 24.0).radius(12.0).pixels(img.pixels()));
+    }
     row()
         .key("account")
         .gap(8.0)
@@ -219,13 +232,7 @@ fn account(name: &str, service: &str) -> El {
         .radius(theme::R_MD)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(
-            el().size(24.0, 24.0)
-                .radius(12.0)
-                .linear_gradient(160.0 * PI / 180.0, [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))])
-                .center()
-                .child(text(initial).font(rune::TextStyle::new(10.0, 600.0)).color(PAL.text)),
-        )
+        .child(face)
         .child(
             col()
                 .min_w(0.0)

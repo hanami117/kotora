@@ -157,6 +157,18 @@ impl Covers {
         inner.failed.insert(key.0);
     }
 
+    /// An image whose URL changed (the profile picture): drawn again from the new URL.
+    pub fn forget(&mut self, id: u32) {
+        let inner = self.inner.get_mut();
+        let gone: Vec<Key> = inner.images.keys().filter(|k| k.0 == id).copied().collect();
+        for k in gone {
+            if let Some(e) = inner.images.remove(&k) {
+                inner.total -= e.2;
+            }
+        }
+        inner.failed.remove(&id);
+    }
+
     /// Sign out: covers leave memory (the disk folder is deleted by `online::sign_out`).
     pub fn clear(&mut self) {
         let inner = self.inner.get_mut();
@@ -322,6 +334,13 @@ mod tests {
         }
         let (n, bytes) = c.usage();
         assert!(bytes <= MEMORY_BUDGET && n < 1000, "{n} covers, {bytes} bytes");
+        let mut c = Covers::default();
+        c.attach(ImageCache::new(Arc::new(|| {})));
+        c.fake();
+        c.get(u32::MAX, url, 24.0, 24.0);
+        c.get(3, url, 34.0, 48.0);
+        c.forget(u32::MAX);
+        assert_eq!(c.usage(), (1, 34 * 48 * 4 * 4 / 3), "only the forgotten one goes");
     }
 
     #[test]

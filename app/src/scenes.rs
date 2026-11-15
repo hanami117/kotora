@@ -16,6 +16,11 @@ pub const SCENES: &[Scene] = &[
     ("list", |_| {}),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
     ("list-covers", fake_covers),
+    // The account's MyAnimeList profile picture (made up), round in the sidebar.
+    ("account-picture", |s| {
+        fake_covers(s);
+        s.avatar = Some("https://cdn.example.invalid/images/userimages/1.jpg".into());
+    }),
     ("list-watching", |s| s.go(Page::List(Status::Watching))),
     ("list-plan", |s| s.go(Page::List(Status::PlanToWatch))),
     ("list-completed", |s| s.go(Page::List(Status::Completed))),

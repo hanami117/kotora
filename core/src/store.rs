@@ -365,6 +365,19 @@ impl Store {
         Ok(())
     }
 
+    /// The user's profile picture URL (`None`: none set or not asked yet) and when it was last
+    /// asked for. Kept in `kv`, so sign out deletes it with the rest.
+    pub fn picture(&self, service: &str) -> Result<(Option<String>, Option<i64>)> {
+        let url = self.kv_get(&format!("{service}:picture"))?.filter(|u| !u.is_empty());
+        let at = self.kv_get(&format!("{service}:picture_at"))?.and_then(|v| v.parse().ok());
+        Ok((url, at))
+    }
+
+    pub fn set_picture(&self, service: &str, url: Option<&str>, now: i64) -> Result<()> {
+        self.kv_set(&format!("{service}:picture"), url.unwrap_or(""))?;
+        self.kv_set(&format!("{service}:picture_at"), &now.to_string())
+    }
+
     /// Unix seconds of the last full sync of `service`.
     pub fn synced_at(&self, service: &str) -> Result<Option<i64>> {
         Ok(self.kv_get(&format!("{service}:synced_at"))?.and_then(|v| v.parse().ok()))
@@ -496,7 +509,14 @@ pub(crate) mod tests {
         assert_eq!(s.account("mal").unwrap().as_deref(), Some("demo_user2"));
         s.replace_list("mal", &[item(1, "A", Status::Watching, 1, 1)], 1).unwrap();
         s.kv_set("other", "keep").unwrap();
+        assert_eq!(s.picture("mal").unwrap(), (None, None));
+        s.set_picture("mal", Some("https://cdn.example.invalid/u.jpg"), 7).unwrap();
+        assert_eq!(s.picture("mal").unwrap(), (Some("https://cdn.example.invalid/u.jpg".into()), Some(7)));
+        s.set_picture("mal", None, 8).unwrap();
+        assert_eq!(s.picture("mal").unwrap(), (None, Some(8)), "none set: asked, nothing to show");
+        s.set_picture("mal", Some("https://cdn.example.invalid/u.jpg"), 9).unwrap();
         s.clear_service("mal").unwrap();
+        assert_eq!(s.picture("mal").unwrap(), (None, None), "sign out deletes the picture");
         assert_eq!(s.account("mal").unwrap(), None);
         assert!(s.load_list("mal").unwrap().is_empty());
         assert_eq!(s.synced_at("mal").unwrap(), None);

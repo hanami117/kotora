@@ -243,7 +243,7 @@ pub fn waiting_label(state: OpState) -> &'static str {
 #[derive(Debug)]
 pub enum Msg {
     /// The saved list and the queue from the database, at start.
-    Cache { items: Vec<ListItem>, user: Option<String>, synced_at: Option<i64>, ops: Vec<Op> },
+    Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, synced_at: Option<i64>, ops: Vec<Op> },
     /// The queue changed: all of it, the entries it touched, and those that left the list.
     /// `offline`: a send failed for lack of network (true) or went through (false).
     Queue { ops: Vec<Op>, items: Vec<ListItem>, gone: Vec<u32>, offline: Option<bool> },
@@ -255,7 +255,9 @@ pub enum Msg {
     SyncFailed(Fail),
     /// Nothing to sync (signed out, no Client ID, `KOTORA_OFFLINE`): stop the loading state.
     Idle,
-    SignedIn { user: String },
+    SignedIn { user: String, picture: Option<String> },
+    /// The profile picture was asked for again (at most daily, after a sync).
+    Picture(Option<String>),
     SignInFailed(String),
     SignedOut,
     /// The followed player and what recognition made of its file (`None`: nothing plays).
@@ -288,6 +290,8 @@ pub struct State {
     pub auth: Auth,
     /// The signed-in user name and service; `None` when signed out.
     pub account: Option<(String, &'static str)>,
+    /// The account's profile picture URL; the sidebar draws it round, else the initial.
+    pub avatar: Option<String>,
     pub entries: Vec<Entry>,
     /// Indexes into `entries` for the list page: its status, the chip, the search, the sort.
     /// Rebuilt by `refresh()`; the view only reads it.
@@ -357,6 +361,7 @@ impl State {
             search_back: Page::List(Status::Watching),
             auth: Auth::SignedIn,
             account: Some(("demo_user".into(), "MyAnimeList")),
+            avatar: None,
             entries: fake_entries(),
             rows: Vec::new(),
             loading: false,
@@ -736,7 +741,7 @@ impl State {
     pub fn apply(&mut self, msg: Msg) -> bool {
         let service = "MyAnimeList";
         match msg {
-            Msg::Cache { items, user, synced_at, ops } => {
+            Msg::Cache { items, user, picture, synced_at, ops } => {
                 self.ops = ops;
                 // A sync that already finished is newer than the cache read.
                 if self.synced_at.is_none() || self.entries.is_empty() {
@@ -751,6 +756,7 @@ impl State {
                 }
                 if let Some(u) = user {
                     self.account = Some((u, service));
+                    self.avatar = self.avatar.take().or(picture);
                 }
                 self.loading = self.loading && items.is_empty() && self.syncing;
                 true
@@ -815,9 +821,10 @@ impl State {
                 self.loading = false;
                 true
             }
-            Msg::SignedIn { user } => {
+            Msg::SignedIn { user, picture } => {
                 self.auth = Auth::SignedIn;
                 self.account = Some((user, service));
+                self.avatar = picture;
                 self.cancel = None;
                 self.error = None;
                 // The queue waited for this.
@@ -838,6 +845,14 @@ impl State {
             Msg::Reached { key, file } => self.now_reached(&key, &file),
             Msg::Players(v) => self.players_seen(v),
             Msg::ClientIdSaved(r) => self.client_id_saved(r),
+            Msg::Picture(url) => {
+                let changed = self.account.is_some() && self.avatar != url;
+                if changed {
+                    self.covers.forget(crate::ui::AVATAR_ID);
+                    self.avatar = url;
+                }
+                changed
+            }
             Msg::SignedOut => {
                 self.covers.clear();
                 // MyAnimeList's answers go with the account (search results, the open page).
@@ -848,6 +863,7 @@ impl State {
                 self.detail = None;
                 self.auth = Auth::SignedOut;
                 self.account = None;
+                self.avatar = None;
                 self.entries.clear();
                 self.ops.clear();
                 self.queue = 0;
@@ -1247,12 +1263,16 @@ mod tests {
         let mut s = State::fake();
         s.apply(Msg::SyncFailed(Fail::SignInAgain));
         assert!(s.worker.hold.load(Ordering::Relaxed));
-        s.apply(Msg::SignedIn { user: "demo_user".into() });
+        s.apply(Msg::SignedIn { user: "demo_user".into(), picture: Some("https://cdn.example.invalid/u.jpg".into()) });
+        assert_eq!(s.avatar.as_deref(), Some("https://cdn.example.invalid/u.jpg"));
         assert!(!s.worker.hold.load(Ordering::Relaxed));
         s.open_details(crate::details::Stub::bare(9001, "x"));
         s.online.show("x", crate::search::fake_hits());
         s.apply(Msg::SignedOut);
         assert!(s.ops.is_empty() && s.queue == 0);
+        assert!(s.avatar.is_none(), "the picture goes with the account");
+        assert!(!s.apply(Msg::Picture(Some("https://cdn.example.invalid/late.jpg".into()))), "a late answer after sign out is dropped");
+        assert!(s.avatar.is_none());
         assert!(s.detail.is_none() && s.page != Page::Details && s.online.hits.is_empty());
     }
 
@@ -1339,7 +1359,7 @@ mod tests {
     fn an_old_cache_never_replaces_a_newer_sync() {
         let mut s = State::start(Auth::SignedIn);
         s.apply(Msg::Synced { items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)], synced_at: 10 });
-        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), synced_at: Some(5), ops: vec![] });
+        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), picture: None, synced_at: Some(5), ops: vec![] });
         assert_eq!(s.entries.len(), 1);
         assert_eq!(s.entries[0].title, "Fresh");
         assert_eq!(s.account.as_ref().map(|a| a.0.as_str()), Some("demo_user"));
@@ -1352,9 +1372,9 @@ mod tests {
         s.entries.clear();
         s.loading = true;
         s.syncing = true;
-        s.apply(Msg::Cache { items: vec![], user: None, synced_at: None, ops: vec![] });
+        s.apply(Msg::Cache { items: vec![], user: None, picture: None, synced_at: None, ops: vec![] });
         assert!(s.loading, "nothing saved yet: keep the skeleton");
-        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, synced_at: Some(1), ops: vec![] });
+        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, picture: None, synced_at: Some(1), ops: vec![] });
         assert!(!s.loading);
     }
 }

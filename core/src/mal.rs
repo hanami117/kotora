@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
-use crate::service::{AnimeHit, Details, ListService, MyEntry, SearchHit, ServiceError};
+use crate::service::{AnimeHit, Details, ListService, MyEntry, SearchHit, ServiceError, User};
 use crate::time;
 use crate::tokens::{Token, TokenStore};
 
@@ -330,10 +330,13 @@ impl<T: Transport> Client<T> {
         parse_details(&r.body).map_err(ServiceError::Other)
     }
 
-    pub fn fetch_user_name(&mut self, access: &str) -> Result<String, ServiceError> {
-        let r = self.get(format!("{API}/users/@me"), access)?;
+    /// The user's name and profile picture (`GET /users/@me?fields=picture`; MAL leaves the
+    /// picture out when none is set).
+    pub fn fetch_user(&mut self, access: &str) -> Result<User, ServiceError> {
+        let r = self.get(format!("{API}/users/@me?fields=picture"), access)?;
         let me: Me = serde_json::from_str(&r.body).map_err(|_| ServiceError::Other("can't read the user answer".into()))?;
-        Ok(me.name)
+        let picture = me.picture.filter(|p| p.starts_with("https://"));
+        Ok(User { name: me.name, picture })
     }
 
     /// The whole list, 100 entries a page, following `paging.next`.
@@ -545,6 +548,8 @@ struct TokenReply {
 #[derive(Deserialize)]
 struct Me {
     name: String,
+    #[serde(default)]
+    picture: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -768,7 +773,11 @@ impl<T: Transport> ListService for Mal<T> {
     }
 
     fn user_name(&mut self) -> Result<String, ServiceError> {
-        self.authed(|c, a| c.fetch_user_name(a))
+        self.authed(|c, a| c.fetch_user(a)).map(|u| u.name)
+    }
+
+    fn user(&mut self) -> Result<User, ServiceError> {
+        self.authed(|c, a| c.fetch_user(a))
     }
 
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
@@ -1180,5 +1189,19 @@ mod tests {
         mal.complete_sign_in("code", "verifier").unwrap();
         assert_eq!(mal.tokens.load_mal().unwrap().access_token, "first");
         assert_eq!(mal.user_name().unwrap(), "demo_user");
+    }
+
+    #[test]
+    fn the_user_reads_with_the_picture() {
+        let (f, seen) = fake(vec![
+            ok(r#"{"id":5,"name":"demo_user","picture":"https://cdn.example.invalid/images/userimages/5.jpg?t=1","location":""}"#),
+            ok(r#"{"id":5,"name":"demo_user"}"#),
+        ]);
+        let (c, _) = client(f);
+        let mut mal = Mal::new(c, tmp_tokens("user", Some(token("fresh", 3000))));
+        let u = mal.user().unwrap();
+        assert_eq!((u.name.as_str(), u.picture.as_deref()), ("demo_user", Some("https://cdn.example.invalid/images/userimages/5.jpg?t=1")));
+        assert_eq!(mal.user().unwrap().picture, None, "no picture set");
+        assert_eq!(seen.lock().unwrap()[0].1, "https://api.myanimelist.net/v2/users/@me?fields=picture");
     }
 }
