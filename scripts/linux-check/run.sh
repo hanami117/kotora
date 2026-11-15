@@ -1,7 +1,7 @@
 #!/bin/sh
 # Usage: scripts/linux-check/run.sh [SOURCE_DIR] [STEP...]
 #   SOURCE_DIR  a checkout of the repo (default: the one this script is in)
-#   STEP        build test clippy snap release  (default: build test clippy snap)
+#   STEP        build test clippy snap release bloat  (default: build test clippy snap)
 # The source is mounted read-only and copied (no .git, target) into the container. Cargo's registry and
 # the target dir live in docker volumes (kot-linux-cargo, kot-linux-target), never on the host.
 # Logs: /tmp/linux-check/<label>/<step>.log, label = the folder's name.
@@ -32,8 +32,9 @@ for s in $STEPS; do
     build)   cmd="cargo build --workspace" ;;
     test)    cmd="cargo test --workspace" ;;
     clippy)  cmd="cargo clippy --workspace --all-targets" ;;
-    snap)    cmd="sh -c \"for sc in list loading list-dropped; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
+    snap)    cmd="sh -c \"for sc in list list-covers loading list-dropped settings-page; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
     release) cmd="sh -c \"cargo build --release -p kotora -p kotora-ctl && strip -o /tmp/kotora.stripped /target/release/kotora && strip -o /tmp/kot.stripped /target/release/kot && ls -l /target/release/kotora /tmp/kotora.stripped /tmp/kot.stripped\"" ;;
+    bloat)   cmd="sh -c \"cargo install -q --locked cargo-bloat && cargo bloat --release -p kotora --crates -n 25\"" ;;
     *) echo "unknown step $s"; continue ;;
   esac
   echo "== $s: $cmd"
@@ -42,5 +43,6 @@ for s in $STEPS; do
   if [ $s = clippy ]; then echo "clippy warnings: $(grep -c "^warning" /out/clippy.log)"; fi
   if [ $s = test ]; then grep -E "^test result|FAILED|failed" /out/test.log | sort | uniq -c | head -20; fi
   if [ $s = release ]; then tail -3 /out/release.log; fi
+  if [ $s = bloat ]; then tail -30 /out/bloat.log; fi
 done
 exit ${fail:-0}'

@@ -20,8 +20,11 @@ and `docs/ROADMAP.md` before starting work on a new machine.
     Refresh, sign-in and sign-out, sign-in screens, Settings account card
   - read only: no write to the MAL account; `+1` is hidden in the real app
   - tested against recorded JSON only; **not yet run against the real MAL**
-- Still open: the anitomy decision (left open on purpose), covers, the 15-minute refresh, the build-time
-  Client ID default (see docs/ROADMAP.md, Stage 2).
+  - polish (2026-11-15): macOS traffic lights in a band above the logo, Settings with Accounts and
+    About cards, real covers in the list (disk cache, decoded at display size), Rune's `dbus` feature
+    dropped to save size on Linux
+- Decided: anitomy = an existing Rust port (MPL-2.0), added and measured in Stage 3/4 (ROADMAP, Stage 1).
+- Still open: the 15-minute refresh, the build-time Client ID default (see docs/ROADMAP.md, Stage 2).
 
 ## Git rules (the repository will be public)
 
@@ -100,9 +103,21 @@ The agent never signed in. On the Mac (then on Arch), from the `stage-2` checkou
 The first real call also confirms two guesses: the `fields=` list of the animelist request, and that a
 403 or 429 does not appear on a normal list of a few hundred entries.
 
+## Live check of the polish (the user)
+
+1. Mac: the traffic lights sit in their own band above the Kotora logo, lined up with it; dragging that
+   band moves the window; in full screen the band goes away.
+2. Arch: the window looks as before (the desktop's title bar, no band).
+3. Settings, wide and narrow window: two cards side by side, stacked below about 1100 pt wide.
+   The kotora.moe and Source code links open the browser.
+4. After signing in: covers appear in the list within a second or two (tiles first). Restart with
+   `KOTORA_OFFLINE=1`: the covers come from `~/.cache/kotora/covers` at once. Sign out: that folder goes.
+5. Memory with the window open on a long list (Completed), after scrolling to the end and back:
+   `footprint $(pgrep -x kotora)` (Mac) or `grep Pss /proc/$(pgrep -x kotora)/smaps_rollup` (Arch).
+
 ## Next steps
 
-1. The user reviews `stage-1` and `stage-2`, builds them on Arch and the Mac, runs the live test above and
+1. The user reviews `stage-1` and `stage-2`, builds them on Arch and the Mac, runs the live tests above and
    measures the live budgets (window memory, first frame).
-2. Decide on anitomy (still open), covers, and the 15-minute refresh.
+2. Decide on the 15-minute refresh.
 3. Stage 3: edits and the sync queue (the first writes to the account; each needs approval).
