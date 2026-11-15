@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kotora
+GenericName=Anime Tracker
+Comment=Keeps your anime list up to date
+Exec=kotora
+Icon=io.github.hanami117.kotora
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+Keywords=anime;tracker;myanimelist;mal;kotora;
+StartupWMClass=io.github.hanami117.kotora
+StartupNotify=true
