@@ -409,6 +409,32 @@ Second batch after the live test (2026-11-15, one commit each):
   `cargo clippy --workspace --all-targets` clean.
 - [ ] Live test of the second batch by the user on Arch.
 
+Third batch (2026-11-15, user-approved): merges and rewatching.
+- [x] **Merged** `relations` (anime-relations) and `manga-prep` (`core/src/manga`, no UI) into
+  `stage-5`; detect.rs keeps both the not-on-list cover and the file's own episode, the cover looked up
+  after the redirect. About credits anime-relations; a redirect to an anime off the list says why on
+  the "Not on your list" card and in `kot now`.
+- [x] **Rewatching (MAL, as Taiga):** the status stays Completed, `is_rewatching` on, the progress
+  counts again. Schema 5: `entry.times_rewatched` and the rewatch fields in `pending_op`, so the
+  queue sends them like the rest (`PATCH my_list_status` with `is_rewatching`,
+  `num_times_rewatched`); the list, entry and details reads ask for `num_times_rewatched`.
+  - Start: "Rewatch" in a completed row's editor, on the details page, and `kot rewatch TITLE|ID`;
+    "Stop rewatching" ends one without counting it.
+  - Detection: a completed anime that plays again asks "Watching it again?" with "Start rewatch at
+    episode N" (or `kot confirm`); never automatic, even with "Update automatically" on.
+  - The last episode of a rewatch: one queued change, `is_rewatching` off, the count +1, the
+    progress at the total, still Completed (`Change::completes`, shared with the app and `kot`).
+  - UI: "Rewatching" tag on rows and details, "Rewatched: twice" on details.
+  - Decided: the Watching page also shows rewatches, as Taiga's Currently Watching list does
+    (Taiga's list treats a rewatching entry as watching). The sidebar's Watching count stays MAL's
+    status count, and the page says "+ 1 rewatching" next to its own, so the two numbers explain
+    each other. The Completed page still shows them too, since they are Completed on MAL.
+  - Scenes: `list-rewatching`, `list-editor-rewatch`, `details-rewatch`, `details-rewatching`,
+    `now-playing-rewatch-offer`, `now-playing-rewatch-started`.
+  - To check live (read only): that MAL returns `num_times_rewatched` for the
+    `list_status{num_times_rewatched}` field syntax on the list. Tested with recorded-shape JSON only.
+- [ ] Live test of the third batch by the user (rewatch writes need the user's OK on their account).
+
 Decided in this stage (easy to change):
 - The list page's box filters the whole list, not only the page's status, once it holds a query; the
   chips hide while it does. Clearing it brings the status page back. MyAnimeList is searched only

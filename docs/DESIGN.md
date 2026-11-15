@@ -273,7 +273,9 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
 5. **Decide:** watch time and position cross the threshold. The banner, notification and `kot now`
    show the offer; `kot confirm` or the button enqueues the op. Never offer an episode at or below the
    current progress, unless the entry is Rewatching. With the auto-update switch on (default off), the op
-   is enqueued without the offer when the match is confident.
+   is enqueued without the offer when the match is confident. A Completed entry (not rewatching) that
+   plays again is asked about a rewatch ("Watching it again?"), never started by itself; during a
+   rewatch the last episode ends it and adds one to `num_times_rewatched`, in the same op (Stage 5).
 
 ### 5.6 Paths, ids, process model
 
