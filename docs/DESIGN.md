@@ -82,6 +82,9 @@ exactly where Kotora should be strongest.
   2. A match against the user's own list (titles and alternative titles from MAL).
   3. Otherwise, one rate-limited MAL search (`GET /anime?q=`).
   4. Results are cached.
+  5. anime-relations (Taiga's rules, CC0) moves an episode numbered on past a season's end to the
+     anime it belongs to: "Season 2 - 15" is episode 2 of "2nd Season Part 2" (added 2026-11-15,
+     item 13 of section 12).
 - **Update with confirmation (the default):** when the episode passes a threshold (default 80 % watched,
   or the player stops after at least 50 %), the app shows a banner and a desktop notification: "Update
   *X* to episode N?". The choices are Update, Not now, and "Wrong anime…".
@@ -110,8 +113,8 @@ exactly where Kotora should be strongest.
 - **The mpv Lua script:** reports file, position and end to `kot`, so no IPC socket setup is needed.
 - **Window-title detectors** where a compositor allows it: X11, Hyprland, sway or wlroots
   foreign-toplevel. These are opt-in. (The open-file detectors moved into v0.1, above.)
-- **Recognition corrections UI:** "this file / folder is X", episode offsets, and anime-relations
-  (CC0) for numbering that continues across seasons.
+- **Recognition corrections UI:** "this file / folder is X" and episode offsets. (anime-relations,
+  for numbering that continues across seasons, came into v0.1.)
 - **History:** a local log of what was watched and when, with undo.
 - **Seasons browser:** current, next and past seasons from the signed-in service (MAL: `GET
   /anime/season/{year}/{season}`), fetched on demand. Add to Plan to watch.
@@ -258,7 +261,14 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
    1. Recognition cache (user corrections first).
    2. Fuzzy match against the user's list titles.
    3. One service search (MAL `GET /anime?q=`, rate-limited).
-   4. Season and episode mapping via anime-relations (later).
+   4. Episode redirection via anime-relations (`core/src/recognize/relations.rs`), applied once to
+      whatever steps 1-3 found, the user's pick included. A rule `- 39587|42198|108632:14-25 ->
+      42203|43247|119661:1-12!` moves episodes 14-25 of the MAL anime 39587 to episodes 1-12 of 42203
+      (`!`: 42203's own 14-25 too). The episode offered and the anime change; the reason says why
+      ("episode 15 of … 2nd Season is episode 2 of Part 2"). A destination on the list keeps the
+      source's certainty, and an episode past the count that a rule explains is no reason to ask. A
+      destination not on the list shows as "not on your list", titled from the rule's comment. MAL ids
+      only for now; the Kitsu and AniList ids are read and kept for later.
    5. Low confidence: show "Not sure: is this *X*?".
 5. **Decide:** watch time and position cross the threshold. The banner, notification and `kot now`
    show the offer; `kot confirm` or the button enqueues the op. Never offer an episode at or below the
@@ -274,7 +284,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
   - tokens: `$XDG_DATA_HOME/kotora/tokens.json`, mode 0600 (section 11)
   - data: `$XDG_DATA_HOME/kotora/kotora.db` (the queue, corrections and history are not re-downloadable,
     so not cache)
-  - cache: `$XDG_CACHE_HOME/kotora/` (covers, API responses)
+  - cache: `$XDG_CACHE_HOME/kotora/` (covers, API responses, the downloaded `anime-relations.txt`)
   - log: `$XDG_STATE_HOME/kotora/kotora.log`, and `~/Library/Logs/Kotora` on macOS
 - **Socket:** `$XDG_RUNTIME_DIR/kotora.sock` (Linux; `/tmp/kotora-<uid>` fallback), and
   `kotora-<uid>` in `confstr(_CS_DARWIN_USER_TEMP_DIR)` on macOS. `KOTORA_CTL_SOCKET` overrides it.
@@ -475,6 +485,13 @@ bugs we find in Taiga or its data upstream when they are relevant.
   sign-out, which deletes it. The data dir is mode 0700 and the socket 0600. The VLC web password
   (macOS) in `config.toml` has the same caveat; the file is 0600.
 - No telemetry. An update check (later) is opt-out and anonymous, as in Uzumaki.
+- **anime-relations download:** the same rules. A copy is built in. At the first recognised file of a
+  run, when the last try is a week old (a day after a failed one), one anonymous `GET` of the raw file on
+  GitHub (`User-Agent: Kotora/<version>`, `If-None-Match` with the saved ETag; no account, no cookies),
+  on a short thread. Not when offline (`KOTORA_OFFLINE`) or headless, and not with `[recognition]
+  relations_download = false`. Sign-in is not needed: the file is public data, not MAL's. A download
+  that doesn't read, or has under half the built-in copy's rules, is dropped and the last good copy
+  stays; the newer of the downloaded and the built-in copy (by `last_modified`) is used.
 - Logs never contain tokens, and contain file paths only at debug level.
 
 ## 12. Decisions (2026-11-14)
@@ -513,6 +530,11 @@ The user answered the open questions. These are decided; the rest of this docume
     come forward from v0.3/v0.4. To make room, AniList, library folders with "play next", the
     corrections UI, and AppImage/DMG move to v0.3. The seasons browser, statistics, Discord and the
     tray stay later (v0.4).
+
+13. **anime-relations in v0.1 (2026-11-15):** episode redirection between MAL entries, as Taiga
+    does it, moved forward from v0.3 so split seasons and numbering that continues across seasons
+    (the user's Re:Zero releases) are recognised. The rules file is built in and refreshed from
+    GitHub at most once a week (section 11). The corrections UI stays in v0.3.
 
 **Players for v0.1:** mpv (IPC socket and MPRIS), VLC (MPRIS on Linux), mpc-qt (MPRIS; `xesam:url`
 unverified), and from Stage 5 all of them (plus Celluloid and Haruna) through their open files on

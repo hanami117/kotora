@@ -25,6 +25,8 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   `stage-5` (on top of `stage-4`): Client ID from the app, search and add, details page, and the
   detection GUI. The detection engine (`stage-5-detect`) was merged into `stage-5` on 2026-11-15 and
   wired. Waiting for the user's live test. The release moves to Stage 6.
+- **anime-relations (moved from v0.3 into v0.1):** built on branch `relations` (2026-11-15, on top of
+  `stage-5`), waiting for review and the user's live test with their Re:Zero releases. See below.
 
 ## Stage 0: design
 
@@ -351,6 +353,41 @@ Open after Stage 5:
 - The merge needed no database migration: `stage-5-detect` only added `[players]` keys.
 - `mpv.conf` is checked once at start; a change made by hand while Kotora runs shows after a restart.
 
+## anime-relations: episode redirection (part of v0.1)
+
+Why (2026-11-15): releases number split seasons on ("Season 2 - 15" is episode 2 of "2nd Season
+Part 2" on MAL) or count from the first season. Recognition found the season it read, saw an episode
+past its count and asked. Taiga solves this with erengy/anime-relations (CC0); Kotora now reads the
+same file. Moved forward from v0.3; the corrections UI stays there. Built on branch `relations`.
+
+- [x] Parser (`core/src/recognize/relations.rs`): `::meta` (version 1.x, `last_modified`) and
+  `::rules`; MAL | Kitsu | AniList ids, `?` (unknown id or open end), `~` (the source's id, per
+  field or for all), `!` (the destination's own rule), single episodes, ranges and range-to-one-episode
+  rules; titles from the comment above a rule. Bad lines are counted and skipped. All 556 rule lines of
+  the current file read (810 rules after `!`, 792 with MAL ids), indexed by MAL id.
+- [x] Applied after recognition (`recognize::redirect`): the cache, the list match, the search and
+  the user's pick. The anime and the episode offered change; the reason reads "episode 15 of Re:Zero
+  kara Hajimeru Isekai Seikatsu 2nd Season is episode 2 of Part 2" in Now Playing and `kot now`
+  (nothing new in `kot`). A destination not on the list is "not on your list" with its title from the
+  rule's comment, so "Add as Watching" works. One step, no chains (as Taiga).
+- [x] Tests with inline fixtures: the format, the real Re:Zero rules (S2 numbered 1-25 → Part 2
+  1-12; absolute 30 → 2nd Season 5; season 3 numbered 51-66 or 1-16), "S02E03" and absolute "15"
+  giving the same episode, the user's pick and a search hit, the download policy.
+- [x] Data: the file is built in (`core/data/anime-relations.txt`, 50 KB, `last_modified`
+  2026-10-19) and refreshed from GitHub at most once a week, at the first recognised file of a run, with
+  the ETag; a day after a failed try; never offline or headless; off with `[recognition]
+  relations_download = false`. The last good copy stays (DESIGN.md §11).
+- [x] Costs (Linux x86_64, release, stripped): `kotora` 30,137,368 bytes, +102,272 (+0.10 MB: 50 KB
+  of data, the rest code) over `stage-5` built the same way (30,035,096). Reading the file: 0.4-0.5 ms,
+  once per run, at the first file. No timer, no new thread at rest.
+- [ ] Live test by the user (STATUS.md has the list for Stage 5; see below).
+- Open: the About page (`app/src/ui.rs`, another branch) should name anime-relations next to anitomy.
+  A "not on your list" card shows no reason line, so the redirect is visible there only by the title.
+
+Live test: play a Season 2 release numbered 1-25 at episode 15 or later, and a Season 3 release.
+Now Playing (and `kot now`) should name 2nd Season Part 2 (or the 3rd Season) with the moved episode
+and the reason.
+
 ## Stage 6: release 0.1
 
 - [ ] `install.sh` (copy Uzumaki's: `~/.local`, desktop file, icons, `--uninstall`).
@@ -375,7 +412,7 @@ to v0.3.
   - corrections UI ("this file / folder is X")
   - library folders and "play next episode"
   - opt-in window-title detectors on X11, Hyprland, sway and wlroots
-  - anime-relations episode mapping
+  - (anime-relations episode mapping moved into v0.1, 2026-11-15: done on branch `relations`)
 - **v0.4:**
   - seasons browser
   - statistics
