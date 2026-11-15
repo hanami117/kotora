@@ -3,10 +3,11 @@
 use std::f32::consts::PI;
 
 use kotora_core::Status;
-use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, Tx, col, el, icon, row, spacer, text};
+use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
 
 use crate::icons;
-use crate::model::{Entry, Filter, Page, State};
+use crate::model::{Air, Auth, Entry, Filter, Page, Sort, State};
+use crate::online;
 use crate::theme::{self, PAL};
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -22,8 +23,17 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(main(s, wide))
 }
 
-/// No visible change comes from `poll` in stage 1: nothing ticks.
+/// Nothing ticks: workers report through `update_if`, so `poll` never has a visible change.
 pub fn poll(_s: &mut State, _t: f64, _tx: &mut Tx) -> bool {
+    false
+}
+
+/// Ctrl F (Cmd F on macOS) jumps to the search box.
+pub fn on_key(s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx) -> bool {
+    if k.is_command('f') && matches!(s.page, Page::List(_)) && s.has_list() {
+        s.query.focused = true;
+        return true;
+    }
     false
 }
 
@@ -36,7 +46,7 @@ fn sidebar(s: &State) -> El {
     }
     side = side.child(nav_heading("My list"));
     for st in Status::ALL {
-        let count = (!s.loading).then(|| s.count(st).to_string());
+        let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
         side = side.child(nav_item(
             st.slug(),
             NavMark::Dot(PAL.status(st)),
@@ -80,12 +90,18 @@ fn sidebar(s: &State) -> El {
                 ),
         );
     }
-    let (dot, line) = if s.loading {
+    let (dot, line) = if s.syncing {
         (PAL.faint, "Syncing…".to_string())
-    } else if s.offline {
+    } else if s.offline && s.queue > 0 {
         (PAL.warn(), format!("Offline · {} changes waiting", s.queue))
+    } else if s.offline {
+        (PAL.warn(), "Offline · showing your saved list".to_string())
+    } else if let Some(at) = s.synced_at {
+        (PAL.ok(), format!("Synced {}", sync_age(s.clock() - at)))
+    } else if s.has_list() {
+        (PAL.faint, "Not synced yet".to_string())
     } else {
-        (PAL.ok(), s.synced.to_string())
+        (PAL.faint, "Not signed in".to_string())
     };
     side.child(
         row()
@@ -97,6 +113,16 @@ fn sidebar(s: &State) -> El {
             .child(el().size(6.0, 6.0).radius(3.0).fill(dot))
             .child(text(line).font(theme::SMALL).color(PAL.faint)),
     )
+}
+
+/// "just now", "2 min ago", "3 h ago", "2 days ago".
+fn sync_age(secs: i64) -> String {
+    match secs.max(0) {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", secs / 60),
+        3600..=86_399 => format!("{} h ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
+    }
 }
 
 fn brand(s: &State) -> El {
@@ -201,25 +227,26 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
 
 fn main(s: &State, wide: bool) -> El {
     let page = match s.page {
+        Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide),
-        Page::NowPlaying => placeholder("Now Playing", "Nothing is playing."),
-        Page::Queue => placeholder("Sync queue", "The queue comes in a later stage."),
-        Page::Settings => placeholder("Settings", "Settings come in a later stage."),
+        Page::NowPlaying => placeholder(s, "Now Playing", "Nothing is playing."),
+        Page::Queue => placeholder(s, "Sync queue", "The queue comes in a later stage."),
+        Page::Settings => settings(s),
     };
     col().key("main").grow(1.0).min_w(0.0).h_full().child(page)
 }
 
-fn placeholder(title: &str, line: &str) -> El {
+fn placeholder(s: &State, title: &str, line: &str) -> El {
     col()
         .key(format!("page/{title}"))
         .w_full()
         .h_full()
-        .child(top(title, None, false))
+        .child(top(s, title, None, false))
         .child(text(line.to_string()).font(theme::BODY).color(PAL.faint).px(theme::PAGE_PAD))
 }
 
 /// The page's top bar: title, count, and (on the list) search and sort.
-fn top(title: &str, count: Option<usize>, tools: bool) -> El {
+fn top(s: &State, title: &str, count: Option<usize>, tools: bool) -> El {
     let mut t = row().key("top").gap(12.0).center_y().px(theme::PAGE_PAD).pt(18.0).pb(14.0).child(
         row()
             .gap(6.0)
@@ -231,12 +258,15 @@ fn top(title: &str, count: Option<usize>, tools: bool) -> El {
             }),
     );
     if tools {
-        t = t.child(spacer()).child(search_box()).child(sort_select());
+        t = t.child(spacer()).child(search_box(s)).child(sort_select(s.sort));
+        if s.auth == Auth::SignedIn {
+            t = t.child(refresh_button(s.syncing));
+        }
     }
     t
 }
 
-fn search_box() -> El {
+fn search_box(s: &State) -> El {
     let kbd = if cfg!(target_os = "macos") { "\u{2318} F" } else { "Ctrl F" };
     row()
         .key("search")
@@ -249,16 +279,30 @@ fn search_box() -> El {
         .fill(PAL.field)
         .border(1.0, PAL.border)
         .child(icon(&icons::SEARCH, 16.0).color(PAL.faint))
-        .child(text("Search titles").font(theme::BODY).color(PAL.faint))
-        .child(spacer())
         .child(
-            el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(kbd).font(rune::TextStyle::new(10.0, 500.0)).color(PAL.faint)),
+            text_input(&s.query, theme::BODY)
+                .key("search-input")
+                .grow(1.0)
+                .min_w(0.0)
+                .single_line()
+                .color(PAL.text)
+                .placeholder("Search titles", PAL.faint)
+                .on_edit(|s: &mut State| &mut s.query)
+                .on_input_change(|s: &mut State, _tx: &mut Tx| s.refresh())
+                .on_submit(|_s: &mut State, tx: &mut Tx| tx.blur()),
+        )
+        .child(
+            el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(kbd).font(TextStyle::new(10.0, 500.0)).color(PAL.faint)),
         )
 }
 
-fn sort_select() -> El {
+/// The sort control cycles through the orders on each press.
+fn sort_select(sort: Sort) -> El {
     row()
         .key("sort")
+        .role("button")
+        .label(format!("Sort: {}", sort.label()))
+        .focusable(true)
         .h(32.0)
         .px(10.0)
         .gap(8.0)
@@ -266,43 +310,69 @@ fn sort_select() -> El {
         .radius(theme::R_SM)
         .fill(PAL.field)
         .border(1.0, PAL.border)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.set_sort(s.sort.next());
+        })
         .child(text("Sort").font(theme::BODY).color(PAL.faint))
-        .child(text("Last updated").font(theme::BODY_MED).color(PAL.text))
+        .child(text(sort.label()).font(theme::BODY_MED).color(PAL.text))
         .child(icon(&icons::DOWN, 14.0).color(PAL.text))
+}
+
+fn refresh_button(syncing: bool) -> El {
+    el().key("refresh")
+        .role("button")
+        .label("Refresh")
+        .focusable(true)
+        .size(32.0, 32.0)
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border)
+        .center()
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            online::refresh(s);
+        })
+        .child(icon(&icons::SYNC, 16.0).color(if syncing { PAL.faint } else { PAL.dim }))
 }
 
 fn list_page(s: &State, st: Status, wide: bool) -> El {
     let count = s.count(st);
-    let page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(top(st.label(), (!s.loading).then_some(count), true));
+    let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(top(s, st.label(), (!s.loading).then_some(count), true));
+    if let Some(a) = status_alert(s) {
+        page = page.child(a);
+    }
     if s.loading {
         return page.child(loading());
     }
     if count == 0 {
         return page.child(empty(st));
     }
-    let rows = s.visible();
-    page.child(chips(s, st))
-        .child(header(wide))
-        .child(
-            col().key(format!("rows-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-                col().key("rows").growth(GrowthSpec::default()).virtual_rows(
-                    rows.len(),
-                    theme::ROW_H,
-                    move |s: &State, i| {
-                        // `i` is an index into the filtered rows; the key is the media id.
-                        let v = s.visible();
-                        v.get(i).map_or_else(|| format!("gone-{i}").into(), |&k| s.entries[k].id.to_string().into())
-                    },
-                    move |s: &State, i| {
-                        let v = s.visible();
-                        match v.get(i) {
-                            Some(&k) => list_row(&s.entries[k], wide),
-                            None => el(),
-                        }
-                    },
-                ),
+    page = page.child(chips(s, st));
+    if s.rows.is_empty() {
+        return page.child(no_match(s));
+    }
+    let n = s.rows.len();
+    page.child(header(wide, s.sort)).child(
+        col().key(format!("rows-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
+            col().key("rows").growth(GrowthSpec::default()).virtual_rows(
+                n,
+                theme::ROW_H,
+                move |s: &State, i| {
+                    // `i` is an index into the shown rows; the key is the media id.
+                    s.rows.get(i).map_or_else(|| format!("gone-{i}").into(), |&k| s.entries[k].id.to_string().into())
+                },
+                move |s: &State, i| match s.rows.get(i) {
+                    Some(&k) => list_row(&s.entries[k], wide, s.clock(), !s.read_only),
+                    None => el(),
+                },
             ),
-        )
+        ),
+    )
 }
 
 fn chips(s: &State, st: Status) -> El {
@@ -327,7 +397,7 @@ fn chips(s: &State, st: Status) -> El {
             .press(PAL.press())
             .on_press_tx(move |s: &mut State, tx: &mut Tx| {
                 tx.instant();
-                s.filter = f;
+                s.set_filter(f);
             })
             .child(text(format!("{} {n}", f.label())).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim }));
         chip = if on { chip.fill(PAL.accent.alpha(0.14)) } else { chip.border(1.0, PAL.border) };
@@ -350,7 +420,7 @@ fn columns(cover: El, title: El, progress: El, score: El, kind: El, updated: El,
     r.child(updated.w(theme::COL_UPDATED))
 }
 
-fn header(wide: bool) -> El {
+fn header(wide: bool, sort: Sort) -> El {
     let h = |s: &str, sorted: bool| text(s.to_uppercase()).font(theme::CAPTION).color(if sorted { PAL.dim } else { PAL.faint });
     col()
         .key("thead")
@@ -358,11 +428,11 @@ fn header(wide: bool) -> El {
         .child(
             columns(
                 el().w(34.0),
-                h("Title", false),
-                h("Progress", true),
-                h("Score", false),
+                h("Title", sort == Sort::Title),
+                h("Progress", sort == Sort::Progress),
+                h("Score", sort == Sort::Score),
                 h("Type", false).key("thead/type"),
-                row().gap(4.0).center_y().child(h("Updated", true)).child(icon(&icons::DOWN, 10.0).color(PAL.dim)),
+                row().gap(4.0).center_y().child(h("Updated", sort == Sort::Updated)).child(icon(&icons::DOWN, 10.0).color(PAL.dim)),
                 wide,
             )
             .h(30.0)
@@ -371,12 +441,12 @@ fn header(wide: bool) -> El {
         .child(el().w_full().h(1.0).fill(PAL.border))
 }
 
-fn list_row(e: &Entry, wide: bool) -> El {
+fn list_row(e: &Entry, wide: bool, now: i64, plus: bool) -> El {
     let id = e.id;
     let status_c = PAL.status(e.status);
 
     let mut sub = row().gap(8.0).center_y();
-    if e.airing.is_some() {
+    if e.air == Air::Airing {
         sub = sub.child(tag("Airing", PAL.airing, true));
     }
     if e.rewatching {
@@ -385,8 +455,9 @@ fn list_row(e: &Entry, wide: bool) -> El {
     if e.waiting.is_some() {
         sub = sub.child(tag("Waiting to sync", PAL.warn(), false));
     }
-    let note = e.waiting.or(e.airing).unwrap_or("Finished airing");
-    sub = sub.child(text(note).font(theme::LABEL).color(PAL.faint));
+    if !e.note().is_empty() {
+        sub = sub.child(text(e.note()).font(theme::LABEL).color(PAL.faint));
+    }
     if let Some(n) = e.new_episode {
         sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.accent.alpha(0.14)));
     }
@@ -413,26 +484,7 @@ fn list_row(e: &Entry, wide: bool) -> El {
                 .child(text(e.progress.to_string()).font(theme::NUM_MED).color(PAL.text))
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
-        .child(
-            el().key("plus")
-                .role("button")
-                .label("+1")
-                .focusable(true)
-                .size(38.0, 26.0)
-                .radius(theme::R_SM)
-                .border(1.0, PAL.border_strong)
-                .center()
-                .hover(PAL.accent)
-                .press(PAL.accent_lo)
-                // On orange the label turns dark (white or dim on orange fails contrast).
-                .hover_group()
-                .on_press_tx(move |s: &mut State, tx: &mut Tx| {
-                    // Optimistic and at once (design-spec §6): no counting animation.
-                    tx.instant();
-                    s.plus_one(id);
-                })
-                .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim).group_color(PAL.on_accent)),
-        );
+        .child(if plus { plus_button(id) } else { el() });
     let score = match e.score {
         Some(n) => text(n.to_string()).font(theme::NUM_MED).color(PAL.text),
         None => text("\u{2013}").font(theme::BODY).color(PAL.faint),
@@ -448,13 +500,34 @@ fn list_row(e: &Entry, wide: bool) -> El {
                 progress,
                 score,
                 text(e.kind).font(theme::LABEL).color(PAL.dim),
-                text(e.updated).font(theme::LABEL).color(PAL.dim),
+                text(kotora_core::time::age(e.updated_at, now)).font(theme::LABEL).color(PAL.dim),
                 wide,
             )
             .grow(1.0)
             .px(theme::PAGE_PAD),
         )
         .child(el().w_full().h(1.0).fill(PAL.border.alpha(0.6)))
+}
+
+/// `+1`: optimistic and at once (design-spec §6), no counting animation.
+fn plus_button(id: u32) -> El {
+    el().key("plus")
+        .role("button")
+        .label("+1")
+        .focusable(true)
+        .size(38.0, 26.0)
+        .radius(theme::R_SM)
+        .border(1.0, PAL.border_strong)
+        .center()
+        .hover(PAL.accent)
+        .press(PAL.accent_lo)
+        // On orange the label turns dark (white or dim on orange fails contrast).
+        .hover_group()
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.plus_one(id);
+        })
+        .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim).group_color(PAL.on_accent))
 }
 
 fn tag(label: &str, c: Color, dot: bool) -> El {
@@ -537,6 +610,156 @@ fn loading() -> El {
         c = c.child(el().key(format!("skel/{i}")).w_full().h(44.0).radius(theme::R_MD).fill(PAL.raised));
     }
     c
+}
+
+// ------------------------------------------------------------------- alerts, sign-in, settings
+
+fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
+    let (fg, fill) = match (primary, on.is_some()) {
+        (true, true) => (PAL.on_accent, PAL.accent),
+        (_, false) => (PAL.faint, PAL.field),
+        (false, true) => (PAL.text, PAL.raised),
+    };
+    let b = el()
+        .key(key.to_string())
+        .role("button")
+        .label(label.to_string())
+        .h(32.0)
+        .px(14.0)
+        .radius(theme::R_SM)
+        .fill(fill)
+        .center()
+        .child(text(label.to_string()).font(theme::LABEL_BTN).color(fg));
+    let b = if primary || on.is_none() { b } else { b.border(1.0, PAL.border_strong) };
+    match on {
+        Some(f) => b
+            .focusable(true)
+            .hover(if primary { Color::BLACK.alpha(0.08) } else { PAL.hover() })
+            .press(PAL.press())
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                f(s);
+            }),
+        None => b,
+    }
+}
+
+/// A tinted bar with a message and an optional button (design-spec §7).
+fn alert(key: &str, c: Color, message: String, action: Option<El>) -> El {
+    let mut r = row()
+        .key(key.to_string())
+        .gap(12.0)
+        .center_y()
+        .px(14.0)
+        .py(10.0)
+        .mx(theme::PAGE_PAD)
+        .mb(12.0)
+        .radius(theme::R_MD)
+        .fill(c.alpha(0.08))
+        .border(1.0, c.alpha(0.3))
+        .child(el().size(6.0, 6.0).radius(3.0).fill(c))
+        .child(text(message).font(theme::BODY).color(PAL.text).grow(1.0).min_w(0.0));
+    if let Some(a) = action {
+        r = r.child(a);
+    }
+    r
+}
+
+/// The bar above the list: sign in again, or the last sync's error.
+fn status_alert(s: &State) -> Option<El> {
+    if s.auth == Auth::Expired {
+        return Some(alert(
+            "alert/expired",
+            PAL.warn(),
+            "MyAnimeList needs you to sign in again. Your saved list still works.".into(),
+            Some(button("alert/sign-in", "Sign in", true, Some(online::sign_in))),
+        ));
+    }
+    let err = s.error.as_ref()?;
+    let mut msg = err.clone();
+    if s.offline && let Some(at) = s.synced_at {
+        msg = format!("{msg} Last synced {}.", sync_age(s.clock() - at));
+    }
+    Some(alert("alert/error", PAL.status(Status::Dropped), msg, Some(button("alert/retry", "Retry", false, Some(online::refresh)))))
+}
+
+/// A status page that has entries, but none match the chip or the search.
+fn no_match(s: &State) -> El {
+    let q = s.query.text.trim();
+    let line = if q.is_empty() { "No anime match this filter.".to_string() } else { format!("Nothing matches \u{201c}{q}\u{201d}.") };
+    col().key("no-match").grow(1.0).min_h(0.0).center().gap(4.0).pb(60.0).child(text(line).font(theme::SECTION).color(PAL.text))
+}
+
+/// The list pages before there is a list: no Client ID, signed out, or waiting for the browser.
+fn welcome(s: &State) -> El {
+    let mut c = col().key("welcome").w_full().h_full().center().gap(10.0).pb(40.0);
+    if let Some(img) = &s.logo {
+        c = c.child(el().size(64.0, 64.0).radius(14.0).pixels(img.pixels()));
+    }
+    c = c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text));
+    match s.auth {
+        Auth::NoClientId => {
+            c = c
+                .child(text("To sign in, Kotora needs a MyAnimeList Client ID.").font(theme::BODY).color(PAL.dim))
+                .child(
+                    col()
+                        .key("no-client-id")
+                        .gap(6.0)
+                        .padding(16.0)
+                        .mt(6.0)
+                        .radius(theme::R_MD)
+                        .fill(PAL.status(Status::Dropped).alpha(0.08))
+                        .border(1.0, PAL.status(Status::Dropped).alpha(0.3))
+                        .child(text("Add this to ~/.config/kotora/config.toml:").font(theme::LABEL).color(PAL.dim))
+                        .child(text("[mal]\nclient_id = \"your client id\"").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text))
+                        .child(
+                            text("Register a free ID at myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback.")
+                                .font(theme::LABEL)
+                                .color(PAL.dim),
+                        ),
+                )
+                .child(row().gap(8.0).mt(6.0).child(button("sign-in", "Sign in", true, None)).child(button("check-again", "Check again", false, Some(online::recheck_config))));
+        }
+        Auth::SigningIn => {
+            c = c
+                .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY).color(PAL.dim))
+                .child(row().mt(6.0).child(button("cancel", "Cancel", false, Some(online::cancel_sign_in))));
+        }
+        _ => {
+            c = c
+                .child(text("Sign in to MyAnimeList to see your list. Kotora only reads it for now.").font(theme::BODY).color(PAL.dim))
+                .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in))));
+        }
+    }
+    if let Some(e) = &s.error {
+        c = c.child(text(e.clone()).font(theme::LABEL).color(PAL.status(Status::Dropped)).mt(8.0));
+    }
+    c
+}
+
+fn settings(s: &State) -> El {
+    let mut card = col().key("account-card").gap(8.0).padding(16.0).radius(12.0).fill(PAL.surface).border(1.0, PAL.border).child(text("Account").font(theme::SECTION).color(PAL.text));
+    card = match (&s.account, s.auth) {
+        (Some((name, service)), _) => card
+            .child(text(format!("Signed in as {name} on {service}.")).font(theme::BODY).color(PAL.text))
+            .child(
+                text("Your sign-in token is kept in a file that only you can read. It is not encrypted. Signing out deletes it and your saved list.")
+                    .font(theme::LABEL)
+                    .color(PAL.dim),
+            )
+            .child(row().mt(6.0).child(button("sign-out", "Sign out", false, Some(online::sign_out)))),
+        (None, Auth::NoClientId) => card.child(text("No MyAnimeList Client ID in config.toml yet. The Welcome page shows how to add it.").font(theme::BODY).color(PAL.dim)),
+        (None, Auth::SigningIn) => card.child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY).color(PAL.dim)),
+        (None, _) => card
+            .child(text("Not signed in.").font(theme::BODY).color(PAL.dim))
+            .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in)))),
+    };
+    col()
+        .key("page/Settings")
+        .w_full()
+        .h_full()
+        .child(top(s, "Settings", None, false))
+        .child(col().px(theme::PAGE_PAD).max_w(560.0).child(card))
 }
 
 #[cfg(test)]

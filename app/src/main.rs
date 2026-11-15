@@ -1,7 +1,8 @@
 //! Kotora: a native anime tracker for Linux and macOS (Rune UI).
 //!
-//! Stage 1: the window with the sidebar and the list page on fake data, the `kot` socket and
-//! single instance. No network, no MyAnimeList, no detection yet.
+//! Stage 2: the window with the sidebar and the list page, the saved list in SQLite, MyAnimeList
+//! sign-in and a read-only sync, the `kot` socket and single instance. Headless scenes use fake data.
+//! No edits to the MAL account and no detection yet.
 //!
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
@@ -9,6 +10,7 @@
 mod ctl;
 mod icons;
 mod model;
+mod online;
 mod scenes;
 mod theme;
 mod ui;
@@ -75,6 +77,7 @@ fn main() {
         scenes: scenes::SCENES,
         setup: Some(setup),
         poll: Some(ui::poll),
+        on_key: Some(ui::on_key),
         min_size: Some((960.0, 600.0)),
         ..AppSpec::new("Kotora", (1280.0, 800.0), State::fake, ui::view)
     };
@@ -103,9 +106,11 @@ fn main() {
     // `kot` talks to this socket; it goes away with `_ctl` when the app ends.
     let _ctl = ctl::start(handle.clone());
     let app = app.init(move || {
-        let mut s = State::fake();
-        s.window = !hidden;
+        let mut s = State::start(online::initial_auth());
         s.handle = Some(handle);
+        s.window = !hidden;
+        // The saved list first, then a sync when signed in (workers, off the UI thread).
+        online::start(&mut s);
         s
     });
     app.run();

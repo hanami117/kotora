@@ -1,9 +1,10 @@
-//! App state. Stage 1 has fake data only: no store, no network, no detection.
+//! App state. The real list comes from the store and MyAnimeList (`online.rs`); the fake list below
+//! is for the headless scenes and the tests only.
 //!
-//! Every title here is made up (the same ones as `mockup/kotora.html`).
+//! Every fake title here is made up (the same ones as `mockup/kotora.html`).
 
-use kotora_core::Status;
-use rune::{AppHandle, Image, ImageCache};
+use kotora_core::{ListItem, Status};
+use rune::{AppHandle, Image, ImageCache, TextEdit};
 
 pub type Handle = AppHandle<State>;
 
@@ -39,11 +40,60 @@ impl Filter {
     pub fn keeps(self, e: &Entry) -> bool {
         match self {
             Filter::All => true,
-            Filter::Airing => e.airing.is_some(),
-            Filter::Finished => e.airing.is_none(),
+            Filter::Airing => e.air == Air::Airing,
+            Filter::Finished => e.air == Air::Finished,
             Filter::NewEpisode => e.new_episode.is_some(),
         }
     }
+}
+
+/// Where a show is in its run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Air {
+    Airing,
+    Finished,
+    Upcoming,
+    Unknown,
+}
+
+/// How the list is ordered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sort {
+    Updated,
+    Title,
+    Score,
+    Progress,
+}
+
+impl Sort {
+    pub const ALL: [Sort; 4] = [Sort::Updated, Sort::Title, Sort::Score, Sort::Progress];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Sort::Updated => "Last updated",
+            Sort::Title => "Title",
+            Sort::Score => "Score",
+            Sort::Progress => "Progress",
+        }
+    }
+
+    /// The next order (the Sort control cycles).
+    pub fn next(self) -> Sort {
+        Sort::ALL[(Sort::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1) % Sort::ALL.len()]
+    }
+}
+
+/// Where the sign-in stands. Decides what the list pages show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Auth {
+    /// No Client ID in `config.toml`: sign-in is off and the page says how to set it.
+    NoClientId,
+    SignedOut,
+    /// The browser is open and we wait for the redirect.
+    SigningIn,
+    SignedIn,
+    /// The token was refused: the saved list shows, with a Sign in button.
+    Expired,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +101,8 @@ pub struct Entry {
     /// The service's media id (fake here). Picks the cover tile's colours.
     pub id: u32,
     pub title: String,
+    /// Every title, lower case, one per line (the search filter looks here).
+    pub search: String,
     pub status: Status,
     pub progress: u32,
     /// `None`: unknown (still airing with no count).
@@ -58,10 +110,11 @@ pub struct Entry {
     /// 1-10; `None`: not scored.
     pub score: Option<u8>,
     pub kind: &'static str,
-    /// "now", "2 h", … (a timestamp once the store exists).
-    pub updated: &'static str,
-    /// "Ep 7 on Sat" while airing.
-    pub airing: Option<&'static str>,
+    /// Unix seconds of the last change (the Updated column shows its age).
+    pub updated_at: i64,
+    pub air: Air,
+    /// "Ep 7 on Sat" while airing (needs broadcast data; fake only for now).
+    pub airing_note: Option<&'static str>,
     /// A released episode past the progress.
     pub new_episode: Option<u32>,
     pub rewatching: bool,
@@ -69,7 +122,58 @@ pub struct Entry {
     pub waiting: Option<&'static str>,
 }
 
+/// MAL's `media_type` as the Type column writes it.
+pub fn kind_label(format: &str) -> &'static str {
+    match format {
+        "tv" => "TV",
+        "movie" => "Movie",
+        "ova" => "OVA",
+        "ona" => "ONA",
+        "special" => "Special",
+        "tv_special" => "TV special",
+        "music" => "Music",
+        "cm" => "CM",
+        "pv" => "PV",
+        _ => "",
+    }
+}
+
 impl Entry {
+    pub fn from_item(it: &ListItem) -> Entry {
+        let m = &it.media;
+        let search = m.all_titles().map(str::to_lowercase).collect::<Vec<_>>().join("\n");
+        Entry {
+            id: m.id,
+            title: m.title.clone(),
+            search,
+            status: it.status,
+            progress: it.progress,
+            episodes: m.episodes,
+            score: it.score,
+            kind: kind_label(&m.format),
+            updated_at: it.updated_at,
+            air: match m.air_status.as_str() {
+                "currently_airing" => Air::Airing,
+                "finished_airing" => Air::Finished,
+                "not_yet_aired" => Air::Upcoming,
+                _ => Air::Unknown,
+            },
+            airing_note: None,
+            new_episode: None,
+            rewatching: it.rewatching,
+            waiting: None,
+        }
+    }
+
+    /// The grey line after the tags.
+    pub fn note(&self) -> &'static str {
+        self.waiting.or(self.airing_note).unwrap_or(match self.air {
+            Air::Finished => "Finished airing",
+            Air::Upcoming => "Not yet aired",
+            _ => "",
+        })
+    }
+
     pub fn fraction(&self) -> f32 {
         match self.episodes {
             Some(n) if n > 0 => (self.progress as f32 / n as f32).clamp(0.0, 1.0),
@@ -86,72 +190,269 @@ pub struct NowMini {
     pub line: String,
 }
 
+/// What a worker tells the UI thread (`online.rs` sends these through `AppHandle::update_if`).
+#[derive(Debug)]
+pub enum Msg {
+    /// The saved list from the database, at start.
+    Cache { items: Vec<ListItem>, user: Option<String>, synced_at: Option<i64> },
+    /// A fresh list from the service, already saved.
+    Synced { items: Vec<ListItem>, synced_at: i64 },
+    /// The sync failed; the saved list stays.
+    SyncFailed(Fail),
+    /// Nothing to sync (signed out, no Client ID, `KOTORA_OFFLINE`): stop the loading state.
+    Idle,
+    SignedIn { user: String },
+    SignInFailed(String),
+    SignedOut,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Fail {
+    Offline(String),
+    SignInAgain,
+    Other(String),
+}
+
 pub struct State {
     pub page: Page,
     pub filter: Filter,
+    pub sort: Sort,
+    /// The search box.
+    pub query: TextEdit,
+    pub auth: Auth,
     /// The signed-in user name and service; `None` when signed out.
     pub account: Option<(String, &'static str)>,
     pub entries: Vec<Entry>,
+    /// Indexes into `entries` for the list page: its status, the chip, the search, the sort.
+    /// Rebuilt by `refresh()`; the view only reads it.
+    pub rows: Vec<usize>,
     /// The first sync is running and nothing is saved yet: skeleton rows.
     pub loading: bool,
+    /// A sync is running.
+    pub syncing: bool,
+    /// The last sync's error, in plain words (red alert on the list).
+    pub error: Option<String>,
     pub queue: u32,
     pub offline: bool,
-    pub synced: &'static str,
+    /// Unix seconds of the last full sync.
+    pub synced_at: Option<i64>,
+    /// Scenes pin the clock; the real app reads it when it draws.
+    pub fixed_now: Option<i64>,
     pub now: Option<NowMini>,
+    /// Stage 2 writes nothing to the account, so the real app hides `+1`. The fake state (scenes)
+    /// keeps it, as the edits will look in stage 3.
+    pub read_only: bool,
     /// The window is open (false after a `--hidden` start until `kot show`).
     pub window: bool,
+    /// Set while a sign-in waits for the browser; setting it ends the wait.
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The C2 icon at sidebar size, set in `setup`.
     pub logo: Option<Image>,
     pub images: Option<ImageCache>,
     pub handle: Option<Handle>,
 }
 
+/// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
+pub const FAKE_NOW: i64 = 1_800_000_000;
+
 impl State {
-    /// The first state: the fake list (stage 1 has no store yet).
+    /// The first state of the headless scenes: the fake list.
     pub fn fake() -> Self {
-        State {
+        let mut s = State {
             page: Page::List(Status::Watching),
             filter: Filter::All,
+            sort: Sort::Updated,
+            query: TextEdit::new(""),
+            auth: Auth::SignedIn,
             account: Some(("demo_user".into(), "MyAnimeList")),
             entries: fake_entries(),
+            rows: Vec::new(),
             loading: false,
+            syncing: false,
+            error: None,
             queue: 4,
             offline: false,
-            synced: "Synced 2 min ago",
+            synced_at: Some(FAKE_NOW - 120),
+            fixed_now: Some(FAKE_NOW),
             now: Some(NowMini { id: 0, title: "Lanterns of Kirigaoka".into(), line: "Ep 6 · mpv · 82%".into() }),
+            read_only: false,
             window: true,
+            cancel: None,
             logo: None,
             images: None,
             handle: None,
-        }
+        };
+        s.refresh();
+        s
+    }
+
+    /// The first state of the real app: nothing loaded yet. `online::start` fills it in.
+    pub fn start(auth: Auth) -> Self {
+        let mut s = State::fake();
+        s.entries.clear();
+        s.auth = auth;
+        s.account = None;
+        s.queue = 0;
+        s.synced_at = None;
+        s.fixed_now = None;
+        s.now = None;
+        s.loading = matches!(auth, Auth::SignedIn);
+        s.handle = None;
+        s.read_only = true;
+        s.refresh();
+        s
+    }
+
+    pub fn clock(&self) -> i64 {
+        self.fixed_now.unwrap_or_else(kotora_core::time::now_unix)
     }
 
     pub fn count(&self, s: Status) -> usize {
         self.entries.iter().filter(|e| e.status == s).count()
     }
 
-    /// The rows the list page shows: the page's status, then the chip.
-    pub fn visible(&self) -> Vec<usize> {
-        let Page::List(st) = self.page else { return Vec::new() };
-        (0..self.entries.len()).filter(|&i| self.entries[i].status == st && self.filter.keeps(&self.entries[i])).collect()
+    /// Whether the list pages show a list (rather than the sign-in screen).
+    pub fn has_list(&self) -> bool {
+        matches!(self.auth, Auth::SignedIn | Auth::Expired)
+    }
+
+    /// Rebuilds `rows`: the page's status, then the chip, the search and the sort. Call it after
+    /// any change to the page, filter, query, sort or entries.
+    pub fn refresh(&mut self) {
+        let Page::List(st) = self.page else {
+            self.rows.clear();
+            return;
+        };
+        let q = self.query.text.trim().to_lowercase();
+        let mut rows: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| {
+                let e = &self.entries[i];
+                e.status == st && self.filter.keeps(e) && (q.is_empty() || e.search.contains(&q))
+            })
+            .collect();
+        let e = &self.entries;
+        match self.sort {
+            // Newest first; the sort is stable, so equal times keep the list's order.
+            Sort::Updated => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].updated_at)),
+            Sort::Title => rows.sort_by_cached_key(|&i| e[i].title.to_lowercase()),
+            Sort::Score => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].score.unwrap_or(0))),
+            Sort::Progress => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].progress)),
+        }
+        self.rows = rows;
     }
 
     pub fn go(&mut self, page: Page) {
         if self.page != page {
             self.page = page;
             self.filter = Filter::All;
+            self.refresh();
         }
     }
 
-    /// `+1`: optimistic, at once (the queue comes in stage 3).
+    pub fn set_filter(&mut self, f: Filter) {
+        self.filter = f;
+        self.refresh();
+    }
+
+    pub fn set_sort(&mut self, sort: Sort) {
+        self.sort = sort;
+        self.refresh();
+    }
+
+    /// `+1`: optimistic, at once (the queue comes in stage 3; until then it only changes the
+    /// screen, and a sync brings back MyAnimeList's number).
     pub fn plus_one(&mut self, id: u32) {
+        let now = self.clock();
+        if self.read_only {
+            return;
+        }
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
             && e.episodes.is_none_or(|n| e.progress < n)
         {
             e.progress += 1;
-            e.updated = "now";
+            e.updated_at = now;
             if e.new_episode.is_some_and(|n| e.progress >= n) {
                 e.new_episode = None;
+            }
+        }
+    }
+
+    fn set_items(&mut self, items: &[ListItem]) {
+        self.entries = items.iter().map(Entry::from_item).collect();
+        self.refresh();
+    }
+
+    /// Applies a worker's message. Returns whether anything visible changed.
+    pub fn apply(&mut self, msg: Msg) -> bool {
+        let service = "MyAnimeList";
+        match msg {
+            Msg::Cache { items, user, synced_at } => {
+                // A sync that already finished is newer than the cache read.
+                if self.synced_at.is_none() || self.entries.is_empty() {
+                    self.set_items(&items);
+                    self.synced_at = self.synced_at.or(synced_at);
+                }
+                if let Some(u) = user {
+                    self.account = Some((u, service));
+                }
+                self.loading = self.loading && items.is_empty() && self.syncing;
+                true
+            }
+            Msg::Synced { items, synced_at } => {
+                self.set_items(&items);
+                self.synced_at = Some(synced_at);
+                self.syncing = false;
+                self.loading = false;
+                self.offline = false;
+                self.error = None;
+                if self.auth == Auth::Expired {
+                    self.auth = Auth::SignedIn;
+                }
+                true
+            }
+            Msg::SyncFailed(f) => {
+                self.syncing = false;
+                self.loading = false;
+                match f {
+                    Fail::Offline(m) => {
+                        self.offline = true;
+                        self.error = Some(m);
+                    }
+                    Fail::SignInAgain => self.auth = Auth::Expired,
+                    Fail::Other(m) => self.error = Some(m),
+                }
+                true
+            }
+            Msg::Idle => {
+                self.syncing = false;
+                self.loading = false;
+                true
+            }
+            Msg::SignedIn { user } => {
+                self.auth = Auth::SignedIn;
+                self.account = Some((user, service));
+                self.cancel = None;
+                self.error = None;
+                true
+            }
+            Msg::SignInFailed(m) => {
+                // Keep the saved list when the user was only signing in again.
+                self.auth = if self.entries.is_empty() { Auth::SignedOut } else { Auth::Expired };
+                self.cancel = None;
+                self.error = Some(m);
+                true
+            }
+            Msg::SignedOut => {
+                self.auth = Auth::SignedOut;
+                self.account = None;
+                self.entries.clear();
+                self.synced_at = None;
+                self.syncing = false;
+                self.loading = false;
+                self.offline = false;
+                self.error = None;
+                self.refresh();
+                true
             }
         }
     }
@@ -180,6 +481,20 @@ struct Fake {
     new_episode: Option<u32>,
     rewatching: bool,
     waiting: Option<&'static str>,
+}
+
+/// "2 h", "3 days", "1 week", … as seconds (the fake list's ages).
+fn fake_age(label: &str) -> i64 {
+    let (n, unit) = label.split_once(' ').unwrap_or((label, ""));
+    let n: i64 = n.parse().unwrap_or(0);
+    n * match unit {
+        "h" => 3600,
+        "day" | "days" => 86_400,
+        "week" | "weeks" => 604_800,
+        "month" | "months" => 2_592_000,
+        "year" | "years" => 31_536_000,
+        _ => 0,
+    }
 }
 
 const fn fk(title: &'static str, progress: u32, episodes: u32, score: Option<u8>, updated: &'static str, airing: Option<&'static str>) -> Fake {
@@ -224,9 +539,11 @@ fn fake_entries() -> Vec<Entry> {
             progress: f.progress,
             episodes: Some(f.episodes),
             score: f.score,
+            search: f.title.to_lowercase(),
             kind: f.kind,
-            updated: f.updated,
-            airing: f.airing,
+            updated_at: FAKE_NOW - fake_age(f.updated),
+            air: if f.airing.is_some() { Air::Airing } else { Air::Finished },
+            airing_note: f.airing,
             new_episode: f.new_episode,
             rewatching: f.rewatching,
             waiting: f.waiting,
@@ -246,6 +563,7 @@ fn fake_entries() -> Vec<Entry> {
                 Status::Completed => episodes,
                 _ => (h >> 4) % episodes,
             };
+            let search = title.to_lowercase();
             out.push(Entry {
                 id,
                 title,
@@ -253,9 +571,11 @@ fn fake_entries() -> Vec<Entry> {
                 progress,
                 episodes: Some(episodes),
                 score: (status == Status::Completed && k % 5 != 4).then_some(5 + (h % 6) as u8),
+                search,
                 kind: if movie { "Movie" } else { "TV" },
-                updated: UPDATED[(k as usize * 6 / n as usize).min(5)],
-                airing: None,
+                updated_at: FAKE_NOW - fake_age(UPDATED[(k as usize * 6 / n as usize).min(5)]),
+                air: Air::Finished,
+                airing_note: None,
                 new_episode: None,
                 rewatching: false,
                 waiting: None,
@@ -264,4 +584,156 @@ fn fake_entries() -> Vec<Entry> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use kotora_core::Media;
+
+    use super::*;
+
+    fn item(id: u32, title: &str, status: Status, progress: u32, score: Option<u8>, updated_at: i64) -> ListItem {
+        ListItem {
+            media: Media {
+                id,
+                title: title.into(),
+                title_en: Some(format!("{title} English")),
+                title_ja: None,
+                synonyms: vec!["Hidden Alias".into()],
+                episodes: Some(12),
+                format: "ona".into(),
+                air_status: "currently_airing".into(),
+                cover_url: None,
+            },
+            status,
+            progress,
+            score,
+            rewatching: false,
+            updated_at,
+        }
+    }
+
+    fn loaded() -> State {
+        let mut s = State::fake();
+        s.apply(Msg::Synced {
+            items: vec![
+                item(1, "Bravo", Status::Watching, 3, Some(7), 100),
+                item(2, "alpha", Status::Watching, 9, None, 300),
+                item(3, "Charlie", Status::Watching, 1, Some(9), 200),
+                item(4, "Delta", Status::Completed, 12, Some(10), 50),
+            ],
+            synced_at: 999,
+        });
+        s
+    }
+
+    fn titles(s: &State) -> Vec<&str> {
+        s.rows.iter().map(|&i| s.entries[i].title.as_str()).collect()
+    }
+
+    #[test]
+    fn fake_list_keeps_the_mockup_order() {
+        let s = State::fake();
+        assert_eq!(s.rows.len(), 12);
+        assert_eq!(s.entries[s.rows[0]].title, "Lanterns of Kirigaoka");
+        assert_eq!(s.entries[s.rows[11]].title, "Clockwork Bakery Wars");
+    }
+
+    #[test]
+    fn the_real_app_is_read_only() {
+        let mut s = State::start(Auth::SignedIn);
+        s.apply(Msg::Synced { items: vec![item(1, "A", Status::Watching, 3, None, 1)], synced_at: 1 });
+        s.plus_one(1);
+        assert_eq!(s.entries[0].progress, 3, "stage 2 never changes progress");
+        let mut f = State::fake();
+        let id = f.entries[0].id;
+        let before = f.entries[0].progress;
+        f.plus_one(id);
+        assert_eq!(f.entries[0].progress, before + 1);
+    }
+
+    #[test]
+    fn sorts() {
+        let mut s = loaded();
+        assert_eq!(titles(&s), ["alpha", "Charlie", "Bravo"]);
+        s.set_sort(Sort::Title);
+        assert_eq!(titles(&s), ["alpha", "Bravo", "Charlie"]);
+        s.set_sort(Sort::Score);
+        assert_eq!(titles(&s), ["Charlie", "Bravo", "alpha"]);
+        s.set_sort(Sort::Progress);
+        assert_eq!(titles(&s), ["alpha", "Bravo", "Charlie"]);
+        assert_eq!(Sort::Progress.next(), Sort::Updated);
+    }
+
+    #[test]
+    fn searches_every_title_case_blind() {
+        let mut s = loaded();
+        s.query.replace_text("  ALPHA ");
+        s.refresh();
+        assert_eq!(titles(&s), ["alpha"]);
+        s.query.replace_text("charlie english");
+        s.refresh();
+        assert_eq!(titles(&s), ["Charlie"]);
+        s.query.replace_text("hidden alias");
+        s.refresh();
+        assert_eq!(s.rows.len(), 3);
+        s.query.replace_text("zzz");
+        s.refresh();
+        assert!(s.rows.is_empty());
+        // The search follows the page.
+        s.query.replace_text("delta");
+        s.go(Page::List(Status::Completed));
+        assert_eq!(titles(&s), ["Delta"]);
+    }
+
+    #[test]
+    fn filters_use_the_airing_status() {
+        let mut s = loaded();
+        s.set_filter(Filter::Airing);
+        assert_eq!(s.rows.len(), 3);
+        s.set_filter(Filter::Finished);
+        assert!(s.rows.is_empty());
+        assert_eq!(s.entries[0].kind, "ONA");
+    }
+
+    #[test]
+    fn messages_move_the_state() {
+        let mut s = State::fake();
+        assert!(s.apply(Msg::SyncFailed(Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into()))));
+        assert!(s.offline && s.error.is_some() && !s.syncing);
+        assert_eq!(s.entries.len(), 303, "the saved list stays");
+        s.apply(Msg::SyncFailed(Fail::SignInAgain));
+        assert_eq!(s.auth, Auth::Expired);
+        assert!(s.has_list());
+        s.apply(Msg::Synced { items: vec![], synced_at: 5 });
+        assert_eq!((s.auth, s.offline, s.error.is_none(), s.synced_at), (Auth::SignedIn, false, true, Some(5)));
+        s.apply(Msg::SignedOut);
+        assert_eq!(s.auth, Auth::SignedOut);
+        assert!(s.entries.is_empty() && s.account.is_none() && !s.has_list());
+        s.apply(Msg::SignInFailed("busy".into()));
+        assert_eq!((s.auth, s.error.as_deref()), (Auth::SignedOut, Some("busy")));
+    }
+
+    #[test]
+    fn an_old_cache_never_replaces_a_newer_sync() {
+        let mut s = State::start(Auth::SignedIn);
+        s.apply(Msg::Synced { items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)], synced_at: 10 });
+        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), synced_at: Some(5) });
+        assert_eq!(s.entries.len(), 1);
+        assert_eq!(s.entries[0].title, "Fresh");
+        assert_eq!(s.account.as_ref().map(|a| a.0.as_str()), Some("demo_user"));
+        assert_eq!(s.synced_at, Some(10));
+    }
+
+    #[test]
+    fn a_cache_ends_the_loading_state_and_an_empty_one_waits_for_the_sync() {
+        let mut s = State::fake();
+        s.entries.clear();
+        s.loading = true;
+        s.syncing = true;
+        s.apply(Msg::Cache { items: vec![], user: None, synced_at: None });
+        assert!(s.loading, "nothing saved yet: keep the skeleton");
+        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, synced_at: Some(1) });
+        assert!(!s.loading);
+    }
 }
