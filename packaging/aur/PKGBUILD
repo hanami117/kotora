@@ -1,0 +1,93 @@
+# Maintainer: hanami117 <hanami117 at users dot noreply dot github dot com>
+#
+# Draft for the AUR package `kotora`, built from the release's source tarball.
+# TODO before the first push (there is no v0.1.0 tag yet):
+#   - tag v0.1.0 and publish the release (the user's call)
+#   - sha256sums: replace SKIP with the tarball's checksum
+#     (packaging/release.sh will print it; `makepkg -g` also works)
+#   - pkgrel: 1 for a new version; one more for a change to this PKGBUILD only
+# Then: makepkg --printsrcinfo > .SRCINFO, test (makepkg -si, namcap PKGBUILD *.pkg.tar.zst,
+# extra-x86_64-build), and push PKGBUILD + .SRCINFO to ssh://aur@aur.archlinux.org/kotora.git.
+#
+# Layout:
+#   /usr/bin/kotora, /usr/bin/kot
+#   /usr/share/applications, /usr/share/icons/hicolor, /usr/share/licenses/kotora
+# SQLite is bundled (rusqlite "bundled"), so there is no sqlite dependency.
+
+pkgname=kotora
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Anime tracker for MyAnimeList: recognises the episode in your player and asks before it records it'
+arch=('x86_64')
+url='https://kotora.moe'
+license=('GPL-3.0-or-later')
+# Run time. The app (Rune/winit/wgpu) loads Vulkan, xkbcommon and the Wayland and X11 client
+# libraries with dlopen, so namcap cannot see them: they are listed by hand so both a Wayland and
+# an X11 session work.
+depends=(
+  'dbus'
+  'gcc-libs'
+  'glibc'
+  'hicolor-icon-theme'
+  'libx11'
+  'libxcursor'
+  'libxi'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'libxrandr'
+  'vulkan-icd-loader'
+  'wayland'
+)
+optdepends=(
+  'vulkan-driver: GPU drawing (vulkan-radeon, vulkan-intel or nvidia-utils)'
+  'mpv: a supported player'
+  'vlc: a supported player'
+  'mpc-qt: a supported player'
+)
+# cargo is provided by rust and by rustup (rustup users need a default toolchain).
+makedepends=('cargo' 'pkgconf')
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/hanami117/kotora/archive/refs/tags/v$pkgver.tar.gz")
+# TODO: the checksum of the v0.1.0 tarball (there is no tag yet).
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p kotora -p kotora-ctl
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --workspace
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  install -Dm755 target/release/kotora "$pkgdir/usr/bin/kotora"
+  install -Dm755 target/release/kot "$pkgdir/usr/bin/kot"
+
+  install -Dm644 packaging/linux/io.github.hanami117.kotora.desktop \
+    "$pkgdir/usr/share/applications/io.github.hanami117.kotora.desktop"
+  install -Dm644 assets/icons/io.github.hanami117.kotora.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.hanami117.kotora.svg"
+  local icon size
+  for icon in assets/icons/hicolor/*/apps/io.github.hanami117.kotora.png; do
+    size=$(basename "$(dirname "$(dirname "$icon")")")
+    install -Dm644 "$icon" "$pkgdir/usr/share/icons/hicolor/$size/apps/io.github.hanami117.kotora.png"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
