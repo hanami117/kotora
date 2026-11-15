@@ -506,3 +506,20 @@ to v0.3.
     - a manga file name parser (`v03`, `c021`, `Ch.21.5`)
     - MAL manga list sync
     - Komga and Kavita server APIs later still
+  - Manga, what exists (2026-11-15, branch `manga-prep`; core only, no UI, not wired in):
+    - `core/src/manga/name.rs`: the file name parser (series, volume, chapter, decimals, ranges,
+      group, language, year, extras, one-shots; folders give a missing series or volume)
+    - `core/src/manga/yacreader.rs`: library list from `YACReaderLibrary.ini`, and a read-only,
+      lock-free reader of `library.ydb` (`opened_since`). Fixtures follow YACReader 10.5.1's
+      schema (DB 10.5.0). The library list was checked against a real install; the database
+      itself was not (the library's drive was not mounted)
+    - `manga::chapter_read`: read flag, or `current_page >= num_pages - 1`
+  - Manga, what is left:
+    - UI: a Manga view and scenes with fake data
+    - MAL manga list: service calls, store tables, sync queue
+    - match a series to the MAL manga list (recognition for manga), then offer the chapter
+    - wiring: a worker that reads `opened_since` and feeds the same ask-first flow as episodes
+    - watch the `.ydb`: `detect::dirwatch` only reports create, move and attrib in a folder; it
+      needs `IN_MODIFY` / `IN_CLOSE_WRITE` (and kqueue `NOTE_WRITE` on the file), or a slow poll of
+      the file's mtime
+    - the generic fallback for other readers (`/proc` detector), Komga and Kavita

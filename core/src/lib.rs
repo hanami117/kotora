@@ -9,6 +9,7 @@ pub mod config;
 pub mod covers;
 pub mod loopback;
 pub mod mal;
+pub mod manga;
 pub mod model;
 pub mod paths;
 pub mod queue;
