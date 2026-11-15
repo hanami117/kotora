@@ -12,3 +12,11 @@ your progress for you.
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Credits
+
+- [Taiga](https://taiga.moe/) by erengy, which Kotora follows.
+- [anime-relations](https://github.com/erengy/anime-relations) (public domain, CC0): the episode
+  redirection rules, built in and refreshed from GitHub at most once a week.
+- [anitomy](https://github.com/erengy/anitomy) (MPL-2.0), through
+  [anitomy-ng](https://github.com/tylergibbs2/anitomy-ng): file name parsing.

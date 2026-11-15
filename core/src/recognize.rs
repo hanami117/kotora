@@ -9,10 +9,17 @@
 //! 4. Nothing on the list: one service search, cached for 30 days. A hit on the list is unsure;
 //!    a hit elsewhere is shown as "not on your list" (adding comes later, v0.4).
 //!
+//! 5. anime-relations ([`redirect`], [`relations`]): an episode numbered on past a season's end
+//!    ("Season 2 - 15") moves to the anime it belongs to ("2nd Season Part 2", episode 2), as in
+//!    Taiga.
+//!
 //! [`offer`] then says which episode to offer, if any (never at or below the progress, unless
 //! rewatching).
 
+pub mod relations;
+
 use anitomy_ng::{ElementKind, Options};
+use relations::Relations;
 
 use crate::service::SearchHit;
 use crate::ListItem;
@@ -218,8 +225,9 @@ pub enum Found {
 /// The cache's answer for a key: (media id, source, title).
 pub type Cached = Option<(u32, String, String)>;
 
-/// Steps 2 and 3. `None`: nothing on the list; the caller may search (step 4).
-pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached) -> Option<Found> {
+/// Steps 2 and 3. `None`: nothing on the list; the caller may search (step 4). `rel` only keeps
+/// an episode past the count sure when a relation explains it ([`redirect`] moves it after).
+pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations) -> Option<Found> {
     if let Some((id, source, _)) = cached {
         match source.as_str() {
             "ignore" => return Some(Found::Ignored),
@@ -236,6 +244,7 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached) -> Option<Found>
     let item = items.iter().find(|it| it.media.id == best.media_id)?;
     if let (Some(ep), Some(n)) = (p.episode, item.media.episodes)
         && ep > n
+        && rel.mal(best.media_id, ep).is_none()
     {
         sure = false;
         why = format!("episode {ep} is past its {n}");
@@ -253,6 +262,51 @@ pub fn from_search(hits: &[SearchHit], items: &[ListItem]) -> Found {
     match hits.first() {
         Some(h) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
         None => Found::Nothing,
+    }
+}
+
+/// The destination's title said shortly: what it adds to the source's title ("Part 2"), or all
+/// of it.
+fn short_title<'a>(from: &str, to: &'a str) -> &'a str {
+    match to.strip_prefix(from).and_then(|rest| rest.strip_prefix(' ')) {
+        Some(rest) if !rest.trim().is_empty() => rest.trim(),
+        _ => to,
+    }
+}
+
+/// Step 5: anime-relations. When a rule moves the parsed episode of the found anime, the
+/// destination and its episode replace them (`parsed.episode` too, so the offer follows) and
+/// `why` says so: "episode 15 of Re:Zero … 2nd Season is episode 2 of Part 2". A destination on
+/// the list is a list match (as sure as the source's); one not on the list is
+/// [`Found::NotOnList`]. Applied once (no chains), like Taiga.
+pub fn redirect(found: Found, parsed: &mut Parsed, items: &[ListItem], rel: &Relations) -> Found {
+    let Some(ep) = parsed.episode else { return found };
+    let (from, sure, why_before, title_before) = match &found {
+        Found::List { media_id, sure, why } => (*media_id, *sure, Some(why.as_str()), None),
+        Found::NotOnList { media_id, title } => (*media_id, false, None, Some(title.as_str())),
+        _ => return found,
+    };
+    let Some(r) = rel.mal(from, ep) else { return found };
+    let title_of = |id: u32| items.iter().find(|it| it.media.id == id).map(|it| it.media.title.clone());
+    let from_title = title_of(from).or(title_before.map(str::to_string)).or(r.from_title.clone()).unwrap_or_else(|| "this anime".into());
+    let to_item = items.iter().find(|it| it.media.id == r.to);
+    let to_title = title_of(r.to).or(r.to_title.clone()).unwrap_or_else(|| format!("MyAnimeList anime {}", r.to));
+    let because = if r.to == from {
+        format!("episode {ep} of {from_title} is its episode {} (numbered on from the season before)", r.episode)
+    } else {
+        format!("episode {ep} of {from_title} is episode {} of {}", r.episode, short_title(&from_title, &to_title))
+    };
+    parsed.episode = Some(r.episode);
+    match to_item {
+        Some(_) => {
+            // "same title in your list" was about the source; keep a user's pick.
+            let why = match why_before {
+                Some(w) if w == "you picked it" => format!("{w}; {because}"),
+                _ => because,
+            };
+            Found::List { media_id: r.to, sure, why }
+        }
+        None => Found::NotOnList { media_id: r.to, title: to_title },
     }
 }
 

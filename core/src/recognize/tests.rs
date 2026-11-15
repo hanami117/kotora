@@ -104,7 +104,7 @@ fn list() -> Vec<ListItem> {
 }
 
 fn found(name: &str) -> Option<Found> {
-    on_list(&parse(name).unwrap(), &list(), &None)
+    on_list(&parse(name).unwrap(), &list(), &None, &Relations::default())
 }
 
 #[test]
@@ -125,10 +125,10 @@ fn matches_the_list_by_any_title_and_season() {
 #[test]
 fn the_cache_wins_and_ignores() {
     let p = parse("/v/Paper Crane Detective - 01.mkv").unwrap();
-    assert_eq!(on_list(&p, &list(), &Some((4, "user".into(), String::new()))), Some(Found::List { media_id: 4, sure: true, why: "you picked it".into() }));
-    assert_eq!(on_list(&p, &list(), &Some((0, "ignore".into(), String::new()))), Some(Found::Ignored));
+    assert_eq!(on_list(&p, &list(), &Some((4, "user".into(), String::new())), &Relations::default()), Some(Found::List { media_id: 4, sure: true, why: "you picked it".into() }));
+    assert_eq!(on_list(&p, &list(), &Some((0, "ignore".into(), String::new())), &Relations::default()), Some(Found::Ignored));
     // A pick that left the list counts for nothing.
-    assert_eq!(on_list(&p, &list(), &Some((99, "user".into(), String::new()))), None);
+    assert_eq!(on_list(&p, &list(), &Some((99, "user".into(), String::new())), &Relations::default()), None);
 }
 
 #[test]

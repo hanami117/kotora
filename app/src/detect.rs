@@ -5,6 +5,9 @@
 //! The recognition thread blocks on its channel. For each new file it parses the name, reads the
 //! saved list and the cache from the database, and (only when nothing on the list matches, the
 //! user is signed in and not offline) asks MyAnimeList once, within the shared rate budget.
+//! Then anime-relations may move the episode to another anime ("Season 2 - 15" is "Part 2",
+//! episode 2). The rules are read once, at the first file; a newer copy is downloaded from GitHub
+//! on a short thread at most once a week (not offline, `[recognition] relations_download`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +16,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use kotora_core::config::{self, Config};
 use kotora_core::mal::{Client, Mal, UreqTransport};
 use kotora_core::paths;
+use kotora_core::recognize::relations::{self, Relations};
 use kotora_core::recognize::{self, Found, Parsed};
 use kotora_core::service::ListService;
 use kotora_core::store::Store;
@@ -29,6 +33,8 @@ enum In {
     Report(Report),
     /// The user's pick for a title key (`None`: not an anime).
     Correct { key: String, media_id: Option<u32> },
+    /// A newer anime-relations file was downloaded.
+    Relations(Box<Relations>),
 }
 
 /// The running detection, kept in the state.
@@ -60,10 +66,12 @@ pub fn start(s: &mut State) {
     crate::precise::check_conf(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
+    let tx_for_refresh = tx.clone();
     let detector = kotora_detect::start(settings(&c), move |r| {
         let _ = rtx.send(In::Report(r));
     });
-    let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx));
+    let relations_download = c.recognition.relations_download;
+    let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
     s.glue = Some(Glue { tx, detector: Arc::new(detector) });
 }
 
@@ -108,11 +116,31 @@ struct Current {
     found: Found,
     candidates: Vec<(u32, String)>,
     cover_url: Option<String>,
+    /// The episode in the file's name, before anime-relations moved it.
+    file_episode: Option<u32>,
 }
 
-fn run(h: &Handle, rx: &Receiver<In>) {
+/// The rules: read at the first file (the newer of the downloaded and the built-in copy), and a
+/// download started then when one is due.
+fn rules<'a>(rel: &'a mut Option<Relations>, tx: &Sender<In>, download: bool) -> &'a Relations {
+    rel.get_or_insert_with(|| {
+        let dir = paths::cache_dir();
+        if download && !paths::offline_forced() && relations::due(&dir, now_unix().max(0) as u64) {
+            let tx = tx.clone();
+            let _ = std::thread::Builder::new().name("kotora-relations".into()).spawn(move || {
+                if let Ok(Some(r)) = relations::refresh(&dir, now_unix().max(0) as u64, relations::fetch_github) {
+                    let _ = tx.send(In::Relations(Box::new(r)));
+                }
+            });
+        }
+        relations::load(&paths::cache_dir())
+    })
+}
+
+fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
     let mut store: Option<Store> = None;
     let mut current: Option<Current> = None;
+    let mut rel: Option<Relations> = None;
     for msg in rx {
         match msg {
             In::Report(Report::Now(None)) => {
@@ -122,13 +150,15 @@ fn run(h: &Handle, rx: &Receiver<In>) {
             In::Report(Report::Now(Some(track))) => {
                 let file = track.playing.file().unwrap_or_default().to_string();
                 if current.as_ref().is_none_or(|c| c.file != file) {
-                    current = Some(recognise(&mut store, &file));
+                    let r = rules(&mut rel, tx, download);
+                    current = Some(recognise(&mut store, &file, r));
                 }
                 let Some(c) = &current else { continue };
                 send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone() }))));
             }
             In::Report(Report::Reached { key, file }) => send(h, Msg::Reached { key, file }),
             In::Report(Report::Sources(v)) => send(h, Msg::Players(v)),
+            In::Relations(r) => rel = Some(*r),
             In::Correct { key, media_id } => {
                 if let Some(st) = open(&mut store) {
                     let (id, source) = match media_id {
@@ -142,10 +172,16 @@ fn run(h: &Handle, rx: &Receiver<In>) {
                 if let Some(c) = &mut current
                     && c.parsed.as_ref().is_some_and(|p| p.key() == key)
                 {
-                    c.found = match media_id {
+                    let found = match media_id {
                         Some(media_id) => Found::List { media_id, sure: true, why: "you picked it".into() },
                         None => Found::Ignored,
                     };
+                    // The picked anime may move the file's episode (or not move it).
+                    let items = open(&mut store).and_then(|st| st.load_list(SERVICE).ok()).unwrap_or_default();
+                    if let Some(p) = &mut c.parsed {
+                        p.episode = c.file_episode;
+                        c.found = recognize::redirect(found, p, &items, rules(&mut rel, tx, download));
+                    }
                 }
             }
         }
@@ -159,15 +195,23 @@ fn open(store: &mut Option<Store>) -> Option<&mut Store> {
     store.as_mut()
 }
 
-fn recognise(store: &mut Option<Store>, file: &str) -> Current {
-    let nothing = |parsed| Current { file: file.to_string(), parsed, found: Found::Nothing, candidates: Vec::new(), cover_url: None };
-    let Some(parsed) = recognize::parse(file) else { return nothing(None) };
+fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current {
+    let nothing = |parsed: Option<Parsed>| Current {
+        file: file.to_string(),
+        file_episode: parsed.as_ref().and_then(|p| p.episode),
+        parsed,
+        found: Found::Nothing,
+        candidates: Vec::new(),
+        cover_url: None,
+    };
+    let Some(mut parsed) = recognize::parse(file) else { return nothing(None) };
+    let file_episode = parsed.episode;
     let Some(st) = open(store) else { return nothing(Some(parsed)) };
     let items = st.load_list(SERVICE).unwrap_or_default();
     let key = parsed.key();
     let cached = st.recognition(SERVICE, &key).ok().flatten();
     let candidates = recognize::candidates(&parsed, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
-    let found = match recognize::on_list(&parsed, &items, &cached) {
+    let found = match recognize::on_list(&parsed, &items, &cached, rel) {
         Some(f) => f,
         None => match cached.filter(|(_, src, _)| src == "search") {
             // Searched before (30 days): no second call.
@@ -177,11 +221,12 @@ fn recognise(store: &mut Option<Store>, file: &str) -> Current {
             None => search(st, &parsed, &items, &key),
         },
     };
+    let found = recognize::redirect(found, &mut parsed, &items, rel);
     let cover_url = match &found {
         Found::NotOnList { media_id, .. } => not_on_list_cover(st, *media_id),
         _ => None,
     };
-    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url }
+    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, file_episode }
 }
 
 /// The cover of an anime that isn't on the list: from its saved details, else one details
