@@ -8,7 +8,8 @@ description = "Kotora: a native anime tracker for Linux and macOS (Rune UI)"
 
 [dependencies]
 # Rune is pre-release: pin a rev of its dev branch. Same rev as Uzumaki; bump both apps together.
-rune = { git = "https://github.com/anomalyco/rune", rev = "f3d04f3f2069d177d04c963b0ba9f6b2065e46eb" }
+# Rune's default features minus `ogg-audio` (macOS Ogg playback; Kotora plays no sound).
+rune = { git = "https://github.com/anomalyco/rune", rev = "f3d04f3f2069d177d04c963b0ba9f6b2065e46eb", default-features = false, features = ["accessibility", "dbus", "embedded-fonts", "metal-backend", "svg"] }
 kotora-core = { path = "../core" }
 # The `kot` protocol and socket (the app answers, `kot` asks).
 kotora-ctl = { path = "../ctl" }
