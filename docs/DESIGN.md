@@ -493,6 +493,11 @@ The user answered the open questions. These are decided; the rest of this docume
 9. **v0.1 packaging:** install.sh and AUR. AppImage and DMG from v0.2.
 10. **Taiga:** stay separate, credit it clearly (README and About), and report upstream bugs when
     relevant.
+11. **Last episode completes (2026-11-15):** like the MAL website, when progress reaches the last
+    episode (`+1`, the inline editor, `kot +1` / `kot set`, or a recorded episode) the status becomes
+    Completed in the same queued op. Only when the total is known, and not when the change names a
+    status itself. Plan to watch still becomes Watching on the first recorded episode (unless that
+    episode is the last). The banner says "Completed"; Undo restores progress and status.
 
 **Players for v0.1:** mpv (IPC socket and MPRIS), VLC (MPRIS on Linux), mpc-qt (MPRIS; `xesam:url`
 unverified). macOS: mpv, IINA, VLC (HTTP interface). MPC-HC is Windows-only. Details in section 5.5.

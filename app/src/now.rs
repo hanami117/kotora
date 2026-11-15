@@ -52,6 +52,8 @@ pub struct Recorded {
     pub episode: u32,
     pub old_progress: u32,
     pub old_status: Status,
+    /// The episode was the last one: the entry is now Completed.
+    pub completed: bool,
     pub auto: bool,
 }
 
@@ -258,12 +260,14 @@ impl State {
         let (i, ep) = self.offer().ok_or("Nothing to update: no recognised new episode is playing.")?;
         let e = &self.entries[i];
         let (id, title, old_progress, old_status) = (e.id, e.title.clone(), e.progress, e.status);
-        // A show you planned to watch is now one you watch. (Completed after the last episode is
-        // still open: the same question as `+1`.)
-        let status = (old_status == Status::PlanToWatch).then_some(Status::Watching);
+        // A show you planned to watch is now one you watch. The last episode completes it instead
+        // (`edit` does that when the total is known).
+        let last = e.episodes.is_some_and(|n| n > 0 && ep == n);
+        let status = (old_status == Status::PlanToWatch && !last).then_some(Status::Watching);
         self.edit(id, Change { progress: Some(ep), status, ..Default::default() })?;
+        let completed = old_status != Status::Completed && self.entries.iter().any(|e| e.id == id && e.status == Status::Completed);
         if let Some(n) = &mut self.now {
-            n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, auto });
+            n.recorded = Some(Recorded { id, episode: ep, old_progress, old_status, completed, auto });
             n.acted = true;
             n.picking = false;
         }
@@ -273,8 +277,7 @@ impl State {
     /// Undo on the banner: the entry goes back (the queue drops the change if it hasn't left).
     pub fn undo_record(&mut self) {
         let Some(r) = self.now.as_ref().and_then(|n| n.recorded) else { return };
-        let status = (r.old_status != Status::Watching).then_some(r.old_status);
-        let _ = self.edit(r.id, Change { progress: Some(r.old_progress), status, ..Default::default() });
+        let _ = self.edit(r.id, Change { progress: Some(r.old_progress), status: Some(r.old_status), ..Default::default() });
         if let Some(n) = &mut self.now {
             n.recorded = None;
             n.dismissed = true;
@@ -535,6 +538,24 @@ mod tests {
         s.record(false).unwrap();
         let e = s.entries.iter().find(|e| e.id == id).unwrap();
         assert_eq!((e.status, e.progress), (Status::Watching, 1));
+    }
+
+    #[test]
+    fn the_last_episode_completes_and_undo_restores() {
+        let mut s = fresh();
+        let (id, title, total) = {
+            let e = s.entries.iter().find(|e| e.status == Status::Watching && e.episodes.is_some_and(|n| n > 1)).unwrap();
+            (e.id, e.title.clone(), e.episodes.unwrap())
+        };
+        s.entries.iter_mut().find(|e| e.id == id).unwrap().progress = total - 1;
+        s.now_seen(Some(seen(&format!("{title} - {total:02}.mkv"), Some(id), true, true)));
+        s.record(false).unwrap();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.status, e.progress), (Status::Completed, total));
+        assert!(s.now.as_ref().unwrap().recorded.unwrap().completed);
+        s.undo_record();
+        let e = s.entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((e.status, e.progress), (Status::Watching, total - 1));
     }
 
     #[test]

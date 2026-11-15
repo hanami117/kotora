@@ -167,7 +167,7 @@ Built 2026-11-15 on `stage-3`. Tested with recorded-shape JSON, fake services an
 Open after Stage 3:
 - The "keep the higher progress" rule is always on; the Settings switch (mockup) comes with the Updates
   card in Stage 4.
-- `+1` to the last episode does not set Completed by itself (MAL's site does); to be decided.
+- (Done after Stage 4: the last episode sets Completed, DESIGN.md §12.11.)
 - The editor's progress is a stepper only; long shows are faster with `kot set`. A typed number could follow.
 - A full sync that fetched the list just before a change was sent can show the old value until the next
   sync (the change itself is on MAL). Rare; the 15-minute refresh would fix it.
@@ -225,8 +225,8 @@ real players are the user's live test (STATUS.md).
   `settings-players-off`.
 
 Open after Stage 4:
-- **For the user to decide:** should `+1` (and recording) on the last episode set Completed? Today it
-  doesn't.
+- Decided 2026-11-15: the last episode sets Completed (`+1`, editor, `kot`, recording), when the total
+  is known. The banner says "Completed" and Undo restores the status (DESIGN.md §12.11).
 - Recording an episode of a Plan to watch entry sets Watching (decided here, as MAL's site does; easy to
   drop).
 - The notification has no buttons: Update is in the app or `kot confirm`. On macOS, `osascript` may show

@@ -437,7 +437,7 @@ impl State {
 
     /// An edit (the editor, `+1`, `kot`): the list shows it at once and the queue sends it.
     /// Returns the entry's index.
-    pub fn edit(&mut self, id: u32, change: Change) -> Result<usize, String> {
+    pub fn edit(&mut self, id: u32, mut change: Change) -> Result<usize, String> {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
@@ -453,6 +453,17 @@ impl State {
             && !(1..=10).contains(&sc)
         {
             return Err("A score goes from 1 to 10.".into());
+        }
+        // Like the MAL website: the last episode completes the entry (when the total is known and
+        // the change doesn't pick a status itself).
+        if change.status.is_none()
+            && let (Some(p), Some(n)) = (change.progress, e.episodes)
+            && n > 0
+            && p == n
+            && e.progress < n
+            && e.status != Status::Completed
+        {
+            change.status = Some(Status::Completed);
         }
         let after = change.apply(e.values());
         if after == e.values() {
@@ -509,9 +520,17 @@ impl State {
 
     pub fn editor_step(&mut self, delta: i32) {
         let max = self.editor_episodes();
+        let was = self.editor.and_then(|ed| self.entries.iter().find(|e| e.id == ed.id)).map(|e| e.status);
         if let Some(ed) = &mut self.editor {
             let p = ed.progress.saturating_add_signed(delta);
             ed.progress = max.map_or(p, |n| p.min(n));
+            // The last episode completes the entry, as on the MAL website.
+            if delta > 0 && max.is_some_and(|n| n > 0 && ed.progress == n) {
+                ed.status = Status::Completed;
+            } else if delta < 0 && ed.status == Status::Completed && max.is_some_and(|n| ed.progress < n) && was.is_some_and(|w| w != Status::Completed) {
+                // Stepping back off the last episode undoes that.
+                ed.status = was.unwrap_or(ed.status);
+            }
         }
     }
 
@@ -1039,6 +1058,41 @@ mod tests {
         assert!(s.plus_one(4).unwrap_err().contains("last episode"));
         let mut out = State::start(Auth::SignedOut);
         assert_eq!(out.edit(1, Change::default()).unwrap_err(), "Not signed in.");
+    }
+
+    #[test]
+    fn the_last_episode_completes_the_entry() {
+        let mut s = loaded();
+        // +1 to the last episode.
+        s.edit(2, Change { progress: Some(11), ..Default::default() }).unwrap();
+        let i = s.plus_one(2).unwrap();
+        assert_eq!((s.entries[i].progress, s.entries[i].status), (12, Status::Completed));
+        // An explicit status wins (`kot set --status watching`).
+        s.edit(3, Change { progress: Some(12), status: Some(Status::Watching), ..Default::default() }).unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 3).unwrap().status, Status::Watching);
+        // Unknown total: nothing happens.
+        let e = s.entries.iter_mut().find(|e| e.id == 1).unwrap();
+        e.episodes = None;
+        s.edit(1, Change { progress: Some(40), ..Default::default() }).unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().status, Status::Watching);
+        // Not the last episode: no change of status.
+        let mut s = loaded();
+        s.edit(1, Change { progress: Some(11), ..Default::default() }).unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().status, Status::Watching);
+    }
+
+    #[test]
+    fn the_editor_completes_on_the_last_episode_and_steps_back() {
+        let mut s = loaded();
+        s.toggle_editor(1);
+        s.editor_step(100);
+        assert_eq!(s.editor.unwrap().status, Status::Completed);
+        s.editor_step(-1);
+        assert_eq!(s.editor.unwrap().status, Status::Watching);
+        s.editor_step(1);
+        s.save_editor().unwrap();
+        let e = s.entries.iter().find(|e| e.id == 1).unwrap();
+        assert_eq!((e.progress, e.status), (12, Status::Completed));
     }
 
     #[test]

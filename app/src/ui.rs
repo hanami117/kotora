@@ -1400,7 +1400,12 @@ fn banner(s: &State) -> El {
             .child(text(tail).font(theme::BODY).color(PAL.text))
     };
     if let Some(r) = n.recorded {
-        let how = if r.auto { "Updated automatically" } else { "Updated" };
+        let how = match (r.auto, r.completed) {
+            (true, true) => "Updated automatically \u{b7} Completed",
+            (false, true) => "Updated \u{b7} Completed",
+            (true, false) => "Updated automatically",
+            (false, false) => "Updated",
+        };
         let waiting = s.entries.iter().find(|e| e.id == r.id).and_then(|e| e.waiting).unwrap_or("Sent to MyAnimeList");
         b = b
             .child(
