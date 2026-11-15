@@ -14,6 +14,7 @@ mod ctl;
 mod detect;
 mod details;
 mod icons;
+mod mock;
 mod model;
 mod now;
 mod online;

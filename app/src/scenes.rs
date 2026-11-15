@@ -13,6 +13,16 @@ use crate::setup::Step;
 pub type Scene = (&'static str, fn(&mut State));
 
 pub const SCENES: &[Scene] = &[
+    // THROWAWAY mockups (branch `mockups`).
+    ("mock-grid-a", |_| crate::mock::set("grid-a")),
+    ("mock-grid-b", |_| crate::mock::set("grid-b")),
+    ("mock-grid-c", |_| crate::mock::set("grid-c")),
+    ("mock-now-a", |s| { s.go(Page::NowPlaying); crate::mock::set("now-a") }),
+    ("mock-now-b", |s| { s.go(Page::NowPlaying); crate::mock::set("now-b") }),
+    ("mock-details-a", |_| crate::mock::set("details-a")),
+    ("mock-details-b", |_| crate::mock::set("details-b")),
+    ("mock-mini-a", |_| crate::mock::set("mini-a")),
+    ("mock-mini-b", |_| crate::mock::set("mini-b")),
     // The main list, as `mockup/shots/list.png`.
     ("list", |_| {}),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.

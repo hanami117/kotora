@@ -19,6 +19,9 @@ use crate::queue::Cmd;
 use crate::theme::{self, PAL};
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    if let Some(m) = crate::mock::active() {
+        return crate::mock::view(s, m, cx);
+    }
     // The type column hides below 1100 pt (design-spec §3).
     let wide = cx.layout_size("root").is_none_or(|[w, _]| w >= theme::NARROW_W);
     // macOS draws the traffic lights over the window's top-left (Rune's full-size content), so the
@@ -124,7 +127,9 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         ))
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings))
         .child(spacer());
-    if let Some(now) = &s.now {
+    if let (Some(v), Some(_)) = (crate::mock::mini_variant(), &s.now) {
+        side = side.child(crate::mock::mini(s, v));
+    } else if let Some(now) = &s.now {
         let (_, title) = now_title(s, now);
         let mut bits = Vec::new();
         if let Some(ep) = now.episode() {
@@ -2224,3 +2229,11 @@ mod tests {
         assert_eq!(super::now_cover_url(&s, &n), None, "nothing matched: the tile");
     }
 }
+
+// ---- mockups branch: access for mock.rs
+pub(crate) fn main_pub(s: &State, wide: bool) -> El { main(s, wide) }
+pub(crate) fn sidebar_pub(s: &State) -> El { sidebar(s, 0.0) }
+pub(crate) fn search_box_pub(s: &State) -> El { search_box(s) }
+pub(crate) fn sort_select_pub(sort: Sort) -> El { sort_select(sort) }
+pub(crate) fn chips_pub(s: &State, st: Status) -> El { chips(s, st) }
+pub(crate) fn players_status_card_pub(s: &State) -> El { players_status_card(s) }
