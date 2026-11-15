@@ -1,6 +1,6 @@
 # Kotora: project status
 
-Last updated: 2026-11-15 (stage 4). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
+Last updated: 2026-11-15 (stage 5). Read this together with `CLAUDE.md`, `docs/DESIGN.md`
 and `docs/ROADMAP.md` before starting work on a new machine.
 
 ## Where things are
@@ -40,6 +40,18 @@ and `docs/ROADMAP.md` before starting work on a new machine.
     Settings Updates and Players cards
   - `kot now | confirm | dismiss`
   - tested with recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus
+- `stage-5` (on top of `stage-4`, pushed for review, not merged): after the first live test.
+  - `core`: `check_client_id` / `save_client_id`, `[notices]` in `config.toml`; MAL `browse` (search
+    rows) and `details` (`GET /anime/{id}`); schema 4: `pending_op.added` (adds through the queue,
+    `Store::add_to_list`) and the `details` cache (list titles, others a week / newest 100)
+  - `app`: Client ID guide and field (Welcome, Settings), search across the list plus MAL results with
+    add, the details page, Now Playing links and "Add as Watching", the detection GUI (per-source
+    player lines, the one-time precise-detection banner)
+  - `kot config client-id ID`, `kot add QUERY|ID [--status S]`
+  - tested with recorded-shape JSON, fake services and scenes; **nothing has talked to MAL**
+- `stage-5-detect` (another session, same base): the detection engine (process scan, watched-time
+  rule, macOS `libproc`, `mpv.conf` helper). Merge it into `stage-5`, then wire the one
+  `TODO(stage-5-detect)` in `app/src/precise.rs`.
 - Decided: anitomy = `anitomy-ng` 1.0.10 (MPL-2.0), added in Stage 4: +1.0 MB on macOS, +1.6 MB on Linux
   with its `regex` (ROADMAP budgets).
 - Still open: the 15-minute refresh, the build-time Client ID default (see docs/ROADMAP.md, Stage 2).
@@ -214,6 +226,49 @@ entry you don't mind changing back.
    poll); with only mpv/IINA, 0.
 5. Memory with the window open: `footprint $(pgrep -x kotora)`.
 
+## Live test of stage 5 (the user, on Arch)
+
+First merge `stage-5-detect` into `stage-5` and wire the TODO in `app/src/precise.rs` (the detection
+parts below need it). Build: `cargo build --release -p kotora -p kotora-ctl`, quit any running Kotora,
+start `target/release/kotora`. **Adding and editing write to MAL** like `+1`: use titles you don't mind
+adding (Kotora can't remove an entry yet; remove a test add on myanimelist.net, then Refresh).
+
+1. Client ID guide, without touching your real settings: quit Kotora, then
+   `mkdir -p /tmp/kot-cfg && XDG_CONFIG_HOME=/tmp/kot-cfg target/release/kotora`. The Welcome page shows
+   three steps. "Open the API page" opens myanimelist.net/apiconfig. Copy, then paste somewhere: it is
+   `http://127.0.0.1:47321/callback`. Paste `hello world` and Save: a red line says why. Paste your
+   Client ID and Save: "Client ID saved" and Sign in works (your token in `~/.local/share/kotora` still
+   applies, so the list may load at once). `stat -c %a /tmp/kot-cfg/kotora/config.toml` says 600.
+   Quit, `rm -rf /tmp/kot-cfg`, start Kotora normally.
+2. Settings → Accounts: the Client ID shows as dots and its last four characters. Change, paste
+   `abc`, Save: "too short". Cancel. `kot config client-id YOUR_ID` answers "Saved the Client ID".
+3. Search: type two letters: your list's matches, and "Type 3 letters or more". Type the title of a show
+   you don't have: about half a second later "On MyAnimeList" lists results with covers, type,
+   episodes, season and ★ score. The ▾ menu shows the other statuses; Escape closes it. Retype the same
+   query: the results come back at once (from memory). With `KOTORA_OFFLINE=1`, search says it needs
+   the network and still searches your list.
+4. Add (writes to MAL): "+ Watching" on one result: it moves up to "On your list" with "Waiting to
+   sync", the Sync queue shows "Add as Watching", then it goes out. Check myanimelist.net.
+5. Details: click a title in the list (the title, not the row): cover, titles, score, rank, dates,
+   studios, genres, synopsis; on the right your entry with its start date. Edit, change the score,
+   Save: it goes through the queue (writes to MAL; set it back). `+1` works there. Back and Escape
+   return to the list. "Open on MyAnimeList" opens the browser. Click a search result: its page has
+   "Add as Watching" and the other statuses. Open the same title again with `KOTORA_OFFLINE=1`: it
+   shows from the saved copy.
+6. `kot add EXACT TITLE` adds one (writes to MAL); `kot add` with a common word lists ids to choose.
+7. Detection (needs the merge): start mpv with no `input-ipc-server` and no mpv-mpris and play an
+   episode. Settings → Players says "mpv · process · playing"; Now Playing says "No position from the
+   player". A blue banner offers precise detection. **This edits your mpv.conf**; back it up first
+   (`cp ~/.config/mpv/mpv.conf ~/.config/mpv/mpv.conf.bak`, if you have one). Click "Turn on precise
+   detection": the banner shows the line added. Restart mpv: Settings says "IPC socket · playing" and
+   Now Playing shows the position. Restart Kotora: the banner doesn't come back ("No thanks" is also
+   remembered; delete `[notices]` from `config.toml` to see it again).
+8. A file of a show not on your list: Now Playing's "Not on your list" card has "Add as Watching"
+   (writes to MAL) and "Details"; after adding, the episode is offered as usual.
+9. Tell the agent what you saw; copy any red line (they never contain a token). CPU at rest with the
+   window open and covered: `pidstat -p $(pgrep -x kotora) 5 12`; memory:
+   `grep Pss /proc/$(pgrep -x kotora)/smaps_rollup`.
+
 ## Next steps
 
 1. The user reviews `stage-1`, `stage-2` and `stage-3`, builds them on Arch and the Mac, runs the live tests
@@ -221,4 +276,5 @@ entry you don't mind changing back.
 2. Decide on the 15-minute refresh, and the open points of Stage 3 (docs/ROADMAP.md).
 3. Stage 4 review and the live player tests above; then the open points of Stage 4 (docs/ROADMAP.md),
    among them whether the last episode sets Completed.
-4. Stage 5 (after the first live test), then Stage 6: release 0.1.
+4. Stage 5: merge `stage-5-detect` into `stage-5`, wire the precise-detection TODO, run the live test
+   above, then Stage 6: release 0.1.

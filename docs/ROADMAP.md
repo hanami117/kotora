@@ -21,8 +21,10 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
 - **Stage 4, detection (completes v0.1):** built on branch `stage-4` (2026-11-15, on top of `stage-3`),
   waiting for review and the user's live player tests on Arch and the Mac. Detectors are tested with
   recorded messages, a fake mpv on a temp socket and a fake MPRIS player on a private bus (Docker).
-- **Stage 5, after the first live test:** added 2026-11-15 from the user's feedback; on branch `stage-5`
-  (on top of `stage-4`). The release moves to Stage 6.
+- **Stage 5, after the first live test:** added 2026-11-15 from the user's feedback. Built on branch
+  `stage-5` (on top of `stage-4`): Client ID from the app, search and add, details page, and the
+  detection GUI. The detection engine is on `stage-5-detect`, to be merged into `stage-5`. Waiting for
+  the merge and the user's live test. The release moves to Stage 6.
 
 ## Stage 0: design
 
@@ -44,15 +46,26 @@ Kotora has no Electron, no bridge and no audio, so it must stay small. Measure i
 of every stage and write the numbers here. A stage that breaks a budget explains why or fixes it.
 The first numbers are targets; Stage 1 measures the real baseline and may adjust them once, with a reason.
 
-| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) | Stage 3 (2026-11-15) | Stage 4 (2026-11-15) |
-|---|---|---|---|---|---|---|---|
-| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below) | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB | macOS arm64 23.5 MB (23,538,104 bytes; +0.2 MB: queue, editor, queue page). Linux arm64 (Docker) 27.6 MB (27,561,088 bytes; +0.2 MB). `kot` 0.5 MB | macOS arm64 24.6 MB (24,563,488 bytes; +1.0 MB: anitomy-ng with `regex`, detectors, Now Playing). Linux arm64 (Docker) 29.2 MB (29,200,048 bytes; +1.6 MB): 0.8 MB under the 30 MB target, so v0.2 must watch it. `kot` 0.6 MB |
-| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured | not re-measured |
-| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user | live only; to be measured by the user |
-| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) | macOS `--hidden`, scratch config, detection on (one mpv socket watched): 13 MB footprint (peak 89 MB during start) |
-| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls | macOS `--hidden`, detection on, no player: 0.00 s CPU in 60 s, 0 idle wakeups. A fake mpv playing for 27 s: 0.00 s CPU (no position polling; one wake at the threshold). VLC's web interface (macOS, opt-in, off until its password is set) is the one poll: 60 s while VLC is not running, 30 s idle, 15 s playing |
-| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured | not re-measured |
-| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) | not re-measured |
+| what | target | how to measure | Stage 1 (2026-11-15) | Stage 2 (2026-11-15) | Polish (2026-11-15) | Stage 3 (2026-11-15) | Stage 4 (2026-11-15) |Stage 5 (2026-11-15) |
+|---|---|---|---|---|---|---|---|--|
+| release binary (`kotora`, stripped) | 30 MB or less (was 25, see below); `codegen-units = 1` since Stage 5 | `ls -l target/release/kotora` after `strip` | macOS arm64 19.2 MB; Linux arm64 (Docker) 25.2 MB. `kot` 0.5 MB | macOS arm64 23.1 MB (+3.9 MB: SQLite, ureq with rustls). `kot` 0.6 MB. Linux arm64 (Docker) 29.3 MB (+4.1 MB): 0.7 MB under the target, so the next stage must watch it | macOS arm64 23.3 MB (+0.2 MB: covers). Linux arm64 (Docker) 27.4 MB (−1.9 MB: Rune `dbus` dropped, covers added). `kot` 0.5 MB | macOS arm64 23.5 MB (23,538,104 bytes; +0.2 MB: queue, editor, queue page). Linux arm64 (Docker) 27.6 MB (27,561,088 bytes; +0.2 MB). `kot` 0.5 MB | macOS arm64 24.6 MB (24,563,488 bytes; +1.0 MB: anitomy-ng with `regex`, detectors, Now Playing). Linux arm64 (Docker) 29.2 MB (29,200,048 bytes; +1.6 MB): 0.8 MB under the 30 MB target, so v0.2 must watch it. `kot` 0.6 MB |**Linux x86_64 29.9 MB** (29,930,264 bytes) with `codegen-units = 1`; 33.9 MB (33,869,560) with the default profile, over the target: see below. Stage 4 built on the same machine: 33.5 MB (33,469,560), so Stage 5 adds 0.40 MB (Client ID, search, details, detection GUI). `kot` 0.56 MB (557,368; 575,648 with the default profile) |
+| package (DMG / tarball, compressed) | 15 MB or less | size of the packaging output | no DMG yet; `tar.gz` of both stripped binaries: macOS 8.7 MB, Linux 11.1 MB | `tar.gz` of both stripped binaries, macOS: 10.7 MB | not re-measured | not re-measured | not re-measured |not re-measured |
+| memory at rest, window open, list of 300 entries | 100 MB or less | Linux: PSS from `/proc/<pid>/smaps_rollup`; macOS: `footprint` | live only (agents never open a window); to be measured by the user | live only; to be measured by the user | live only. Headless snap of `list-covers` vs `list` at 2x: +0.15 MB RSS; covers are capped at 16 MB in memory (a 300-entry list at 2x is about 10 MB if all are shown) | live only; to be measured by the user | live only; to be measured by the user |live only; to be measured by the user |
+| memory at rest, window closed (tray / hidden) | 50 MB or less | same | macOS `--hidden`, 303 fake entries: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 89 MB during start) | macOS `--hidden`, empty scratch config: 12 MB footprint (covers never load without a window) | macOS `--hidden`, empty scratch config: 12 MB footprint (peak 88 MB during start) | macOS `--hidden`, scratch config, detection on (one mpv socket watched): 13 MB footprint (peak 89 MB during start) |Linux x86_64 `--hidden`, scratch config, players off, offline: PSS 19.6 MB (RSS 27.3 MB) |
+| CPU at rest | 0 %, no timers waking more than once a minute | `top`/`pidstat` over 60 s; no busy poll | macOS `--hidden`: 0.01 s CPU in 60 s, 0 idle wakeups. Code: `poll` returns false, no `wake_after`, socket threads block in `accept`/`read` | macOS `--hidden`: 0.01 s CPU in 60 s. Code: sign-in waits only while a sign-in runs (at most 5 min), no refresh timer | macOS `--hidden`: 0.01 s CPU in 60 s. Cover workers start only with work and end when idle | macOS `--hidden`: 0.00 s CPU in 60 s, 0 idle wakeups. The queue worker thread starts with an edit and ends when nothing is left to send; while a change waits for a retry it sleeps until then (30 s doubling to 15 min), never polls | macOS `--hidden`, detection on, no player: 0.00 s CPU in 60 s, 0 idle wakeups. A fake mpv playing for 27 s: 0.00 s CPU (no position polling; one wake at the threshold). VLC's web interface (macOS, opt-in, off until its password is set) is the one poll: 60 s while VLC is not running, 30 s idle, 15 s playing |Linux `--hidden`: 0 ticks of CPU in 60 s, 0 context switches of the main thread. A search thread starts with a pause in typing and ends with the answer; a details thread with the page; no timer |
+| start to first frame | 300 ms or less (warm) | `KOTORA_FRAME_LOG` or a timestamp log | headless (no window): 27–31 ms from `main` to the first encoded frame, 1280×800 at 2x; window creation is live only | not re-measured (headless scenes unchanged in cost); live number still the user's | not re-measured | not re-measured | not re-measured |not re-measured |
+| `kot status` round trip | 20 ms or less | `time kot status` | 2.6 ms median, 3.3 ms max (50 runs, hidden app) | not re-measured | not re-measured | 2.2 ms median, 3.0 ms max (50 runs, hidden app) | not re-measured |1.3 ms median, 2.1 ms max (50 runs, hidden app, Linux) |
+
+Stage 5 and the binary target: this is the first measurement on Linux x86_64 (the earlier Linux
+numbers were arm64 in Docker). The same Stage 4 code is 33.5 MB stripped on x86_64 against 29.2 MB on
+arm64: x86_64 code for this stack (Rune, wgpu, naga, zbus) is about 14 % larger, so the 30 MB target was
+already over on x86_64 before Stage 5, which adds 0.40 MB. `.text` is 24.4 MB; by symbols, Rune about
+3.4 MB, naga 1.2, zbus with zvariant 1.4, wgpu_core 0.8, `kotora` 0.55. Measured on the
+same machine, stripped: the default release profile 33.87 MB (full build 1 m 30 s); with
+`codegen-units = 1` 29.93 MB (2 m 02 s); with that and fat LTO 28.12 MB (3 m 06 s). Neither changes
+behaviour. The workspace now sets `codegen-units = 1` in `[profile.release]` (Uzumaki keeps the default;
+the Rune rev is still shared). Fat LTO is the next step if a later stage needs room. macOS arm64 is not
+re-measured; it can only shrink with the same setting.
 
 Stage 4 changes no target. New dependencies: `anitomy-ng` (MPL-2.0) with `regex`/`regex-automata`/
 `regex-syntax`/`aho-corasick` (MIT or Apache-2.0); zbus 5 in `detect` is the copy Rune's AT-SPI already
@@ -248,27 +261,77 @@ without search-and-add and a details page, a show found by detection but missing
 dead end. These items come forward from v0.3/v0.4 into v0.1; AniList, library folders with "play next",
 the corrections UI and AppImage/DMG move to v0.3 to make room (DESIGN.md §12.12).
 
-- [ ] **Client ID from the app:** a three-step guide on the Welcome page (open MAL's API page, create an
-  app of type "other" with the redirect URL and a Copy button, paste the ID), a field with Save that
-  writes `config.toml` (comments kept, 0600) and enables Sign in at once, an inline error for a bad ID.
-  The same field in Settings (masked, with Change). `kot config client-id ID`.
-- [ ] **Zero-config detection:**
-  - Linux: a process detector that finds mpv, VLC, mpc-qt, Celluloid and Haruna owned by the user and
-    reads their open video file from `/proc/<pid>/fd`. Light: a cheap scan every few seconds, measured.
-    No position: the file counts as watched after it has been open for a set time.
-  - IPC/MPRIS data wins when the same player gives both; no double counting.
-  - macOS: the same through `libproc` if it fits in the stage, else a stub and a note here.
-  - "Precise mode": when mpv is found by its process but has no socket, a banner offers once to add
-    `input-ipc-server=…` to `~/.config/mpv/mpv.conf` (one click, never twice, shows what was written).
-  - Settings shows each player's real state ("mpv · process · playing", "IPC socket").
-- [ ] **Search and add:** the search bar shows the list's matches first, then MAL results (debounced,
-  shared rate budget, signed in and online only, cached briefly) with cover, type, episodes, season,
-  score, "+ Watching" and the other statuses. Adding goes through the queue. `kot add QUERY|ID`.
-- [ ] **Details page:** a click on a title (list row, search result, Now Playing) opens its MAL
-  information and the user's entry (or "Add to list") in the main area, with Back and "Open on
-  MyAnimeList". Details are cached in SQLite only for titles on the list or recently shown.
-- [ ] Scenes for every new view and state; budgets measured.
-- [ ] Live test by the user on Arch.
+Built 2026-11-15 in two parallel branches. **Detection lives on branch `stage-5-detect`** (the process
+detector, the watched-time rule, macOS `libproc` and the `mpv.conf` helper; its own session and notes);
+everything else, including the detection GUI, is on `stage-5`. `stage-5-detect` is merged into
+`stage-5` before the live test, and the one wiring point is marked `TODO(stage-5-detect)` in
+`app/src/precise.rs`. All of `stage-5` is tested with recorded-shape JSON, fake services and scenes;
+nothing has talked to MAL.
+
+- [x] **Client ID from the app** (`app/src/clientid.rs`, `core::config::check_client_id`): the
+  Welcome page's three steps (Open the API page; app type "other", non-commercial, the redirect URL
+  with Copy; paste the ID) and a field with Save. The ID is trimmed (quotes too) and must be hex, 20
+  to 64 characters (MAL's are 32); a pasted secret, app name or half an ID gets a line that says what
+  is wrong. Save writes `[mal] client_id` with the comment-keeping writer (0600) on a short thread and
+  re-reads the sign-in state, so Sign in works at once. Settings → Accounts shows it masked (last 4)
+  with Change. `kot config client-id ID` does the same through the running app. Scenes:
+  `no-client-id`, `no-client-id-error`, `client-id-saved`, `settings-client-id-change`,
+  `settings-no-client-id`.
+- [ ] **Zero-config detection:** on `stage-5-detect` (see that branch's notes for the process scan,
+  its CPU and the watched-time rule).
+  - [x] GUI (`app/src/precise.rs`): each player's line keeps its source's label, so it reads
+    "mpv · process · playing" or "IPC socket · …"; Now Playing says "No position from the player" for
+    a process source instead of an empty bar. When mpv is seen by its process only (and its IPC
+    socket doesn't answer), a banner offers once to turn on precise detection: one click appends
+    `input-ipc-server=…` to `mpv.conf` and shows what was written, or that the file already sets a
+    socket, or the error. The click or "No thanks" is remembered in `config.toml` (`[notices]
+    mpv_precise = true`); Settings keeps a Turn on button under mpv. Scenes: `precise-offer`,
+    `precise-written`, `precise-already-set`, `precise-failed`, `settings-players-process`,
+    `now-playing-process`.
+  - [ ] Wiring after the merge: `write_mpv_conf` in `precise.rs` calls
+    `kotora_detect::mpvconf::enable` with the first watched mpv socket (the TODO says how).
+- [x] **Search and add** (`app/src/search.rs`, `core::mal::browse_anime`): with a query, the list
+  page becomes search results: the list's matches across every status (the page's own first, each
+  with its status tag), then MAL's results that are not on the list. MAL is asked only signed in and
+  online, for 3 letters or more, 400 ms after typing stops (`GET /anime?q=&limit=10` with type,
+  episodes, status, season and mean score); answers stay 10 minutes in memory (20 queries) and go
+  with sign out. One rate budget for the whole app, as before. A result row: cover, title, type,
+  episodes, airing, season, ★ score, English title, "+ Watching" and a menu for Plan to watch,
+  Completed, On hold, Dropped. Adding is optimistic and goes through the queue (`Store::add_to_list`,
+  schema 4's `pending_op.added`: not on MAL is no conflict, a full sync keeps it until sent, Discard
+  removes it, Completed starts at the last episode). `kot add QUERY|ID [--status S]` (a title must
+  find one anime, else kot lists ids). Scenes: `search-online` (`-pending`, `-menu`, `-added`,
+  `-short`, `-offline`, `-error`, `-none`).
+- [x] **Details page** (`app/src/details.rs`, `core::mal::fetch_details`): a list row's title, a
+  search result, the Now Playing title or "Details" on its not-on-list card opens the anime in the
+  main area: cover (MAL's large one at 200 × 284), titles (main, English, Japanese, synonyms), type,
+  episodes, airing, season, MAL score, rank, popularity, members, aired dates, studios, genres,
+  source, length, synopsis; on the right the user's entry (status, progress with `+1`, score,
+  started and finished dates, Rewatching, Waiting to sync; Edit opens the editor's fields there) or
+  Add to list with every status. Back or Escape returns (the sidebar keeps that page lit); "Open on
+  MyAnimeList" opens the browser. Information comes from the store's `details` table when younger
+  than 3 days, else `GET /anime/{id}` (signed in, online), and is saved: for titles on the list, and
+  others at most a week and the newest 100 (DESIGN.md: no hoarding); sign out deletes it. A fetch
+  also refreshes a saved entry's titles, count and cover. Now Playing's "Not on your list" card has
+  "Add as Watching", which also remembers the file as that anime. Scenes: `details-on-list`
+  (`-editor`), `details-not-on-list` (`-added`), `details-loading`, `details-error`.
+- [x] Scenes for every new view and state (above), checked as PNGs at 1280 × 800 and 960 × 600, and
+  tests that find their parts; a press on a row's title opens details, elsewhere the editor.
+- [x] Budgets measured (table above; Linux x86_64 from this stage on; `codegen-units = 1` keeps the
+  binary under 30 MB there).
+- [ ] Live test by the user on Arch, after `stage-5-detect` is merged (STATUS.md).
+
+Decided in this stage (easy to change):
+- The search box searches the whole list, not only the page's status, once it holds a query; the chips
+  hide while searching. Clearing it brings the status page back.
+- Search results hide anime already on the list (they are shown above, with their status). MAL's
+  default leaves out NSFW titles in search.
+- A row's title opens details; the rest of the row still opens the inline editor.
+
+Open after Stage 5:
+- Start and finish dates and the rewatching flag show on the details page but are not editable yet.
+- The details page has no related anime or recommendations (more MAL fields, more requests).
+- If `stage-5-detect` adds a database migration too, it must come after schema 4 here (merge note).
 
 ## Stage 6: release 0.1
 
