@@ -177,7 +177,11 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .radius(theme::R_SM)
         .hover(PAL.hover())
         .press(PAL.press())
-        .on_press(move |s: &mut State| s.go(page))
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            // A new page replaces the old one at once; rows don't swim.
+            tx.instant();
+            s.go(page);
+        })
         .child(mark)
         .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
         .child(spacer());
@@ -321,7 +325,10 @@ fn chips(s: &State, st: Status) -> El {
             .radius(13.0)
             .hover(PAL.hover())
             .press(PAL.press())
-            .on_press(move |s: &mut State| s.filter = f)
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.filter = f;
+            })
             .child(text(format!("{} {n}", f.label())).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim }));
         chip = if on { chip.fill(PAL.accent.alpha(0.14)) } else { chip.border(1.0, PAL.border) };
         r = r.child(chip);
@@ -417,7 +424,11 @@ fn list_row(e: &Entry, wide: bool) -> El {
                 .center()
                 .hover(PAL.accent)
                 .press(PAL.accent_lo)
-                .on_press(move |s: &mut State| s.plus_one(id))
+                .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                    // Optimistic and at once (design-spec §6): no counting animation.
+                    tx.instant();
+                    s.plus_one(id);
+                })
                 .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim)),
         );
     let score = match e.score {
