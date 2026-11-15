@@ -4,9 +4,12 @@
 //!
 //! - [`name`]: a file name parser for comic files (`.cbz`, `.cbr`, `.cb7`, `.zip`, `.pdf`,
 //!   `.epub`) and their folders: series, volume, chapter, group, language, year.
+//! - [`yacreader`]: a read-only reader of YACReader's library databases. It reports what the user
+//!   opened lately, how far they got, and whether YACReader calls it read.
 //! - [`chapter_read`]: the one rule that says when Kotora counts a chapter as read.
 
 pub mod name;
+pub mod yacreader;
 
 /// Whether a chapter counts as read.
 ///
