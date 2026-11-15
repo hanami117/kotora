@@ -1,0 +1,32 @@
+# Changelog
+
+All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [0.1.0] - date to be set
+
+First release. MyAnimeList only; Linux first, macOS from source.
+
+### Added
+- **Your list:** Watching, Plan to watch, Completed, On hold and Dropped, with covers, progress, score, airing
+  information, status chips, sorting and search. The list is kept in a local SQLite database and works offline.
+- **MyAnimeList sign-in** with PKCE (no client secret). The Welcome page guides you through getting a Client ID;
+  `kot config client-id ID` does the same. Tokens are stored in a private file.
+- **Edits and the sync queue:** change progress (`+1`), score and status. Changes wait in a visible queue,
+  are sent in order, retried with backoff, and conflicts with changes made elsewhere are shown.
+- **Detection:** mpv (IPC socket), MPRIS players on Linux (VLC, mpc-qt, Celluloid, Haruna, SMPlayer, …), VLC's web
+  interface and IINA on macOS, and a zero-setup process source that finds a player by its open video file. A
+  watched-time rule decides when an episode counts. Desktop notifications.
+- **Recognition:** file names are parsed with anitomy-ng and matched to your list, with season handling.
+- **Updates ask first:** an offer to record the episode (Update, Not now, Wrong anime…). Automatic updating is a
+  switch, off by default, with Undo.
+- **Search and add:** search your list and MyAnimeList together, add with one click, and a details page with
+  synopsis, score, studios and your own entry.
+- **Settings:** account, players, updates, the `mpv.conf` helper for precise detection, and About.
+- **`kot`:** `status`, `list`, `+1`, `set`, `add`, `queue`, `sync`, `now`, `confirm`, `dismiss`, `config`, `show`, `quit`.
+- A single instance per user; `kot` and the app share one socket.
+- `install.sh` for Linux, a desktop entry and icons, and an AUR package draft.
+
+### Not in this release
+- AniList, several accounts, a corrections UI, library folders, AppImage and DMG (planned for 0.3).
