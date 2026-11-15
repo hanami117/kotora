@@ -1,0 +1,9 @@
+[package]
+name = "kotora-core"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+description = "Kotora's core: data model, store, services, sync queue and recognition (no UI)"
+
+[dependencies]
