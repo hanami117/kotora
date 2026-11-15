@@ -118,6 +118,8 @@ struct Current {
     cover_url: Option<String>,
     /// The episode in the file's name, before anime-relations moved it.
     file_episode: Option<u32>,
+    /// anime-relations moved the file to an anime that isn't on the list: why.
+    relation: Option<String>,
 }
 
 /// The rules: read at the first file (the newer of the downloaded and the built-in copy), and a
@@ -154,7 +156,7 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                     current = Some(recognise(&mut store, &file, r));
                 }
                 let Some(c) = &current else { continue };
-                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone() }))));
+                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), relation: c.relation.clone() }))));
             }
             In::Report(Report::Reached { key, file }) => send(h, Msg::Reached { key, file }),
             In::Report(Report::Sources(v)) => send(h, Msg::Players(v)),
@@ -203,6 +205,7 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
         found: Found::Nothing,
         candidates: Vec::new(),
         cover_url: None,
+        relation: None,
     };
     let Some(mut parsed) = recognize::parse(file) else { return nothing(None) };
     let file_episode = parsed.episode;
@@ -221,12 +224,32 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
             None => search(st, &parsed, &items, &key),
         },
     };
+    let before = found.clone();
     let found = recognize::redirect(found, &mut parsed, &items, rel);
+    let relation = relation_reason(&before, &found, file_episode, parsed.episode, &items);
     let cover_url = match &found {
         Found::NotOnList { media_id, .. } => not_on_list_cover(st, *media_id),
         _ => None,
     };
-    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, file_episode }
+    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, file_episode, relation }
+}
+
+/// Why the file is an anime that isn't on the list, when anime-relations moved it there (a list
+/// match carries its reason in `why` already): "episode 15 of Re:Zero 2nd Season is episode 2 of
+/// Re:Zero 2nd Season Part 2 (anime-relations)".
+fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Option<u32>, items: &[kotora_core::ListItem]) -> Option<String> {
+    let Found::NotOnList { media_id: to, title: to_title } = after else { return None };
+    let (from, from_title) = match before {
+        Found::List { media_id, .. } => (*media_id, items.iter().find(|it| it.media.id == *media_id).map(|it| it.media.title.clone())),
+        Found::NotOnList { media_id, title } => (*media_id, Some(title.clone())),
+        _ => return None,
+    };
+    let (file_ep, ep) = (file_ep?, ep?);
+    if from == *to && file_ep == ep {
+        return None;
+    }
+    let from_title = from_title.unwrap_or_else(|| "the file's anime".into());
+    Some(format!("episode {file_ep} of {from_title} is episode {ep} of {to_title} (anime-relations)"))
 }
 
 /// The cover of an anime that isn't on the list: from its saved details, else one details
@@ -278,5 +301,16 @@ mod tests {
         assert!(s.processes && s.process_minutes == 15);
         let c = Config::parse("[players]\nprocess_scan = false\nprocess_minutes = 0\n").unwrap();
         assert_eq!((settings(&c).processes, settings(&c).process_minutes), (false, 1));
+    }
+
+    #[test]
+    fn a_redirect_off_the_list_says_why() {
+        let list = Found::List { media_id: 31240, sure: true, why: "same title in your list".into() };
+        let off = Found::NotOnList { media_id: 42203, title: "Re:Zero 2nd Season Part 2".into() };
+        let why = relation_reason(&list, &off, Some(15), Some(2), &[]).unwrap();
+        assert_eq!(why, "episode 15 of the file's anime is episode 2 of Re:Zero 2nd Season Part 2 (anime-relations)");
+        // Found by a search and not moved: no reason line.
+        assert_eq!(relation_reason(&off, &off, Some(2), Some(2), &[]), None);
+        assert_eq!(relation_reason(&list, &list, Some(15), Some(2), &[]), None, "a list match says it in `why`");
     }
 }

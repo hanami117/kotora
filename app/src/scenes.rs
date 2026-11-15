@@ -225,6 +225,18 @@ pub const SCENES: &[Scene] = &[
         }
         s.go(Page::NowPlaying);
     }),
+    // anime-relations moved episode 15 of a season to its second part, which isn't on the list.
+    ("now-playing-relation-not-on-list", |s| {
+        playing_file(s, "[Hoshi] Velvet Orchard Chronicle S2 - 15 (1080p).mkv");
+        if let Some(n) = &mut s.now {
+            n.found = Found::NotOnList { media_id: 9002, title: "Velvet Orchard Chronicle 2nd Season Part 2".into() };
+            n.relation = Some("episode 15 of Velvet Orchard Chronicle 2nd Season is episode 2 of Velvet Orchard Chronicle 2nd Season Part 2 (anime-relations)".into());
+            if let Some(p) = &mut n.parsed {
+                p.episode = Some(2);
+            }
+        }
+        s.go(Page::NowPlaying);
+    }),
     // Nothing on the list, nothing found.
     ("now-playing-unknown", |s| {
         playing_file(s, "holiday_2026_beach.mp4");
@@ -725,6 +737,8 @@ mod tests {
         assert!(render("search-online-none", (1280.0, 800.0)).find("sr/list-none").is_some());
         assert!(render("search-online", (960.0, 600.0)).find("add").is_some(), "the add button fits a small window");
         assert!(render("search-mal-id", (960.0, 600.0)).find("sr/id/41590").is_some());
+        assert!(render("now-playing-relation-not-on-list", (1280.0, 800.0)).find("np-relation").is_some());
+        assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-relation").is_none());
         assert!(render("search-online", (1280.0, 800.0)).find("sr/id/").is_none());
     }
 

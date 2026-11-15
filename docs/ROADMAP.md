@@ -453,8 +453,10 @@ same file. Moved forward from v0.3; the corrections UI stays there. Built on bra
   of data, the rest code) over `stage-5` built the same way (30,035,096). Reading the file: 0.4-0.5 ms,
   once per run, at the first file. No timer, no new thread at rest.
 - [ ] Live test by the user (STATUS.md has the list for Stage 5; see below).
-- Open: the About page (`app/src/ui.rs`, another branch) should name anime-relations next to anitomy.
-  A "not on your list" card shows no reason line, so the redirect is visible there only by the title.
+- [x] After the merge into `stage-5` (2026-11-15): the About page names anime-relations next to
+  anitomy, and when a rule moves the file to an anime that isn't on the list, the "Not on your list"
+  card (and `kot now`) say why ("Episode 15 of … is episode 2 of … (anime-relations)"). Scene:
+  `now-playing-relation-not-on-list`.
 
 Live test: play a Season 2 release numbered 1-25 at episode 15 or later, and a Season 3 release.
 Now Playing (and `kot now`) should name 2nd Season Part 2 (or the 3rd Season) with the moved episode

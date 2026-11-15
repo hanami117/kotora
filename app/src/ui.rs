@@ -1463,7 +1463,7 @@ fn about_card(s: &State) -> El {
                             .wrap(),
                     )
                     .child(
-                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng). Not affiliated with MyAnimeList.")
+                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga's author. Not affiliated with MyAnimeList.")
                             .font(theme::LABEL)
                             .color(PAL.faint)
                             .wrap(),
@@ -1881,14 +1881,22 @@ fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
     }
 }
 
-fn not_on_list_card(id: u32, title: &str) -> El {
-    card("np-not-on-list", "Not on your list")
-        .child(
-            text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."))
-                .font(theme::LABEL)
-                .color(PAL.dim)
-                .wrap(),
-        )
+fn not_on_list_card(id: u32, title: &str, relation: Option<&str>) -> El {
+    let mut c = card("np-not-on-list", "Not on your list").child(
+        text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."))
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .wrap(),
+    );
+    // anime-relations moved the file here: say so, or the other title looks like a wrong match.
+    if let Some(why) = relation {
+        let mut why = why.to_string();
+        if let Some(first) = why.get(..1) {
+            why.replace_range(..1, &first.to_uppercase());
+        }
+        c = c.child(text(format!("{why}.")).key("np-relation").font(theme::LABEL).color(PAL.faint).wrap().mt(6.0));
+    }
+    c
         .child(
             row()
                 .gap(8.0)
@@ -1930,7 +1938,7 @@ fn now_page(s: &State, wide: bool) -> El {
         } else if matches!(n.found, Found::List { sure: false, .. }) && n.recorded.is_none() {
             side = side.child(unsure_card(s, n));
         } else if let Found::NotOnList { media_id, title } = &n.found {
-            side = side.child(not_on_list_card(*media_id, title));
+            side = side.child(not_on_list_card(*media_id, title, n.relation.as_deref()));
         }
     }
     side = side.child(players_status_card(s));

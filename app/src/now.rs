@@ -39,6 +39,8 @@ pub struct Now {
     pub candidates: Vec<(u32, String)>,
     /// The cover of a match that isn't on the list (a list entry has its own).
     pub cover_url: Option<String>,
+    /// Why a match that isn't on the list is another anime than the file's (anime-relations).
+    pub relation: Option<String>,
     /// "Not now".
     pub dismissed: bool,
     /// The banner acted already (notified, or recorded automatically).
@@ -69,6 +71,8 @@ pub struct Seen {
     pub candidates: Vec<(u32, String)>,
     /// The cover of an anime found on MyAnimeList but not on the list (saved details).
     pub cover_url: Option<String>,
+    /// anime-relations moved the file to an anime that isn't on the list: why, in words.
+    pub relation: Option<String>,
 }
 
 /// Settings → Updates and Players, as `config.toml` has them.
@@ -141,6 +145,7 @@ impl Now {
             recognizing: false,
             candidates: seen.candidates,
             cover_url: seen.cover_url,
+            relation: seen.relation,
             dismissed: false,
             acted: false,
             recorded: None,
@@ -422,7 +427,10 @@ impl State {
         let matched = match &n.found {
             Found::List { sure: true, why, .. } => format!("In your list, sure: {why}"),
             Found::List { why, .. } => format!("In your list, not sure: {why}"),
-            Found::NotOnList { .. } => "Not on your list (found on MyAnimeList)".into(),
+            Found::NotOnList { .. } => match &n.relation {
+                Some(why) => format!("Not on your list: {why}"),
+                None => "Not on your list (found on MyAnimeList)".into(),
+            },
             Found::Ignored => "Marked as not an anime".into(),
             Found::Nothing => "Not found on your list".into(),
         };
@@ -545,6 +553,7 @@ mod tests {
             },
             candidates: vec![],
             cover_url: None,
+            relation: None,
         }
     }
 
