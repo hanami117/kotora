@@ -107,6 +107,29 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     }
 }
 
+/// A signed-in MyAnimeList client for a short worker (search, details, `kot add`): `None` when
+/// offline by choice (`KOTORA_OFFLINE`), with no Client ID, or with no token. Shares the app's
+/// one rate budget.
+pub fn mal_service() -> Option<Mal<UreqTransport>> {
+    if paths::offline_forced() {
+        return None;
+    }
+    let id = Config::load(&paths::config_file()).ok()?.mal_client_id?;
+    let tokens = TokenStore::new(paths::token_file());
+    tokens.load_mal()?;
+    Some(Mal::new(Client::new(id, UreqTransport::default()), tokens))
+}
+
+/// A service error in the words a page shows.
+pub fn error_text(e: ServiceError) -> String {
+    match e {
+        ServiceError::Offline(_) => "Can't reach MyAnimeList.".into(),
+        ServiceError::SignInAgain => "MyAnimeList needs you to sign in again.".into(),
+        ServiceError::RateLimited => "MyAnimeList asked Kotora to slow down. Try again in a minute.".into(),
+        ServiceError::Other(m) => m,
+    }
+}
+
 // -------------------------------------------------------------------------------------- sign in
 
 pub fn sign_in(s: &mut State) {
@@ -165,6 +188,16 @@ pub fn open_link(s: &mut State, url: &'static str) {
     }
     std::thread::spawn(move || {
         let _ = open_browser(url);
+    });
+}
+
+/// [`open_link`] for a URL made at run time (an anime's MyAnimeList page).
+pub fn open_url(s: &mut State, url: String) {
+    if s.handle.is_none() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let _ = open_browser(&url);
     });
 }
 

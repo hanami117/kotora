@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use kotora_core::queue::{Op, OpState};
-use kotora_core::{Change, ListItem, Remote, Status, Values};
+use kotora_core::{Change, ListItem, Media, Remote, Status, Values};
 use rune::{AppHandle, Image, TextEdit};
 
 use kotora_core::recognize::Found;
@@ -25,6 +25,8 @@ pub enum Page {
     NowPlaying,
     Queue,
     Settings,
+    /// One anime's information (`details.rs`); `State::detail` says which.
+    Details,
 }
 
 /// The chips above the list.
@@ -319,6 +321,10 @@ pub struct State {
     pub logo_big: Option<Image>,
     /// Covers in the list, and Rune's image cache (`art.rs`).
     pub covers: Covers,
+    /// The open details page.
+    pub detail: Option<crate::details::Detail>,
+    /// The MyAnimeList half of the search (`search.rs`).
+    pub online: crate::search::Online,
     /// The MyAnimeList Client ID field (Welcome and Settings).
     pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
@@ -358,6 +364,8 @@ impl State {
             logo: None,
             logo_big: None,
             covers: Covers::default(),
+            detail: None,
+            online: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
         };
@@ -398,8 +406,15 @@ impl State {
         matches!(self.auth, Auth::SignedIn | Auth::Expired)
     }
 
+    /// Whether the search box holds a query: the list page shows search results (every status,
+    /// then MyAnimeList) instead of one status.
+    pub fn searching(&self) -> bool {
+        matches!(self.page, Page::List(_)) && !self.query.text.trim().is_empty()
+    }
+
     /// Rebuilds `rows`: the page's status, then the chip, the search and the sort. Call it after
-    /// any change to the page, filter, query, sort or entries.
+    /// any change to the page, filter, query, sort or entries. A search looks at every status
+    /// (the page's own first) and ignores the chip.
     pub fn refresh(&mut self) {
         let Page::List(st) = self.page else {
             self.rows.clear();
@@ -409,7 +424,7 @@ impl State {
         let mut rows: Vec<usize> = (0..self.entries.len())
             .filter(|&i| {
                 let e = &self.entries[i];
-                e.status == st && self.filter.keeps(e) && (q.is_empty() || e.search.contains(&q))
+                if q.is_empty() { e.status == st && self.filter.keeps(e) } else { e.search.contains(&q) }
             })
             .collect();
         let e = &self.entries;
@@ -419,6 +434,10 @@ impl State {
             Sort::Title => rows.sort_by_cached_key(|&i| e[i].title.to_lowercase()),
             Sort::Score => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].score.unwrap_or(0))),
             Sort::Progress => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].progress)),
+        }
+        if !q.is_empty() {
+            // The page's status first, then the sidebar's order (stable: the sort stays within).
+            rows.sort_by_key(|&i| if e[i].status == st { 0 } else { 1 + Status::ALL.iter().position(|x| *x == e[i].status).unwrap_or(0) });
         }
         self.rows = rows;
     }
@@ -496,6 +515,37 @@ impl State {
         crate::queue::send(self, Cmd::Edit { media_id: id, change });
         self.refresh();
         Ok(i)
+    }
+
+    /// Search and add, the details page, Now Playing: puts an anime on the list with `status`
+    /// (the list shows it at once, waiting to sync) and queues the add. One already on the list
+    /// gets the status instead. Returns the entry's index.
+    pub fn add_media(&mut self, media: Media, status: Status) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        if self.entries.iter().any(|e| e.id == media.id) {
+            return self.edit(media.id, Change { status: Some(status), ..Default::default() });
+        }
+        let progress = match (status, media.episodes) {
+            (Status::Completed, Some(n)) => n,
+            _ => 0,
+        };
+        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, updated_at: self.clock() };
+        let mut e = Entry::from_item(&item);
+        e.waiting = Some(waiting_label(OpState::Queued));
+        self.entries.push(e);
+        crate::queue::send(self, Cmd::Add { media, status });
+        self.refresh();
+        Ok(self.entries.len() - 1)
+    }
+
+    /// The page whose sidebar item is lit (the details page lights the page it came from).
+    pub fn lit_page(&self) -> Page {
+        match (&self.page, &self.detail) {
+            (Page::Details, Some(d)) => d.back,
+            (p, _) => *p,
+        }
     }
 
     /// `+1`: optimistic, at once (design-spec §6).
@@ -1194,7 +1244,7 @@ mod tests {
         assert_eq!(titles(&s), ["Charlie"]);
         s.query.replace_text("hidden alias");
         s.refresh();
-        assert_eq!(s.rows.len(), 3);
+        assert_eq!(titles(&s), ["alpha", "Charlie", "Bravo", "Delta"], "every status, the page's own first");
         s.query.replace_text("zzz");
         s.refresh();
         assert!(s.rows.is_empty());
@@ -1202,6 +1252,22 @@ mod tests {
         s.query.replace_text("delta");
         s.go(Page::List(Status::Completed));
         assert_eq!(titles(&s), ["Delta"]);
+    }
+
+    #[test]
+    fn an_added_anime_shows_at_once_and_waits() {
+        let mut s = loaded();
+        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None };
+        let i = s.add_media(m.clone(), Status::Completed).unwrap();
+        let e = &s.entries[i];
+        assert_eq!((e.status, e.progress, e.waiting), (Status::Completed, 10, Some("Waiting to sync")));
+        assert_eq!(s.count(Status::Completed), 2);
+        // Again: a status change, not a second entry.
+        s.add_media(m, Status::OnHold).unwrap();
+        assert_eq!(s.entries.iter().filter(|e| e.id == 77).count(), 1);
+        assert_eq!(s.entries.iter().find(|e| e.id == 77).unwrap().status, Status::OnHold);
+        let mut out = State::start(Auth::SignedOut);
+        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None }, Status::Watching).is_err());
     }
 
     #[test]

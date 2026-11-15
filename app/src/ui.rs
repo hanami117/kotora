@@ -50,6 +50,14 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx) -> bool {
         s.editor = None;
         return true;
     }
+    if k.key == rune::Key::Escape && s.online.menu.is_some() {
+        s.online.menu = None;
+        return true;
+    }
+    if k.key == rune::Key::Escape && s.page == Page::Details {
+        s.details_back();
+        return true;
+    }
     false
 }
 
@@ -69,6 +77,7 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         side = side.child(account(name, service));
     }
     side = side.child(nav_heading("My list"));
+    let lit = s.lit_page();
     for st in Status::ALL {
         let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
         side = side.child(nav_item(
@@ -76,22 +85,22 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             NavMark::Dot(PAL.status(st)),
             st.label(),
             count.map(NavEnd::Count),
-            s.page == Page::List(st),
+            lit == Page::List(st),
             Page::List(st),
         ));
     }
     side = side.child(nav_heading("Kotora").mt(12.0));
     side = side
-        .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, s.page == Page::NowPlaying, Page::NowPlaying))
+        .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
             "Sync queue",
             (s.queue > 0).then(|| NavEnd::Badge(s.queue.to_string())),
-            s.page == Page::Queue,
+            lit == Page::Queue,
             Page::Queue,
         ))
-        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, s.page == Page::Settings, Page::Settings))
+        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings))
         .child(spacer());
     if let Some(now) = &s.now {
         let (id, title) = now_title(s, now);
@@ -270,6 +279,7 @@ fn main(s: &State, wide: bool) -> El {
         Page::NowPlaying => now_page(s, wide),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
+        Page::Details => crate::details::page(s, wide),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).
@@ -322,7 +332,10 @@ fn search_box(s: &State) -> El {
                 .color(PAL.text)
                 .placeholder("Search titles", PAL.faint)
                 .on_edit(|s: &mut State| &mut s.query)
-                .on_input_change(|s: &mut State, _tx: &mut Tx| s.refresh())
+                .on_input_change(|s: &mut State, tx: &mut Tx| {
+                    tx.instant();
+                    s.search_changed();
+                })
                 .on_submit(|_s: &mut State, tx: &mut Tx| tx.blur()),
         )
         .child(
@@ -375,6 +388,9 @@ fn refresh_button(syncing: bool) -> El {
 }
 
 fn list_page(s: &State, st: Status, wide: bool) -> El {
+    if crate::search::shows(s) && !s.loading {
+        return search_page(s, st, wide);
+    }
     let count = s.count(st);
     let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(top(s, st.label(), (!s.loading).then_some(count), true));
     if let Some(a) = status_alert(s) {
@@ -402,6 +418,31 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
                 },
                 move |s: &State, i| match s.rows.get(i) {
                     Some(&k) => list_row(s, &s.entries[k], wide),
+                    None => el(),
+                },
+            ),
+        ),
+    )
+}
+
+/// The list page while the search box holds a query: the list's matches (every status), then
+/// MyAnimeList's results (`search.rs`).
+fn search_page(s: &State, st: Status, wide: bool) -> El {
+    use crate::search::{SRow, layout};
+    let mut page = col().key("page/search").w_full().h_full().child(top(s, "Search", Some(s.rows.len()), true));
+    if let Some(a) = status_alert(s) {
+        page = page.child(a);
+    }
+    let n = layout(s).len();
+    page.child(header(wide, s.sort)).child(
+        col().key(format!("search-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
+            col().key("rows").growth(GrowthSpec::default()).virtual_rows(
+                n,
+                theme::ROW_H,
+                |s: &State, i| layout(s).get(i).map_or_else(|| format!("gone-{i}"), |r| crate::search::key(s, *r)).into(),
+                move |s: &State, i| match layout(s).get(i) {
+                    Some(SRow::List(k)) => s.rows.get(*k).map_or_else(el, |&k| list_row(s, &s.entries[k], wide)),
+                    Some(r) => crate::search::line(s, *r),
                     None => el(),
                 },
             ),
@@ -480,7 +521,11 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     let id = e.id;
     let status_c = PAL.status(e.status);
 
-    let mut sub = row().gap(8.0).center_y();
+    // The tag line fades out at the title column's end instead of running into the progress.
+    let mut sub = row().w_full().min_w(0.0).gap(8.0).center_y().clip_fade(0.0, 0.0, 16.0, 0.0);
+    if s.searching() {
+        sub = sub.child(tag(e.status.label(), PAL.status(e.status), true));
+    }
     if e.air == Air::Airing {
         sub = sub.child(tag("Airing", PAL.airing, true));
     }
@@ -496,7 +541,9 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     if let Some(n) = e.new_episode {
         sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.accent.alpha(0.14)));
     }
-    let title = col().gap(2.0).child(text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).truncate()).child(sub);
+    // The title opens the details page; the rest of the row opens the editor.
+    let name = text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).group_color(PAL.accent_hi).truncate();
+    let title = col().gap(2.0).child(crate::details::title_link(name, crate::details::Stub::from_entry(e))).child(sub);
 
     let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
     // `+1` while there is a next episode; the space stays so the columns line up.
@@ -555,7 +602,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
 }
 
 /// `+1`: optimistic and at once (design-spec §6), no counting animation.
-fn plus_button(id: u32) -> El {
+pub(crate) fn plus_button(id: u32) -> El {
     el().key("plus")
         .role("button")
         .label("+1")
@@ -687,7 +734,7 @@ pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
         )
 }
 
-fn step_button(key: &str, label: &str, delta: i32) -> El {
+pub(crate) fn step_button(key: &str, label: &str, delta: i32) -> El {
     el().key(key.to_string())
         .role("button")
         .label(if delta < 0 { "One less" } else { "One more" })
@@ -1536,7 +1583,10 @@ fn now_card(s: &State, n: &Now) -> El {
         .grow(1.0)
         .min_w(0.0)
         .child(text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase()).font(theme::CAPTION).color(PAL.faint))
-        .child(text(title).font(theme::TITLE).color(PAL.text).wrap().mt(4.0).mb(2.0))
+        .child(match now_stub(s, n) {
+            Some(stub) => crate::details::title_link(text(title).font(theme::TITLE).color(PAL.text).group_color(PAL.accent_hi).wrap(), stub).mt(4.0).mb(2.0),
+            None => text(title).font(theme::TITLE).color(PAL.text).wrap().mt(4.0).mb(2.0),
+        })
         .child(text(sub.join(" \u{b7} ")).font(theme::BODY).color(PAL.dim))
         .child(
             row()
@@ -1671,13 +1721,30 @@ fn picker_card(n: &Now) -> El {
     )
 }
 
-fn not_on_list_card(title: &str) -> El {
-    card("np-not-on-list", "Not on your list").child(
-        text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it on myanimelist.net, then Refresh; Kotora will offer the episode."))
-            .font(theme::LABEL)
-            .color(PAL.dim)
-            .wrap(),
-    )
+/// What the details page needs for the playing anime, when it is known.
+fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
+    match &n.found {
+        Found::List { media_id, .. } => s.entries.iter().find(|e| e.id == *media_id).map(crate::details::Stub::from_entry),
+        Found::NotOnList { media_id, title } => Some(crate::details::Stub::bare(*media_id, title)),
+        _ => None,
+    }
+}
+
+fn not_on_list_card(id: u32, title: &str) -> El {
+    card("np-not-on-list", "Not on your list")
+        .child(
+            text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."))
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap(),
+        )
+        .child(
+            row()
+                .gap(8.0)
+                .mt(12.0)
+                .child(action("np/add".into(), "Add as Watching", true, |s, _| s.add_playing()))
+                .child(crate::details::details_ghost(crate::details::Stub::bare(id, title))),
+        )
 }
 
 /// Nothing plays: how to let Kotora see the players.
@@ -1711,8 +1778,8 @@ fn now_page(s: &State, wide: bool) -> El {
             side = side.child(picker_card(n));
         } else if matches!(n.found, Found::List { sure: false, .. }) && n.recorded.is_none() {
             side = side.child(unsure_card(s, n));
-        } else if let Found::NotOnList { title, .. } = &n.found {
-            side = side.child(not_on_list_card(title));
+        } else if let Found::NotOnList { media_id, title } = &n.found {
+            side = side.child(not_on_list_card(*media_id, title));
         }
     }
     side = side.child(players_status_card(s));

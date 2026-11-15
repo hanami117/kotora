@@ -192,6 +192,58 @@ pub const SCENES: &[Scene] = &[
         s.queue = 1;
         s.go(Page::Queue);
     }),
+    // Search and add: the list's matches (every status), then MyAnimeList's results.
+    ("search-online", |s| search(s, "kirigaoka", true)),
+    ("search-online-pending", |s| {
+        search(s, "kirigaoka", false);
+        s.online.pending = true;
+    }),
+    // The status menu of one result is open.
+    ("search-online-menu", |s| {
+        search(s, "kirigaoka", true);
+        s.online.menu = Some(9102);
+    }),
+    // One result added as Watching: it moves up to the list's matches, waiting to sync.
+    ("search-online-added", |s| {
+        search(s, "kirigaoka", true);
+        s.add_hit(9101, Status::Watching);
+    }),
+    ("search-online-short", |s| search(s, "ki", false)),
+    ("search-online-offline", |s| {
+        s.offline = true;
+        search(s, "kirigaoka", false);
+    }),
+    ("search-online-error", |s| {
+        search(s, "kirigaoka", false);
+        s.online.error = Some("Can't reach MyAnimeList.".into());
+    }),
+    ("search-online-none", |s| {
+        search(s, "zzzz", false);
+        s.online.show("zzzz", vec![]);
+    }),
+    // The details page of an anime on the list, opened from its row.
+    ("details-on-list", |s| details(s, 0, true)),
+    ("details-editor", |s| {
+        details(s, 0, true);
+        s.toggle_editor(0);
+    }),
+    // Not on the list: Add to list.
+    ("details-not-on-list", |s| details(s, 9102, false)),
+    ("details-added", |s| {
+        details(s, 9102, false);
+        s.add_shown(Status::PlanToWatch);
+    }),
+    // Opened, nothing known yet but the row's title.
+    ("details-loading", |s| {
+        s.covers.fake();
+        s.open_details(crate::details::Stub::bare(9103, "Kirigaoka Lantern Shop"));
+    }),
+    ("details-error", |s| {
+        s.open_details(crate::details::Stub::bare(9103, "Kirigaoka Lantern Shop"));
+        if let Some(d) = &mut s.detail {
+            d.error = Some("Can't reach MyAnimeList.".into());
+        }
+    }),
     ("settings-page", |s| s.go(Page::Settings)),
     // "Update automatically" on, threshold 90 %, keep-higher off.
     ("settings-auto-on", |s| {
@@ -232,6 +284,40 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::Settings);
     }),
 ];
+
+/// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
+fn search(s: &mut State, q: &str, answered: bool) {
+    s.covers.fake();
+    for e in s.entries.iter_mut().filter(|e| e.id < 12) {
+        e.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", e.id));
+    }
+    s.query.replace_text(q);
+    s.search_changed();
+    s.online.pending = false;
+    if answered {
+        let mut hits = crate::search::fake_hits();
+        for h in hits.iter_mut().filter(|h| h.id != 9104) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
+    }
+}
+
+/// The details page of `id` (the fake list's, or a made-up search result), answered.
+fn details(s: &mut State, id: u32, on_list: bool) {
+    s.covers.fake();
+    let title = s.entries.iter().find(|e| e.id == id).map_or_else(|| "Lanterns of Kirigaoka 2nd Season".to_string(), |e| e.title.clone());
+    s.open_details(crate::details::Stub::bare(id, &title));
+    let mut d = crate::details::fake_details(id, &title, on_list);
+    d.cover_url = Some(format!("https://cdn.example.invalid/{id}l.jpg"));
+    if !on_list {
+        d.synonyms.clear();
+        d.title_en = None;
+        d.mean = Some(8.05);
+        d.rank = None;
+    }
+    s.details_answer(crate::details::Answer { id, result: Ok(d), item: None, done: true });
+}
 
 /// The fake episode passed the threshold.
 fn reached(s: &mut State) {
@@ -361,8 +447,9 @@ mod tests {
 
     #[test]
     fn search_with_no_match_says_so() {
+        // A query searches the whole list (and MyAnimeList): nothing on the list says so in a line.
         let rt = render("list-search-none", (1280.0, 800.0));
-        assert!(rt.find("no-match").is_some() && rt.find("rows").is_none() && rt.find("search").is_some());
+        assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
     }
 
@@ -442,6 +529,47 @@ mod tests {
         let rt = render("settings-auto-on", (1360.0, 860.0));
         assert!(rt.find("set/asks-off").is_some());
         assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
+    }
+
+    #[test]
+    fn search_shows_the_list_then_myanimelist() {
+        let rt = render("search-online", (1280.0, 800.0));
+        for key in ["page/search", "sr/list-head", "0", "sr/online-head", "hit/9101", "hit/9104", "add", "menu"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(rt.find("hit/0").is_none(), "an anime on the list shows once, above");
+        assert!(rt.find("chips").is_none());
+        assert!(render("search-online-menu", (1280.0, 800.0)).find("add-menu").is_some());
+        let rt = render("search-online-added", (1280.0, 800.0));
+        assert!(rt.find("9101").is_some() && rt.find("hit/9101").is_none());
+        for name in ["search-online-pending", "search-online-short", "search-online-offline", "search-online-error", "search-online-none"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("sr/note").is_some() && rt.find("hit/9101").is_none(), "{name}");
+        }
+        assert!(render("search-online-error", (1280.0, 800.0)).find("sr/retry").is_some());
+        assert!(render("search-online-none", (1280.0, 800.0)).find("sr/list-none").is_some());
+        assert!(render("search-online", (960.0, 600.0)).find("add").is_some(), "the add button fits a small window");
+    }
+
+    #[test]
+    fn details_show_the_anime_and_the_entry() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("details-on-list", size);
+            for key in ["page/details", "det/back", "det/open-mal", "det-title", "det-tags", "det-stats", "det/score", "det-facts", "det-synopsis", "det-mine", "det/progress", "det/edit"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(rt.find("det/add").is_none());
+        }
+        let rt = render("details-editor", (1280.0, 800.0));
+        assert!(rt.find("editor").is_some() && rt.find("ed/save").is_some() && rt.find("det/edit").is_none());
+        let rt = render("details-not-on-list", (1280.0, 800.0));
+        assert!(rt.find("det/add-watching").is_some() && rt.find("det/add/plan").is_some() && rt.find("det/progress").is_none());
+        assert!(render("details-added", (1280.0, 800.0)).find("det/progress").is_some());
+        assert!(render("details-loading", (1280.0, 800.0)).find("det-loading").is_some());
+        assert!(render("details-error", (1280.0, 800.0)).find("det/retry").is_some());
+        // The sidebar keeps the page Back goes to lit.
+        let rt = render("details-on-list", (1280.0, 800.0));
+        assert!(rt.find("nav/watching").is_some());
     }
 
     /// The type column hides below 1100 pt.

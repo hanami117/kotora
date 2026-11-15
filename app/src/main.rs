@@ -12,12 +12,14 @@ mod art;
 mod clientid;
 mod ctl;
 mod detect;
+mod details;
 mod icons;
 mod model;
 mod now;
 mod online;
 mod queue;
 mod scenes;
+mod search;
 mod theme;
 mod ui;
 
