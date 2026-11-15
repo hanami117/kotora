@@ -257,9 +257,9 @@ pub const SCENES: &[Scene] = &[
         s.prefs.players.vlc = false;
         s.prefs.players.iina = false;
         s.prefs.players.other_mpris = false;
-        s.players = vec![kotora_detect::SourceStatus {
+        s.players = vec![crate::precise::PlayerState {
             switch: kotora_detect::Switch::Mpv,
-            via: kotora_detect::Via::MpvIpc,
+            via: crate::precise::VIA_IPC,
             line: "folder of /run/user/1000/mpv.sock not found".into(),
             led: kotora_detect::Led::Problem,
         }];
@@ -278,6 +278,45 @@ pub const SCENES: &[Scene] = &[
         signed_out(s, Auth::NoClientId);
         s.client_id.hint = None;
         s.go(Page::Settings);
+    }),
+    // mpv seen by its open file only: the one-time offer to turn on precise detection.
+    ("precise-offer", |s| {
+        process_only(s);
+        s.go(Page::List(Status::Watching));
+    }),
+    // Turned on: what was written to mpv.conf.
+    ("precise-written", |s| {
+        process_only(s);
+        s.enable_precise();
+        s.precise_written(crate::precise::Precise::Wrote {
+            file: "~/.config/mpv/mpv.conf".into(),
+            text: "# Added by Kotora: lets it read mpv's position (precise detection).\ninput-ipc-server=/run/user/1000/mpv.sock\n".into(),
+        });
+    }),
+    ("precise-already-set", |s| {
+        process_only(s);
+        s.precise_written(crate::precise::Precise::AlreadySet { file: "~/.config/mpv/mpv.conf".into(), socket: "/tmp/mpvsocket".into() });
+    }),
+    ("precise-failed", |s| {
+        process_only(s);
+        s.precise_written(crate::precise::Precise::Failed("Can't write mpv.conf: permission denied".into()));
+    }),
+    // Settings → Players with sources seen by their process: the honest lines and Turn on.
+    ("settings-players-process", |s| {
+        process_only(s);
+        s.prefs.precise_answered = true;
+        s.go(Page::Settings);
+    }),
+    // Now Playing for a file seen by the process source: no position, counted by time open.
+    ("now-playing-process", |s| {
+        if let Some(n) = &mut s.now {
+            n.via = crate::precise::VIA_PROCESS;
+            n.position = None;
+            n.duration = None;
+        }
+        s.players = crate::precise::fake_process_players();
+        s.prefs.precise_answered = true;
+        s.go(Page::NowPlaying);
     }),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
@@ -317,6 +356,12 @@ fn details(s: &mut State, id: u32, on_list: bool) {
         d.rank = None;
     }
     s.details_answer(crate::details::Answer { id, result: Ok(d), item: None, done: true });
+}
+
+/// mpv is seen by its open file only, and nothing plays in a known way.
+fn process_only(s: &mut State) {
+    s.now = None;
+    s.players = crate::precise::fake_process_players();
 }
 
 /// The fake episode passed the threshold.
@@ -570,6 +615,21 @@ mod tests {
         // The sidebar keeps the page Back goes to lit.
         let rt = render("details-on-list", (1280.0, 800.0));
         assert!(rt.find("nav/watching").is_some());
+    }
+
+    #[test]
+    fn the_precise_offer_and_its_answers() {
+        let rt = render("precise-offer", (1280.0, 800.0));
+        assert!(rt.find("precise").is_some() && rt.find("precise/on").is_some() && rt.find("precise/no").is_some());
+        assert!(render("precise-offer", (960.0, 600.0)).find("precise/on").is_some());
+        assert!(render("precise-written", (1280.0, 800.0)).find("precise/written").is_some());
+        assert!(render("precise-already-set", (1280.0, 800.0)).find("precise/ok").is_some());
+        assert!(render("precise-failed", (1280.0, 800.0)).find("precise/error").is_some());
+        assert!(render("list", (1280.0, 800.0)).find("precise").is_none(), "mpv's socket answers: no offer");
+        let rt = render("settings-players-process", (1280.0, 800.0));
+        assert!(rt.find("set/precise-on").is_some() && rt.find("precise").is_none(), "answered: Settings only");
+        let rt = render("now-playing-process", (1280.0, 800.0));
+        assert!(rt.find("np-no-position").is_some() && rt.find("np-bar").is_none());
     }
 
     /// The type column hides below 1100 pt.

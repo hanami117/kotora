@@ -285,6 +285,8 @@ fn main(s: &State, wide: bool) -> El {
     // The Now Playing banner sits on top of every page (design-spec §4).
     if s.banner() {
         m = m.child(banner(s));
+    } else if s.precise_banner() {
+        m = m.child(crate::precise::banner(s));
     }
     m.child(col().grow(1.0).min_h(0.0).w_full().child(page))
 }
@@ -1579,6 +1581,9 @@ fn now_card(s: &State, n: &Now) -> El {
                 .child(el().grow(1.0 - frac)),
         )
         .child(row().w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
+    // The process source has no position: say so instead of an empty bar.
+    let no_position = n.position.is_none() && n.via == crate::precise::VIA_PROCESS;
+    let verb = if no_position { "Open" } else { verb };
     let mut info = col()
         .grow(1.0)
         .min_w(0.0)
@@ -1588,15 +1593,30 @@ fn now_card(s: &State, n: &Now) -> El {
             None => text(title).font(theme::TITLE).color(PAL.text).wrap().mt(4.0).mb(2.0),
         })
         .child(text(sub.join(" \u{b7} ")).font(theme::BODY).color(PAL.dim))
-        .child(
-            row()
+        .child(if no_position {
+            col()
+                .key("np-no-position")
                 .mt(16.0)
-                .mb(6.0)
-                .child(text(times).font(theme::LABEL_NUM).color(PAL.text))
-                .child(spacer())
-                .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.faint)),
-        )
-        .child(bar)
+                .gap(4.0)
+                .child(text(if n.reached { "Counts as watched" } else { "No position from the player" }).font(theme::LABEL_NUM).color(PAL.text))
+                .child(
+                    text("Kotora sees the file the player has open, not how far in you are: the episode counts once it has been open long enough.")
+                        .font(theme::LABEL)
+                        .color(PAL.faint)
+                        .wrap(),
+                )
+        } else {
+            col()
+                .child(
+                    row()
+                        .mt(16.0)
+                        .mb(6.0)
+                        .child(text(times).font(theme::LABEL_NUM).color(PAL.text))
+                        .child(spacer())
+                        .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.faint)),
+                )
+                .child(bar)
+        })
         .child(
             row()
                 .mt(14.0)
@@ -1752,7 +1772,7 @@ fn now_empty() -> El {
     let help = if cfg!(target_os = "macos") {
         "mpv: add input-ipc-server=/tmp/mpv.sock to mpv.conf. IINA: Settings \u{2192} Advanced \u{2192} additional mpv options, input-ipc-server=/tmp/iina.sock. VLC: turn on its web interface with a password, then put it in config.toml ([vlc] password)."
     } else {
-        "VLC and mpc-qt are found by themselves (MPRIS). mpv: install mpv-mpris, or add input-ipc-server=$XDG_RUNTIME_DIR/mpv.sock to mpv.conf."
+        "mpv, VLC, mpc-qt, Celluloid and Haruna are found by themselves, by the file they have open. For the position too, VLC and mpc-qt use MPRIS, and mpv its IPC socket (Kotora offers to turn it on)."
     };
     col()
         .key("np-empty")
@@ -1912,8 +1932,19 @@ fn players_card(s: &State) -> El {
                 )
                 .child(switch(format!("set/switch/{}", sw.config_key()), sw.label(), on, move |s, v| s.set_player(sw, v))),
         );
+        if sw == Switch::Mpv
+            && let Some(h) = crate::precise::settings_hint(s)
+        {
+            c = c.child(h);
+        }
     }
-    c.child(text("Socket paths and VLC's web password: config.toml ([players] mpv_sockets, [vlc]). Streaming sites in the browser: use MAL-Sync.").font(theme::LABEL).color(PAL.faint).wrap().mt(6.0))
+    c.child(
+        text("Players are found by their open files with no setup; \u{201c}process\u{201d} means no position, so a file counts after it stays open a while. Socket paths and VLC's web password: config.toml ([players] mpv_sockets, [vlc]). Streaming sites in the browser: use MAL-Sync.")
+            .font(theme::LABEL)
+            .color(PAL.faint)
+            .wrap()
+            .mt(6.0),
+    )
 }
 
 #[cfg(test)]

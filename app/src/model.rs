@@ -13,6 +13,8 @@ use rune::{AppHandle, Image, TextEdit};
 use kotora_core::recognize::Found;
 use kotora_detect::{Led, SourceStatus, Switch, Via};
 
+use crate::precise::PlayerState;
+
 use crate::art::Covers;
 use crate::now::{Now, Prefs, Seen};
 use crate::queue::{Cmd, Worker};
@@ -306,7 +308,9 @@ pub struct State {
     /// Now Playing (`now.rs`): the followed player, its file and the offer.
     pub now: Option<Now>,
     /// The players' states (Settings → Players, the Now Playing page).
-    pub players: Vec<SourceStatus>,
+    pub players: Vec<PlayerState>,
+    /// The one-time "precise detection" offer for mpv (`precise.rs`).
+    pub precise: crate::precise::Offer,
     /// Settings → Updates and Players.
     pub prefs: Prefs,
     /// The detection threads (`detect.rs`); `None` headless.
@@ -357,6 +361,7 @@ impl State {
             fixed_now: Some(FAKE_NOW),
             now: Some(fake_now()),
             players: fake_players(),
+            precise: Default::default(),
             prefs: Prefs::default(),
             glue: None,
             window: true,
@@ -870,8 +875,8 @@ pub fn fake_now() -> Now {
 }
 
 /// The fake players of this system (Settings → Players).
-pub fn fake_players() -> Vec<SourceStatus> {
-    let st = |switch, via, line: &str, led| SourceStatus { switch, via, line: line.into(), led };
+pub fn fake_players() -> Vec<PlayerState> {
+    let st = |switch, via, line: &str, led| PlayerState::from(SourceStatus { switch, via, line: line.into(), led });
     if cfg!(target_os = "macos") {
         vec![st(Switch::Mpv, Via::MpvIpc, "/tmp/mpv.sock: playing", Led::Playing), st(Switch::Iina, Via::MpvIpc, "/tmp/iina.sock: not running", Led::Off)]
     } else {

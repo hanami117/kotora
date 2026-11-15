@@ -17,6 +17,7 @@ mod icons;
 mod model;
 mod now;
 mod online;
+mod precise;
 mod queue;
 mod scenes;
 mod search;

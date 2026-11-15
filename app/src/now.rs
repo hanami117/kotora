@@ -75,12 +75,14 @@ pub struct Prefs {
     pub players: kotora_core::config::Players,
     /// macOS: VLC's web password is set.
     pub vlc_set_up: bool,
+    /// The "precise detection" offer for mpv was answered (`[notices] mpv_precise`).
+    pub precise_answered: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false }
     }
 }
 
@@ -92,6 +94,7 @@ impl Prefs {
             keep_higher: c.updates.keep_higher_progress,
             players: c.players.clone(),
             vlc_set_up: !c.vlc.password.is_empty(),
+            precise_answered: c.notices.mpv_precise,
         }
     }
 }
@@ -332,6 +335,7 @@ impl State {
 
     /// The sources' states (Settings, the Now Playing page).
     pub fn players_seen(&mut self, sources: Vec<SourceStatus>) -> bool {
+        let sources: Vec<crate::precise::PlayerState> = sources.into_iter().map(Into::into).collect();
         if self.players == sources {
             return false;
         }
@@ -396,7 +400,7 @@ impl State {
 
     /// The source line for a switch: "IPC socket · playing".
     pub fn player_line(&self, sw: Switch) -> (String, kotora_detect::Led) {
-        let mine: Vec<&SourceStatus> = self.players.iter().filter(|s| s.switch == sw).collect();
+        let mine: Vec<&crate::precise::PlayerState> = self.players.iter().filter(|s| s.switch == sw).collect();
         let best = mine.iter().max_by_key(|s| match s.led {
             kotora_detect::Led::Playing => 3,
             kotora_detect::Led::Idle => 2,
@@ -404,7 +408,7 @@ impl State {
             kotora_detect::Led::Off => 0,
         });
         match best {
-            Some(s) => (format!("{} \u{b7} {}", s.via.label(), s.line), s.led),
+            Some(s) => (format!("{} \u{b7} {}", s.via, s.line), s.led),
             None => (
                 match sw {
                     Switch::Vlc if cfg!(target_os = "macos") && !self.prefs.vlc_set_up => "web interface \u{b7} not set up (needs VLC's password)".into(),
