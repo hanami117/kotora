@@ -28,6 +28,7 @@ mod scenes;
 mod search;
 mod setup;
 mod theme;
+mod tray;
 mod ui;
 
 use std::io::Write;
@@ -62,9 +63,19 @@ fn setup(s: &mut State, wake: Waker) {
     s.covers.attach(cache);
 }
 
-/// No tray yet: closing the window quits.
-fn on_close(_s: &mut State, tx: &mut Tx) {
-    tx.quit();
+/// Closing the window hides it to the tray (detection keeps working); without a tray it quits.
+/// The tray's Quit, ⌘Q and `kot quit` quit. On macOS Rune also runs this when the app ends
+/// (⌘Q, the Dock's Quit); the loop is already exiting then, so hiding still quits.
+fn on_close(s: &mut State, tx: &mut Tx) {
+    if !s.hide_on_close() {
+        tx.quit();
+    }
+}
+
+/// macOS: the Dock icon clicked, or Kotora opened again from the Finder.
+#[cfg(target_os = "macos")]
+fn on_reopen(s: &mut State, has_visible_windows: bool, _tx: &mut Tx) -> bool {
+    s.reopen(has_visible_windows)
 }
 
 /// `KOTORA_FRAME_LOG=FILE`: appends how long the first frame took after start (the lightness
@@ -125,7 +136,14 @@ fn main() {
     }
     let app = if hidden { app.windowless() } else { app };
     let app = app.keep_running().on_close(on_close);
+    #[cfg(target_os = "macos")]
+    let app = app.on_reopen(on_reopen);
     let handle = app.handle();
+    // macOS: a background start is a menu bar app until the window shows (no Dock icon).
+    #[cfg(target_os = "macos")]
+    if hidden {
+        handle.set_dock_icon(false);
+    }
     // `kot` talks to this socket; it goes away with `_ctl` when the app ends.
     let _ctl = ctl::start(handle.clone());
     let app = app.init(move || {
@@ -134,6 +152,8 @@ fn main() {
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
         s.handle = Some(handle);
         s.window = !hidden;
+        // The tray or menu bar icon (UI thread: AppKit needs the main thread on macOS).
+        s.start_tray();
         // The saved list first, then a sync when signed in (workers, off the UI thread).
         online::start(&mut s);
         // Players: sources and recognition on their own threads, event driven.

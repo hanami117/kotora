@@ -389,6 +389,8 @@ pub struct State {
     /// The MyAnimeList Client ID field (Welcome and Settings).
     pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
+    /// The tray or menu bar icon (`tray.rs`); `None` headless, in tests and where it failed.
+    pub tray: Option<crate::tray::TrayCtl>,
     /// What the last position tick showed (`now::tick`); `None` while nothing ticks.
     pub tick: Option<(bool, u64)>,
 }
@@ -441,6 +443,7 @@ impl State {
             airing: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
+            tray: None,
             tick: None,
         };
         s.queue_changed();
@@ -841,7 +844,14 @@ impl State {
     }
 
     /// Applies a worker's message. Returns whether anything visible changed.
+    /// A worker's message. The tray follows what plays after each one.
     pub fn apply(&mut self, msg: Msg) -> bool {
+        let changed = self.apply_msg(msg);
+        self.sync_tray();
+        changed
+    }
+
+    fn apply_msg(&mut self, msg: Msg) -> bool {
         let service = "MyAnimeList";
         match msg {
             Msg::Cache { items, user, picture, synced_at, ops } => {

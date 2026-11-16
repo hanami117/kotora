@@ -1,0 +1,117 @@
+//! The tray icon: Rune's StatusNotifierItem tray on Linux (`tray_linux.rs`), a menu bar item of
+//! our own on macOS (`tray_mac.rs`, Rune has no Mac tray). Both give `TrayCtl` the same API:
+//! the current detection line, Show Kotora and Quit.
+//!
+//! With a tray, closing the window only hides it: Kotora keeps running and detection keeps
+//! working. Quit in the tray, ⌘Q on the Mac and `kot quit` really quit. Same design as
+//! Uzumaki's `tray.rs`; never started headless.
+
+#[cfg(not(target_os = "macos"))]
+#[path = "tray_linux.rs"]
+mod imp;
+#[cfg(target_os = "macos")]
+#[path = "tray_mac.rs"]
+mod imp;
+
+pub use imp::TrayCtl;
+
+use crate::model::{Handle, State};
+
+/// Shows the window and, on macOS, the Dock icon that closing to the menu bar hid. The Dock
+/// request goes first, so the window opens into a regular app.
+pub fn show_window(handle: &Handle) {
+    #[cfg(target_os = "macos")]
+    handle.set_dock_icon(true);
+    handle.open();
+    handle.update(|s: &mut State, _| s.window = true);
+}
+
+/// The tray's first line: what plays, as the sidebar card has it ("Title · Ep 7"), or empty.
+pub fn now_line(s: &State) -> String {
+    let Some(now) = &s.now else { return String::new() };
+    let (_, title) = crate::ui::now_title(s, now);
+    match now.episode() {
+        Some(ep) => format!("{title} \u{b7} Ep {ep}"),
+        None => title,
+    }
+}
+
+impl State {
+    /// Starts the tray (live runs only, on the UI thread).
+    pub fn start_tray(&mut self) {
+        if rune::is_headless() {
+            return;
+        }
+        if let Some(h) = &self.handle {
+            self.tray = TrayCtl::start(h.clone());
+        }
+        self.sync_tray();
+    }
+
+    /// Hands the detection line to the tray; it does nothing unless the line changed.
+    pub fn sync_tray(&mut self) {
+        if self.tray.is_none() {
+            return;
+        }
+        let line = now_line(self);
+        if let Some(t) = &mut self.tray {
+            t.set_now(&line);
+        }
+    }
+
+    /// `App::on_close`: true when the window should only hide (there is a tray to come back
+    /// from). On macOS Rune also runs this on ⌘Q and the Dock's Quit; the app is ending then,
+    /// so the Dock request below is never applied and Kotora quits.
+    pub fn hide_on_close(&mut self) -> bool {
+        if self.tray.is_none() {
+            return false;
+        }
+        self.window = false;
+        // macOS: no window and a menu bar icon to come back with, so the Dock icon goes too.
+        #[cfg(target_os = "macos")]
+        if let Some(h) = &self.handle {
+            h.set_dock_icon(false);
+        }
+        true
+    }
+
+    /// `App::on_reopen` (macOS: the Dock icon clicked, or Kotora opened again from the Finder):
+    /// with no window showing, bring back the window and the Dock icon. Rune's own default does
+    /// nothing while the Dock icon is hidden.
+    #[cfg(target_os = "macos")]
+    pub fn reopen(&mut self, has_visible_windows: bool) -> bool {
+        match (&self.handle, has_visible_windows) {
+            (Some(h), false) => {
+                show_window(h);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_line_names_what_plays_and_is_empty_otherwise() {
+        let mut s = State::fake();
+        s.now = None;
+        assert_eq!(now_line(&s), "");
+        let s = State::fake();
+        if let Some(now) = &s.now {
+            let line = now_line(&s);
+            assert!(!line.is_empty());
+            if let Some(ep) = now.episode() {
+                assert!(line.ends_with(&format!("Ep {ep}")), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn without_a_tray_closing_quits() {
+        let mut s = State::fake();
+        assert!(!s.hide_on_close());
+    }
+}

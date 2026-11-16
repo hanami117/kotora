@@ -41,6 +41,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 /// while a window shows it (`now::tick`); at rest `poll` has no change and asks for no wake.
 pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     // Both run: each may ask for its own wake.
+    // The tray's line follows picks made in the window too (cheap: a string compare).
+    s.sync_tray();
     let now = crate::now::tick(s, tx);
     let airing = crate::airing::tick(s, tx);
     now || airing
