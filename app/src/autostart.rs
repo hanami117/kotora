@@ -135,6 +135,7 @@ pub fn plist_text(exe: &Path, hidden: bool) -> String {
          \x20   </array>\n\
          \x20   <key>RunAtLoad</key><true/>\n\
          \x20   <key>ProcessType</key><string>Interactive</string>\n\
+         \x20   <key>AssociatedBundleIdentifiers</key><string>{APP_ID}</string>\n\
          </dict>\n\
          </plist>\n"
     )
@@ -169,6 +170,8 @@ mod tests {
         assert!(t.contains("<string>/Applications/Kotora.app/Contents/MacOS/kotora</string>\n        <string>--hidden</string>"), "{t}");
         assert!(t.contains("<key>RunAtLoad</key><true/>"));
         assert!(!t.contains("KeepAlive"));
+        // Login Items shows "Kotora" with its icon, not the bare binary.
+        assert!(t.contains("<key>AssociatedBundleIdentifiers</key><string>io.github.hanami117.kotora</string>"));
         assert!(!plist_text(Path::new("/x/kotora"), false).contains("--hidden"));
         assert!(plist_text(Path::new("/a&b/kotora"), false).contains("<string>/a&amp;b/kotora</string>"));
     }
