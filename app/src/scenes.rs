@@ -823,6 +823,12 @@ pub const SCENES: &[Scene] = &[
         s.window = true;
         s.intro = Some(crate::intro::Intro::live());
     }),
+    // A slow first frame: it comes 1 s in. The cover must be solid orange until then, and the
+    // whole run plays after it (`--video --duration 2.4`).
+    ("intro-live-late", |s| {
+        s.window = true;
+        s.intro = Some(crate::intro::Intro::live_late(1.0));
+    }),
     ("intro-live-light", |s| {
         s.set_theme(Theme::Light);
         s.window = true;

@@ -216,6 +216,15 @@ fn main() {
     #[cfg(target_os = "macos")]
     let app = app.on_reopen(on_reopen).on_window(on_window);
     let handle = app.handle();
+    // The startup intro's clock starts at the first frame presented (`intro::on_frame`); the
+    // first-frame log keeps running beside it.
+    let app = {
+        let (mut log, mut intro) = (log_first_frame(), intro::on_frame(handle.clone()));
+        app.on_frame_encoded(move |f| {
+            log(f);
+            intro(f);
+        })
+    };
     // macOS: a background start is a menu bar app until the window shows (no Dock icon).
     #[cfg(target_os = "macos")]
     if hidden {

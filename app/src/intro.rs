@@ -3,6 +3,14 @@
 //! splits along them into four strips that slide away and fade, and the app is underneath.
 //! About 0.8 s. Any click or key skips it.
 //!
+//! - **The clock:** it starts at the first frame the window actually presented, not at process
+//!   start or state creation (window, GPU and the first view can take hundreds of ms before
+//!   anything shows). Until then the cover sits in its start pose, solid orange, opaque from
+//!   that very first frame (`overlay`). Rune's `on_frame_encoded` reports a `Drawn` frame;
+//!   `on_frame` turns the first into `presented`, which arms the intro. `poll` then holds the
+//!   solid orange `LEAD` longer (nothing runs, so a late frame in that time costs no motion;
+//!   Rune charges running motion for a hitch, up to 250 ms), and only then starts the tweens.
+//!
 //! - **When:** only on a real cold start with a window (`at_launch`): not a `--hidden` or login
 //!   start in the background, not a test instance, not headless (scenes freeze frames of it), and
 //!   never when the window comes back from the tray or menu bar. Settings → Appearance →
@@ -64,6 +72,10 @@ const SLASH: f32 = 0.12;
 /// The strips start sliding apart (the last slash is nearly through) and take `SPLIT`.
 const SPLIT_AT: f32 = 0.33;
 const SPLIT: f32 = 0.45;
+/// After the first presented frame the solid orange holds this long before the tweens start.
+/// Nothing runs then, so startup work on the UI thread (first sync results, covers) that hitches
+/// a frame or two costs no motion; the 0.8 s below is then seen whole.
+pub const LEAD: f64 = 0.10;
 /// The whole intro; it is dropped after this.
 pub const TOTAL: f32 = 0.8;
 /// Reduce Motion: the layer holds a moment, then fades.
@@ -237,8 +249,13 @@ fn name_color() -> Color {
 
 pub struct Intro {
     phase: Phase,
-    /// Poll time the running phase began.
+    /// The first frame was presented on screen with the cover in it (`presented`). Nothing
+    /// counts down before this.
+    armed: bool,
+    /// Poll time the running phase began; in `Start`, the poll time the intro was armed.
     since: Option<f64>,
+    /// Scenes: arm at this poll time instead of on a presented frame (a slow first frame).
+    arm_at: Option<f64>,
     /// Scenes: the time it shows, held (no poll timing headless).
     frozen: Option<f32>,
     /// What the view last drew: the Reduce Motion fade (shorter, so `poll` ends it sooner).
@@ -249,7 +266,8 @@ pub struct Intro {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
-    /// The first frame: everything in its start pose, so the tweens have something to run from.
+    /// Everything in its start pose, until the first frame is presented and `LEAD` has gone, so
+    /// the tweens have something to run from.
     Start,
     Run,
 }
@@ -274,7 +292,7 @@ pub fn at_launch(l: Launch) -> Option<Intro> {
 
 impl Intro {
     fn new() -> Intro {
-        Intro { phase: Phase::Start, since: None, frozen: None, reduced: Cell::new(false), force_reduced: false }
+        Intro { phase: Phase::Start, armed: false, since: None, arm_at: None, frozen: None, reduced: Cell::new(false), force_reduced: false }
     }
 
     /// Scenes: the intro held at `progress` (0 to 1) of its run.
@@ -285,12 +303,18 @@ impl Intro {
 
     /// Scenes: the live intro, which a headless `--video` records (its clock runs there).
     pub fn live() -> Intro {
-        Intro::new()
+        Intro { armed: true, ..Intro::new() }
+    }
+
+    /// Scenes: the live intro whose first frame comes `late` seconds in (a slow window or first
+    /// view): it must wait in the start pose, then play whole.
+    pub fn live_late(late: f64) -> Intro {
+        Intro { arm_at: Some(late), ..Intro::new() }
     }
 
     /// Scenes: the live Reduce Motion fade.
     pub fn live_reduced() -> Intro {
-        Intro { force_reduced: true, ..Intro::new() }
+        Intro { armed: true, force_reduced: true, ..Intro::new() }
     }
 }
 
@@ -314,22 +338,33 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
         }
         return false;
     }
+    if i.arm_at.is_some_and(|at| t >= at) {
+        i.armed = true;
+    }
     match (i.phase, i.since) {
-        // The start pose is up for a frame first; this poll is the next frame.
-        (Phase::Start, None) => {
-            i.since = Some(t);
-            tx.wake_after(Duration::ZERO);
+        // No frame has been presented with the cover yet: the clock doesn't run. `presented`
+        // wakes this poll (a scene's late arming sets its own wake).
+        (Phase::Start, None) if !i.armed => {
+            if let Some(at) = i.arm_at {
+                tx.wake_after(Duration::from_secs_f64((at - t).max(0.0)));
+            }
             false
         }
-        (Phase::Start, Some(since)) if t > since => {
+        // The frame is up: the solid orange holds `LEAD`, then the tweens start.
+        (Phase::Start, None) => {
+            i.since = Some(t);
+            tx.wake_after(Duration::from_secs_f64(LEAD));
+            false
+        }
+        (Phase::Start, Some(since)) if t - since >= LEAD - 1e-3 => {
             i.phase = Phase::Run;
             i.since = Some(t);
             tx.animated();
             tx.wake_after(Duration::from_secs_f32(TOTAL));
             true
         }
-        (Phase::Start, _) => {
-            tx.wake_after(Duration::ZERO);
+        (Phase::Start, Some(since)) => {
+            tx.wake_after(Duration::from_secs_f64((LEAD - (t - since)).max(0.0)));
             false
         }
         (Phase::Run, Some(since)) => {
@@ -344,6 +379,41 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
             }
         }
         (Phase::Run, None) => false,
+    }
+}
+
+/// A frame was presented on screen (`App::on_frame_encoded`, `Drawn`) with the cover in it:
+/// the intro's clock may start. Only once the window shows, and only the first such frame.
+/// Returns true once, so the poll that starts the hold runs.
+pub fn presented(s: &mut State) -> bool {
+    let window = s.window;
+    match s.intro.as_mut() {
+        Some(i) if window && !i.armed && i.frozen.is_none() => {
+            i.armed = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// `App::on_frame_encoded`'s hook: tells the state about the first frame presented with the
+/// intro up, then goes quiet (no work per frame after that).
+pub fn on_frame(handle: rune::AppHandle<State>) -> impl FnMut(&rune::FrameEncoded) + 'static {
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    move |f| {
+        use std::sync::atomic::Ordering::Relaxed;
+        if f.outcome() != rune::FrameOutcome::Drawn || done.load(Relaxed) {
+            return;
+        }
+        let done = done.clone();
+        handle.update_if(move |s: &mut State, _| {
+            // Not shown yet (a macOS launch not yet known to be a login start): the next frame
+            // tries again. No intro: nothing to arm.
+            if s.intro.is_none() || s.intro.as_ref().is_some_and(|i| i.armed) || s.window {
+                done.store(true, Relaxed);
+            }
+            presented(s)
+        });
     }
 }
 
@@ -448,14 +518,22 @@ mod tests {
         s
     }
 
+    /// The first frame was presented at the poll time `t` (as `on_frame` reports it).
+    fn present(s: &mut State) {
+        assert!(presented(s), "arms once");
+    }
+
     #[test]
     fn it_runs_once_then_goes() {
         let mut s = running();
-        assert!(!poll_at(&mut s, 10.0), "the first frame shows the start pose");
-        assert!(poll_at(&mut s, 10.016), "then it runs");
+        present(&mut s);
+        assert!(!poll_at(&mut s, 10.0), "armed: the hold starts, the cover stays in its start pose");
+        assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Start));
+        assert!(!poll_at(&mut s, 10.0 + LEAD * 0.5));
+        assert!(poll_at(&mut s, 10.0 + LEAD), "then it runs");
         assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Run));
         assert!(!poll_at(&mut s, 10.4));
-        assert!(poll_at(&mut s, 10.016 + TOTAL as f64));
+        assert!(poll_at(&mut s, 10.0 + LEAD + TOTAL as f64));
         assert!(s.intro.is_none());
         const { assert!(TOTAL < 1.0, "under a second") };
         // Nothing brings it back: the window reopened from the tray only sets `window`.
@@ -465,10 +543,62 @@ mod tests {
     }
 
     #[test]
+    fn the_clock_starts_at_the_first_presented_frame_not_before() {
+        // A slow start: polls come (state made, window made) but no frame is presented for a
+        // second. The cover stays in its start pose and nothing counts down.
+        let mut s = running();
+        for t in [0.0, 0.2, 0.5, 0.9, 1.0] {
+            assert!(!poll_at(&mut s, t));
+            let i = s.intro.as_ref().expect("still up");
+            assert!(i.phase == Phase::Start && i.since.is_none() && !i.armed, "no clock at {t}");
+        }
+        // The first frame lands at 1.0: the hold and the run are timed from there.
+        present(&mut s);
+        assert!(!poll_at(&mut s, 1.0));
+        assert!(!poll_at(&mut s, 1.0 + LEAD * 0.9), "still holding");
+        assert!(poll_at(&mut s, 1.0 + LEAD), "runs from the first frame + the hold");
+        assert!(!poll_at(&mut s, 1.0 + LEAD + TOTAL as f64 - 0.01), "the whole run is seen");
+        assert!(poll_at(&mut s, 1.0 + LEAD + TOTAL as f64));
+        assert!(s.intro.is_none());
+    }
+
+    #[test]
+    fn a_frame_before_the_window_shows_does_not_arm_it() {
+        let mut s = running();
+        s.window = false;
+        assert!(!presented(&mut s), "no window yet");
+        s.window = true;
+        assert!(presented(&mut s), "the first frame with the window");
+        assert!(!presented(&mut s), "once");
+        s.intro = None;
+        assert!(!presented(&mut s));
+        // A scene's frozen frame never arms.
+        s.intro = Some(Intro::frozen(0.5, false));
+        assert!(!presented(&mut s));
+    }
+
+    #[test]
+    fn the_cover_is_opaque_from_the_first_frame() {
+        // The very first frame, before any poll, is the start pose: solid base, strips and name
+        // at full opacity, claws unscaled-in; the app is not visible through it.
+        let mut rt = runtime(live_late(), false);
+        // A second of slow frames with no frame presented: still the start pose, still opaque.
+        for _ in 0..30 {
+            rt.frame(1.0 / 30.0);
+        }
+        let all = rt.elements();
+        let op = |key: &str| all.iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.opacity);
+        for key in ["intro/base", "intro/strip/0", "intro/strip/3", "intro/name"] {
+            assert!(op(key).is_some_and(|o| (o - 1.0).abs() < 1e-3), "{key}: {:?}", op(key));
+        }
+        assert!(rt.state.intro.is_some(), "not dropped by the time passing");
+    }
+
+    #[test]
     fn closing_the_window_mid_intro_drops_it() {
         let mut s = running();
+        present(&mut s);
         poll_at(&mut s, 0.0);
-        poll_at(&mut s, 0.02);
         s.window = false; // closed to the tray
         poll_at(&mut s, 0.1);
         assert!(s.intro.is_none());
@@ -481,15 +611,17 @@ mod tests {
         let mut s = running();
         s.window = false;
         poll_at(&mut s, 0.0);
-        assert!(s.intro.as_ref().is_some_and(|i| i.since.is_none()), "waits, not started");
+        assert!(s.intro.as_ref().is_some_and(|i| i.since.is_none() && !i.armed), "waits, not started");
         s.window = true;
+        present(&mut s);
         poll_at(&mut s, 1.0);
-        assert!(poll_at(&mut s, 1.02), "plays once the window shows");
+        assert!(poll_at(&mut s, 1.0 + LEAD), "plays once the window shows and a frame is up");
     }
 
     #[test]
     fn a_click_or_key_skips() {
         let mut s = running();
+        present(&mut s);
         poll_at(&mut s, 0.0);
         skip(&mut s);
         assert!(s.intro.is_none());
@@ -501,9 +633,10 @@ mod tests {
         if let Some(i) = &mut s.intro {
             i.reduced.set(true);
         }
+        present(&mut s);
         poll_at(&mut s, 0.0);
-        poll_at(&mut s, 0.02);
-        assert!(poll_at(&mut s, 0.02 + REDUCED_TOTAL as f64));
+        assert!(poll_at(&mut s, LEAD));
+        assert!(poll_at(&mut s, LEAD + REDUCED_TOTAL as f64));
         assert!(s.intro.is_none());
     }
 
@@ -520,6 +653,13 @@ mod tests {
         let mut s = State::fake();
         s.window = true;
         s.intro = Some(Intro::live());
+        s
+    }
+
+    fn live_late() -> State {
+        let mut s = State::fake();
+        s.window = true;
+        s.intro = Some(Intro::live_late(1.0));
         s
     }
 
