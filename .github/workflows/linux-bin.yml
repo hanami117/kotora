@@ -60,7 +60,6 @@ env:
   PUBLIC_REPO: hanami117/kotora
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
-  ARCH_IMAGE: archlinux:base-devel@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239
 
 jobs:
   # 1. Build the tarball from the tag, in a clean container, and check it.
