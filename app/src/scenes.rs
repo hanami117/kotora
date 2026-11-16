@@ -566,6 +566,11 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::Airing);
         s.airing.loading = true;
     }),
+    ("airing-updating", |s| {
+        // Saved (or first-page) rows are on screen and a worker still asks for the rest.
+        airing(s, crate::airing::View::Week);
+        s.airing.loading = true;
+    }),
     ("airing-empty", |s| {
         let (season, _) = crate::airing::fake_season();
         s.airing_show(season, Vec::new());
