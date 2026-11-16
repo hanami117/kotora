@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/banner.jpg" alt="Kotora: a native anime tracker for Linux and macOS"></p>
+
 # Kotora 小虎
 
 A native anime tracker for Linux and macOS, written in Rust.
@@ -47,11 +49,16 @@ play, download or fetch video. For streaming sites, use [MAL-Sync](https://malsy
 From the AUR, with your AUR helper:
 
 ```sh
-yay -S kotora
+yay -S kotora      # builds from the release's source
+yay -S kotora-bin  # prebuilt x86_64 binary, no Rust toolchain needed
 ```
 
-It builds from the release's source and installs `kotora`, `kot`, the menu entry and the icons. Updates come
-with your AUR helper.
+Both install `kotora`, `kot`, the menu entry and the icons, and they conflict with each other: pick one.
+Updates come with your AUR helper. AUR pages: [kotora](https://aur.archlinux.org/packages/kotora) and
+[kotora-bin](https://aur.archlinux.org/packages/kotora-bin).
+
+The release page also has a Linux x86_64 tarball (`kotora-0.1.2-linux-x86_64.tar.gz`). It is built on Arch
+Linux, so it needs a recent glibc; on other distros, building from source is the safer way.
 
 ### macOS
 

@@ -4,6 +4,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Packaging
+- `kotora-bin` is on the AUR (prebuilt x86_64 binary). AUR `kotora` 0.1.2-2 fixes `kot --version`.
+
 ## [0.1.2] - 2026-11-16
 
 ### Added
