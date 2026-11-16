@@ -8,7 +8,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::airing::{Broadcast, SEASON_MAX_AGE, SEASONS_KEPT, Season, SeasonAnime};
+use crate::airing::{Broadcast, NextAiring, SEASON_MAX_AGE, SEASONS_KEPT, Season, SeasonAnime};
 use crate::service::Details;
 use crate::{Kind, ListItem, Media, Scope, Status};
 
@@ -246,6 +246,10 @@ pub(crate) const MIGRATIONS: &[&str] = &[
      ALTER TABLE pending_op ADD COLUMN old_volumes INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE pending_op ADD COLUMN r_volumes INTEGER;
      CREATE INDEX pending_op_entry ON pending_op (service, kind, media_id);",
+    // 11: AniList (0.2). `media.next_airing`: the next episode and its exact time from AniList's
+    // `nextAiringEpisode` (`13 1767196800`: episode, unix seconds), which the Airing timetable
+    // prefers to its own estimate. MyAnimeList rows leave it empty.
+    "ALTER TABLE media ADD COLUMN next_airing TEXT;",
 ];
 
 /// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside
@@ -424,13 +428,13 @@ impl Store {
         {
             let mut media = tx.prepare(
                 "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
-                   start_date, broadcast, kind, volumes, authors)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                   start_date, broadcast, kind, volumes, authors, next_airing)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                  ON CONFLICT (service, kind, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
                    title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
                    format = excluded.format, air_status = excluded.air_status, cover_url = excluded.cover_url,
                    fetched_at = excluded.fetched_at, start_date = excluded.start_date, broadcast = excluded.broadcast,
-                   volumes = excluded.volumes, authors = excluded.authors",
+                   volumes = excluded.volumes, authors = excluded.authors, next_airing = excluded.next_airing",
             )?;
             let mut entry = tx.prepare(
                 "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, times_rewatched, updated_at, kind, volumes)
@@ -454,7 +458,8 @@ impl Store {
                     m.broadcast.map(crate::airing::Broadcast::to_text),
                     k,
                     m.volumes,
-                    serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into())
+                    serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into()),
+                    m.next_airing.map(NextAiring::to_text)
                 ])?;
                 entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at, k, it.volumes])?;
             }
@@ -508,7 +513,8 @@ impl Store {
             "UPDATE media SET title = ?3, title_en = ?4, title_ja = ?5, synonyms = ?6, episodes = ?7, format = ?8,
                air_status = ?9, cover_url = COALESCE(?10, cover_url), fetched_at = ?11,
                start_date = COALESCE(?12, start_date), broadcast = COALESCE(?13, broadcast),
-               volumes = ?15, authors = CASE WHEN ?16 = '[]' THEN authors ELSE ?16 END
+               volumes = ?15, authors = CASE WHEN ?16 = '[]' THEN authors ELSE ?16 END,
+               next_airing = COALESCE(?17, next_airing)
              WHERE service = ?1 AND kind = ?14 AND id = ?2 AND id IN (SELECT media_id FROM entry WHERE service = ?1 AND kind = ?14)",
             params![
                 service,
@@ -526,7 +532,8 @@ impl Store {
                 m.broadcast.map(crate::airing::Broadcast::to_text),
                 m.kind.name(),
                 m.volumes,
-                serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into())
+                serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into()),
+                m.next_airing.map(NextAiring::to_text)
             ],
         )?;
         Ok(n > 0)
@@ -668,7 +675,7 @@ fn synced_key(service: &str, kind: Kind) -> String {
 
 const ITEM_SELECT: &str = "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
         e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched, m.start_date, m.broadcast,
-        m.kind, m.volumes, m.authors, e.volumes
+        m.kind, m.volumes, m.authors, e.volumes, m.next_airing
  FROM entry e JOIN media m ON m.service = e.service AND m.kind = e.kind AND m.id = e.media_id";
 
 fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
@@ -690,6 +697,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
             kind: Kind::from_name(&r.get::<_, String>(17)?),
             volumes: r.get(18)?,
             authors: serde_json::from_str(&r.get::<_, String>(19)?).unwrap_or_default(),
+            next_airing: r.get::<_, Option<String>>(21)?.as_deref().and_then(NextAiring::from_text),
         },
         status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
         progress: r.get(10)?,
@@ -722,6 +730,7 @@ pub(crate) mod tests {
                 authors: Vec::new(),
                 kind: Default::default(),
                 volumes: None,
+                next_airing: None,
             },
             status,
             progress,
@@ -1100,6 +1109,24 @@ pub(crate) mod tests {
         m.broadcast = None;
         st.refresh_media("mal", &m, 2000).unwrap();
         assert_eq!(st.load_item("mal", 2).unwrap().unwrap().media.broadcast, it.media.broadcast);
+    }
+
+    #[test]
+    fn the_list_keeps_the_exact_next_airing_per_service() {
+        let mut st = Store::open_memory().unwrap();
+        let mut it = item(2, "Kirigaoka no Lantern", Status::Watching, 6, 100);
+        it.media.next_airing = Some(NextAiring { episode: 8, at: 1_767_196_800 });
+        st.replace_list("anilist", std::slice::from_ref(&it), 1000).unwrap();
+        assert_eq!(st.load_item("anilist", 2).unwrap().unwrap().media.next_airing, it.media.next_airing);
+        assert_eq!(st.load_item("mal", 2).unwrap(), None, "AniList rows are not MyAnimeList's");
+        // A refresh without one keeps it; a newer one replaces it.
+        let mut m = it.media.clone();
+        m.next_airing = None;
+        st.refresh_media("anilist", &m, 2000).unwrap();
+        assert_eq!(st.load_item("anilist", 2).unwrap().unwrap().media.next_airing, it.media.next_airing);
+        m.next_airing = Some(NextAiring { episode: 9, at: 1_767_801_600 });
+        st.refresh_media("anilist", &m, 3000).unwrap();
+        assert_eq!(st.load_item("anilist", 2).unwrap().unwrap().media.next_airing.map(|n| n.episode), Some(9));
     }
 
     #[test]

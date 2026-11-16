@@ -33,69 +33,7 @@ pub use manga::{manga_type_label, parse_manga_details, parse_manga_hits, parse_m
 
 // ------------------------------------------------------------------------------------ transport
 
-pub struct Request {
-    pub method: &'static str,
-    pub url: String,
-    pub bearer: Option<String>,
-    /// A form-encoded body (POST, PATCH).
-    pub form: Option<String>,
-}
-
-pub struct Response {
-    pub status: u16,
-    pub retry_after: Option<u64>,
-    pub body: String,
-}
-
-/// One HTTP exchange. `Err` means no answer at all (DNS, connect, timeout).
-pub trait Transport {
-    fn send(&self, req: &Request) -> Result<Response, String>;
-}
-
-/// The real transport: blocking `ureq` on the caller's (worker) thread.
-pub struct UreqTransport {
-    agent: ureq::Agent,
-}
-
-impl Default for UreqTransport {
-    fn default() -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .http_status_as_error(false)
-            .user_agent(concat!("Kotora/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
-        UreqTransport { agent }
-    }
-}
-
-impl Transport for UreqTransport {
-    fn send(&self, req: &Request) -> Result<Response, String> {
-        let auth = req.bearer.as_ref().map(|b| format!("Bearer {b}"));
-        let mut resp = match req.method {
-            "POST" | "PATCH" => {
-                let r = if req.method == "POST" { self.agent.post(&req.url) } else { self.agent.patch(&req.url) };
-                let mut r = r.header("Content-Type", "application/x-www-form-urlencoded");
-                if let Some(a) = &auth {
-                    r = r.header("Authorization", a);
-                }
-                r.send(req.form.clone().unwrap_or_default())
-            }
-            _ => {
-                let mut r = self.agent.get(&req.url);
-                if let Some(a) = &auth {
-                    r = r.header("Authorization", a);
-                }
-                r.call()
-            }
-        }
-        .map_err(|e| e.to_string())?;
-        let status = resp.status().as_u16();
-        let retry_after = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
-        let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
-        Ok(Response { status, retry_after, body })
-    }
-}
+pub use crate::http::{Request, Response, Transport, UreqTransport};
 
 // ----------------------------------------------------------------------------------- PKCE etc.
 
@@ -235,7 +173,7 @@ impl<T: Transport> Client<T> {
     }
 
     fn token_request(&mut self, pairs: &[(&str, &str)]) -> Result<Token, CallError> {
-        let req = Request { method: "POST", url: TOKEN_URL.into(), bearer: None, form: Some(form(pairs)) };
+        let req = Request { method: "POST", url: TOKEN_URL.into(), bearer: None, form: Some(form(pairs)), json: None };
         let resp = match self.call(&req) {
             // The token endpoint answers 400 / 401 for a bad code or a dead refresh token.
             Err(CallError::Other(m)) if m.contains("HTTP 400") => return Err(CallError::Unauthorized),
@@ -267,7 +205,7 @@ impl<T: Transport> Client<T> {
         if !url.starts_with(API_PREFIX) {
             return Err(CallError::Other("MyAnimeList sent a link to another site; ignored".into()));
         }
-        self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None })
+        self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None, json: None })
     }
 
     /// The user's list entry for one anime (`GET /anime/{id}?fields=my_list_status{num_times_rewatched}`,
@@ -307,7 +245,7 @@ impl<T: Transport> Client<T> {
             return Err(ServiceError::Other("nothing to send".into()));
         }
         let body = form(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>());
-        let req = Request { method: "PATCH", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body) };
+        let req = Request { method: "PATCH", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body), json: None };
         let r = self.call(&req)?;
         let ls: ListStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
         ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
@@ -574,6 +512,7 @@ pub fn parse_season(body: &str) -> Result<(Vec<SeasonAnime>, bool), String> {
                 // The medium size (225 px wide) is plenty for a card.
                 cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
                 mine,
+                next_airing: None,
             }
         })
         .collect();
@@ -839,6 +778,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
                 authors: Vec::new(),
                 kind: Default::default(),
                 volumes: None,
+                next_airing: None,
             },
             status,
             progress: ls.num_episodes_watched,

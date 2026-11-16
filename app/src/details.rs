@@ -217,6 +217,7 @@ impl State {
                 authors: Vec::new(),
                 kind: Default::default(),
                 volumes: None,
+                next_airing: None,
             },
         };
         if let Err(e) = self.add_media(media, status) {

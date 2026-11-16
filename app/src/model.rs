@@ -1555,6 +1555,7 @@ mod tests {
                 authors: Vec::new(),
                 kind: Default::default(),
                 volumes: None,
+                next_airing: None,
             },
             status,
             progress,

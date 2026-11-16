@@ -2,13 +2,14 @@
 //!
 //! The data model, the SQLite store (the local cache of the user's list), the sync queue
 //! (`queue.rs`), recognition (`recognize.rs`: file name → anime on the list), paths, the config
-//! file, the token file, and the MyAnimeList client (list, one entry, `PATCH my_list_status`,
+//! file, the token file, the AniList client (`anilist.rs`), and the MyAnimeList client (list, one entry, `PATCH my_list_status`,
 //! search, seasons), the Airing timetable (`airing.rs`), the update check (`update.rs`). Nothing here touches a UI or starts a thread of its own.
 
 pub mod airing;
 pub mod airnotes;
 pub mod config;
 pub mod covers;
+pub mod http;
 pub mod library;
 pub mod loopback;
 pub mod mal;

@@ -60,6 +60,36 @@ impl Broadcast {
     }
 }
 
+/// The next episode and the exact time it airs, from the service (AniList's
+/// `nextAiringEpisode`). Beats the weekly estimate: delays and breaks are already in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NextAiring {
+    pub episode: u32,
+    /// Unix seconds.
+    pub at: i64,
+}
+
+impl NextAiring {
+    /// The store's form: `13 1767196800`.
+    pub fn to_text(self) -> String {
+        format!("{} {}", self.episode, self.at)
+    }
+
+    pub fn from_text(s: &str) -> Option<NextAiring> {
+        let (e, at) = s.trim().split_once(' ')?;
+        let episode = e.parse().ok().filter(|e| *e > 0)?;
+        Some(NextAiring { episode, at: at.trim().parse().ok()? })
+    }
+
+    /// The weekly slot in Japan time this airing falls on (for the timetable's day and time).
+    pub fn broadcast(self) -> Broadcast {
+        let local = self.at + JST;
+        let days = local.div_euclid(86_400);
+        let minute = (local.rem_euclid(86_400) / 60) as u16;
+        Broadcast { day: time::weekday(days), minute: Some(minute) }
+    }
+}
+
 /// When the episodes of one show air, as Kotora estimates it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timetable {
@@ -92,8 +122,18 @@ impl Timetable {
         Some(Timetable { first, episodes: episodes.filter(|&n| n > 0), shift: 0, until })
     }
 
-    /// The show's timetable, from what the season list or the saved list knows.
+    /// From the service's exact next airing: that episode at that time, then weekly. The
+    /// episodes before it have aired.
+    pub fn from_next(next: NextAiring, episodes: Option<u32>) -> Timetable {
+        Timetable { first: next.at, episodes: episodes.filter(|&n| n > 0), shift: next.episode - 1, until: None }
+    }
+
+    /// The show's timetable, from what the season list or the saved list knows: the exact next
+    /// airing when the service gave one, else the estimate.
     pub fn of(a: &SeasonAnime) -> Option<Timetable> {
+        if let Some(n) = a.next_airing {
+            return Some(Timetable::from_next(n, a.episodes));
+        }
         Timetable::new(a.start_date.as_deref()?, a.broadcast?, a.episodes, a.end_date.as_deref())
     }
 
@@ -159,6 +199,9 @@ pub struct NotAired {
 impl Timetable {
     /// The timetable of a list entry's anime (the list has no end date).
     pub fn of_media(m: &Media) -> Option<Timetable> {
+        if let Some(n) = m.next_airing {
+            return Some(Timetable::from_next(n, m.episodes));
+        }
         Timetable::new(m.start_date.as_deref()?, m.broadcast?, m.episodes, None)
     }
 }
@@ -214,6 +257,8 @@ pub struct SeasonAnime {
     pub cover_url: Option<String>,
     /// The user's entry on MyAnimeList when it was fetched (MAL `status`, progress).
     pub mine: Option<(String, u32)>,
+    /// The exact next airing, when the service gives it (AniList).
+    pub next_airing: Option<NextAiring>,
 }
 
 impl SeasonAnime {
@@ -233,6 +278,7 @@ impl SeasonAnime {
             authors: Vec::new(),
             kind: Default::default(),
             volumes: None,
+            next_airing: self.next_airing,
         }
     }
 
@@ -255,6 +301,7 @@ impl SeasonAnime {
             members: None,
             cover_url: m.cover_url.clone(),
             mine: Some((it.status.mal_name().into(), it.progress)),
+            next_airing: m.next_airing,
         }
     }
 
@@ -387,6 +434,36 @@ mod tests {
 
     fn at(date: &str, hh: i64, mm: i64, offset: i64) -> i64 {
         time::parse_date(date).unwrap() * 86_400 + hh * 3600 + mm * 60 - offset
+    }
+
+    #[test]
+    fn the_exact_next_airing_beats_the_estimate() {
+        // The estimate says 7 aired by now, but AniList knows of breaks: 5 is next.
+        let next = NextAiring { episode: 5, at: at("2026-11-21", 23, 30, JST) };
+        assert_eq!(NextAiring::from_text(&next.to_text()), Some(next));
+        assert_eq!(NextAiring::from_text("0 5"), None);
+        assert_eq!(next.broadcast(), Broadcast { day: 5, minute: Some(1410) }, "Saturday 23:30 JST");
+        let m = Media {
+            air_status: "currently_airing".into(),
+            episodes: Some(12),
+            start_date: Some("2026-10-03".into()),
+            broadcast: Some(Broadcast { day: 5, minute: Some(1410) }),
+            next_airing: Some(next),
+            ..Default::default()
+        };
+        let now = at("2026-11-20", 12, 0, JST);
+        let tt = Timetable::of_media(&m).unwrap();
+        assert_eq!(tt.aired(now), 4);
+        assert_eq!(tt.next(now), Some((5, next.at)));
+        assert_eq!(tt.time_of(6), Some(next.at + WEEK));
+        assert!(not_aired(&m.air_status, Some(tt), 4, 5, now).is_some_and(|n| n.expected == Some(next.at)));
+        assert_eq!(not_aired(&m.air_status, Some(tt), 4, 4, now), None);
+        // Without it, the same show is estimated from the start date.
+        let est = Timetable::of_media(&Media { next_airing: None, ..m.clone() }).unwrap();
+        assert_eq!(est.aired(now), 7);
+        // After it airs, the weeks go on from it.
+        assert_eq!(tt.aired(next.at + 1), 5);
+        assert_eq!(Timetable::of(&SeasonAnime { next_airing: Some(next), episodes: Some(12), ..Default::default() }).map(|t| t.aired(now)), Some(4));
     }
 
     #[test]

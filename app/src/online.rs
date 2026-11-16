@@ -316,6 +316,7 @@ mod tests {
                 authors: Vec::new(),
                 kind: Default::default(),
                 volumes: None,
+                next_airing: None,
             },
             status: Status::Watching,
             progress: 1,

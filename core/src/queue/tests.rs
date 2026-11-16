@@ -69,6 +69,7 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
             authors: Vec::new(),
             kind: Default::default(),
             volumes: None,
+            next_airing: None,
         },
         status: Status::Watching,
         progress,

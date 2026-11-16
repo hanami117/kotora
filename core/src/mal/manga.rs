@@ -77,7 +77,7 @@ impl<T: Transport> Client<T> {
             return Err(ServiceError::Other("nothing to send".into()));
         }
         let body = form(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>());
-        let req = Request { method: "PATCH", url: format!("{API}/manga/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body) };
+        let req = Request { method: "PATCH", url: format!("{API}/manga/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body), json: None };
         let r = self.call(&req)?;
         let ms: MangaStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
         ms.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
@@ -253,6 +253,7 @@ impl MangaNode {
             cover_url: self.main_picture.and_then(|p| p.medium.or(p.large)),
             start_date: non_empty(self.start_date),
             broadcast: None,
+            next_airing: None,
         }
     }
 }

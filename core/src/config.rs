@@ -2,10 +2,13 @@
 //!
 //! ```toml
 //! [account]
-//! service = "mal"              # chosen on the first screen; v0.3 adds "anilist"
+//! service = "mal"              # or "anilist": the one service Kotora keeps the list on
 //!
 //! [mal]
 //! client_id = "…"
+//!
+//! [anilist]
+//! client_id = "12345"          # the AniList API client's id (a number)
 //!
 //! [updates]
 //! auto = false                 # record confident matches without asking (off by default)
@@ -65,6 +68,8 @@ pub struct Config {
     /// `None` before they chose. Lower-cased; an empty value counts as none.
     pub service: Option<String>,
     pub mal_client_id: Option<String>,
+    /// `[anilist] client_id`: the id of the user's AniList API client (a number).
+    pub anilist_client_id: Option<String>,
     pub updates: Updates,
     pub players: Players,
     pub vlc: Vlc,
@@ -434,6 +439,7 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("service", &self.service)
             .field("mal_client_id", &self.mal_client_id.as_ref().map(|_| "<set>"))
+            .field("anilist_client_id", &self.anilist_client_id.as_ref().map(|_| "<set>"))
             .field("updates", &self.updates)
             .field("players", &self.players)
             .field("vlc_port", &self.vlc.port)
@@ -455,6 +461,8 @@ struct File {
     account: Account,
     #[serde(default)]
     mal: Mal,
+    #[serde(default)]
+    anilist: Mal,
     #[serde(default)]
     updates: Updates,
     #[serde(default)]
@@ -499,6 +507,7 @@ impl Config {
         Ok(Config {
             service: f.account.service.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()),
             mal_client_id: f.mal.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            anilist_client_id: f.anilist.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             updates,
             players: f.players,
             vlc: f.vlc,
@@ -517,7 +526,21 @@ impl Config {
     /// chosen, has no Client ID in the file and has no saved token. Anyone who already uses
     /// Kotora with MyAnimeList skips it, and nothing is written for them.
     pub fn needs_service_choice(&self, has_token: bool) -> bool {
-        self.service.is_none() && self.mal_client_id.is_none() && !has_token
+        self.service.is_none() && self.mal_client_id.is_none() && self.anilist_client_id.is_none() && !has_token
+    }
+
+    /// The service Kotora keeps the list on: `[account] service`, MyAnimeList when none is
+    /// chosen (everybody from 0.1) or the value is unknown.
+    pub fn service_id(&self) -> crate::service::ServiceId {
+        self.service.as_deref().and_then(crate::service::ServiceId::from_name).unwrap_or_default()
+    }
+
+    /// The Client ID of `service`, when one is saved.
+    pub fn client_id(&self, service: crate::service::ServiceId) -> Option<&str> {
+        match service {
+            crate::service::ServiceId::Mal => self.mal_client_id.as_deref(),
+            crate::service::ServiceId::AniList => self.anilist_client_id.as_deref(),
+        }
     }
 
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
@@ -611,6 +634,45 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
 
 /// The services the first screen offers: the value written to `[account] service`.
 pub const SERVICE_MAL: &str = "mal";
+pub const SERVICE_ANILIST: &str = "anilist";
+
+/// Checks a pasted AniList Client ID: AniList's are whole numbers (its client secrets are 40
+/// letters and digits, never needed). Returns the cleaned ID.
+pub fn check_anilist_client_id(raw: &str) -> Result<String, String> {
+    let id = raw.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`').trim();
+    if id.is_empty() {
+        return Err("Paste the Client ID first.".into());
+    }
+    if id.chars().any(char::is_whitespace) {
+        return Err("A Client ID is one word, with no spaces in it.".into());
+    }
+    if !id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(if id.len() >= 30 {
+            "That looks like the Client Secret. Kotora doesn't need it: copy the ID instead (a number).".into()
+        } else {
+            "That doesn't look like an AniList Client ID: it is a number, like 12345.".into()
+        });
+    }
+    if id.len() > 10 || id.trim_start_matches('0').is_empty() {
+        return Err("That doesn't look like an AniList Client ID: it is a number, like 12345.".into());
+    }
+    Ok(id.to_string())
+}
+
+/// Saves the AniList Client ID (`[anilist] client_id`), after [`check_anilist_client_id`].
+pub fn save_anilist_client_id(path: &Path, raw: &str) -> Result<String, String> {
+    let id = check_anilist_client_id(raw)?;
+    write_setting(path, "anilist", "client_id", &quote(&id))?;
+    Ok(id)
+}
+
+/// Saves the Client ID of `service`, checked the way that service's IDs look.
+pub fn save_client_id_for(path: &Path, service: crate::service::ServiceId, raw: &str) -> Result<String, String> {
+    match service {
+        crate::service::ServiceId::Mal => save_client_id(path, raw),
+        crate::service::ServiceId::AniList => save_anilist_client_id(path, raw),
+    }
+}
 
 /// Saves the chosen service (`[account] service`).
 pub fn save_service(path: &Path, service: &str) -> Result<(), String> {
@@ -839,6 +901,29 @@ mod tests {
         let t = set_line("[updates]\nautomatic = 1\n", "updates", "auto", "true");
         assert_eq!(t, "[updates]\nautomatic = 1\nauto = true\n");
         assert_eq!(set_line("", "updates", "auto", "true"), "[updates]\nauto = true\n");
+    }
+
+    #[test]
+    fn anilist_ids_and_the_chosen_service_are_read() {
+        use crate::service::ServiceId;
+        let c = Config::parse("[account]\nservice = \"anilist\"\n[anilist]\nclient_id = \" 12345 \"\n").unwrap();
+        assert_eq!((c.service_id(), c.client_id(ServiceId::AniList), c.client_id(ServiceId::Mal)), (ServiceId::AniList, Some("12345"), None));
+        assert!(!c.needs_service_choice(false));
+        assert!(!Config { anilist_client_id: Some("1".into()), ..Config::default() }.needs_service_choice(false), "an AniList ID counts too");
+        assert_eq!(Config::default().service_id(), ServiceId::Mal, "0.1 users are on MyAnimeList");
+        assert_eq!(Config::parse("[account]\nservice = \"kitsu\"\n").unwrap().service_id(), ServiceId::Mal);
+        assert!(!format!("{c:?}").contains("12345"));
+    }
+
+    #[test]
+    fn anilist_client_ids_are_checked() {
+        assert_eq!(check_anilist_client_id(" \"12345\"\n").unwrap(), "12345");
+        assert!(check_anilist_client_id("").unwrap_err().contains("Paste"));
+        assert!(check_anilist_client_id("12 345").unwrap_err().contains("no spaces"));
+        assert!(check_anilist_client_id("aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7d").unwrap_err().contains("Client Secret"));
+        assert!(check_anilist_client_id("abc").unwrap_err().contains("a number"));
+        assert!(check_anilist_client_id("0").is_err());
+        assert!(check_anilist_client_id("12345678901").is_err());
     }
 
     #[test]

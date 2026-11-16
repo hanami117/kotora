@@ -1,9 +1,58 @@
-//! What the app needs from an online list service. MyAnimeList implements it in v0.1; AniList
-//! can in v0.2 without the store or the queue changing.
+//! What the app needs from an online list service. MyAnimeList (`mal.rs`) and AniList
+//! (`anilist.rs`) implement it; the store and the queue key everything by the service's name.
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Change, Kind, ListItem, Media, Remote, Status};
+
+/// The services Kotora can keep a list on. One is active at a time (`[account] service`); each
+/// keeps its own rows in the store (the `service` column) and its own token.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ServiceId {
+    #[default]
+    Mal,
+    AniList,
+}
+
+impl ServiceId {
+    pub const ALL: [ServiceId; 2] = [ServiceId::Mal, ServiceId::AniList];
+
+    /// The store's `service` column and `[account] service`: `mal`, `anilist`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ServiceId::Mal => "mal",
+            ServiceId::AniList => "anilist",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<ServiceId> {
+        ServiceId::ALL.into_iter().find(|v| v.name() == s.trim().to_ascii_lowercase())
+    }
+
+    /// "MyAnimeList", "AniList".
+    pub fn title(self) -> &'static str {
+        match self {
+            ServiceId::Mal => "MyAnimeList",
+            ServiceId::AniList => "AniList",
+        }
+    }
+
+    /// An anime's (or manga's) page on the service's website.
+    pub fn media_url(self, kind: Kind, id: u32) -> String {
+        match self {
+            ServiceId::Mal => format!("https://myanimelist.net/{}/{id}", kind.name()),
+            ServiceId::AniList => format!("https://anilist.co/{}/{id}", kind.name()),
+        }
+    }
+
+    /// The user's profile page.
+    pub fn profile_url(self, user: &str) -> String {
+        match self {
+            ServiceId::Mal => format!("https://myanimelist.net/profile/{user}"),
+            ServiceId::AniList => format!("https://anilist.co/user/{user}"),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
@@ -86,6 +135,7 @@ impl AnimeHit {
             authors: self.authors.clone(),
             kind: self.kind,
             volumes: self.volumes,
+            next_airing: None,
         }
     }
 
@@ -184,6 +234,8 @@ pub struct Details {
     pub authors: Vec<Author>,
     /// Manga: the magazines or labels it ran in.
     pub serialization: Vec<String>,
+    /// The exact next airing, when the service gives it (AniList).
+    pub next_airing: Option<crate::airing::NextAiring>,
 }
 
 impl Details {
@@ -204,6 +256,7 @@ impl Details {
             authors: self.authors.iter().map(|a| a.name.clone()).collect(),
             kind: self.kind,
             volumes: self.volumes,
+            next_airing: self.next_airing,
         }
     }
 
@@ -282,6 +335,10 @@ pub trait ListService {
     fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError>;
     /// Sends one change and returns the entry as the service saved it.
     fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError>;
+    /// Removes one anime from the list. Nothing in the app asks for it yet.
+    fn delete_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
+        Err(ServiceError::Other(format!("{} can't remove entries in Kotora yet", self.title())))
+    }
     /// A title search (recognition's one search for a file not matched on the list).
     fn search(&mut self, _query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         Ok(Vec::new())

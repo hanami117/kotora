@@ -32,6 +32,9 @@ pub struct Media {
     pub volumes: Option<u32>,
     /// Manga: the authors, "First Last" (empty for anime).
     pub authors: Vec<String>,
+    /// The next episode and its exact time, when the service knows it (AniList
+    /// `nextAiringEpisode`; MyAnimeList has none). The timetable prefers it to its estimate.
+    pub next_airing: Option<crate::airing::NextAiring>,
 }
 
 impl Media {
