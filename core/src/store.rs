@@ -1,4 +1,4 @@
-//! The SQLite store: the local cache of the user's list (DESIGN.md §5.3). Schema versions go by
+//! The SQLite store: the local cache of the user's list. Schema versions go by
 //! `PRAGMA user_version`; each migration runs once, in a transaction.
 //!
 //! Tokens are never here (they live in the 0600 token file). Only media on the user's list is kept,

@@ -1,5 +1,5 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
-//! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
+//! `--list-scenes` lists them. Every view and state gets one.
 
 use kotora_core::Status;
 use kotora_core::airing::Season;
@@ -16,7 +16,7 @@ use crate::setup::Step;
 pub type Scene = (&'static str, fn(&mut State));
 
 pub const SCENES: &[Scene] = &[
-    // The main list, as `mockup/shots/list.png`.
+    // The main list, as in the design mockup.
     ("list", |_| {}),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
     ("list-covers", fake_covers),

@@ -1,4 +1,4 @@
-//! Library folders (docs/ROADMAP.md, "Library folders"): the folders where the user's anime files are, which episodes
+//! Library folders: the folders where the user's anime files are, which episodes
 //! they hold, and the file for the next episode ("Play next episode").
 //!
 //! - [`skip_dir`] and [`skip_file`]: the name rules (samples, extras, creditless openings and

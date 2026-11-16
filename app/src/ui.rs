@@ -1,6 +1,6 @@
 //! The view: sidebar, list page with the inline editor, Now Playing (page and banner), sync queue
 //! and Settings, as in
-//! `mockup/kotora.html` (design-spec §4).
+//! the design mockup (design-spec §4).
 
 use std::f32::consts::PI;
 

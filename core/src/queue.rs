@@ -1,4 +1,4 @@
-//! The sync queue (DESIGN.md §5.4): local edits wait here until the service has them.
+//! The sync queue: local edits wait here until the service has them.
 //!
 //! - **Local first:** [`Store::enqueue`] changes the saved entry (the list shows it at once) and
 //!   queues the change, in one transaction.
@@ -649,7 +649,7 @@ pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
         Some(r) if op.base_updated_at < 0 || r.updated_at <= op.base_updated_at => Decision::Send,
         Some(r) if op.change.is_in(&r.values) => Decision::AlreadyThere(*r),
         Some(r) => {
-            // Only the progress, and ours is higher: the higher number wins (DESIGN.md §5.4).
+            // Only the progress, and ours is higher: the higher number wins.
             let progress_only = op.change.status.is_none() && op.change.score.is_none() && op.change.rewatching.is_none() && op.change.times_rewatched.is_none();
             if keep_higher && progress_only && op.change.progress.is_some_and(|p| p > r.values.progress) { Decision::Send } else { Decision::Conflict }
         }

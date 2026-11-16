@@ -6,8 +6,7 @@
 //! - it really played for a while: a quarter of the duration, at most 2 minutes (a jump to the
 //!   end doesn't count).
 //!
-//! Or when the player stops or changes file after at least half of it, with the same play time
-//! (DESIGN.md §4: "or the player stops after at least 50 %").
+//! Or when the player stops or changes file after at least half of it, with the same play time.
 //!
 //! A process source (`Via::Process`, see `procfs.rs`) knows neither position nor pause, only that
 //! the file is open. For it the time the file stays open counts as time played, and the file

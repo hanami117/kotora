@@ -1,7 +1,7 @@
 //! App state. The real list comes from the store and MyAnimeList (`online.rs`); the fake list below
 //! is for the headless scenes and the tests only.
 //!
-//! Every fake title here is made up (the same ones as `mockup/kotora.html`).
+//! Every fake title here is made up (the same ones as the design mockup).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

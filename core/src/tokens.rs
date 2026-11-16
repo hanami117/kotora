@@ -1,5 +1,5 @@
-//! The token file: `$XDG_DATA_HOME/kotora/tokens.json`, mode 0600, in a 0700 folder. Not encrypted
-//! (DESIGN.md §11). Never in the database, never in logs: `Debug` hides the values.
+//! The token file: `$XDG_DATA_HOME/kotora/tokens.json`, mode 0600, in a 0700 folder. Not encrypted.
+//! Never in the database, never in logs: `Debug` hides the values.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

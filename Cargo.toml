@@ -13,7 +13,6 @@ edition = "2024"
 [profile.dev.package."*"]
 opt-level = 2
 
-# One codegen unit: the stripped Linux x86_64 binary goes from 33.9 to 29.9 MB (the 30 MB budget,
-# docs/ROADMAP.md, Stage 5), for about 30 s more on a full release build. No change in behaviour.
+# One codegen unit: the stripped Linux x86_64 binary goes from 33.9 to 29.9 MB (the 30 MB budget), for about 30 s more on a full release build. No change in behaviour.
 [profile.release]
 codegen-units = 1

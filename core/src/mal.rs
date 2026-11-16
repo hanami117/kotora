@@ -1,4 +1,4 @@
-//! The MyAnimeList client (DESIGN.md §8.1): OAuth 2 with PKCE (`plain`, the only method MAL
+//! The MyAnimeList client: OAuth 2 with PKCE (`plain`, the only method MAL
 //! supports), token refresh, the user's anime list, one entry (read and `PATCH my_list_status`),
 //! a rate budget and 429 handling.
 //!
@@ -18,7 +18,7 @@ use crate::service::{AnimeHit, AnimeStats, Details, ListService, MyEntry, Profil
 use crate::time;
 use crate::tokens::{Token, TokenStore};
 
-/// The registered redirect: the port is fixed (STATUS.md).
+/// The registered redirect: the port is fixed.
 pub const PORT: u16 = 47_321;
 pub const REDIRECT_URI: &str = "http://127.0.0.1:47321/callback";
 const AUTHORIZE_URL: &str = "https://myanimelist.net/v1/oauth2/authorize";

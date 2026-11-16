@@ -1,4 +1,4 @@
-//! Airing: MyAnimeList's seasonal lists and Kotora's own timetable (DESIGN.md §5.8).
+//! Airing: MyAnimeList's seasonal lists and Kotora's own timetable.
 //!
 //! MyAnimeList gives each show a start date and a weekly broadcast slot in Japan time
 //! (`broadcast { day_of_the_week, start_time }`), not the time of each episode. Kotora estimates:
@@ -147,8 +147,8 @@ impl Timetable {
     }
 }
 
-/// An episode past what has aired by the estimate: Kotora asks before it is recorded
-/// (DESIGN.md §5.8). Only the total episode count is a hard limit.
+/// An episode past what has aired by the estimate: Kotora asks before it is recorded.
+/// Only the total episode count is a hard limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotAired {
     pub episode: u32,

@@ -1,4 +1,4 @@
-//! Where Kotora keeps things: XDG paths on Linux and macOS (DESIGN.md §5.6).
+//! Where Kotora keeps things: XDG paths on Linux and macOS.
 
 use std::path::PathBuf;
 

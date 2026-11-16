@@ -1,4 +1,4 @@
-//! Manga support, first pieces (experimental; docs/ROADMAP.md, "Manga").
+//! Manga support, first pieces (experimental).
 //!
 //! Nothing here is wired into the app yet. There is no UI, no list sync and no thread.
 //!

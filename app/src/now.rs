@@ -1,5 +1,5 @@
-//! Now Playing: what the followed player shows, what recognition made of it, and the offer
-//! (DESIGN.md §5.5, step 5). The detection threads are in `detect.rs`; this is the UI-thread side.
+//! Now Playing: what the followed player shows, what recognition made of it, and the offer.
+//! The detection threads are in `detect.rs`; this is the UI-thread side.
 //!
 //! The flow: a file passes the threshold ([`Msg::Reached`](crate::model::Msg)) → the banner asks
 //! "Update to N?" and a desktop notification says the same (`notes/`, with Update and Not now where
@@ -1411,7 +1411,7 @@ mod tests {
     }
 
     /// Not a check: `cargo test --release -p kotora tick_cost -- --ignored --nocapture` prints the
-    /// CPU one tick costs (poll, view, layout, draw list; no GPU), for the budgets in ROADMAP.md.
+    /// CPU one tick costs (poll, view, layout, draw list; no GPU), for the lightness budgets.
     #[test]
     #[ignore]
     fn tick_cost() {

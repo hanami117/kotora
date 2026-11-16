@@ -1,4 +1,4 @@
-//! Now-playing sources (docs/DESIGN.md §5.5) and the watch timer.
+//! Now-playing sources and the watch timer.
 //!
 //! - [`mpv`]: mpv's JSON IPC socket (Linux and macOS; IINA too, through its "additional mpv
 //!   options"). Event driven: `observe_property` and seek events. While the socket is missing, a
@@ -134,7 +134,7 @@ impl Switch {
         }
     }
 
-    /// The switches Settings shows on this system (DESIGN.md §12: v0.1 players).
+    /// The switches Settings shows on this system.
     pub fn here() -> &'static [Switch] {
         if cfg!(target_os = "macos") { &[Switch::Mpv, Switch::Iina, Switch::Vlc] } else { &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris] }
     }

@@ -1,5 +1,5 @@
 //! The MyAnimeList Client ID from the app (Stage 5): the field of the setup wizard (`setup.rs`)
-//! and a masked field in Settings, so nobody edits `config.toml` by hand (DESIGN.md §8.1).
+//! and a masked field in Settings, so nobody edits `config.toml` by hand.
 //!
 //! Save checks the ID on the UI thread (`config::check_client_id`, instant), then writes
 //! `config.toml` on a short thread (comments kept, 0600) and re-reads the sign-in state, so Sign in

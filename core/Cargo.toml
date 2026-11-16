@@ -14,7 +14,7 @@ toml = { version = "1.2", default-features = false, features = ["std", "serde", 
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Blocking HTTP on worker threads (no async runtime of our own).
 ureq = "3"
-# File-name parsing (recognition): a pure-Rust port of anitomy, MPL-2.0 (DESIGN.md §9; decided
+# File-name parsing (recognition): a pure-Rust port of anitomy, MPL-2.0 (decided
 # 2026-11-15). It brings `regex` without its Unicode tables and fast paths.
 anitomy-ng = { version = "1.0.10", default-features = false }
 # The user's UTC offset (`localtime_r`, `tm_gmtoff`) for the airing times: the system's zone

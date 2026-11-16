@@ -1,4 +1,4 @@
-//! Recognition (DESIGN.md §5.5): file name → anime on the user's list, and the episode.
+//! Recognition: file name → anime on the user's list, and the episode.
 //!
 //! 1. Parse the file name with anitomy (the `anitomy-ng` port, MPL-2.0). Without a title in the
 //!    name, the folder's name gives it.

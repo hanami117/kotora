@@ -1,5 +1,5 @@
 //! A request budget: at most `per_minute` requests in any 60 s, and `min_gap` between two.
-//! MAL documents no limit, so Kotora budgets 20 a minute, 1 s apart (DESIGN.md §5.4).
+//! MAL documents no limit, so Kotora budgets 20 a minute, 1 s apart.
 //! Pure: the caller passes the clock and does the sleeping, so tests need no real time.
 
 use std::collections::VecDeque;

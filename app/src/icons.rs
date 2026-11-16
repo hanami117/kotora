@@ -1,4 +1,4 @@
-//! Line icons on a 24 grid, 1.6 stroke, round caps (design-spec §5), from `mockup/kotora.html`.
+//! Line icons on a 24 grid, 1.6 stroke, round caps (design-spec §5).
 //! Tinted with `.color()`.
 
 use rune::Icon;

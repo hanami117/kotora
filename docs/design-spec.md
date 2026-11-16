@@ -1,10 +1,9 @@
 # Kotora design spec
 
-Stage 0.5. The look of Kotora v0.1, as tokens and rules the Rune code can copy. The mockup is
-`mockup/kotora.html` (open it in a browser); screenshots are in `mockup/shots/`. All titles, names and
+Stage 0.5. The look of Kotora v0.1, as tokens and rules the Rune code can copy. The mockup (an HTML page and screenshots) is archived as the git tag `archive/mockups`. All titles, names and
 files in the mockup are made up, and covers are generated tiles.
 
-Dark theme first. A light theme comes later (DESIGN.md §5.7), so every colour below is a token, never a
+Dark theme first. A light theme comes later, so every colour below is a token, never a
 literal in view code.
 
 ## 1. Palette
@@ -182,7 +181,7 @@ Line icons on a 24 grid, 1.6 stroke, round caps and joins, drawn at 16 (13–14 
 tinted with `.color()`. They are Rune `Icon` statics with an SVG subset body (`path`, `rect`, `circle`),
 as in Uzumaki. The set: search, chevron, play, sync, sliders (settings), external link, check, x, offline,
 alert, back, file, lock, cloud. The app icon is C2; the sidebar shows it at 28, so it needs the small
-variant (STATUS.md).
+variant.
 
 ## 6. Motion
 
@@ -213,7 +212,7 @@ Errors say what failed and what still works, in plain words.
 - **Linux (KDE and others):** server-side decorations from the desktop; Kotora draws nothing in the title
   bar. Title "Kotora", `app_id` `io.github.hanami117.kotora`.
 - **macOS:** the standard title bar with traffic lights, coloured like `side` if Rune allows it; title
-  "Kotora". The mockup has a "macOS" toggle; `mockup/shots/list-macos.png` shows it.
+  "Kotora". The mockup has a "macOS" toggle.
 
 ## 9. Tokens in Rune
 

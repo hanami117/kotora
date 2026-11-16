@@ -1,6 +1,6 @@
 //! The Airing page: what airs this week (by weekday, in the user's time zone) and this season's
 //! anime (a cover grid, most members first). Data from MyAnimeList only; the times are Kotora's
-//! own estimate (`kotora_core::airing::Timetable`, DESIGN.md §5.8).
+//! own estimate (`kotora_core::airing::Timetable`).
 //!
 //! - **Data:** the current season and the one before (its shows still airing), from
 //!   `GET /anime/season/{year}/{season}` in pages of 100 (at most [`PAGES`] each: 8 requests

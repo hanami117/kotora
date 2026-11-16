@@ -145,8 +145,8 @@ fn paint_window_bg(handle: &rune::WindowHandle) {
     });
 }
 
-/// `KOTORA_FRAME_LOG=FILE`: appends how long the first frame took after start (the lightness
-/// budget, docs/ROADMAP.md). Off unless set.
+/// `KOTORA_FRAME_LOG=FILE`: appends how long the first frame took after start
+/// (the lightness budget). Off unless set.
 fn log_first_frame() -> impl FnMut(&rune::FrameEncoded) + 'static {
     let mut done = false;
     move |_f| {
