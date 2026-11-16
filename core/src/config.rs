@@ -1,6 +1,9 @@
 //! `config.toml`: the settings the user edits, by hand or in Settings.
 //!
 //! ```toml
+//! [account]
+//! service = "mal"              # chosen on the first screen; v0.3 adds "anilist"
+//!
 //! [mal]
 //! client_id = "…"
 //!
@@ -57,6 +60,9 @@ use serde::Deserialize;
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Config {
+    /// `[account] service`: the list service the user chose on the first screen (`"mal"`), or
+    /// `None` before they chose. Lower-cased; an empty value counts as none.
+    pub service: Option<String>,
     pub mal_client_id: Option<String>,
     pub updates: Updates,
     pub players: Players,
@@ -423,6 +429,7 @@ impl Default for Vlc {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
+            .field("service", &self.service)
             .field("mal_client_id", &self.mal_client_id.as_ref().map(|_| "<set>"))
             .field("updates", &self.updates)
             .field("players", &self.players)
@@ -441,6 +448,8 @@ impl std::fmt::Debug for Config {
 
 #[derive(Deserialize, Default)]
 struct File {
+    #[serde(default)]
+    account: Account,
     #[serde(default)]
     mal: Mal,
     #[serde(default)]
@@ -468,6 +477,11 @@ struct File {
 }
 
 #[derive(Deserialize, Default)]
+struct Account {
+    service: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
 struct Mal {
     client_id: Option<String>,
 }
@@ -480,6 +494,7 @@ impl Config {
         let mut updates = f.updates;
         updates.threshold = updates.threshold.clamp(50, 100);
         Ok(Config {
+            service: f.account.service.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()),
             mal_client_id: f.mal.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             updates,
             players: f.players,
@@ -493,6 +508,13 @@ impl Config {
             library: f.library,
             app: f.app,
         })
+    }
+
+    /// Whether the first screen ("Which service do you use?") is still due: the user has not
+    /// chosen, has no Client ID in the file and has no saved token. Anyone who already uses
+    /// Kotora with MyAnimeList skips it, and nothing is written for them.
+    pub fn needs_service_choice(&self, has_token: bool) -> bool {
+        self.service.is_none() && self.mal_client_id.is_none() && !has_token
     }
 
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
@@ -584,6 +606,14 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
     }
 }
 
+/// The services the first screen offers: the value written to `[account] service`.
+pub const SERVICE_MAL: &str = "mal";
+
+/// Saves the chosen service (`[account] service`).
+pub fn save_service(path: &Path, service: &str) -> Result<(), String> {
+    write_setting(path, "account", "service", &quote(service))
+}
+
 /// Saves the MAL Client ID (`[mal] client_id`), after [`check_client_id`]. Returns the ID saved.
 pub fn save_client_id(path: &Path, raw: &str) -> Result<String, String> {
     let id = check_client_id(raw)?;
@@ -642,6 +672,41 @@ mod tests {
         let c = Config::parse(&text).unwrap();
         assert_eq!(c.library.folders, folders);
         assert_eq!(Config::parse(&set_line(&text, "library", "folders", &quote_list(&[]))).unwrap().library.folders, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_service_choice_is_read_and_skipped_for_existing_users() {
+        let none = Config::parse("").unwrap();
+        assert_eq!(none.service, None);
+        assert!(none.needs_service_choice(false), "a fresh install is asked");
+        assert!(!none.needs_service_choice(true), "a saved token means MyAnimeList already");
+        let id = Config::parse("[mal]\nclient_id = \"fake-id\"\n").unwrap();
+        assert!(!id.needs_service_choice(false), "a Client ID in the file counts too");
+        let text = set_line("", "account", "service", &quote(SERVICE_MAL));
+        assert_eq!(text, "[account]\nservice = \"mal\"\n");
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.service.as_deref(), Some("mal"));
+        assert!(!c.needs_service_choice(false), "chosen once, never asked again");
+        assert_eq!(Config::parse("[account]\nservice = \" MAL \"\n").unwrap().service.as_deref(), Some("mal"));
+        assert_eq!(Config::parse("[account]\nservice = \"\"\n").unwrap().service, None);
+    }
+
+    #[test]
+    fn save_service_keeps_the_rest_and_the_mode() {
+        let dir = std::env::temp_dir().join(format!("kotora-svc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        write_setting(&path, "updates", "auto", "true").unwrap();
+        save_service(&path, SERVICE_MAL).unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.service.as_deref(), Some("mal"));
+        assert!(c.updates.auto, "the other settings stay");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

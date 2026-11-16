@@ -234,6 +234,8 @@ fn main() {
     let app = app.init(move || {
         let mut s = State::start(online::initial_auth());
         s.client_id.hint = clientid::saved_hint();
+        s.setup_service = s.auth == model::Auth::NoClientId && online::wants_service_choice();
+        s.setup = s.setup_first();
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
         // Desktop notifications, with buttons where the system has them (`notes/`).
         s.notes = notes::Notifier::start(handle.clone());

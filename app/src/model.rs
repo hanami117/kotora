@@ -387,6 +387,9 @@ pub struct State {
     pub sign_in_link: Option<(String, bool)>,
     /// The setup wizard's step (`setup.rs`).
     pub setup: crate::setup::Step,
+    /// The wizard starts with "Which service do you use?" (nothing chosen, no Client ID, no token).
+    /// Stays on through the first run, so Back from Welcome returns to it.
+    pub setup_service: bool,
     /// The page the wizard returns to when closed (Settings for "Set up again").
     pub setup_back: Page,
     pub entries: Vec<Entry>,
@@ -492,6 +495,7 @@ impl State {
             profile: Some(crate::profile::fake()),
             sign_in_link: None,
             setup: crate::setup::Step::Welcome,
+            setup_service: false,
             setup_back: Page::List(Status::Watching),
             entries: fake_entries(),
             rows: Vec::new(),

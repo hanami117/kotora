@@ -583,6 +583,12 @@ The user answered the open questions. These are decided; the rest of this docume
     (Romaji / English / Japanese) is added. The mpv Lua script is dropped: the one-click precise mode
     covers it. `/usr/bin/kot` is free on Arch.
 
+15. **Service choice first (2026-11-16):** the setup wizard begins with "Which service do you use?": a
+    MyAnimeList card that works and an AniList card that is dimmed ("Coming soon"). It is an unnumbered
+    intro; the five numbered steps stay as they were. The choice is saved as `[account] service = "mal"`
+    so v0.3 can branch on it. Someone who already has a Client ID, a token or a saved choice never sees it,
+    and nothing is written to their config. No AniList code until v0.3.
+
 **Players for v0.1:** mpv (IPC socket and MPRIS), VLC (MPRIS on Linux), mpc-qt (MPRIS; `xesam:url`
 unverified), and from Stage 5 all of them (plus Celluloid and Haruna) through their open files on
 Linux. macOS: mpv, IINA, VLC (HTTP interface). MPC-HC is Windows-only. Details in section 5.5.

@@ -25,7 +25,7 @@ use crate::icons;
 use crate::model::{Entry, Handle, Page, State};
 use crate::play::{self, Player};
 use crate::theme::{self, PAL};
-use crate::ui::{button, card, cell, ghost, option};
+use crate::ui::{button, card, cell, field_hint, ghost, option};
 
 /// How often the folders are walked again for changes.
 pub const RESCAN_EVERY: Duration = Duration::from_secs(5 * 60);
@@ -624,7 +624,7 @@ pub fn settings_card(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(if cfg!(target_os = "macos") { "/Volumes/Disk/Anime" } else { "~/Videos/Anime" }, PAL.faint)
+                .placeholder(field_hint(&l.draft, if cfg!(target_os = "macos") { "/Volumes/Disk/Anime" } else { "~/Videos/Anime" }), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.library.draft)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.library.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {

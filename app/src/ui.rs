@@ -431,9 +431,9 @@ pub(crate) fn kbd(label: &str) -> El {
 fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     let width = size[0];
     let page = match s.page {
-        Page::Setup => crate::setup::page(s),
+        Page::Setup => crate::setup::page(s, width),
         // First run: no Client ID, so the wizard is the only thing a list page can show.
-        Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
+        Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s, width),
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),
@@ -558,7 +558,7 @@ fn search_box(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder("Filter your list", PAL.faint)
+                .placeholder(field_hint(&s.query, "Filter your list"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.query)
                 .on_input_change(|s: &mut State, tx: &mut Tx| {
                     tx.instant();
@@ -790,7 +790,7 @@ fn search_view(s: &State, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder("Search your list and MyAnimeList, or paste a MyAnimeList link", PAL.faint)
+                .placeholder(field_hint(&s.find, "Search your list and MyAnimeList, or paste a MyAnimeList link"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
@@ -1537,6 +1537,12 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
 }
 
 // ------------------------------------------------------------------- alerts, sign-in, settings
+
+/// A field's placeholder, empty while the field has focus. Rune draws the caret at the text's
+/// start, right on top of the placeholder's first letter, which then looks cut off.
+pub(crate) fn field_hint(edit: &rune::TextEdit, hint: &str) -> String {
+    if edit.focused { String::new() } else { hint.to_string() }
+}
 
 pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
     let (fg, fill) = match (primary, on.is_some()) {
