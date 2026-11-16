@@ -603,6 +603,38 @@ Later (v0.3, opt-in): AniList's `airingSchedule` has the exact time of each epis
 data); use it for the Airing times after re-checking AniList's terms (clause 5 allows a client of the
 user's own account; a schedule is not the user's list, so it needs a fresh look).
 
+## Library folders and "Play next episode" (branch `library`, 2026-11-16)
+
+Brought forward from v0.3 at the user's request. Built on the Mac; Linux not compiled yet.
+
+- [x] `core::library`: name rules (video extensions; skips samples, extras, NCOP/NCED, OP1/ED2, PV, CM, menus,
+  trailers, hidden files and folders such as `Extras/`, `NC/`, `@eaDir`), a recursive walk (links followed,
+  loops not, 12 levels, 50,000 files), and the `library_file` table (migration 7): size and time per file, so a
+  rescan parses only new or changed names. A folder that is missing, unreadable or empty (an unmounted mount
+  point) is **offline**: its rows stay and nothing is deleted.
+- [x] Matching in memory, once per title and season: `recognize::on_list` with the user's "Wrong anime" picks,
+  sure matches only (plus titles a past MAL search put on the list); anime-relations then moves each episode.
+  No network: a title not on the list is counted as "not matched". A movie with no number is episode 1.
+- [x] Next file: progress + 1; among copies, one in an online folder, of the release group of the episode
+  before, else the newest. "Episode 7 not in your folders", "Episode 23 is on Archive, which is offline",
+  "All episodes watched".
+- [x] `app/src/library.rs`: the `kotora-library` thread (its own connection) scans at start, when folders
+  change, on Rescan and every 5 minutes; matches again after a sync. Results through `update_if` (redraw only
+  on change). Settings → Library: folders with state and Remove, a path field with Add and Choose… (`osascript`
+  on macOS, `zenity`/`kdialog` on Linux), the count of matched files, Rescan, Open with.
+- [x] `app/src/play.rs`: Open with Automatic (the player detection last saw, saved as `[library] last_player`),
+  System default, mpv, IINA (macOS), VLC; only installed ones show. macOS `open [-a App] -- FILE` (Homebrew
+  mpv without an app: the binary); Linux the player's binary or `xdg-open`. The file is checked off the UI
+  thread (a sleeping drive), then the player starts detached.
+- [x] Play: ▶ on Watching (and rewatching) rows when the next file is there; "On your disk" on the details page
+  (which episodes, compact: "1–6, 8"), with Play or the reason; "Up next" on Now Playing while nothing plays.
+- [x] `kot next TITLE`.
+- Scenes: `library-settings`, `library-settings-error`, `library-list`, `library-details`,
+  `library-details-missing`, `library-details-offline`, `library-now-idle`.
+- Not done: a live file watcher (inotify/FSEvents; the 5-minute walk and Rescan cover it), a match for
+  unsure titles ("this folder is X", the corrections UI), a "Wrong anime" pick re-matching at once (it applies
+  at the next pass).
+
 ## Stage 6: release 0.1
 
 - [x] `install.sh` (from Uzumaki's: `~/.local`, desktop file, PNG and SVG icons, `--uninstall`, refuses
@@ -637,7 +669,7 @@ to v0.3.
   - AniList (implicit grant; re-check the terms first) and several accounts
   - AppImage (Ubuntu 22.04 container) and DMG (ad-hoc signed)
   - corrections UI ("this file / folder is X")
-  - library folders and "play next episode"
+  - library folders and "play next episode" (done early: branch `library`, 2026-11-16)
   - opt-in window-title detectors on X11, Hyprland, sway and wlroots
   - Airing: AniList's `airingSchedule` (exact per-episode times, AniChart's data) as an opt-in,
     after re-checking AniList's terms

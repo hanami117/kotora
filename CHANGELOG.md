@@ -15,6 +15,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   shows buttons (KDE, GNOME, …); macOS: in Kotora.app.
 - **Precise detection prompt:** when the player you watch with (mpv, IINA) is seen by its open file only, Now
   Playing offers once to turn on precise detection, with Turn on and Not now.
+- **Library folders and Play next episode:** Settings → Library takes the folders where your anime are (an
+  unplugged drive shows as offline and is never forgotten). Kotora finds the episodes in them, leaves out samples,
+  extras and creditless openings, and links them to your list with the same rules as the playing file. A ▶ on
+  Watching rows, a Play button on the details page and an "Up next" card on Now Playing open the next episode in
+  the player of your choice (Open with: automatic, system default, mpv, IINA, VLC). `kot next TITLE` does the same.
 
 ### Changed
 - **Update automatically asks** instead of recording when the episode would skip one (two or more ahead of your

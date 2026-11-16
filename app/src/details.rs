@@ -599,7 +599,7 @@ fn mine_column(s: &State, d: &Detail) -> El {
             c = c.child(more).child(text("It goes to the sync queue first, then to MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap().pt(10.0));
         }
     }
-    col().gap(16.0).child(c)
+    col().gap(16.0).child(c).children(crate::library::details_block(s, id))
 }
 
 /// The details page.

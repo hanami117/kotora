@@ -424,6 +424,8 @@ pub struct State {
     pub tray: Option<crate::tray::TrayCtl>,
     /// What the last position tick showed (`now::tick`); `None` while nothing ticks.
     pub tick: Option<(bool, u64)>,
+    /// Library folders and "Play next episode" (`library.rs`).
+    pub library: crate::library::Library,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -478,6 +480,7 @@ impl State {
             notes: Default::default(),
             tray: None,
             tick: None,
+            library: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -967,6 +970,11 @@ impl State {
     /// Applies a worker's message. Returns whether anything visible changed.
     /// A worker's message. The tray follows what plays after each one.
     pub fn apply(&mut self, msg: Msg) -> bool {
+        match &msg {
+            Msg::Synced { .. } => crate::library::list_changed(self),
+            Msg::Now(Some(seen)) => crate::library::saw_player(self, &seen.track.playing.player),
+            _ => {}
+        }
         let changed = self.apply_msg(msg);
         self.sync_tray();
         changed

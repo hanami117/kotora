@@ -12,6 +12,7 @@
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
 //! kot add QUERY|ID [--status S]
+//! kot next TITLE  play the next episode from the library folders
 //! kot config client-id ID
 //! kot show       shows the window
 //! kot quit       quits the app
@@ -47,6 +48,8 @@ Commands:
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
   rewatch TITLE|ID      watch a completed anime again from episode 1
+  next TITLE            play the next episode of TITLE from your
+                        library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   MyAnimeList for (it must find one), or its id
   config client-id ID   save your MyAnimeList Client ID
@@ -85,6 +88,7 @@ fn main() -> ExitCode {
             }
         },
         ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
+        ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
             eprintln!("kot: use kot config client-id ID (try kot help)");

@@ -139,6 +139,11 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 Err(message) => Reply::Error { message, anyway: false },
             }
         }
+        Request::Next { title } => reply(on_ui(handle, true, move |s| {
+            let i = s.find(&title)?;
+            let id = s.entries[i].id;
+            crate::library::play_next(s, id).map(|message| Reply::Done { message: format!("{message}.") })
+        })),
         Request::Sync => reply(on_ui(handle, true, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());
