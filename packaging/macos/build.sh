@@ -4,15 +4,26 @@
 # its name and icon, the menu bar its app name, and the login item a real app to start.
 #
 #   packaging/macos/build.sh          → target/macos/Kotora.app (release build)
+#   packaging/macos/build.sh --dmg    the same, and target/macos/Kotora-<release>.dmg (the app and a
+#                                     link to Applications; <release> is the version, plus -<build>
+#                                     from build 2 on). packaging/release.sh uses this.
 #
-# No disk image, no Homebrew, no notarisation, and it installs nothing: open it from the
-# Finder where it is. Needs Rust and librsvg for the icon (`brew install librsvg`).
+# No Homebrew, no notarisation, and it installs nothing: open it from the Finder where it is. Needs Rust and librsvg for the icon (`brew install librsvg`).
 # Based on Uzumaki's packaging/macos/build.sh.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 say() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 die() { printf 'build.sh: %s\n' "$*" >&2; exit 1; }
+
+dmg=0
+while (($#)); do
+    case "$1" in
+        --dmg) dmg=1 ;;
+        *) die "unknown option '$1' (only --dmg)" ;;
+    esac
+    shift
+done
 
 [[ $(uname -s) == Darwin ]] || die "run this on a Mac"
 command -v rsvg-convert >/dev/null || die "rsvg-convert is missing (brew install librsvg)"
@@ -26,6 +37,8 @@ build=$(tr -d '[:space:]' <BUILD)
 target=${CARGO_TARGET_DIR:-target}
 app=$target/macos/Kotora.app
 
+# The update check counts a bundle as the DMG's copy (core/src/update.rs, `build_channel`).
+export KOTORA_CHANNEL=${KOTORA_CHANNEL:-dmg}
 say "Building Kotora $version (build $build, release)"
 cargo build --release --locked -p kotora -p kotora-ctl
 bin=$target/release
@@ -80,6 +93,19 @@ say "Signing (ad hoc)"
 codesign --force --sign - "$app/Contents/MacOS/kot"
 codesign --force --sign - "$app"
 codesign --verify --strict "$app" || die "the bundle's signature doesn't verify"
+
+if ((dmg)); then
+    if ((build == 1)); then release=$version; else release=$version-$build; fi
+    image=$target/macos/Kotora-$release.dmg
+    say "Making $image"
+    stage=$work/dmg
+    mkdir "$stage"
+    ditto "$app" "$stage/Kotora.app"
+    ln -s /Applications "$stage/Applications"
+    rm -f "$image"
+    hdiutil create -quiet -volname Kotora -srcfolder "$stage" -format UDZO -ov "$image"
+    say "Done: $(du -sh "$image" | cut -f1) $image"
+fi
 
 say "Done: $(du -sh "$app" | cut -f1) $app"
 say "Open it from the Finder (open $app). Quit any other running Kotora first (kot quit)."

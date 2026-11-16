@@ -17,7 +17,7 @@ mkdir -p "$out"
 docker build -q -t kot-linux-check "$here" >/dev/null
 docker run --rm -v "$src":/src:ro -v "$out":/out \
   -v kot-linux-cargo:/cargo -v kot-linux-target:/target \
-  -e STEPS="$steps" -e WGPU_BACKEND="${WGPU_BACKEND:-gl}" kot-linux-check sh -c '
+  -e STEPS="$steps" -e WGPU_BACKEND="${WGPU_BACKEND:-gl}" -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}" kot-linux-check sh -c '
 set -u
 fail=0
 mkdir -p /work "$HOME" && rsync -a --delete --exclude .git --exclude target /src/ /work/
