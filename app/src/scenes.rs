@@ -1756,7 +1756,8 @@ mod tests {
     fn alt_digits_go_to_the_list_pages_even_from_a_field() {
         use kotora_core::Status;
         let rt = render("settings-keys-alt", (1280.0, 800.0));
-        for key in ["set/row/page-keys", "set/page-keys/ctrl", "set/page-keys/alt"] {
+        let primary = format!("set/page-keys/{}", kotora_core::config::PageKeys::Primary.key());
+        for key in ["set/row/page-keys", primary.as_str(), "set/page-keys/alt"] {
             assert!(rt.find(key).is_some(), "{key}");
         }
         let mut s = State::fake();
