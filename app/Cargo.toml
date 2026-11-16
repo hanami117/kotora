@@ -23,3 +23,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # WebP covers (MAL serves some as `.webp`): the pure-Rust decoder alone (MIT OR Apache-2.0).
 # `image`'s own `webp` feature links the encoder too: +0.56 MB stripped against +0.23 MB this way.
 image-webp = "0.2"
+
+# macOS only, on the objc2 0.6 stack Rune already builds (no extra frameworks): the menu bar's
+# About panel and app-menu tidy (menu_bar.rs) and the menu bar icon (tray_mac.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSDictionary", "NSData", "NSGeometry", "NSObject"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSImage", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView"] }

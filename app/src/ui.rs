@@ -19,6 +19,8 @@ use crate::queue::Cmd;
 use crate::theme::{self, PAL};
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    #[cfg(target_os = "macos")]
+    crate::menu_bar::sync();
     // The type column hides below 1100 pt (design-spec §3).
     let wide = cx.layout_size("root").is_none_or(|[w, _]| w >= theme::NARROW_W);
     // macOS draws the traffic lights over the window's top-left (Rune's full-size content), so the
@@ -83,6 +85,17 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
 }
 
 // ------------------------------------------------------------------------------------ sidebar
+
+/// Opens a page as its sidebar item does (also the macOS Go menu).
+pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
+    // A new page replaces the old one at once; rows don't swim.
+    tx.instant();
+    match page {
+        Page::Search => s.open_search(),
+        Page::Airing => s.open_airing(),
+        _ => s.go(page),
+    }
+}
 
 /// `chrome_top`: the traffic-light band's height (macOS), or 0 where the system draws the frame.
 fn sidebar(s: &State, chrome_top: f32) -> El {
@@ -285,15 +298,7 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .radius(theme::R_SM)
         .hover(PAL.hover())
         .press(PAL.press())
-        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
-            // A new page replaces the old one at once; rows don't swim.
-            tx.instant();
-            match page {
-                Page::Search => s.open_search(),
-                Page::Airing => s.open_airing(),
-                _ => s.go(page),
-            }
-        })
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| go_to(s, page, tx))
         .child(mark)
         .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
         .child(spacer());

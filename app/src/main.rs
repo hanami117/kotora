@@ -17,6 +17,8 @@ mod details;
 mod icons;
 #[cfg(target_os = "macos")]
 mod iina;
+#[cfg(target_os = "macos")]
+mod menu_bar;
 mod model;
 mod now;
 mod online;
@@ -99,11 +101,12 @@ fn main() {
     };
     let app = App::new(spec).tab_visits_controls(true).on_frame_encoded(log_first_frame());
     // macOS: the traffic lights pinned in a band at the sidebar's top (`theme::TRAFFIC_LIGHTS`),
-    // clear of the logo. Linux keeps the desktop's frame and is not touched.
+    // clear of the logo, and the menu bar: Rune's standard Edit and Window menus plus Kotora's
+    // own items (`menu_bar.rs`). Linux keeps the desktop's frame and is not touched.
     #[cfg(target_os = "macos")]
-    let app = app
-        .chrome(rune::Chrome { traffic_lights: Some(theme::TRAFFIC_LIGHTS), ..rune::Chrome::DEFAULT })
-        .standard_menus();
+    let app = menu_bar::install(
+        app.chrome(rune::Chrome { traffic_lights: Some(theme::TRAFFIC_LIGHTS), ..rune::Chrome::DEFAULT }).standard_menus(),
+    );
 
     // Headless (`--snap`, `--tree`, `--script`): no socket, no single-instance check, nothing
     // that touches the user's setup.
