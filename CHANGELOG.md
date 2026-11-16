@@ -27,6 +27,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   the player of your choice (Open with: automatic, system default, mpv, IINA, VLC). `kot next TITLE` does the same.
 
 ### Changed
+- **macOS: the system's parts follow Kotora's theme.** With Theme set to Light or Dark, the traffic lights, title
+  bar, menus, tooltips and the library's Choose… panel (now AppKit's own folder panel) take that theme too;
+  System follows macOS.
 - **Update automatically asks** instead of recording when the episode would skip one (two or more ahead of your
   progress) or hasn't aired yet by the estimate. The banner and `kot now` say why.
 

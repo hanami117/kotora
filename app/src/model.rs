@@ -911,6 +911,7 @@ impl State {
             return;
         }
         self.prefs.theme = theme;
+        crate::chrome::follow(theme);
         crate::detect::save_setting(self, "display", "theme", kotora_core::config::quote(theme.key()));
     }
 

@@ -11,6 +11,7 @@
 mod airing;
 mod airnotes;
 mod art;
+mod chrome;
 mod autostart;
 mod clientid;
 mod ctl;
@@ -94,6 +95,8 @@ thread_local! {
 #[cfg(target_os = "macos")]
 fn on_window(handle: &rune::WindowHandle) {
     WINDOW.with(|w| *w.borrow_mut() = Some(handle.clone()));
+    // The chrome's appearance (traffic lights, panels, menus) and the palette first.
+    chrome::on_window();
     paint_window_bg(handle);
 }
 
@@ -235,6 +238,8 @@ fn main() {
         // Players: sources and recognition on their own threads, event driven.
         detect::start(&mut s);
         library::start(&mut s);
+        // macOS: the chrome follows a forced theme, before the window shows (`chrome.rs`).
+        chrome::follow(s.prefs.theme);
         // Started airing and New episode notifications, from the saved list (no requests).
         airnotes::start(&mut s);
         // macOS: the old LaunchAgent moves over to the login item, once (a worker thread; never

@@ -269,10 +269,27 @@ fn add_typed(s: &mut State) {
     }
 }
 
-/// Choose…: the system's folder picker, on a thread (`osascript` on macOS, `zenity` or `kdialog`
-/// on Linux).
+/// Choose…: the system's folder picker (macOS: an `NSOpenPanel` sheet; Linux: `zenity` or
+/// `kdialog` on a thread).
 fn choose(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
+    // macOS: AppKit's own panel, in this process, so it follows Kotora's theme (`chrome.rs`).
+    #[cfg(target_os = "macos")]
+    {
+        let r = crate::chrome::pick_folder(PROMPT, move |picked| {
+            let Some(p) = picked else { return };
+            h.update_if(move |s, _| {
+                if let Err(e) = add_folder(s, &p) {
+                    s.library.error = Some(e);
+                }
+                true
+            });
+        });
+        if let Err(e) = r {
+            s.library.error = Some(e);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
     let _ = std::thread::Builder::new().name("kotora-choose".into()).spawn(move || {
         let picked = pick_folder();
         h.update_if(move |s, _| {
@@ -290,12 +307,12 @@ fn choose(s: &mut State) {
     });
 }
 
+#[cfg(target_os = "macos")]
+const PROMPT: &str = "Choose a folder with anime in it";
+
+#[cfg(not(target_os = "macos"))]
 fn pick_folder() -> Result<Option<String>, String> {
-    let tries: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
-        &[("osascript", &["-e", "POSIX path of (choose folder with prompt \"Choose a folder with anime in it\")"])]
-    } else {
-        &[("zenity", &["--file-selection", "--directory", "--title=Choose a folder with anime in it"]), ("kdialog", &["--getexistingdirectory", "--title", "Choose a folder with anime in it"])]
-    };
+    let tries: &[(&str, &[&str])] = &[("zenity", &["--file-selection", "--directory", "--title=Choose a folder with anime in it"]), ("kdialog", &["--getexistingdirectory", "--title", "Choose a folder with anime in it"])];
     for (prog, args) in tries {
         match std::process::Command::new(prog).args(*args).stdin(std::process::Stdio::null()).output() {
             Ok(out) if out.status.success() => {
