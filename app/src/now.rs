@@ -4,7 +4,9 @@
 //! The flow: a file passes the threshold ([`Msg::Reached`](crate::model::Msg)) → the banner asks
 //! "Update to N?" and a desktop notification says the same. Update (or `kot confirm`) queues the
 //! progress through the sync queue, like `+1`. With "Update automatically" on (off by default),
-//! a sure match is queued at once and the banner offers Undo; an unsure one still asks.
+//! a sure match is queued at once and the banner offers Undo; an unsure one still asks, and so
+//! does one that would skip an episode or that hasn't aired yet by the estimate
+//! ([`State::offer_note`]).
 
 use kotora_core::recognize::{Found, Parsed};
 use kotora_core::{Change, Status};
@@ -302,6 +304,18 @@ impl State {
         Some((i, ep))
     }
 
+    /// Why the offer asks even with "Update automatically" on: "Episode 9 hasn't aired yet
+    /// (expected Sat Nov 21, 15:30)", or "Skips episode 7" (two or more ahead of the progress).
+    pub fn offer_note(&self) -> Option<String> {
+        let (i, ep) = self.offer()?;
+        let e = &self.entries[i];
+        if let Some(na) = self.not_aired(e.id, &Change { progress: Some(ep), ..Default::default() }) {
+            return Some(format!("Episode {ep} hasn't aired yet{}", self.expected_text(na.expected)));
+        }
+        let (a, b) = kotora_core::recognize::skipped(e.progress, ep)?;
+        Some(if a == b { format!("Skips episode {a}") } else { format!("Skips episodes {a}\u{2013}{b}") })
+    }
+
     /// "Watching it again?": a completed entry plays, with the episode a rewatch starts at.
     pub fn rewatch_offer(&self) -> Option<(usize, u32)> {
         let now = self.now.as_ref()?;
@@ -414,8 +428,10 @@ impl State {
         };
         let title = self.entries[i].title.clone();
         // A player seen by its open file only knows no position or pause: the time open is a
-        // guess, so it always asks, even with "Update automatically" on.
-        let auto = may_record && self.prefs.auto && now.sure() && now.via != crate::precise::VIA_PROCESS;
+        // guess, so it always asks, even with "Update automatically" on. So does an episode that
+        // would skip one, or that hasn't aired yet by the estimate.
+        let note = self.offer_note();
+        let auto = may_record && self.prefs.auto && now.sure() && now.via != crate::precise::VIA_PROCESS && note.is_none();
         if let Some(n) = &mut self.now {
             n.acted = true;
         }
@@ -425,7 +441,11 @@ impl State {
             }
         } else {
             let q = if self.now.as_ref().is_some_and(Now::sure) { "Update" } else { "Not sure: update" };
-            crate::detect::notify(&format!("{q} {title} to episode {ep}?"), "Open Kotora, or run kot confirm.", self.handle.is_some());
+            let body = match note {
+                Some(n) => format!("{n}. Open Kotora, or run kot confirm."),
+                None => "Open Kotora, or run kot confirm.".into(),
+            };
+            crate::detect::notify(&format!("{q} {title} to episode {ep}?"), &body, self.handle.is_some());
         }
     }
 
@@ -587,6 +607,7 @@ impl State {
             episode: n.episode(),
             matched,
             offer: if n.recorded.is_some() { None } else { self.offer().map(|(_, ep)| ep) },
+            note: if n.recorded.is_some() { None } else { self.offer_note().map(|t| format!("{t}: Kotora asks before it records.")) },
             reached: n.reached,
             recorded: n.recorded.map(|r| r.episode),
             dismissed: n.dismissed,
@@ -938,6 +959,81 @@ mod tests {
         s.now_seen(Some(v));
         assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 5, "process: asks");
         assert!(s.banner() && s.now.as_ref().unwrap().recorded.is_none());
+    }
+
+    /// "Update automatically" never skips an episode: a sure match two or more ahead of the
+    /// progress asks, and the banner and `kot now` say why. The next episode still records.
+    #[test]
+    fn auto_asks_when_it_would_skip_an_episode() {
+        let mut s = fresh();
+        s.prefs.auto = true;
+        // Lanterns of Kirigaoka (id 0) is at 5: episode 7 skips 6.
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 07.mkv", Some(0), true, true)));
+        assert_eq!(progress(&s), 5, "asked, not recorded");
+        assert!(s.banner() && s.now.as_ref().unwrap().recorded.is_none());
+        assert_eq!(s.offer_note().as_deref(), Some("Skips episode 6"));
+        assert_eq!(s.ctl_now().unwrap().note.as_deref(), Some("Skips episode 6: Kotora asks before it records."));
+        // Update records it as asked.
+        s.record(false).unwrap();
+        assert_eq!(progress(&s), 7);
+        // Three ahead: a range.
+        let mut s = fresh();
+        s.prefs.auto = true;
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 09.mkv", Some(0), true, true)));
+        assert_eq!((progress(&s), s.offer_note().as_deref()), (5, Some("Skips episodes 6\u{2013}8")));
+        // The next episode: recorded as before, no note.
+        let mut s = fresh();
+        s.prefs.auto = true;
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        assert_eq!(progress(&s), 6);
+        assert!(s.now.as_ref().unwrap().recorded.is_some_and(|r| r.auto));
+    }
+
+    /// Detection never records an episode past the airing estimate by itself: it asks, and says
+    /// it hasn't aired yet. Asking (the banner's Update) still records it.
+    #[test]
+    fn detection_asks_for_an_episode_not_aired_yet() {
+        let mut s = fresh();
+        s.prefs.auto = true;
+        crate::model::airing_entry(&mut s, 0, 5);
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        assert_eq!(progress(&s), 5, "not recorded by itself");
+        assert!(s.banner());
+        let note = s.offer_note().unwrap();
+        assert!(note.starts_with("Episode 6 hasn't aired yet (expected "), "{note}");
+        s.record(false).unwrap();
+        assert_eq!(progress(&s), 6);
+        // Aired: recorded automatically as before.
+        let mut s = fresh();
+        s.prefs.auto = true;
+        crate::model::airing_entry(&mut s, 0, 6);
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        assert_eq!((progress(&s), s.offer_note()), (6, None));
+    }
+
+    /// "Not on your list": one button adds the anime as Watching at the playing episode, in one
+    /// queued change; the banner says it was recorded.
+    #[test]
+    fn add_as_watching_at_the_playing_episode() {
+        let mut s = fresh();
+        let mut v = seen("Velvet Comet - 04.mkv", None, true, true);
+        v.found = Found::NotOnList { media_id: 9001, title: "Velvet Comet".into() };
+        s.now_seen(Some(v));
+        s.add_playing();
+        let e = s.entries.iter().find(|e| e.id == 9001).expect("added");
+        assert_eq!((e.status, e.progress, e.waiting), (Status::Watching, 4, Some("Waiting to sync")));
+        let n = s.now.as_ref().unwrap();
+        assert_eq!(n.media_id(), Some(9001), "the file counts as this anime now");
+        assert!(n.recorded.is_some_and(|r| r.episode == 4 && !r.auto));
+        assert!(s.banner() && s.offer().is_none(), "Recorded, nothing more to offer");
+        // No episode in the name: added at 0, and the offer follows as usual.
+        let mut s = fresh();
+        let mut v = seen("Velvet Comet.mkv", None, true, false);
+        v.found = Found::NotOnList { media_id: 9001, title: "Velvet Comet".into() };
+        s.now_seen(Some(v));
+        s.add_playing();
+        assert_eq!(s.entries.iter().find(|e| e.id == 9001).unwrap().progress, 0);
+        assert!(s.now.as_ref().unwrap().recorded.is_none());
     }
 
     #[test]

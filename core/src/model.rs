@@ -3,7 +3,7 @@
 use crate::Status;
 
 /// An anime, as far as Kotora keeps it: only media on the user's list (no hoarding).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Media {
     /// The service's id (MyAnimeList id in v0.1).
     pub id: u32,

@@ -199,7 +199,7 @@ pub struct Answer {
 }
 
 impl Airing {
-    fn clock(&self, t: i64) -> Clock {
+    pub(crate) fn clock(&self, t: i64) -> Clock {
         match self.tz {
             Some(o) => Clock::at(t, o),
             None => Clock::local(t),

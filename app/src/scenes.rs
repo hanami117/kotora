@@ -166,6 +166,18 @@ pub const SCENES: &[Scene] = &[
     ("list-plus-one", |s| {
         let _ = s.plus_one(4);
     }),
+    // `+1` on an airing entry whose next episode hasn't aired yet (estimate): "Mark anyway?".
+    ("list-plus-one-not-aired", |s| {
+        crate::model::airing_entry(s, 0, 5);
+        let _ = s.plus_one_or_ask(0);
+    }),
+    // The editor saved two episodes ahead of the estimate: it stays open under the question.
+    ("list-editor-not-aired", |s| {
+        crate::model::airing_entry(s, 0, 5);
+        s.toggle_editor(0);
+        s.editor_step(2);
+        let _ = s.save_editor();
+    }),
     // An entry with no episode count (still airing): `?` and no upper bound.
     ("list-editor-unknown-count", |s| {
         if let Some(e) = s.entries.iter_mut().find(|e| e.id == 6) {
@@ -190,6 +202,18 @@ pub const SCENES: &[Scene] = &[
     // "Update automatically" on: recorded at once, Undo in the banner.
     ("now-playing-recorded", |s| {
         s.prefs.auto = true;
+        reached(s);
+    }),
+    // "Update automatically" on, but episode 7 plays at progress 5: it asks, and says why.
+    ("now-playing-offer-skip", |s| {
+        s.prefs.auto = true;
+        playing_file(s, "[Hoshi] Lanterns of Kirigaoka - 07 (1080p).mkv");
+        reached(s);
+    }),
+    // "Update automatically" on, but episode 6 hasn't aired yet by the estimate: it asks.
+    ("now-playing-offer-not-aired", |s| {
+        s.prefs.auto = true;
+        crate::model::airing_entry(s, 0, 5);
         reached(s);
     }),
     // A close title, not the same: "Not sure", and the banner says so.
@@ -229,6 +253,15 @@ pub const SCENES: &[Scene] = &[
         if let Some(n) = &mut s.now {
             n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
         }
+        s.go(Page::NowPlaying);
+    }),
+    // "Add as Watching at episode 2" pressed: added and recorded in one change, Undo in the banner.
+    ("now-playing-not-on-list-added", |s| {
+        playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
+        if let Some(n) = &mut s.now {
+            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+        }
+        s.add_playing();
         s.go(Page::NowPlaying);
     }),
     // anime-relations moved episode 15 of a season to its second part, which isn't on the list.
@@ -922,6 +955,17 @@ mod tests {
         let rt = render("now-playing-picking", (1280.0, 800.0));
         assert!(rt.find("np-picker").is_some() && rt.find("pick/0").is_some() && rt.find("pick/none").is_some());
         assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-not-on-list").is_some());
+        // Asked first: skips an episode, or not aired yet. The note shows; nothing was recorded.
+        for name in ["now-playing-offer-skip", "now-playing-offer-not-aired"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("banner/update").is_some() && rt.find("banner/note").is_some() && rt.find("banner/undo").is_none(), "{name}");
+        }
+        let rt = render("now-playing-not-on-list-added", (1280.0, 800.0));
+        assert!(rt.find("banner/undo").is_some() && rt.find("np-not-on-list").is_none());
+        for name in ["list-plus-one-not-aired", "list-editor-not-aired"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("ask/anyway").is_some() && rt.find("ask/cancel").is_some(), "{name}");
+        }
         let rt = render("now-playing-unknown", (1280.0, 800.0));
         assert!(rt.find("np/update").is_none() && rt.find("np-card").is_some());
         let rt = render("now-playing-empty", (1280.0, 800.0));

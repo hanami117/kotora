@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use kotora_core::airing::{NotAired, Timetable};
 use kotora_core::config::TitleLang;
 use kotora_core::queue::{Op, OpState};
 use kotora_core::{Change, ListItem, Media, Remote, Status, Values};
@@ -76,6 +77,18 @@ pub enum Air {
     Finished,
     Upcoming,
     Unknown,
+}
+
+impl Air {
+    /// MyAnimeList's `status` of the anime.
+    pub fn mal_name(self) -> &'static str {
+        match self {
+            Air::Airing => "currently_airing",
+            Air::Finished => "finished_airing",
+            Air::Upcoming => "not_yet_aired",
+            Air::Unknown => "",
+        }
+    }
 }
 
 /// How the list is ordered.
@@ -152,6 +165,8 @@ pub struct Entry {
     pub waiting: Option<&'static str>,
     /// The service's cover image (`None` in the fake list, and for shows without one).
     pub cover_url: Option<String>,
+    /// When its episodes air, estimated (start date and weekly slot); `None` when unknown.
+    pub timetable: Option<Timetable>,
 }
 
 /// MAL's `media_type` as the Type column writes it.
@@ -199,6 +214,7 @@ impl Entry {
             times_rewatched: it.times_rewatched,
             waiting: None,
             cover_url: m.cover_url.clone(),
+            timetable: Timetable::of_media(m),
         }
     }
 
@@ -252,6 +268,17 @@ impl Entry {
             _ => 0.0,
         }
     }
+}
+
+/// An edit held for "Mark anyway": its episode hasn't aired yet by the estimate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ask {
+    pub id: u32,
+    pub change: Change,
+    /// "Episode 9 of Lanterns of Kirigaoka hasn't aired yet (expected Sat Nov 21, 15:30)."
+    pub question: String,
+    /// From the inline editor: it closes once the edit is made.
+    pub editor: bool,
 }
 
 /// The inline editor's draft: nothing is queued until Save.
@@ -350,6 +377,8 @@ pub struct State {
     pub ops: Vec<Op>,
     /// The row whose inline editor is open, and its draft.
     pub editor: Option<Editor>,
+    /// "Mark anyway?" for an episode that hasn't aired yet (`+1`, the editor).
+    pub ask: Option<Ask>,
     /// The queue's worker thread (`queue.rs`); runs only while there is work.
     pub worker: Arc<Worker>,
     pub offline: bool,
@@ -422,6 +451,7 @@ impl State {
             queue: 0,
             ops: fake_ops(),
             editor: None,
+            ask: None,
             worker: Arc::default(),
             offline: false,
             synced_at: Some(FAKE_NOW - 120),
@@ -637,21 +667,29 @@ impl State {
     /// (the list shows it at once, waiting to sync) and queues the add. One already on the list
     /// gets the status instead. Returns the entry's index.
     pub fn add_media(&mut self, media: Media, status: Status) -> Result<usize, String> {
+        self.add_media_at(media, status, None)
+    }
+
+    /// [`State::add_media`] at an episode: added and recorded in one change ("Add as Watching at
+    /// episode N").
+    pub fn add_media_at(&mut self, media: Media, status: Status, episode: Option<u32>) -> Result<usize, String> {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
         if self.entries.iter().any(|e| e.id == media.id) {
-            return self.edit(media.id, Change { status: Some(status), ..Default::default() });
+            return self.edit(media.id, Change { status: Some(status), progress: episode, ..Default::default() });
         }
-        let progress = match (status, media.episodes) {
-            (Status::Completed, Some(n)) => n,
+        let progress = match (status, media.episodes, episode) {
+            (Status::Completed, Some(n), _) => n,
+            (_, Some(n), Some(p)) => p.min(n),
+            (_, None, Some(p)) => p,
             _ => 0,
         };
         let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock() };
         let mut e = Entry::from_item(&item, self.prefs.titles);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
-        crate::queue::send(self, Cmd::Add { media, status });
+        crate::queue::send(self, Cmd::Add { media: Box::new(media), status, progress: episode });
         self.refresh();
         Ok(self.entries.len() - 1)
     }
@@ -666,12 +704,84 @@ impl State {
 
     /// `+1`: optimistic, at once (design-spec §6).
     pub fn plus_one(&mut self, id: u32) -> Result<usize, String> {
+        let change = self.plus_one_change(id)?;
+        self.edit(id, change)
+    }
+
+    fn plus_one_change(&self, id: u32) -> Result<Change, String> {
         let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
         if e.episodes.is_some_and(|n| e.progress >= n) {
             return Err(format!("{} is at its last episode.", e.title));
         }
-        let p = e.progress + 1;
-        self.edit(id, Change { progress: Some(p), ..Default::default() })
+        Ok(Change { progress: Some(e.progress + 1), ..Default::default() })
+    }
+
+    /// The row's `+1`: an episode that hasn't aired yet by the estimate asks first ("Mark
+    /// anyway?"); anything else is [`State::plus_one`].
+    pub fn plus_one_or_ask(&mut self, id: u32) -> Result<(), String> {
+        let change = self.plus_one_change(id)?;
+        self.edit_or_ask(id, change, false)
+    }
+
+    /// The episode a change marks, when it hasn't aired yet by the estimate (and is not past the
+    /// count: that is refused by [`State::edit`]).
+    pub fn not_aired(&self, id: u32, change: &Change) -> Option<NotAired> {
+        let e = self.entries.iter().find(|e| e.id == id)?;
+        let p = change.progress?;
+        if e.episodes.is_some_and(|n| p > n) {
+            return None;
+        }
+        kotora_core::airing::not_aired(e.air.mal_name(), e.timetable, e.progress, p, self.clock())
+    }
+
+    /// "Episode 9 of Lanterns of Kirigaoka hasn't aired yet (expected Sat Nov 21, 15:30)." for a
+    /// change that marks an episode not aired yet; `None` for any other change.
+    pub fn not_aired_text(&self, id: u32, change: &Change) -> Option<String> {
+        let na = self.not_aired(id, change)?;
+        let title = &self.entries.iter().find(|e| e.id == id)?.title;
+        Some(format!("Episode {} of {title} hasn't aired yet{}.", na.episode, self.expected_text(na.expected)))
+    }
+
+    /// " (expected Sat Nov 21, 15:30)" in the user's zone, or nothing.
+    pub fn expected_text(&self, at: Option<i64>) -> String {
+        match at {
+            Some(t) => {
+                const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                let c = self.airing.clock(t);
+                let day = kotora_core::airing::DAY_SHORT[usize::from(c.weekday % 7)];
+                format!(" (expected {day} {} {}, {})", MONTHS[(c.month as usize).clamp(1, 12) - 1], c.date, c.hhmm())
+            }
+            None => String::new(),
+        }
+    }
+
+    /// An edit by hand that may mark an episode not aired yet: held in [`State::ask`] until
+    /// "Mark anyway" ([`State::mark_anyway`]) or Cancel. Other edits go through at once.
+    pub fn edit_or_ask(&mut self, id: u32, change: Change, editor: bool) -> Result<(), String> {
+        match self.not_aired_text(id, &change) {
+            Some(question) => {
+                self.ask = Some(Ask { id, change, question, editor });
+                Ok(())
+            }
+            None => {
+                self.ask = None;
+                self.edit(id, change)?;
+                if editor {
+                    self.editor = None;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// "Mark anyway": the held edit goes through.
+    pub fn mark_anyway(&mut self) -> Result<(), String> {
+        let Some(a) = self.ask.take() else { return Ok(()) };
+        self.edit(a.id, a.change)?;
+        if a.editor {
+            self.editor = None;
+        }
+        Ok(())
     }
 
     // ------------------------------------------------------------------------- inline editor
@@ -733,9 +843,7 @@ impl State {
             return Ok(());
         };
         let change = Change { status: Some(ed.status), progress: Some(ed.progress), score: Some(ed.score), ..Default::default() }.without_same(&e.values());
-        self.edit(ed.id, change)?;
-        self.editor = None;
-        Ok(())
+        self.edit_or_ask(ed.id, change, true)
     }
 
     // --------------------------------------------------------------------------------- queue
@@ -1209,6 +1317,7 @@ fn fake_entries() -> Vec<Entry> {
             times_rewatched: u32::from(f.rewatching),
             waiting: None,
             cover_url: None,
+            timetable: None,
         })
         .collect();
     const UPDATED: [&str; 6] = ["3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year"];
@@ -1247,11 +1356,24 @@ fn fake_entries() -> Vec<Entry> {
                 times_rewatched: 0,
                 waiting: None,
                 cover_url: None,
+                timetable: None,
             });
             id += 1;
         }
     }
     out
+}
+
+/// Scenes and tests: entry `id` airs weekly, with `aired` episodes out at the fake clock (the
+/// next one in an hour less than a week).
+pub(crate) fn airing_entry(s: &mut State, id: u32, aired: u32) {
+    use kotora_core::airing::WEEK;
+    let now = s.clock();
+    let e = s.entries.iter_mut().find(|e| e.id == id).expect("entry");
+    // `aired` 0: not yet aired, the first in an hour.
+    let first = if aired == 0 { now + 3600 } else { now - i64::from(aired - 1) * WEEK - 3600 };
+    e.air = if aired == 0 { Air::Upcoming } else { Air::Airing };
+    e.timetable = Some(Timetable { first, episodes: e.episodes, shift: 0, until: None });
 }
 
 #[cfg(test)]
@@ -1558,5 +1680,63 @@ mod tests {
         assert!(s.loading, "nothing saved yet: keep the skeleton");
         s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, picture: None, synced_at: Some(1), ops: vec![] });
         assert!(!s.loading);
+    }
+
+    /// Not aired yet by the estimate: `+1` and the editor ask "Mark anyway?"; nothing changes
+    /// until then. Past the count stays a hard no.
+    #[test]
+    fn an_episode_not_aired_yet_asks_first() {
+        let mut s = State::fake();
+        // Lanterns of Kirigaoka (id 0): 5 of 12, 5 aired.
+        airing_entry(&mut s, 0, 5);
+        let p = |s: &State| s.entries.iter().find(|e| e.id == 0).unwrap().progress;
+        s.plus_one_or_ask(0).unwrap();
+        let a = s.ask.clone().expect("asks");
+        assert!(a.question.starts_with("Episode 6 of Lanterns of Kirigaoka hasn't aired yet (expected "), "{}", a.question);
+        assert_eq!(p(&s), 5, "nothing changes yet");
+        s.ask = None;
+        assert_eq!(p(&s), 5, "Cancel: nothing");
+        s.plus_one_or_ask(0).unwrap();
+        s.mark_anyway().unwrap();
+        assert_eq!((p(&s), s.ask.is_none()), (6, true), "Mark anyway");
+        // The editor: Save asks, the editor stays open; Mark anyway saves and closes it.
+        s.toggle_editor(0);
+        s.editor_step(2);
+        s.save_editor().unwrap();
+        assert!(s.ask.as_ref().is_some_and(|a| a.editor && a.question.starts_with("Episode 8 ")));
+        assert!(s.editor.is_some() && p(&s) == 6);
+        s.mark_anyway().unwrap();
+        assert!(s.editor.is_none() && p(&s) == 8);
+        // A score or a status alone never asks.
+        s.toggle_editor(0);
+        s.editor_score(Some(7));
+        s.save_editor().unwrap();
+        assert!(s.ask.is_none() && s.editor.is_none());
+        // Past the count: refused, not asked.
+        assert!(s.edit_or_ask(0, Change { progress: Some(13), ..Default::default() }, false).unwrap_err().contains("12 episodes"));
+        assert!(s.ask.is_none());
+    }
+
+    #[test]
+    fn aired_episodes_and_finished_shows_never_ask() {
+        let mut s = State::fake();
+        airing_entry(&mut s, 0, 7);
+        s.plus_one_or_ask(0).unwrap();
+        assert!(s.ask.is_none(), "episode 6 aired");
+        assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 6);
+        // No slot known (the fake list), or finished: no estimate, no question.
+        let mut s = State::fake();
+        s.plus_one_or_ask(1).unwrap();
+        assert!(s.ask.is_none());
+        airing_entry(&mut s, 0, 5);
+        s.entries.iter_mut().find(|e| e.id == 0).unwrap().air = Air::Finished;
+        s.plus_one_or_ask(0).unwrap();
+        assert!(s.ask.is_none());
+        // Not yet aired at all: episode 1 asks.
+        let mut s = State::fake();
+        s.edit(0, Change { progress: Some(0), ..Default::default() }).unwrap();
+        airing_entry(&mut s, 0, 0);
+        s.plus_one_or_ask(0).unwrap();
+        assert!(s.ask.as_ref().is_some_and(|a| a.question.starts_with("Episode 1 ")));
     }
 }

@@ -162,25 +162,33 @@ impl State {
         self.fetch_details(id);
     }
 
-    /// Now Playing, "Not on your list": add it as Watching, and from then on the file counts as
-    /// this anime (as a pick in "Wrong anime…").
+    /// Now Playing, "Not on your list": add it as Watching at the playing episode (add and
+    /// record in one change; no episode in the name: at 0), and from then on the file counts as
+    /// this anime (as a pick in "Wrong anime…"). The banner says it was recorded, with Undo.
     pub fn add_playing(&mut self) {
-        let Some(kotora_core::recognize::Found::NotOnList { media_id, title }) = self.now.as_ref().map(|n| n.found.clone()) else { return };
-        let media = kotora_core::Media {
-            id: media_id,
-            title,
-            title_en: None,
-            title_ja: None,
-            synonyms: vec![],
-            episodes: None,
-            format: String::new(),
-            air_status: String::new(),
-            cover_url: None,
-            start_date: None,
-            broadcast: None,
-        };
-        match self.add_media(media, Status::Watching) {
-            Ok(_) => self.pick_anime(media_id),
+        let Some(n) = self.now.as_ref() else { return };
+        let kotora_core::recognize::Found::NotOnList { media_id, title } = n.found.clone() else { return };
+        let episode = n.episode().filter(|ep| *ep > 0);
+        let media = kotora_core::Media { id: media_id, title, ..Default::default() };
+        match self.add_media_at(media, Status::Watching, episode) {
+            Ok(_) => {
+                self.pick_anime(media_id);
+                if let (Some(ep), Some(n)) = (episode, &mut self.now) {
+                    n.recorded = Some(crate::now::Recorded {
+                        id: media_id,
+                        episode: ep,
+                        old_progress: 0,
+                        old_status: Status::Watching,
+                        completed: false,
+                        auto: false,
+                        old_rewatching: false,
+                        old_times: 0,
+                        rewatch: false,
+                    });
+                    n.acted = true;
+                    n.dismissed = false;
+                }
+            }
             Err(e) => self.error = Some(e),
         }
     }

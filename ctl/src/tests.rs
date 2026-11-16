@@ -28,19 +28,24 @@ fn wire_format_is_readable() {
         text,
         r#"{"reply":"status","version":"0.1.0 (build 1)","account":"demo_user","service":"MyAnimeList","entries":303,"queue":4,"offline":false,"window":true}"#
     );
-    let err = Reply::Error { message: "nope".into() };
+    let err = Reply::Error { message: "nope".into(), anyway: false };
     assert_eq!(serde_json::to_string(&err).unwrap(), r#"{"reply":"error","message":"nope"}"#);
+    // Old bytes stay the same; the new fields show only when set.
+    assert_eq!(serde_json::to_string(&Request::PlusOne { title: "x".into(), anyway: false }).unwrap(), r#"{"cmd":"plus_one","title":"x"}"#);
+    assert_eq!(serde_json::to_string(&Request::PlusOne { title: "x".into(), anyway: true }).unwrap(), r#"{"cmd":"plus_one","title":"x","anyway":true}"#);
+    let held = Reply::Error { message: "Episode 9 hasn't aired yet.".into(), anyway: true };
+    assert_eq!(serde_json::to_string(&held).unwrap(), r#"{"reply":"error","message":"Episode 9 hasn't aired yet.","anyway":true}"#);
 }
 
 #[test]
 fn requests_and_replies_round_trip() {
-    let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0) };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into() }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }] {
+    let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0), anyway: true };
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
     let signed_out = Status { account: None, service: String::new(), ..sample() };
-    for reply in [Reply::Status(sample()), Reply::Status(signed_out), Reply::Status(Status::default()), Reply::Error { message: "x".into() }, Reply::Done { message: "Saved.".into() }] {
+    for reply in [Reply::Status(sample()), Reply::Status(signed_out), Reply::Status(Status::default()), Reply::Error { message: "x".into(), anyway: false }, Reply::Done { message: "Saved.".into() }] {
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), reply);
     }
@@ -94,15 +99,15 @@ fn serve_answers_in_order_and_cleans_up() {
     let path = temp_socket("order");
     let server = serve(&path, |req| match req {
         Request::Status => Reply::Status(sample()),
-        _ => Reply::Error { message: "nope".into() },
+        _ => Reply::Error { message: "nope".into(), anyway: false },
     })
     .unwrap();
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     let mut c = Client::connect_to(&path).unwrap();
     assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
-    assert_eq!(c.request(&Request::Show).unwrap(), Reply::Error { message: "nope".into() });
+    assert_eq!(c.request(&Request::Show).unwrap(), Reply::Error { message: "nope".into(), anyway: false });
     // A second app on the same path is refused while the first answers: single instance.
-    assert_eq!(serve(&path, |_| Reply::Error { message: String::new() }).err().map(|e| e.kind()), Some(io::ErrorKind::AddrInUse));
+    assert_eq!(serve(&path, |_| Reply::Error { message: String::new(), anyway: false }).err().map(|e| e.kind()), Some(io::ErrorKind::AddrInUse));
     drop(server);
     assert!(!path.exists());
     assert!(Client::connect_to(&path).is_err(), "nobody answers after the app ends");
@@ -191,9 +196,9 @@ fn the_build_script_facts_parse() {
 fn stage_3_wire_format() {
     assert_eq!(serde_json::to_string(&Request::List { status: Some("watching".into()) }).unwrap(), r#"{"cmd":"list","status":"watching"}"#);
     assert_eq!(serde_json::to_string(&Request::List { status: None }).unwrap(), r#"{"cmd":"list"}"#);
-    assert_eq!(serde_json::to_string(&Request::PlusOne { title: "Neon".into() }).unwrap(), r#"{"cmd":"plus_one","title":"Neon"}"#);
+    assert_eq!(serde_json::to_string(&Request::PlusOne { title: "Neon".into(), anyway: false }).unwrap(), r#"{"cmd":"plus_one","title":"Neon"}"#);
     assert_eq!(
-        serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None }).unwrap(),
+        serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None, anyway: false }).unwrap(),
         r#"{"cmd":"set","title":"Neon","progress":3}"#
     );
     assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);

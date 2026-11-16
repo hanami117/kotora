@@ -404,7 +404,7 @@ fn new_media(id: u32, episodes: Option<u32>) -> Media {
 #[test]
 fn an_add_shows_at_once_and_is_sent_as_a_new_entry() {
     let (mut s, mut f) = setup();
-    let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, 500).unwrap().unwrap();
+    let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap().unwrap();
     let e = entry(&s, 7);
     assert_eq!((e.status, e.progress, e.score, e.media.title.as_str()), (Status::Watching, 0, None, "New 7"));
     let op = &s.queue("mal", 500).unwrap()[0];
@@ -419,19 +419,42 @@ fn an_add_shows_at_once_and_is_sent_as_a_new_entry() {
 #[test]
 fn completed_adds_start_at_the_last_episode() {
     let (mut s, _) = setup();
-    s.add_to_list("mal", &new_media(7, Some(12)), Status::Completed, 500).unwrap();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::Completed, None, 500).unwrap();
     assert_eq!(entry(&s, 7).progress, 12);
     let op = &s.queue("mal", 500).unwrap()[0];
     assert_eq!(describe_op(op), "Add as Completed, progress 12");
     // Unknown count: 0.
-    s.add_to_list("mal", &new_media(8, None), Status::Completed, 500).unwrap();
+    s.add_to_list("mal", &new_media(8, None), Status::Completed, None, 500).unwrap();
     assert_eq!(entry(&s, 8).progress, 0);
+}
+
+/// Now Playing's "Add as Watching at episode N": one change that adds and records.
+#[test]
+fn an_add_can_start_at_an_episode() {
+    let (mut s, mut f) = setup();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, Some(4), 500).unwrap();
+    assert_eq!(entry(&s, 7).progress, 4);
+    let q = s.queue("mal", 500).unwrap();
+    assert_eq!(q.len(), 1, "one change");
+    assert_eq!(describe_op(&q[0]), "Add as Watching, progress 4");
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::Sent });
+    assert_eq!((f.remote[&7].values.status, f.remote[&7].values.progress), (Status::Watching, 4));
+    // Never past the count; an unknown count takes the episode as it is.
+    s.add_to_list("mal", &new_media(8, Some(12)), Status::Watching, Some(30), 700).unwrap();
+    assert_eq!(entry(&s, 8).progress, 12);
+    s.add_to_list("mal", &new_media(9, None), Status::Watching, Some(30), 700).unwrap();
+    assert_eq!(entry(&s, 9).progress, 30);
+    // Already on the list (Watching at 3): status and progress as one edit (the same status
+    // isn't sent again).
+    s.add_to_list("mal", &new_media(1, Some(12)), Status::OnHold, Some(5), 700).unwrap();
+    let op = s.queue("mal", 700).unwrap().into_iter().find(|o| o.media_id == 1).unwrap();
+    assert_eq!((op.change.status, op.change.progress), (Some(Status::OnHold), Some(5)));
 }
 
 #[test]
 fn edits_merge_into_an_add_and_keep_its_status() {
     let (mut s, _) = setup();
-    s.add_to_list("mal", &new_media(7, Some(12)), Status::PlanToWatch, 500).unwrap();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::PlanToWatch, None, 500).unwrap();
     s.enqueue("mal", 7, progress(1), 501).unwrap();
     let q = s.queue("mal", 501).unwrap();
     assert_eq!(q.len(), 1);
@@ -443,7 +466,7 @@ fn edits_merge_into_an_add_and_keep_its_status() {
 #[test]
 fn discarding_an_add_takes_it_off_the_list() {
     let (mut s, _) = setup();
-    let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, 500).unwrap().unwrap();
+    let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap().unwrap();
     s.discard("mal", id).unwrap();
     assert!(s.load_item("mal", 7).unwrap().is_none());
     assert_eq!(s.open_count("mal").unwrap(), 0);
@@ -452,7 +475,7 @@ fn discarding_an_add_takes_it_off_the_list() {
 #[test]
 fn an_add_survives_a_full_sync_until_sent() {
     let (mut s, _) = setup();
-    s.add_to_list("mal", &new_media(7, Some(12)), Status::OnHold, 500).unwrap();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::OnHold, None, 500).unwrap();
     s.replace_list("mal", &[item(1, 3, 100), item(2, 3, 100)], 700).unwrap();
     let e = entry(&s, 7);
     assert_eq!((e.status, e.media.title.as_str()), (Status::OnHold, "New 7"));
@@ -461,7 +484,7 @@ fn an_add_survives_a_full_sync_until_sent() {
 #[test]
 fn an_add_of_an_anime_on_the_list_changes_its_status() {
     let (mut s, _) = setup();
-    s.add_to_list("mal", &new_media(1, Some(12)), Status::OnHold, 500).unwrap();
+    s.add_to_list("mal", &new_media(1, Some(12)), Status::OnHold, None, 500).unwrap();
     let op = &s.queue("mal", 500).unwrap()[0];
     assert!(!op.added);
     assert_eq!(op.change, Change { status: Some(Status::OnHold), ..Default::default() });
@@ -472,12 +495,12 @@ fn an_add_of_an_anime_on_the_list_changes_its_status() {
 fn an_add_finds_the_anime_already_on_the_service() {
     let (mut s, mut f) = setup();
     f.remote.insert(7, Remote { values: v(Status::Completed, 12, Some(9)), updated_at: 300 });
-    s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, 500).unwrap();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap();
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::Conflict }, "nothing overwritten");
     // Same values there: already there.
     let (mut s, mut f) = setup();
     f.remote.insert(7, Remote { values: v(Status::Watching, 0, None), updated_at: 300 });
-    s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, 500).unwrap();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap();
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::AlreadyThere });
 }
 

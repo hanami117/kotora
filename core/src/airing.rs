@@ -147,6 +147,48 @@ impl Timetable {
     }
 }
 
+/// An episode past what has aired by the estimate: Kotora asks before it is recorded
+/// (DESIGN.md §5.8). Only the total episode count is a hard limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NotAired {
+    pub episode: u32,
+    /// Unix seconds of its estimated slot, when there is a timetable.
+    pub expected: Option<i64>,
+}
+
+impl Timetable {
+    /// The timetable of a list entry's anime (the list has no end date).
+    pub fn of_media(m: &Media) -> Option<Timetable> {
+        Timetable::new(m.start_date.as_deref()?, m.broadcast?, m.episodes, None)
+    }
+}
+
+/// Whether `episode` (a new progress) is past what has aired at `now`, by the estimate.
+///
+/// - Finished airing, or an unknown status: never.
+/// - Airing: past the timetable's episodes, moved forward by the progress (a progress past
+///   the estimate means more aired than estimated). No timetable (no slot time): never.
+/// - Not yet aired: past the timetable, and with no timetable every episode.
+/// - At or below the progress: never (nothing new is marked).
+pub fn not_aired(air_status: &str, tt: Option<Timetable>, progress: u32, episode: u32, now: i64) -> Option<NotAired> {
+    if episode <= progress {
+        return None;
+    }
+    let upcoming = match air_status {
+        "currently_airing" => false,
+        "not_yet_aired" => true,
+        _ => return None,
+    };
+    match tt {
+        Some(t) => {
+            let t = t.with_progress(progress, now);
+            (episode > t.aired(now)).then(|| NotAired { episode, expected: t.time_of(episode).filter(|at| *at > now) })
+        }
+        None if upcoming => Some(NotAired { episode, expected: None }),
+        None => None,
+    }
+}
+
 /// One anime of a season list (MAL `GET /anime/season/{year}/{season}`), with what the Airing
 /// page shows. Cached as JSON in the store's `season` table.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -382,6 +424,35 @@ mod tests {
         assert!(open.slot_in(at("2026-10-12", 0, 0, 0), at("2026-10-19", 0, 0, 0)).is_some());
         assert_eq!(open.slot_in(at("2026-10-19", 0, 0, 0), at("2026-10-26", 0, 0, 0)), None);
         assert_eq!(open.aired(at("2026-12-01", 0, 0, 0)), 3);
+    }
+
+    #[test]
+    fn episodes_past_the_estimate_have_not_aired() {
+        let now = at("2026-11-15", 12, 0, JST);
+        let t = Some(show());
+        // 7 aired: 7 is fine, 8 is not yet, expected at its slot.
+        assert_eq!(not_aired("currently_airing", t, 6, 7, now), None);
+        assert_eq!(not_aired("currently_airing", t, 7, 8, now), Some(NotAired { episode: 8, expected: Some(at("2026-11-21", 23, 30, JST)) }));
+        // A jump from behind asks too (the editor, kot set).
+        assert_eq!(not_aired("currently_airing", t, 3, 10, now).map(|n| n.episode), Some(10));
+        // Progress already past the estimate (a double premiere): the next one is past it again.
+        assert_eq!(not_aired("currently_airing", t, 9, 10, now).and_then(|n| n.expected), Some(at("2026-11-21", 23, 30, JST)));
+        // Nothing new, finished or unknown status, or no timetable while airing: never asks.
+        assert_eq!(not_aired("currently_airing", t, 8, 8, now), None);
+        assert_eq!(not_aired("finished_airing", t, 7, 8, now), None);
+        assert_eq!(not_aired("", t, 7, 8, now), None);
+        assert_eq!(not_aired("currently_airing", None, 7, 8, now), None);
+        // Not yet aired: before the first slot every episode asks; with no timetable too.
+        let early = at("2026-09-20", 0, 0, 0);
+        assert_eq!(not_aired("not_yet_aired", t, 0, 1, early), Some(NotAired { episode: 1, expected: Some(show().first) }));
+        assert_eq!(not_aired("not_yet_aired", None, 0, 1, early), Some(NotAired { episode: 1, expected: None }));
+    }
+
+    #[test]
+    fn a_list_entry_has_a_timetable_from_its_media() {
+        let m = Media { start_date: Some("2026-10-03".into()), broadcast: Some(Broadcast { day: 5, minute: Some(1410) }), episodes: Some(12), ..Default::default() };
+        assert_eq!(Timetable::of_media(&m), Some(show()));
+        assert_eq!(Timetable::of_media(&Media { start_date: None, ..m }), None);
     }
 
     #[test]
