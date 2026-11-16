@@ -284,6 +284,7 @@ fn reading_changes_nothing() {
 
 /// A read-only file in a read-only folder (a mounted copy, a locked share) opens too.
 #[test]
+#[cfg(unix)]
 fn a_read_only_folder_opens() {
     use std::os::unix::fs::PermissionsExt;
     let s = Scratch::new("perm");

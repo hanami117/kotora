@@ -302,15 +302,7 @@ pub fn auto_wanted(enabled: bool, busy: bool, last_check: Option<u64>, last_atte
     enabled && !busy && due(last_check, last_attempt, now)
 }
 
-/// `$XDG_STATE_HOME/kotora`, else `~/.local/state/kotora` (on macOS too): what the app
-/// remembers by itself, apart from the settings.
-pub fn state_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("kotora"))
-}
+pub use crate::paths::state_dir;
 
 /// `$XDG_STATE_HOME/kotora/update.json`, else `~/.local/state/kotora/update.json`.
 pub fn record_path() -> Option<PathBuf> {

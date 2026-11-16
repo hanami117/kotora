@@ -119,8 +119,50 @@ pub fn local_offset(t: i64) -> i64 {
             return tm.tm_gmtoff as i64;
         }
     }
+    #[cfg(windows)]
+    if let Some(offset) = windows_offset(t) {
+        return offset;
+    }
     let _ = t;
     0
+}
+
+/// Windows: the offset from the system's time zone rules for the year of `t` (DST included).
+#[cfg(windows)]
+fn windows_offset(t: i64) -> Option<i64> {
+    use windows_sys::Win32::Foundation::SYSTEMTIME;
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformationForYear, SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION};
+    let day = t.div_euclid(86_400);
+    let secs = t.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(day);
+    // SYSTEMTIME holds the years 1601 to 30827.
+    if !(1601..=30_000).contains(&y) {
+        return None;
+    }
+    let utc = SYSTEMTIME {
+        wYear: y as u16,
+        wMonth: m as u16,
+        wDayOfWeek: 0,
+        wDay: d as u16,
+        wHour: (secs / 3600) as u16,
+        wMinute: (secs % 3600 / 60) as u16,
+        wSecond: (secs % 60) as u16,
+        wMilliseconds: 0,
+    };
+    // SAFETY: plain data structs the calls fill in; a null zone means the current one.
+    let local = unsafe {
+        let mut zone: TIME_ZONE_INFORMATION = std::mem::zeroed();
+        if GetTimeZoneInformationForYear(utc.wYear, std::ptr::null(), &mut zone) == 0 {
+            return None;
+        }
+        let mut local: SYSTEMTIME = std::mem::zeroed();
+        if SystemTimeToTzSpecificLocalTime(&zone, &utc, &mut local) == 0 {
+            return None;
+        }
+        local
+    };
+    let wall = days_from_civil(i64::from(local.wYear), i64::from(local.wMonth), i64::from(local.wDay)) * 86_400 + i64::from(local.wHour) * 3600 + i64::from(local.wMinute) * 60 + i64::from(local.wSecond);
+    Some(wall - t)
 }
 
 pub fn now_unix() -> i64 {
@@ -191,6 +233,9 @@ mod tests {
         let c = Clock::local(t);
         assert_eq!(c, Clock::at(t, local_offset(t)));
         assert!(c.midnight() <= t && t - c.midnight() < 86_400);
+        // A real zone: within UTC-12 and UTC+14, on a quarter hour.
+        let o = local_offset(t);
+        assert!((-12 * 3600..=14 * 3600).contains(&o) && o % 900 == 0, "{o}");
     }
 
     #[test]
