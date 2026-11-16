@@ -1408,10 +1408,10 @@ fn settings(s: &State, wide: bool) -> El {
                     .w_full()
                     .items_start()
                     .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)))
-                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(display_card(s)).child(about_card(s))),
+                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(about_card(s))),
             )
     } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(players_card(s)).child(about_card(s))
+        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
@@ -2165,6 +2165,23 @@ fn display_card(s: &State) -> El {
         "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
         choice,
     ))
+}
+
+/// Settings → Startup: start at login, and whether that start shows the window.
+fn startup_card(s: &State) -> El {
+    let p = &s.prefs;
+    let tray = if cfg!(target_os = "macos") { "menu bar" } else { "tray" };
+    card("startup-card", "Startup")
+        .child(option(
+            "Start Kotora when I log in",
+            "Kotora keeps detecting episodes from the moment you log in.".into(),
+            switch("set/login".into(), "Start Kotora when I log in", p.login, State::set_login),
+        ))
+        .child(option(
+            "Start in the background",
+            format!("At login, show only the {tray} icon, no window. Closing the window always keeps Kotora in the {tray}."),
+            switch("set/background".into(), "Start in the background", p.background, State::set_background),
+        ))
 }
 
 fn players_card(s: &State) -> El {

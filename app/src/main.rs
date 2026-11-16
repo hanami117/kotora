@@ -10,6 +10,7 @@
 
 mod airing;
 mod art;
+mod autostart;
 mod clientid;
 mod ctl;
 mod detect;

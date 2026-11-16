@@ -476,6 +476,12 @@ pub const SCENES: &[Scene] = &[
         s.prefs.keep_higher = false;
         s.go(Page::Settings);
     }),
+    // Settings → Startup with both switches on.
+    ("settings-startup-on", |s| {
+        s.prefs.login = true;
+        s.prefs.background = true;
+        s.go(Page::Settings);
+    }),
     // Two players switched off, one with a problem.
     ("settings-players-off", |s| {
         s.prefs.players.vlc = false;
@@ -933,6 +939,17 @@ mod tests {
         let rt = render("settings-auto-on", (1360.0, 860.0));
         assert!(rt.find("set/asks-off").is_some());
         assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
+    }
+
+    #[test]
+    fn settings_has_the_startup_switches() {
+        for scene in ["settings-page", "settings-startup-on"] {
+            let rt = render(scene, (1360.0, 860.0));
+            assert!(rt.find("startup-card").is_some(), "{scene}");
+            assert!(rt.find("set/login").is_some() && rt.find("set/background").is_some(), "{scene}");
+        }
+        // Narrow: one column, still there.
+        assert!(render("settings-startup-on", (960.0, 700.0)).find("set/login").is_some());
     }
 
     #[test]

@@ -27,6 +27,9 @@
 //!
 //! [display]
 //! titles = "romaji"            # or "english", "japanese"; romaji when a title is missing
+//!
+//! [startup]
+//! background = false           # the login start shows only the tray icon (no window)
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -46,6 +49,7 @@ pub struct Config {
     pub notices: Notices,
     pub recognition: Recognition,
     pub display: Display,
+    pub startup: Startup,
 }
 
 /// Which title the app (and `kot`, through the app) shows.
@@ -96,6 +100,15 @@ impl TitleLang {
 #[serde(default)]
 pub struct Display {
     pub titles: TitleLang,
+}
+
+/// Settings → Startup. Whether Kotora starts at login is the login entry itself
+/// (`app/src/autostart.rs`), not a setting here.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Startup {
+    /// The login start passes `--hidden`: the tray or menu bar icon only, no window.
+    pub background: bool,
 }
 
 /// Recognition settings.
@@ -207,6 +220,7 @@ impl std::fmt::Debug for Config {
             .field("notices", &self.notices)
             .field("recognition", &self.recognition)
             .field("display", &self.display)
+            .field("startup", &self.startup)
             .finish()
     }
 }
@@ -227,6 +241,8 @@ struct File {
     recognition: Recognition,
     #[serde(default)]
     display: Display,
+    #[serde(default)]
+    startup: Startup,
 }
 
 #[derive(Deserialize, Default)]
@@ -249,6 +265,7 @@ impl Config {
             notices: f.notices,
             recognition: f.recognition,
             display: f.display,
+            startup: f.startup,
         })
     }
 
@@ -421,6 +438,8 @@ mod tests {
         assert!(Config::parse("[notices]\nmpv_precise = true\n").unwrap().notices.mpv_precise);
         assert!(c.recognition.relations_download);
         assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
+        assert!(!c.startup.background, "the login start opens the window by default");
+        assert!(Config::parse("[startup]\nbackground = true\n").unwrap().startup.background);
         let c = Config::parse("[updates]\nauto = true\nthreshold = 10\n[players]\nvlc = false\nmpv_sockets = [\"/tmp/a.sock\"]\n").unwrap();
         assert!(c.updates.auto);
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");

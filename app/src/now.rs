@@ -108,12 +108,16 @@ pub struct Prefs {
     pub precise_answered: bool,
     /// Settings → Titles (`[display] titles`).
     pub titles: kotora_core::config::TitleLang,
+    /// Settings → Startup: Kotora starts at login (the login entry exists; `autostart.rs`).
+    pub login: bool,
+    /// Settings → Startup: the login start shows only the tray icon (`[startup] background`).
+    pub background: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, titles: Default::default() }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, titles: Default::default(), login: false, background: false }
     }
 }
 
@@ -127,6 +131,9 @@ impl Prefs {
             vlc_set_up: !c.vlc.password.is_empty(),
             precise_answered: c.notices.mpv_precise,
             titles: c.display.titles,
+            // The login entry itself, read by `detect::start`; false until then.
+            login: false,
+            background: c.startup.background,
         }
     }
 }
@@ -603,6 +610,40 @@ impl State {
         self.prefs.keep_higher = on;
         self.worker.ask_on_higher.store(!on, std::sync::atomic::Ordering::Relaxed);
         crate::detect::save_setting(self, "updates", "keep_higher_progress", on.to_string());
+    }
+
+    /// "Start Kotora when I log in": writes or removes the login entry.
+    pub fn set_login(&mut self, on: bool) {
+        self.prefs.login = on;
+        self.write_login_entry();
+    }
+
+    /// "Start in the background": `--hidden` in the login entry, kept in `config.toml` so it
+    /// stays when the login switch goes off and on.
+    pub fn set_background(&mut self, on: bool) {
+        self.prefs.background = on;
+        crate::detect::save_setting(self, "startup", "background", on.to_string());
+        if self.prefs.login {
+            self.write_login_entry();
+        }
+    }
+
+    /// On a worker thread (a small file, but never in a handler). Live runs only.
+    fn write_login_entry(&mut self) {
+        let Some(h) = self.handle.clone() else { return };
+        if rune::is_headless() {
+            return;
+        }
+        let (on, hidden) = (self.prefs.login, self.prefs.background);
+        let _ = std::thread::Builder::new().name("kotora-autostart".into()).spawn(move || {
+            if let Err(e) = crate::autostart::set(on, hidden) {
+                let login = crate::autostart::enabled();
+                h.update_if(move |s: &mut State, _| {
+                    s.prefs.login = login;
+                    s.apply(crate::model::Msg::QueueError(format!("Can't change the login start: {e}")))
+                });
+            }
+        });
     }
 
     pub fn set_process_scan(&mut self, on: bool) {
