@@ -53,6 +53,7 @@ mod ui;
 mod update;
 #[cfg(windows)]
 mod win;
+mod winsetup;
 mod winsize;
 
 use std::io::Write;

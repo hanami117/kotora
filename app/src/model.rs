@@ -434,6 +434,8 @@ pub struct State {
     /// IINA's precise detection hint (`iina.rs`, macOS).
     #[cfg(target_os = "macos")]
     pub iina: crate::iina::Iina,
+    /// Windows: MPC's web interface and VLC's password (`winsetup.rs`).
+    pub winsetup: crate::winsetup::WinSetup,
     /// Settings → Updates and Players.
     pub prefs: Prefs,
     /// The detection threads (`detect.rs`); `None` headless.
@@ -527,6 +529,7 @@ impl State {
             precise: Default::default(),
             #[cfg(target_os = "macos")]
             iina: Default::default(),
+            winsetup: Default::default(),
             prefs: Prefs::default(),
             glue: None,
             window: true,

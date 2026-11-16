@@ -212,7 +212,7 @@ const SPECS: &[Spec] = &[
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
     spec(Row::KeepHigher, Section::Detection, "Keep the higher progress in conflicts", "When only the progress differs and yours is higher, Kotora sends yours.", "conflict conflicts sync queue progress"),
-    spec(Row::ProcessScan, Section::Detection, "Find players by their open files", "No setup, but no position or pause.", "process open files proc lsof scan no setup"),
+    spec(Row::ProcessScan, Section::Detection, if cfg!(windows) { "Find players without setup" } else { "Find players by their open files" }, "No setup, but no position or pause.", "process open files proc lsof scan no setup window title command line zero config"),
     spec(Row::ProcessMinutes, Section::Detection, "Count a file after it stays open", "Minutes, when the episode's length is unknown.", "minutes process time open files duration"),
     spec(Row::Folders, Section::Library, "Folders", crate::library::FOLDERS_NOTE, "library folder folders directory files disk drive rescan scan play next episode"),
     spec(Row::OpenWith, Section::Library, "Open with", crate::library::OPEN_WITH_NOTE, "player play mpv iina vlc default automatic open"),
@@ -833,6 +833,11 @@ fn row_el(s: &State, r: Row) -> El {
             ),
         Row::AniList => account_row(s, ServiceId::AniList),
         Row::Player(sw) => player(s, sw),
+        Row::VlcWeb if cfg!(windows) => block(
+            "VLC web interface",
+            "VLC is seen with no setup by its window, without a position. For the position, turn on its web interface in VLC (Tools \u{2192} Preferences, Show settings: All, Interface \u{2192} Main interfaces: tick Web; then Main interfaces \u{2192} Lua: set a Lua HTTP password), restart VLC, and type the same password here.",
+            row().gap(12.0).center_y().child(crate::winsetup::vlc_field(s).grow(1.0)).child(if p.vlc_set_up { pill("set/vlc-web", "Set up", PAL.ok()) } else { pill("set/vlc-web", "Not set up", PAL.faint) }),
+        ),
         Row::VlcWeb => line(
             "VLC web interface",
             if cfg!(windows) {
@@ -875,6 +880,11 @@ fn row_el(s: &State, r: Row) -> El {
             "Keep the higher progress in conflicts",
             "When only the progress differs and yours is higher, Kotora sends yours.",
             switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
+        ),
+        Row::ProcessScan if cfg!(windows) => line(
+            "Find players without setup",
+            "By their window title and command line: mpv, mpv.net, MPC-HC, MPC-BE, VLC, PotPlayer. No position or pause (PotPlayer gives both): a file counts after it stays open long enough, and Kotora always asks.",
+            switch("set/process-scan".into(), "Find players without setup", p.players.process_scan, State::set_process_scan),
         ),
         Row::ProcessScan => line(
             "Find players by their open files",
@@ -1001,6 +1011,11 @@ fn player(s: &State, sw: Switch) -> El {
     #[cfg(target_os = "macos")]
     if sw == Switch::Iina
         && let Some(h) = crate::iina::settings_hint(s)
+    {
+        c = c.child(h);
+    }
+    if sw == Switch::Mpc
+        && let Some(h) = crate::winsetup::mpc_hint(s)
     {
         c = c.child(h);
     }

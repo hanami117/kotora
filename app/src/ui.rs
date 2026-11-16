@@ -2059,12 +2059,7 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
                 .mt(12.0)
                 .gap(4.0)
                 .child(text(if n.reached { "Counts as watched" } else { "No position from the player" }).font(theme::LABEL_NUM).color(PAL.text))
-                .child(
-                    text("Kotora sees the file the player has open, not how far in you are: the episode counts once it has been open long enough.")
-                        .font(theme::LABEL)
-                        .color(PAL.dim)
-                        .wrap(),
-                )
+                .child(text(no_position_rule(s, n, cfg!(windows))).key("np-no-position/rule").font(theme::LABEL).color(PAL.dim).wrap())
         } else {
             col()
                 .mt(12.0)
@@ -2259,10 +2254,27 @@ fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Optio
         )
 }
 
+/// Why there is no position, and the rule that counts the episode instead. On Windows the rule
+/// is spelt out with its minutes, and what gives the real position for this player.
+pub(crate) fn no_position_rule(s: &State, n: &Now, windows: bool) -> String {
+    if !windows {
+        return "Kotora sees the file the player has open, not how far in you are: the episode counts once it has been open long enough.".into();
+    }
+    let minutes = s.prefs.players.process_minutes.clamp(1, 180);
+    let unit = if minutes == 1 { "minute" } else { "minutes" };
+    let better = match n.switch {
+        Switch::Mpv => " For the real position, turn on precise detection (Settings \u{2192} Detection).",
+        Switch::Mpc => " For the real position, turn on the player\u{2019}s web interface (Settings \u{2192} Detection).",
+        Switch::Vlc => " For the real position, set up VLC\u{2019}s web interface (Settings \u{2192} Detection).",
+        _ => "",
+    };
+    format!("{} shows this file but doesn\u{2019}t say how far in you are. Kotora offers the update once the file has been open for {minutes} {unit}, also when you close it after that, and always asks first.{better}", n.player)
+}
+
 /// Nothing plays: how to let Kotora see the players.
 fn now_empty() -> El {
     let help = if cfg!(windows) {
-        "On Windows a player needs one setting first. mpv: add the line input-ipc-server=\\\\.\\pipe\\mpvsocket to mpv.conf and restart mpv. VLC: turn on its web interface with a password, and put the password in config.toml ([vlc] password); Settings \u{2192} Detection says how."
+        "mpv, mpv.net, MPC-HC, MPC-BE, VLC and PotPlayer are found by themselves, by their window. For the position too, mpv and mpv.net use an IPC pipe and MPC-HC and MPC-BE their web interface: Kotora turns either on with one click (Settings \u{2192} Detection). VLC needs its web interface with a password; PotPlayer needs nothing."
     } else if cfg!(target_os = "macos") {
         "mpv, IINA and VLC are found by themselves, by the file they have open. For the position too, mpv and IINA use their IPC socket (Kotora offers to turn it on; see Settings \u{2192} Players), and VLC its web interface with a password in config.toml ([vlc] password)."
     } else {

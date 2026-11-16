@@ -1041,6 +1041,49 @@ pub const SCENES: &[Scene] = &[
     ("precise-prompt", |s| {
         now_by_process(s, kotora_detect::Switch::Mpv);
     }),
+    // Windows: Settings → Detection with players seen by their window only: Turn on for mpv.net's
+    // pipe and for MPC's web interface, VLC's password field.
+    ("win-players", |s| {
+        win_players(s);
+        s.prefs.precise_answered = true;
+        s.prefs.vlc_set_up = false;
+        crate::settings::open(s, Section::Detection);
+    }),
+    // Windows: Turn on made mpv.net's mpv.conf (the file didn't exist).
+    ("win-precise-written", |s| {
+        win_players(s);
+        s.enable_precise();
+        s.precise.who = Some("mpv.net".into());
+        s.precise.note = Some("~\\AppData\\Roaming\\mpv.net\\mpv.conf didn\u{2019}t exist: Kotora made it. Close mpv.net and open it again once.".into());
+        s.precise_written(crate::precise::Precise::Wrote {
+            file: "~\\AppData\\Roaming\\mpv.net\\mpv.conf".into(),
+            text: "# Added by Kotora: lets Kotora see what the player plays (position and pause).\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\n".into(),
+        });
+        s.go(Page::List(Status::Watching));
+    }),
+    // Windows: MPC-HC was still open when Turn on was clicked.
+    ("win-mpc-close-first", |s| {
+        win_players(s);
+        s.prefs.precise_answered = true;
+        s.mpc_web_answer(Err(crate::winsetup::close_first("MPC-HC")));
+        crate::settings::open(s, Section::Detection);
+    }),
+    ("win-mpc-turned-on", |s| {
+        win_players(s);
+        s.prefs.precise_answered = true;
+        s.players.retain(|p| p.switch != kotora_detect::Switch::Mpc);
+        s.mpc_web_answer(Ok(crate::winsetup::turned_on(&["MPC-HC"], 13579)));
+        crate::settings::open(s, Section::Detection);
+    }),
+    // Windows: Now Playing for mpv.net seen by its window: the rule with its minutes.
+    ("win-now-playing-window", |s| {
+        now_by_process(s, kotora_detect::Switch::Mpv);
+        win_players(s);
+        s.prefs.precise_answered = true;
+        if let Some(n) = &mut s.now {
+            n.player = "mpv.net".into();
+        }
+    }),
     // The same past the threshold: the episode banner on top, the prompt under it.
     ("precise-prompt-with-offer", |s| {
         now_by_process(s, kotora_detect::Switch::Mpv);
@@ -1193,6 +1236,24 @@ fn rewatch_playing(s: &mut State) {
     if let Some(n) = &mut s.now {
         n.found = Found::List { media_id: id, sure: true, why: "same title in your list".into() };
     }
+}
+
+/// Windows: mpv.net and MPC-HC seen by their window only, VLC open and not set up.
+fn win_players(s: &mut State) {
+    use crate::precise::{PlayerState, VIA_IPC, VIA_PROCESS};
+    use crate::winsetup::VIA_WEB;
+    use kotora_detect::{Led, Switch};
+    let p = |switch, via, line: &str, led| PlayerState { switch, via, line: line.into(), led };
+    s.now = s.now.take().filter(|n| n.via == VIA_PROCESS);
+    s.players = vec![
+        p(Switch::Mpv, VIA_PROCESS, "mpv.net: video file open", Led::Playing),
+        p(Switch::Mpv, VIA_IPC, "\\\\.\\pipe\\mpvsocket: not running", Led::Off),
+        p(Switch::Mpc, VIA_PROCESS, "MPC-HC: video file open", Led::Playing),
+        p(Switch::Mpc, VIA_WEB, "web interface is off in MPC-HC", Led::Off),
+        p(Switch::Vlc, VIA_PROCESS, "running, no video open", Led::Idle),
+        p(Switch::Vlc, VIA_WEB, "web interface not set up (needs VLC's password)", Led::Problem),
+        p(Switch::PotPlayer, VIA_PROCESS, "not running", Led::Off),
+    ];
 }
 
 /// mpv is seen by its open file only, and nothing plays in a known way.
