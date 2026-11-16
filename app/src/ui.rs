@@ -11,7 +11,7 @@ use crate::icons;
 use kotora_core::queue::{Op, OpState};
 
 use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State, remote_text};
-use crate::now::{Now, THRESHOLDS, clock_text};
+use crate::now::{Now, clock_text};
 use kotora_core::recognize::Found;
 use kotora_detect::{Led, Switch};
 use crate::online;
@@ -66,7 +66,8 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let airing = crate::airing::tick(s, tx);
     let toast = crate::library::toast_tick(s, tx);
     let intro = crate::intro::poll(s, t, tx);
-    now || airing || toast || intro
+    let settings = crate::settings::poll(s, t, tx);
+    now || airing || toast || intro || settings
 }
 
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
@@ -77,6 +78,12 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if s.intro.is_some() {
         crate::intro::skip(s);
         return true;
+    }
+    // Settings: Cmd+F is its own search, Escape clears it, Up and Down step the sections.
+    if s.page == Page::Settings
+        && let Some(used) = crate::settings::on_key(s, k, tx)
+    {
+        return used;
     }
     if k.is_command('k') || (k.is_command('f') && !matches!(s.page, Page::List(_))) {
         tx.instant();
@@ -442,7 +449,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::Profile => crate::profile::page(s, wide),
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
-        Page::Settings => settings(s, wide),
+        Page::Settings => crate::settings::page(s, width),
         Page::Details => crate::details::page(s, wide),
         Page::Search if !s.has_list() => welcome(s),
         Page::Search => search_view(s, wide),
@@ -1655,39 +1662,6 @@ fn welcome(s: &State) -> El {
     c
 }
 
-/// Settings (design-spec §4): Accounts, Updates, Players and About. Two columns when wide, one
-/// below `theme::NARROW_W`.
-fn settings(s: &State, wide: bool) -> El {
-    let cards = if wide {
-        col()
-            .gap(16.0)
-            .w_full()
-            .child(
-                row()
-                    .gap(16.0)
-                    .w_full()
-                    .items_start()
-                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)).child(crate::library::settings_card(s)))
-                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(notifications_card(s)).child(display_card(s)).child(startup_card(s)).child(about_card(s))),
-            )
-    } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(notifications_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(crate::library::settings_card(s)).child(about_card(s))
-    };
-    col()
-        .key("page/Settings")
-        .w_full()
-        .h_full()
-        .child(top(s, "Settings", None, false))
-        .child(
-            col()
-                .key("settings-scroll")
-                .scroll(ScrollSpec { stick_bottom: false })
-                .grow(1.0)
-                .min_h(0.0)
-                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(cards)),
-        )
-}
-
 pub(crate) fn card(key: &str, title: &str) -> El {
     col()
         .key(key.to_string())
@@ -1698,8 +1672,8 @@ pub(crate) fn card(key: &str, title: &str) -> El {
         .child(text(title.to_string()).font(theme::SECTION).color(PAL.text).pb(4.0))
 }
 
-/// A service in the Accounts card: badge, name and state, and its button.
-fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: String, action: El, on: bool) -> El {
+/// A service in Settings → Account: badge, name and state, and its button.
+pub(crate) fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: String, action: El, on: bool) -> El {
     let fg = if on { PAL.text } else { PAL.dim };
     row()
         .key(key.to_string())
@@ -1723,93 +1697,6 @@ fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: Stri
                 .child(text(line).font(theme::LABEL).color(if on { PAL.dim } else { PAL.faint }).truncate()),
         )
         .child(action)
-}
-
-fn accounts_card(s: &State) -> El {
-    let (line, action) = match (&s.account, s.auth) {
-        (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(online::sign_out))),
-        (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
-        (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(online::cancel_sign_in))),
-        (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(online::sign_in))),
-    };
-    let note = row()
-        .key("token-note")
-        .gap(10.0)
-        .mt(10.0)
-        .px(12.0)
-        .py(10.0)
-        .items_start()
-        .radius(theme::R_MD)
-        .fill(PAL.st_completed.alpha(0.08))
-        .border(1.0, PAL.st_completed.alpha(0.28))
-        .child(icon(&icons::LOCK, 16.0).color(PAL.st_completed))
-        .child(
-            text("Your sign-in token is kept in a file only you can read. It is not encrypted. Signing out deletes it, your saved list and changes not yet sent.")
-            .font(theme::LABEL)
-            .color(PAL.text)
-            .wrap()
-            .grow(1.0)
-            .min_w(0.0),
-        );
-    card("account-card", "Accounts")
-        .child(service_row("acct/mal", "MAL", hex("#2e51a2"), "MyAnimeList", line, action, true))
-        .child(el().w_full().h(1.0).fill(PAL.border))
-        .child(crate::clientid::settings_row(s))
-        .child(el().w_full().h(1.0).fill(PAL.border))
-        .child(service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.3".into(), small_button("anilist", "Sign in", false, None), false))
-        .child(note)
-}
-
-fn about_card(s: &State) -> El {
-    let logo = el().size(56.0, 56.0).radius(theme::R_LG);
-    let logo = match &s.logo_big {
-        Some(img) => logo.pixels(img.pixels()),
-        None => logo.fill(PAL.raised),
-    };
-    let link = |key: &str, label: &str, url: &'static str| {
-        text(label.to_string())
-            .key(key.to_string())
-            .role("link")
-            .label(label.to_string())
-            .focusable(true)
-            .font(theme::LABEL)
-            .color(PAL.accent_hi)
-            .cursor(rune::Cursor::Pointer)
-            .on_press(move |s: &mut State| online::open_link(s, url))
-    };
-    card("about-card", "About Kotora").child(
-        row()
-            .gap(16.0)
-            .pt(8.0)
-            .items_start()
-            .child(logo)
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .gap(8.0)
-                    .child(text(format!("Version {}", env!("CARGO_PKG_VERSION"))).font(theme::LABEL_NUM).color(PAL.faint))
-                    .child(
-                        text("A tribute to Taiga, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.")
-                            .font(theme::LABEL)
-                            .color(PAL.dim)
-                            .wrap(),
-                    )
-                    .child(
-                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga's author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList.")
-                            .font(theme::LABEL)
-                            .color(PAL.faint)
-                            .wrap(),
-                    )
-                    .child(
-                        row()
-                            .gap(14.0)
-                            .child(link("link/site", "kotora.moe", "https://kotora.moe"))
-                            .child(link("link/source", "Source code", "https://github.com/hanami117/kotora")),
-                    ),
-            ),
-    )
-    .child(crate::update::settings_rows(s))
 }
 
 /// The `sm` button (26 high) of the settings rows.
@@ -2418,257 +2305,6 @@ pub(crate) fn switch_if(key: String, label: &str, on: bool, enabled: bool, set: 
     } else {
         track.opacity(0.4).cursor(rune::Cursor::NotAllowed)
     }
-}
-
-/// A settings line: title and help on the left, the control on the right.
-pub(crate) fn option(title: &str, help: String, control: El) -> El {
-    row()
-        .gap(12.0)
-        .py(10.0)
-        .center_y()
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(2.0)
-                .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap())
-                .child(text(help).font(theme::LABEL).color(PAL.dim).wrap()),
-        )
-        .child(control)
-}
-
-fn updates_card(s: &State) -> El {
-    let p = &s.prefs;
-    let next = THRESHOLDS[(THRESHOLDS.iter().position(|t| *t == p.threshold).unwrap_or(1) + 1) % THRESHOLDS.len()];
-    let threshold = row()
-        .key("set/threshold")
-        .role("button")
-        .label(format!("Offer the update at {}%, next {next}%", p.threshold))
-        .focusable(true)
-        .h(28.0)
-        .px(10.0)
-        .gap(6.0)
-        .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.field)
-        .border(1.0, PAL.border_strong)
-        .hover(PAL.hover())
-        .on_press(|s: &mut State| s.next_threshold())
-        .child(text(format!("{}%", p.threshold)).font(theme::LABEL_NUM).color(PAL.text))
-        .child(icon(&icons::DOWN, 14.0).color(PAL.faint));
-    let ask = if p.auto {
-        "Off: confident matches are recorded at once, with Undo in the banner."
-    } else {
-        "On: a banner and a notification ask; nothing changes until you click Update."
-    };
-    card("updates-card", "Updates")
-        .child(
-            row()
-                .key(if p.auto { "set/asks-off" } else { "set/asks-on" })
-                .gap(8.0)
-                .py(6.0)
-                .center_y()
-                .child(el().size(7.0, 7.0).radius(3.5).fill(if p.auto { PAL.faint } else { PAL.ok() }))
-                .child(text("Ask before updating".to_string()).font(theme::BODY_MED).color(PAL.text))
-                .child(text(ask.to_string()).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
-        )
-        .child(option(
-            "Update automatically",
-            "Record confident matches without asking. Unsure matches, and players seen by their open file only, still ask. Off by default.".into(),
-            switch("set/auto".into(), "Update automatically", p.auto, State::set_auto),
-        ))
-        .child(option("Offer the update at", "Share of the episode watched (or half, when the player stops)".into(), threshold))
-        .child(option(
-            "Keep the higher progress in conflicts",
-            "When only the progress differs and yours is higher, Kotora sends yours.".into(),
-            switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
-        ))
-}
-
-/// Settings → Notifications: one switch per event, and what the system can't do.
-fn notifications_card(s: &State) -> El {
-    use crate::notes::{Kind, Support};
-    let p = &s.prefs.notify;
-    let mut c = card("notifications-card", "Notifications")
-        .child(option(
-            "Episode detected",
-            "When a recognised episode starts playing: \u{201c}Title \u{b7} Ep 6\u{201d}. Off by default.".into(),
-            switch("set/notify-detected".into(), "Episode detected", p.detected, |s, v| s.set_notify(Kind::Detected, v)),
-        ))
-        .child(option(
-            "Update offered",
-            "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner.".into(),
-            switch("set/notify-offer".into(), "Update offered", p.offer, |s, v| s.set_notify(Kind::Offer, v)),
-        ))
-        .child(option(
-            "Episode recorded",
-            "\u{201c}Recorded \u{b7} Ep 6\u{201d} with Undo.".into(),
-            switch("set/notify-recorded".into(), "Episode recorded", p.recorded, |s, v| s.set_notify(Kind::Recorded, v)),
-        ))
-        .child(option(
-            "Started airing",
-            "When a show on Plan to watch starts airing: \u{201c}Title started airing\u{201d}.".into(),
-            switch("set/notify-started".into(), "Started airing", p.started_airing, |s, v| s.set_notify(Kind::Started, v)),
-        ))
-        .child(option(
-            "New episode",
-            "When the next episode of a show you\u{2019}re watching is out, by the estimated broadcast time: \u{201c}Title \u{b7} Ep 7 is out\u{201d}, with Play when the file is in your library.".into(),
-            switch("set/notify-episode".into(), "New episode", p.new_episode, |s, v| s.set_notify(Kind::Aired, v)),
-        ));
-    let line = match s.notes.support {
-        Support::NoButtons => Some("Your notification server shows no buttons: answer in Kotora's banner or with kot confirm."),
-        Support::Outside => Some("Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them."),
-        Support::Denied => Some("Notifications are off for Kotora in System Settings \u{2192} Notifications."),
-        Support::Unknown | Support::Buttons => None,
-    };
-    if let Some(line) = line {
-        c = c.child(
-            row()
-                .key("set/notify-support")
-                .mt(6.0)
-                .px(10.0)
-                .py(8.0)
-                .radius(theme::R_MD)
-                .fill(PAL.warn().alpha(0.08))
-                .border(1.0, PAL.warn().alpha(0.3))
-                .child(text(line.to_string()).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
-        );
-    }
-    c
-}
-
-/// Settings → Appearance: the theme, and which title every page (and `kot`) shows.
-fn display_card(s: &State) -> El {
-    let mut themes = row().key("set/theme").gap(6.0);
-    for t in kotora_core::config::Theme::ALL {
-        themes = themes.child(
-            cell(format!("set/theme/{}", t.key()), format!("Theme {}", t.label()), s.prefs.theme == t, move |s: &mut State| s.set_theme(t))
-                .child(text(t.label()).font(theme::LABEL).color(PAL.text)),
-        );
-    }
-    let mut choice = row().key("set/titles").gap(6.0);
-    for lang in kotora_core::config::TitleLang::ALL {
-        choice = choice.child(
-            cell(format!("set/titles/{}", lang.key()), format!("Titles in {}", lang.label()), s.prefs.titles == lang, move |s: &mut State| s.set_titles(lang))
-                .child(text(lang.label()).font(theme::LABEL).color(PAL.text)),
-        );
-    }
-    card("display-card", "Appearance")
-        .child(option(
-            "Theme",
-            "System follows your desktop\u{2019}s light or dark setting, and changes with it.".into(),
-            themes,
-        ))
-        .child(option(
-            "Titles",
-            "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
-            choice,
-        ))
-        .child(option(
-            "Startup animation",
-            "Claw marks when Kotora opens. Showing the window again doesn\u{2019}t play it; with Reduce Motion it is a short fade.".into(),
-            switch("set/intro".into(), "Startup animation", s.prefs.intro, State::set_intro),
-        ))
-}
-
-/// Settings → Startup: start at login, and whether that start shows the window.
-fn startup_card(s: &State) -> El {
-    let p = &s.prefs;
-    let l = &p.login;
-    let tray = if cfg!(target_os = "macos") { "menu bar" } else { "tray" };
-    let note = match (l.unavailable, l.needs_approval) {
-        (Some(why), _) => why.to_string(),
-        (None, true) => "Waiting for your OK in System Settings, General, Login Items.".to_string(),
-        _ if cfg!(target_os = "macos") => {
-            "Opens Kotora when you log in to your Mac, so it keeps detecting episodes. It is listed in System Settings, General, Login Items.".to_string()
-        }
-        _ => "Kotora keeps detecting episodes from the moment you log in.".to_string(),
-    };
-    let sw = switch_if("set/login".into(), "Start Kotora when I log in", l.on, l.available() && !p.login_busy, State::set_login);
-    let control = if l.needs_approval {
-        row().gap(12.0).center_y().child(small_button("set/login-items", "Open Login Items", false, Some(State::open_login_items))).child(sw)
-    } else {
-        sw
-    };
-    card("startup-card", "Startup")
-        .child(option("Start Kotora when I log in", note, control))
-        .child(option(
-            "Start in the background",
-            format!("At login, show only the {tray} icon, no window. Closing the window always keeps Kotora in the {tray}."),
-            switch("set/background".into(), "Start in the background", p.background, State::set_background),
-        ))
-}
-
-fn players_card(s: &State) -> El {
-    let platform = if cfg!(target_os = "macos") { "macOS" } else { "Linux" };
-    let mut c = card("players-card", "Players").child(text(platform.to_string()).font(theme::CAPTION).color(PAL.faint));
-    for sw in Switch::here() {
-        let sw = *sw;
-        let on = s.prefs.players.get(sw.config_key());
-        let (line, led) = s.player_line(sw);
-        let help = match sw {
-            Switch::OtherMpris => format!("Haruna, Celluloid and others that report a file \u{b7} {}", line.split(" \u{b7} ").last().unwrap_or("")),
-            _ => line,
-        };
-        c = c.child(
-            row()
-                .key(format!("set/player/{}", sw.config_key()))
-                .gap(12.0)
-                .py(8.0)
-                .center_y()
-                .child(el().size(7.0, 7.0).radius(3.5).fill(if on { led_color(led) } else { PAL.faint }))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(sw.label().to_string()).font(theme::BODY_MED).color(PAL.text))
-                        .child(text(help).font(theme::LABEL).color(PAL.dim).truncate()),
-                )
-                .child(switch(format!("set/switch/{}", sw.config_key()), sw.label(), on, move |s, v| s.set_player(sw, v))),
-        );
-        if sw == Switch::Mpv
-            && let Some(h) = crate::precise::settings_hint(s)
-        {
-            c = c.child(h);
-        }
-        #[cfg(target_os = "macos")]
-        if sw == Switch::Iina
-            && let Some(h) = crate::iina::settings_hint(s)
-        {
-            c = c.child(h);
-        }
-    }
-    let p = &s.prefs.players;
-    let minutes = p.process_minutes.clamp(1, 180);
-    let stepper = row()
-        .key("set/process-minutes")
-        .h(28.0)
-        .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.field)
-        .border(1.0, PAL.border_strong)
-        .child(cell("set/process-minutes/minus".into(), "Fewer minutes".into(), false, |s| s.step_process_minutes(false)).child(text("\u{2212}").font(theme::LABEL).color(PAL.dim)))
-        .child(row().min_w(64.0).center().child(text(format!("{minutes} min")).font(theme::LABEL_NUM).color(PAL.text)))
-        .child(cell("set/process-minutes/plus".into(), "More minutes".into(), false, |s| s.step_process_minutes(true)).child(text("+").font(theme::LABEL).color(PAL.dim)));
-    c = c
-        .child(option(
-            "Find players by their open files",
-            "No setup, but no position or pause: a file counts after it stays open long enough, and Kotora always asks.".into(),
-            switch("set/process-scan".into(), "Find players by their open files", p.process_scan, State::set_process_scan),
-        ))
-        .child(option(
-            "Count a file after it stays open",
-            "Open files only, when the episode's length is unknown (default 15 minutes).".into(),
-            if p.process_scan { stepper } else { stepper.opacity(0.5) },
-        ));
-    c.child(
-        text("Players are found by their open files with no setup; \u{201c}process\u{201d} means no position, so a file counts after it stays open a while. Socket paths and VLC's web password: config.toml ([players] mpv_sockets, [vlc]). Streaming sites in the browser: use MAL-Sync.")
-            .font(theme::LABEL)
-            .color(PAL.faint)
-            .wrap()
-            .mt(6.0),
-    )
 }
 
 #[cfg(test)]

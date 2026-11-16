@@ -62,6 +62,7 @@ pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
+    crate::settings::load(s, &c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     crate::precise::check_conf(h.clone());

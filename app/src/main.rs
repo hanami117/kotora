@@ -39,6 +39,7 @@ mod profile;
 mod queue;
 mod scenes;
 mod search;
+mod settings;
 mod setup;
 mod theme;
 mod tray;

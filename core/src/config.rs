@@ -40,6 +40,7 @@
 //! titles = "romaji"            # or "english", "japanese"; romaji when a title is missing
 //! theme = "system"             # or "light", "dark"; system follows the desktop (dark when unknown)
 //! intro = true                 # the startup animation when Kotora opens with its window
+//! settings_section = "general" # the Settings section opened last (written by the app)
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
@@ -207,11 +208,13 @@ pub struct Display {
     pub theme: Theme,
     /// The startup animation on a cold start with a window (on by default).
     pub intro: bool,
+    /// The Settings section opened last ("general", "detection", …; the app reads it).
+    pub settings_section: String,
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true }
+        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new() }
     }
 }
 
@@ -797,6 +800,8 @@ mod tests {
         assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
         assert!(Config::parse("").unwrap().display.intro, "the startup animation is on by default");
         assert!(!Config::parse("[display]\nintro = false\n").unwrap().display.intro);
+        assert_eq!(Config::parse("").unwrap().display.settings_section, "");
+        assert_eq!(Config::parse("[display]\nsettings_section = \"detection\"\n").unwrap().display.settings_section, "detection");
         assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");
         assert!(Theme::Light.is_light(true) && Theme::Light.is_light(false));
         assert!(!Theme::Dark.is_light(true) && !Theme::Dark.is_light(false));

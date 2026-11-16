@@ -561,8 +561,7 @@ fn done(s: &State) -> El {
                                 .on_press_tx(|s: &mut State, tx: &mut Tx| {
                                     tx.instant();
                                     s.setup = Step::Welcome;
-                                    s.go(Page::Settings);
-                                    tx.scroll_into_view("players-card");
+                                    crate::settings::open(s, crate::settings::Section::Detection);
                                 }),
                         ),
                 ),

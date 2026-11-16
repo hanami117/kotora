@@ -25,7 +25,7 @@ use crate::icons;
 use crate::model::{Entry, Handle, Page, State};
 use crate::play::{self, Player};
 use crate::theme::{self, PAL};
-use crate::ui::{button, card, cell, field_hint, ghost, option};
+use crate::ui::{button, card, cell, field_hint, ghost};
 
 /// How often the folders are walked again for changes.
 pub const RESCAN_EVERY: Duration = Duration::from_secs(5 * 60);
@@ -572,15 +572,13 @@ pub fn up_next_card(s: &State) -> Option<El> {
 
 // ------------------------------------------------------------------------------------- settings
 
-/// Settings → Library.
-pub fn settings_card(s: &State) -> El {
+/// Settings → Library → Folders: what the folders are for.
+pub const FOLDERS_NOTE: &str = "Folders where your anime are. Kotora finds the episodes in them (samples, extras and creditless openings left out) and links them to your list, so Play opens the next one.";
+
+/// Settings → Library → Folders: the folders, the field to add one, and the summary.
+pub fn folders_block(s: &State) -> El {
     let l = &s.library;
-    let mut c = card("library-card", "Library").child(
-        text("Folders where your anime are. Kotora finds the episodes in them (samples, extras and creditless openings left out) and links them to your list, so Play opens the next one.")
-            .font(theme::LABEL)
-            .color(PAL.dim)
-            .wrap(),
-    );
+    let mut c = col().key("library-card").w_full();
     for f in &l.folders {
         let (dot, state) = match (f.scanned, f.online) {
             (false, _) => (PAL.faint, "Looking\u{2026}".to_string()),
@@ -662,6 +660,12 @@ pub fn settings_card(s: &State) -> El {
                 .child(if l.scanning { button("set/library/rescan", "Looking\u{2026}", false, None) } else { button("set/library/rescan", "Rescan", false, Some(rescan)) }),
         );
     }
+    c
+}
+
+/// Settings → Library → Open with: Automatic, then each installed player.
+pub fn open_with_choice(s: &State) -> El {
+    let l = &s.library;
     let mut choice = row().key("set/open-with").flex_wrap().gap(6.0);
     let last = Player::from_key(&l.last_player).filter(|p| *p != Player::System && l.installed().contains(p));
     let auto_label = match last {
@@ -674,9 +678,11 @@ pub fn settings_card(s: &State) -> El {
         let on = !on_auto && l.open_with == p.key();
         choice = choice.child(cell(format!("set/open-with/{}", p.key()), format!("Open with {}", p.label()), on, move |s| set_open_with(s, p.key())).child(text(p.label()).font(theme::LABEL).color(PAL.text)));
     }
-    c.child(option("Open with", "Automatic: the player Kotora last saw playing, else your system's default. Only installed players show.".into(), el()))
-        .child(choice)
+    choice
 }
+
+/// Settings → Library → Open with: what Automatic means.
+pub const OPEN_WITH_NOTE: &str = "Automatic: the player Kotora last saw playing, else your system's default. Only installed players show.";
 
 // ------------------------------------------------------------------------------------- scenes
 
