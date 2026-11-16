@@ -183,7 +183,8 @@ pub enum Request {
     Confirm,
     /// Not now: hides the offer for this file. Replies `Now`.
     Dismiss,
-    /// Saves the Client ID of the active service (as the setup wizard's field does). Replies `Done`.
+    /// Saves the user's own Client ID for the active service (as Settings → Account's field does; optional:
+    /// Kotora has its own). Replies `Done`.
     SetClientId { id: String },
     /// Starts a rewatch of a completed entry: a part of its title, or its id on the service.
     /// Replies `Edited`.

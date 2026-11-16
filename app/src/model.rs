@@ -353,6 +353,8 @@ pub enum Msg {
     Players(Vec<SourceStatus>),
     /// The Client ID was written (its last four characters and the sign-in state now), or not.
     ClientIdSaved(Result<(String, Auth), String>),
+    /// "Use Kotora's built-in ID" was written (or failed).
+    ClientIdCleared(Result<(), String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1184,6 +1186,7 @@ impl State {
             Msg::Reached { key, file } => self.now_reached(&key, &file),
             Msg::Players(v) => self.players_seen(v),
             Msg::ClientIdSaved(r) => self.client_id_saved(r),
+            Msg::ClientIdCleared(r) => self.client_id_cleared(r),
             Msg::Profile(p) => {
                 // A late answer after sign out is dropped.
                 let changed = self.account.is_some() && self.profile.as_ref() != Some(&*p);

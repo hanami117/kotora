@@ -1,9 +1,12 @@
-//! The setup wizard (Stage 5): the service choice, then Welcome, create a Client ID (a MyAnimeList
-//! API app, or an AniList API client), paste it, sign in, done.
+//! The setup wizard: the service choice, then Welcome, sign in, done.
+//!
+//! Kotora has its own MyAnimeList and AniList Client IDs built in (`core::service`), so there is
+//! nothing to register or paste; someone with a client of their own sets its ID in Settings →
+//! Account. The Create and Paste steps stay for a service without a built-in ID (none today).
 //!
 //! The choice ("Which service do you use?") is an unnumbered intro, only for someone who has not
-//! chosen yet and has no Client ID or token (`Config::needs_service_choice`); the five numbered
-//! steps are the same for both services, with each one's own words. Settings → Account switches
+//! chosen yet and has no Client ID or token (`Config::needs_service_choice`); the numbered steps
+//! are the same for both services, with each one's own words. Settings → Account switches
 //! services later.
 //!
 //! It shows at first run (no Client ID: every list page shows it) and again from Settings →
@@ -74,7 +77,7 @@ fn sign_in_problem(svc: ServiceId, e: &str) -> Option<(String, String)> {
         return Some((
             format!("{name} said no"),
             if svc.built_in_client_id().is_some() {
-                "The sign-in was denied. Try again and approve it, so Kotora can read and update your list.".to_string()
+                "The sign-in was denied. Try again and approve it, so Kotora can read and update your list. If it keeps failing and you use your own client ID (Settings \u{2192} Account), check that its redirect URL is exactly http://127.0.0.1:47321/callback.".to_string()
             } else {
                 format!("The sign-in was denied. Try again and allow it, so Kotora can read and update your list. If it keeps failing, check that your {}'s redirect URL is exactly the one from step 2.", if svc == ServiceId::AniList { "client" } else { "app" })
             },
@@ -109,7 +112,8 @@ impl State {
         self.service = id;
         if self.handle.is_some() {
             crate::account::set_active(id);
-            self.auth = online::initial_auth();
+            // The choice is made (its file write may still be on its way): no first-run state.
+            self.auth = online::auth_for(id);
             self.client_id.hint = crate::clientid::saved_hint(id);
             // A built-in Client ID means the list pages no longer show the wizard by themselves.
             if self.page != Page::Setup {
@@ -157,6 +161,11 @@ impl State {
             self.setup = self.setup.next(self.service);
             if self.setup == Step::Paste && self.client_id.hint.is_none() {
                 self.client_id.draft.focused = true;
+            }
+            // First run: the wizard was the only page; from the sign-in step on, signing in works
+            // (the service has a built-in Client ID).
+            if self.setup == Step::SignIn && self.auth == Auth::NoClientId && self.service.built_in_client_id().is_some() {
+                self.auth = Auth::SignedOut;
             }
         }
     }
@@ -721,23 +730,20 @@ mod tests {
     #[test]
     fn steps_go_forward_only_when_ready() {
         let mut s = first_run();
-        assert!(!s.setup_closable(), "no Client ID: nothing else to show");
+        assert!(!s.setup_closable(), "first run: nothing else to show");
+        // Kotora's own MyAnimeList Client ID is built in: Welcome, Sign in, Done.
+        assert_eq!(Step::all(ServiceId::Mal), [Step::Welcome, Step::SignIn, Step::Done]);
         s.setup_next();
-        assert_eq!(s.setup, Step::Create);
+        assert_eq!(s.setup, Step::SignIn);
+        assert_eq!(s.auth, Auth::SignedOut, "signing in works from here");
+        assert!(!s.setup_can_go_on(), "not signed in yet");
+        s.setup_prev();
+        assert_eq!(s.setup, Step::Welcome);
         s.setup_next();
-        assert_eq!(s.setup, Step::Paste);
-        s.setup_next();
-        assert_eq!(s.setup, Step::Paste, "no ID saved yet");
-        // A secret's shape is refused; a good ID saved moves on by itself.
+        // A secret's shape is still refused for someone's own ID (Settings).
         s.client_id.draft.replace_text("0123456789abcdef".repeat(4));
         s.save_client_id();
         assert!(s.client_id.error.as_deref().is_some_and(|e| e.contains("Client Secret")));
-        s.apply(Msg::ClientIdSaved(Ok(("cdef".into(), Auth::SignedOut))));
-        assert_eq!(s.setup, Step::SignIn);
-        assert!(!s.setup_can_go_on(), "not signed in yet");
-        s.setup_prev();
-        assert_eq!(s.setup, Step::Paste);
-        s.setup_next();
         // Signing in: the link shows; a denial explains and offers Try again.
         s.auth = Auth::SigningIn;
         s.apply(Msg::SignInUrl { url: "https://myanimelist.net/v1/oauth2/authorize?x".into(), opened: false });
@@ -775,15 +781,15 @@ mod tests {
         assert_eq!(s.setup, Step::Service, "Back from Welcome");
         s.setup_next();
         s.setup_next();
-        assert_eq!(s.setup, Step::Create);
+        assert_eq!(s.setup, Step::SignIn);
         s.setup_prev();
         s.setup_prev();
-        assert_eq!(s.setup, Step::Service, "Create, Welcome, then the choice");
+        assert_eq!(s.setup, Step::Service, "Sign in, Welcome, then the choice");
         s.choose_service(ServiceId::Mal);
         s.setup_next();
         // Other steps ignore the choice.
-        s.choose_service(ServiceId::Mal);
-        assert_eq!(s.setup, Step::Create);
+        s.choose_service(ServiceId::AniList);
+        assert_eq!((s.setup, s.service), (Step::SignIn, ServiceId::Mal));
 
         // Once the wizard is closed the choice is behind us.
         s.auth = Auth::SignedOut;
@@ -801,7 +807,7 @@ mod tests {
         assert_eq!((s.setup, s.service), (Step::Welcome, ServiceId::AniList));
         // Kotora's own Client ID is built in: three steps, no Create or Paste.
         assert_eq!(Step::all(ServiceId::AniList), [Step::Welcome, Step::SignIn, Step::Done]);
-        assert_eq!(Step::all(ServiceId::Mal).len(), 5);
+        assert_eq!(Step::all(ServiceId::Mal).len(), 3, "MyAnimeList's is built in too (0.1.3)");
         assert_eq!((Step::Welcome.number(ServiceId::AniList), Step::SignIn.number(ServiceId::AniList), Step::Done.number(ServiceId::AniList)), (1, 2, 3));
         s.setup_next();
         assert_eq!(s.setup, Step::SignIn);
@@ -822,9 +828,9 @@ mod tests {
 
     #[test]
     fn a_built_in_id_means_no_missing_client_id() {
-        // Without a saved ID, AniList (built in) is signed out, not "no Client ID".
+        // Without a saved ID, both services (built in) are signed out, not "no Client ID".
         let cfg = kotora_core::config::Config::default();
-        assert!(cfg.has_client_id(ServiceId::AniList) && !cfg.has_client_id(ServiceId::Mal));
+        assert!(cfg.has_client_id(ServiceId::AniList) && cfg.has_client_id(ServiceId::Mal));
         let mut s = State::fake();
         s.service = ServiceId::AniList;
         s.auth = Auth::SignedOut;

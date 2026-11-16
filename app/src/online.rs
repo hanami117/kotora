@@ -30,13 +30,18 @@ fn send(h: &Handle, msg: Msg) {
     h.update_if(move |s, _| s.apply(msg));
 }
 
-/// What to show first for the active service: the Client ID and the token file decide.
+/// What to show first for the active service: a saved token means signed in. Kotora has its own
+/// Client IDs, so signed out is only one click from signed in. `NoClientId` is the first run
+/// (nothing chosen, no own ID, no token for any service): the setup wizard is the page.
 pub fn initial_auth() -> Auth {
+    if wants_service_choice() {
+        return Auth::NoClientId;
+    }
     auth_for(account::active())
 }
 
-/// MyAnimeList needs its Client ID for every request (the token refresh); AniList only to sign
-/// in, so a saved AniList token is enough.
+/// The sign-in state of service `id`, the choice made. MyAnimeList needs its Client ID for every
+/// request (the token refresh); AniList only to sign in, so a saved AniList token is enough.
 pub fn auth_for(id: ServiceId) -> Auth {
     let cfg = Config::load(&paths::config_file()).unwrap_or_default();
     let has_id = cfg.has_client_id(id);
@@ -387,7 +392,7 @@ pub fn switch_service(s: &mut State, id: ServiceId) {
             eprintln!("kotora: {e}");
         }
     });
-    s.auth = initial_auth();
+    s.auth = auth_for(id);
     s.client_id.hint = crate::clientid::saved_hint(id);
     s.loading = s.auth == Auth::SignedIn;
     s.refresh();

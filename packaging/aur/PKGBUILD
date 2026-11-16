@@ -16,7 +16,7 @@
 # SQLite is bundled (rusqlite "bundled"), so there is no sqlite dependency.
 
 pkgname=kotora
-pkgver=0.1.1
+pkgver=0.1.3
 pkgrel=1
 _build=1
 if ((_build > 1)); then _rel=$pkgver-$_build; else _rel=$pkgver; fi
@@ -51,7 +51,7 @@ optdepends=(
 makedepends=('cargo' 'pkgconf')
 options=('!lto')
 source=("$pkgname-$_rel.tar.gz::https://github.com/hanami117/kotora/releases/download/v$_rel/kotora-$_rel.tar.gz")
-sha256sums=('e979dc402fc646ad906bb30788eb6ad3a3ec118fd1872a5d61285615f307c2e1')
+sha256sums=('5bdc70173be3dc97055d542b639b5b92ba278d75cfa4fdc3623648c0e3d03912')
 
 prepare() {
   cd "$pkgname-$pkgver"
@@ -65,6 +65,9 @@ build() {
   export CARGO_TARGET_DIR=target
   # The update check says "update with your AUR helper" and offers no download.
   export KOTORA_CHANNEL=aur
+  # A source tarball has no .git: keep git from finding the AUR helper's clone above $srcdir, or
+  # `kot --version` would show that clone's branch and hash.
+  export GIT_CEILING_DIRECTORIES="$srcdir"
   cargo build --frozen --release -p kotora -p kotora-ctl
 }
 

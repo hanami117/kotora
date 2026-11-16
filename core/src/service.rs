@@ -18,10 +18,11 @@ pub enum ServiceId {
 /// `http://127.0.0.1:47321/callback`). A client id is public by design (implicit grant: there is
 /// no secret), so it ships in the source and AniList sign-in is one click.
 pub const ANILIST_CLIENT_ID: &str = "57227";
-/// Kotora's own MyAnimeList client id, once one is registered. `None` until then: MyAnimeList
-/// users register their own (the wizard's steps). Set this one const to switch MAL to the
-/// one-click sign-in too.
-pub const MAL_CLIENT_ID: Option<&str> = None;
+/// Kotora's own MyAnimeList API client id (type "other", PKCE, no secret, redirect URL
+/// `http://127.0.0.1:47321/callback`). A client id is public by design: Taiga ships its own in
+/// its source the same way. It makes sign-in one click. A user's own id (Settings → Account) and
+/// `KOTORA_MAL_CLIENT_ID` win over it.
+pub const MAL_CLIENT_ID: Option<&str> = Some("908dfd0cdb73e89f00555d3f9153ef66");
 
 impl ServiceId {
     pub const ALL: [ServiceId; 2] = [ServiceId::Mal, ServiceId::AniList];

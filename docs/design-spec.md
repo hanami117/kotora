@@ -202,7 +202,7 @@ variant.
 | Offline | Yellow alert on the queue page; sidebar line "Offline · N changes waiting". The list works. |
 | Service error | Red alert "Can't reach MyAnimeList. Showing your saved list from 21:30." with Retry. Never a blank page. |
 | Sign in again (401) | Yellow alert with a Sign in button; the queue is kept. |
-| No Client ID | First-run screen with a red alert that shows the `config.toml` lines, sign-in disabled. |
+| First run | The setup wizard: Welcome, Sign in, Done. Kotora's own Client ID is built in; your own goes in Settings → Account. |
 | Conflict | Orange-bordered card in the queue; the row in the list says "Waiting to sync". |
 
 Errors say what failed and what still works, in plain words.

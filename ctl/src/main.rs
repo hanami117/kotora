@@ -57,8 +57,8 @@ Commands:
                         library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id
-  config client-id ID   save the Client ID of your list service (MyAnimeList
-                        or AniList, as chosen in Kotora)
+  config client-id ID   use your own Client ID for your list service
+                        (MyAnimeList or AniList, as chosen in Kotora; optional)
   show                  show the window
   quit                  quit Kotora
   help                  this text
@@ -214,15 +214,27 @@ fn stdout_is_tty() -> bool {
 
 /// The terminal's columns: asked from stdout, else `$COLUMNS`, else 80 (a pipe).
 fn terminal_width() -> usize {
-    if stdout_is_tty() {
-        let mut ws = libc::winsize { ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0 };
-        // SAFETY: TIOCGWINSZ fills the `winsize` we pass; stdout is a terminal.
-        let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0;
-        if ok && ws.ws_col > 0 {
-            return usize::from(ws.ws_col);
-        }
+    if stdout_is_tty()
+        && let Some(cols) = console_width()
+    {
+        return cols;
     }
     std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()).filter(|&n| n > 0).unwrap_or(80)
+}
+
+/// The columns of the terminal on stdout, from the system.
+#[cfg(unix)]
+fn console_width() -> Option<usize> {
+    let mut ws = libc::winsize { ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0 };
+    // SAFETY: TIOCGWINSZ fills the `winsize` we pass; stdout is a terminal.
+    let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0;
+    (ok && ws.ws_col > 0).then(|| usize::from(ws.ws_col))
+}
+
+/// No ioctl here (Windows): `$COLUMNS`, else 80.
+#[cfg(not(unix))]
+fn console_width() -> Option<usize> {
+    None
 }
 
 fn interactive() -> bool {

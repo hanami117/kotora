@@ -686,6 +686,12 @@ pub fn save_client_id_for(path: &Path, service: crate::service::ServiceId, raw: 
     }
 }
 
+/// Goes back to Kotora's built-in Client ID for `service`: blanks `[mal] client_id` or
+/// `[anilist] client_id` (a blank one counts as none).
+pub fn clear_client_id(path: &Path, service: crate::service::ServiceId) -> Result<(), String> {
+    write_setting(path, service.name(), "client_id", &quote(""))
+}
+
 /// Saves the chosen service (`[account] service`).
 pub fn save_service(path: &Path, service: &str) -> Result<(), String> {
     write_setting(path, "account", "service", &quote(service))
@@ -929,12 +935,16 @@ mod tests {
 
     #[test]
     fn the_client_id_falls_back_to_the_built_in_one() {
-        use crate::service::{ANILIST_CLIENT_ID, ServiceId};
+        use crate::service::{ANILIST_CLIENT_ID, MAL_CLIENT_ID, ServiceId};
         // No environment variable is set for this one in tests.
         let empty = Config::default();
         assert_eq!(empty.effective_client_id(ServiceId::AniList).as_deref(), Some(ANILIST_CLIENT_ID));
         assert!(empty.has_client_id(ServiceId::AniList));
-        assert_eq!(empty.effective_client_id(ServiceId::Mal), None, "no official MyAnimeList id yet");
+        let mal = MAL_CLIENT_ID.unwrap();
+        assert_eq!(mal.len(), 32, "a MyAnimeList id: 32 hex characters");
+        assert!(check_client_id(mal).is_ok());
+        assert_eq!(empty.effective_client_id(ServiceId::Mal).as_deref(), Some(mal));
+        assert!(empty.has_client_id(ServiceId::Mal));
         let own = Config { anilist_client_id: Some("777".into()), mal_client_id: Some("m".into()), ..Config::default() };
         assert_eq!(own.effective_client_id(ServiceId::AniList).as_deref(), Some("777"), "the user's own wins");
         assert_eq!(own.effective_client_id(ServiceId::Mal).as_deref(), Some("m"));
@@ -952,6 +962,22 @@ mod tests {
         assert!(check_anilist_client_id("abc").unwrap_err().contains("a number"));
         assert!(check_anilist_client_id("0").is_err());
         assert!(check_anilist_client_id("12345678901").is_err());
+    }
+
+    #[test]
+    fn going_back_to_the_built_in_id_blanks_the_saved_one() {
+        let dir = std::env::temp_dir().join(format!("kotora-clear-id-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[mal]\nclient_id = \"0123456789abcdef0123456789abcdef\" # mine\n\n[anilist]\nclient_id = \"12345\"\n\n[updates]\nauto = true\n").unwrap();
+        clear_client_id(&path, crate::service::ServiceId::Mal).unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!((c.mal_client_id.as_deref(), c.anilist_client_id.as_deref()), (None, Some("12345")), "only that service's");
+        clear_client_id(&path, crate::service::ServiceId::AniList).unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.anilist_client_id, None);
+        assert!(c.updates.auto, "the rest stays");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

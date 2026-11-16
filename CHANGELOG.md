@@ -5,14 +5,6 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [Unreleased]
 
 ### Added
-- **`kot` with no command is a dashboard:** a now-playing line (player, title, episode, time, and whether an
-  update is offered), then your Watching list sorted by what you can watch next: a progress bar with
-  watched/total, and NEXT ("▶ Ep 6 on disk", else the next air time like "Wed 18:00 (in 2d)", else
-  "aired · not on disk"), then the sync queue and the last sync. It fits the terminal width, uses colour only
-  on a terminal with `NO_COLOR` unset, and is plain text when piped. The data comes in one request, and an
-  older Kotora that doesn't know it makes `kot` print the status lines instead.
-- **`kot status --short`** prints the status as one line.
-- **`kot schedule`** is another name for `kot airing`.
 - **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in
   Settings → Account ("Use AniList"); Kotora keeps one service at a time, and each keeps its own saved list,
   sign-in and waiting changes, so switching back loses nothing. Sign-in is one click: Kotora has its own
@@ -23,6 +15,30 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   details, Airing and `kot` work the same with either service.
 - **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
   no longer throw off "not aired yet" and the Airing timetable.
+
+## [0.1.3] - 2026-11-16
+
+### Changed
+- **Signing in to MyAnimeList is one click.** Kotora now has its own MyAnimeList client ID built in (a client ID is
+  public by design, as in Taiga), so there is nothing to register or paste. The setup wizard is three steps:
+  Welcome, Sign in, Done. A client ID you saved earlier keeps being used.
+- **Your own client ID is an advanced option:** Settings → Account → **Use my own client ID…**, and **Use Kotora's
+  built-in ID** to go back. `kot config client-id ID` still works, and so does `KOTORA_MAL_CLIENT_ID` (it wins).
+
+### Packaging
+- `kotora-bin` is on the AUR (prebuilt x86_64 binary). AUR `kotora` 0.1.2-2 fixes `kot --version`.
+
+## [0.1.2] - 2026-11-16
+
+### Added
+- **`kot` with no command is a dashboard:** a now-playing line (player, title, episode, time, and whether an
+  update is offered), then your Watching list sorted by what you can watch next: a progress bar with
+  watched/total, and NEXT ("▶ Ep 6 on disk", else the next air time like "Wed 18:00 (in 2d)", else
+  "aired · not on disk"), then the sync queue and the last sync. It fits the terminal width, uses colour only
+  on a terminal with `NO_COLOR` unset, and is plain text when piped. The data comes in one request, and an
+  older Kotora that doesn't know it makes `kot` print the status lines instead.
+- **`kot status --short`** prints the status as one line.
+- **`kot schedule`** is another name for `kot airing`.
 
 ### Fixed
 - **`kot` picks the right anime when a title matches several:** a title that is exactly what you typed (any
