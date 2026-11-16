@@ -132,3 +132,5 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
   redirection rules, built in and refreshed from GitHub at most once a week.
 - [anitomy](https://github.com/erengy/anitomy) (MPL-2.0), through
   [anitomy-ng](https://github.com/tylergibbs2/anitomy-ng): file name parsing.
+- [Noto Sans JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License 1.1): the outlines of 小虎
+  in the sidebar and the startup animation.

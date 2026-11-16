@@ -36,6 +36,7 @@
 //! [display]
 //! titles = "romaji"            # or "english", "japanese"; romaji when a title is missing
 //! theme = "system"             # or "light", "dark"; system follows the desktop (dark when unknown)
+//! intro = true                 # the startup animation when Kotora opens with its window
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
@@ -193,11 +194,19 @@ impl Theme {
 }
 
 /// Display settings.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct Display {
     pub titles: TitleLang,
     pub theme: Theme,
+    /// The startup animation on a cold start with a window (on by default).
+    pub intro: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true }
+    }
 }
 
 /// How a list page shows its entries: the table, a grid of posters, or large cards.
@@ -721,6 +730,8 @@ mod tests {
             assert_eq!(c.display.titles, TitleLang::English, "the other display line stays");
         }
         assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
+        assert!(Config::parse("").unwrap().display.intro, "the startup animation is on by default");
+        assert!(!Config::parse("[display]\nintro = false\n").unwrap().display.intro);
         assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");
         assert!(Theme::Light.is_light(true) && Theme::Light.is_light(false));
         assert!(!Theme::Dark.is_light(true) && !Theme::Dark.is_light(false));

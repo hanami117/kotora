@@ -21,6 +21,8 @@ mod details;
 mod grid;
 mod home;
 mod icons;
+mod intro;
+mod kanji;
 mod library;
 mod look;
 #[cfg(target_os = "macos")]
@@ -171,7 +173,7 @@ fn main() {
         poll: Some(ui::poll),
         on_key: Some(ui::on_key),
         min_size: Some((960.0, 600.0)),
-        ..AppSpec::new("Kotora", (1280.0, 800.0), State::fake, ui::view)
+        ..AppSpec::new("Kotora \u{5c0f}\u{864e}", (1280.0, 800.0), State::fake, ui::view)
     };
     let app = App::new(spec).tab_visits_controls(true).on_frame_encoded(log_first_frame());
     // macOS: the traffic lights pinned in a band at the sidebar's top (`theme::TRAFFIC_LIGHTS`),
@@ -237,6 +239,9 @@ fn main() {
         s.notes = notes::Notifier::start(handle.clone());
         s.handle = Some(handle);
         s.window = !windowless;
+        // The startup intro: a cold start that opens a window (a macOS launch checked for a
+        // login start keeps it until that is known: `State::login_launch`).
+        s.intro = intro::at_launch(intro::Launch { enabled: s.prefs.intro, hidden, test_instance, headless: false });
         // The tray or menu bar icon (UI thread: AppKit needs the main thread on macOS).
         s.start_tray();
         // The saved list first, then a sync when signed in (workers, off the UI thread).

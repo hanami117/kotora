@@ -5,6 +5,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [Unreleased]
 
 ### Added
+- **小虎:** Kotora's name in Japanese beside the logo, and in the window title ("Kotora 小虎"). Drawn as vector
+  outlines (Noto Sans JP, OFL), so it shows without a Japanese font installed.
+- **Startup animation:** when Kotora opens with its window, three claw marks rip across an orange layer, which
+  splits and slides away (under a second; any click or key skips it). Not when the window comes back from the
+  tray or menu bar, not for a start in the background; a plain fade with Reduce Motion. Settings → Appearance →
+  Startup animation turns it off (`[display] intro`).
 - **Not aired yet:** `+1`, the editor and `kot +1` / `kot set` ask "Mark anyway?" for an episode past the airing
   estimate (`kot`: `--anyway` skips the question). Only the total episode count is a hard limit.
 - **Add as Watching at episode N:** one button on Now Playing's "Not on your list" card adds the anime and

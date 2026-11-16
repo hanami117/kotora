@@ -467,6 +467,8 @@ pub struct State {
     pub toast: Option<crate::library::Toast>,
     /// An entry's right-click menu (`ctxmenu.rs`).
     pub ctx: Option<crate::ctxmenu::Ctx>,
+    /// The startup intro while it plays (`intro.rs`; only on a cold start with a window).
+    pub intro: Option<crate::intro::Intro>,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -531,6 +533,7 @@ impl State {
             main_size: Default::default(),
             toast: None,
             ctx: None,
+            intro: None,
         };
         s.queue_changed();
         s.refresh();

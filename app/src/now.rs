@@ -143,6 +143,8 @@ pub struct Prefs {
     pub titles: kotora_core::config::TitleLang,
     /// Settings → Appearance (`[display] theme`).
     pub theme: kotora_core::config::Theme,
+    /// Settings → Appearance → Startup animation (`[display] intro`).
+    pub intro: bool,
     /// Each list page's view (`[views]`, the switch in the list's toolbar).
     pub views: kotora_core::config::Views,
     /// Settings → Startup: what the system says about the login start (`autostart.rs`).
@@ -158,7 +160,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true }
     }
 }
 
@@ -175,6 +177,7 @@ impl Prefs {
             notify: c.notifications.clone(),
             titles: c.display.titles,
             theme: c.display.theme,
+            intro: c.display.intro,
             views: c.views,
             // The system's login entry, read by `detect::start`; off until then.
             login: Default::default(),
@@ -712,6 +715,12 @@ impl State {
 
     /// "Start in the background", kept in `config.toml` so it stays when the login switch goes off
     /// and on. Linux writes `--hidden` into the autostart entry; macOS reads it at launch.
+    /// Settings → Appearance → Startup animation: read at the next start.
+    pub fn set_intro(&mut self, on: bool) {
+        self.prefs.intro = on;
+        crate::detect::save_setting(self, "display", "intro", on.to_string());
+    }
+
     pub fn set_background(&mut self, on: bool) {
         self.prefs.background = on;
         crate::detect::save_setting(self, "startup", "background", on.to_string());
@@ -783,6 +792,8 @@ impl State {
     pub fn login_launch(&mut self, at_login: bool) {
         let Some(h) = self.handle.clone() else { return };
         if at_login {
+            // A login start in the background: no intro, now or when the window shows later.
+            self.intro = None;
             if self.tray.is_some() {
                 h.set_dock_icon(false);
             }

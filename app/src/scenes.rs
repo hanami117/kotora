@@ -791,6 +791,36 @@ pub const SCENES: &[Scene] = &[
         search(s, "kirigaoka", true);
     }),
     // Settings → Appearance with Light picked (light whatever the desktop says).
+    // The startup intro (`intro.rs`), held at a share of its run: the orange layer, the three
+    // claw marks ripping across, the strips sliding away.
+    ("intro-0", |s| s.intro = Some(crate::intro::Intro::frozen(0.0, false))),
+    ("intro-15", |s| s.intro = Some(crate::intro::Intro::frozen(0.15, false))),
+    ("intro-25", |s| s.intro = Some(crate::intro::Intro::frozen(0.25, false))),
+    ("intro-35", |s| s.intro = Some(crate::intro::Intro::frozen(0.35, false))),
+    ("intro-50", |s| s.intro = Some(crate::intro::Intro::frozen(0.5, false))),
+    ("intro-62", |s| s.intro = Some(crate::intro::Intro::frozen(0.62, false))),
+    ("intro-75", |s| s.intro = Some(crate::intro::Intro::frozen(0.75, false))),
+    ("intro-90", |s| s.intro = Some(crate::intro::Intro::frozen(0.9, false))),
+    ("intro-40-light", |s| {
+        s.set_theme(Theme::Light);
+        s.intro = Some(crate::intro::Intro::frozen(0.4, false));
+    }),
+    // Reduce Motion: only the fade, held halfway.
+    ("intro-reduced-50", |s| s.intro = Some(crate::intro::Intro::frozen(0.5, true))),
+    // Running: `--video` or `--frames` record it (`--duration 1.2`).
+    ("intro-live", |s| {
+        s.window = true;
+        s.intro = Some(crate::intro::Intro::live());
+    }),
+    ("intro-live-light", |s| {
+        s.set_theme(Theme::Light);
+        s.window = true;
+        s.intro = Some(crate::intro::Intro::live());
+    }),
+    ("intro-live-reduced", |s| {
+        s.window = true;
+        s.intro = Some(crate::intro::Intro::live_reduced());
+    }),
     ("settings-theme-light", |s| {
         s.set_theme(Theme::Light);
         s.go(Page::Settings);

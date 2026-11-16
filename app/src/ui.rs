@@ -52,24 +52,32 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
         .children(s.toast.as_ref().map(crate::library::toast))
+        // The startup intro covers everything while it plays.
+        .children(crate::intro::overlay(s, cx))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
 /// while a window shows it (`now::tick`); at rest `poll` has no change and asks for no wake.
-pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
+pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     // Both run: each may ask for its own wake.
     // The tray's line follows picks made in the window too (cheap: a string compare).
     s.sync_tray();
     let now = crate::now::tick(s, tx);
     let airing = crate::airing::tick(s, tx);
     let toast = crate::library::toast_tick(s, tx);
-    now || airing || toast
+    let intro = crate::intro::poll(s, t, tx);
+    now || airing || toast || intro
 }
 
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
 /// pages; on a list page Ctrl F jumps to its filter box. Escape closes the inline editor, a
 /// menu, the details page or the search page.
 pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    // Any key skips the startup intro, and does nothing else.
+    if s.intro.is_some() {
+        crate::intro::skip(s);
+        return true;
+    }
     if k.is_command('k') || (k.is_command('f') && !matches!(s.page, Page::List(_))) {
         tx.instant();
         s.open_search();
@@ -304,7 +312,16 @@ fn brand(s: &State) -> El {
         .px(8.0)
         .pb(14.0)
         .child(logo)
-        .child(text("Kotora").font(rune::TextStyle::new(15.0, 600.0).tracking(0.2)).color(PAL.text))
+        .child(
+            // 小虎 ("little tiger") beside the name, smaller and dimmer; nudged down so its
+            // baseline sits near the Latin one.
+            row()
+                .key("brand/name")
+                .gap(6.0)
+                .center_y()
+                .child(text("Kotora").font(rune::TextStyle::new(15.0, 600.0).tracking(0.2)).color(PAL.text))
+                .child(crate::kanji::name(12.0, false, PAL.faint).mt(2.0)),
+        )
         .child(spacer())
         .child(text(env!("CARGO_PKG_VERSION").rsplit_once('.').map_or("", |(v, _)| v)).font(theme::SMALL).color(PAL.faint))
 }
@@ -1773,7 +1790,7 @@ fn about_card(s: &State) -> El {
                             .wrap(),
                     )
                     .child(
-                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga's author. Not affiliated with MyAnimeList.")
+                        text("GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga's author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList.")
                             .font(theme::LABEL)
                             .color(PAL.faint)
                             .wrap(),
@@ -2540,6 +2557,11 @@ fn display_card(s: &State) -> El {
             "Titles",
             "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
             choice,
+        ))
+        .child(option(
+            "Startup animation",
+            "Claw marks when Kotora opens. Showing the window again doesn\u{2019}t play it; with Reduce Motion it is a short fade.".into(),
+            switch("set/intro".into(), "Startup animation", s.prefs.intro, State::set_intro),
         ))
 }
 

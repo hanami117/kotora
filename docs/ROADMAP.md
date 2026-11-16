@@ -63,6 +63,12 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   through the 20-a-minute budget) on a worker, saved in the store (12 h for the near seasons, 14 days for older
   ones, at most 6 lists, none older than 30 days; migration 9 drops the old partial copies). Waiting for the
   user's live test.
+- **小虎 and the claw intro (2026-11-16, proposal):** branch `claw-intro` (off `season-picker`). 小虎 beside the
+  sidebar's name and in the window title, as vector outlines (`app/src/kanji.rs`, Noto Sans JP, OFL). A startup
+  animation (`app/src/intro.rs`): an orange layer with 小虎, three claw marks ~90 ms apart, the layer splits into
+  strips that slide away; 0.8 s, any click or key skips. Only a cold start with a window (not `--hidden`, a
+  test instance, headless or a window shown again); Reduce Motion: a fade. Settings → Appearance → Startup
+  animation, `[display] intro`. Scenes `intro-*`. Waiting for the user's judgement live (keep, tune or drop).
 
 ## Stage 0: design
 
