@@ -1974,7 +1974,8 @@ pub(crate) fn kv(label: &str, value: El) -> El {
 fn match_text(s: &State, n: &Now) -> (String, Color) {
     match &n.found {
         Found::List { media_id, sure, why } => {
-            let st = s.entries.iter().find(|e| e.id == *media_id).map_or("", |e| e.status.label());
+            // Never "In your list" without its entry (it left the list: looked up again).
+            let Some(st) = s.entries.iter().find(|e| e.id == *media_id).map(|e| e.status.label()) else { return ("Not on your list now".into(), PAL.faint) };
             if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
         }
         Found::NotOnList { .. } => (format!("Not on your list: {} (found on {})", s.not_on_list_title(n).unwrap_or_default(), s.service.title()), PAL.dim),
