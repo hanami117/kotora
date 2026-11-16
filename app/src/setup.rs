@@ -158,7 +158,7 @@ fn para(t: &str) -> El {
 }
 
 fn title(t: &str) -> El {
-    text(t.to_string()).font(TextStyle::new(22.0, 600.0)).color(PAL.text).pb(2.0)
+    text(t.to_string()).font(TextStyle::new(22.0, 600.0)).color(PAL.text).wrap().pb(2.0)
 }
 
 /// A button that opens a web page in the browser.
@@ -184,11 +184,11 @@ fn open_button(key: &str, label: &str, url: &'static str) -> El {
 }
 
 fn welcome(s: &State) -> El {
-    let mut c = col().gap(12.0);
+    let mut c = col().gap(12.0).w_full().min_w(0.0);
     if let Some(img) = &s.logo_big {
         c = c.child(el().size(56.0, 56.0).radius(theme::R_LG).pixels(img.pixels()));
     }
-    c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text))
+    c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
         .child(para("Kotora keeps your MyAnimeList list up to date while you watch. It notices the episode playing in your own video player and asks before it records it."))
         .child(para("You need two things: a MyAnimeList account, and a free \u{201c}Client ID\u{201d}. MyAnimeList asks every app to register itself; it takes about 2 minutes, and the next steps show you how."))
         .child(text("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap())
@@ -214,7 +214,7 @@ fn value(t: &str) -> El {
 }
 
 fn mono(t: &str) -> El {
-    el().px(8.0).py(3.0).radius(theme::R_XS).fill(PAL.field).border(1.0, PAL.border).child(text(t.to_string()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text))
+    el().min_w(0.0).px(8.0).py(3.0).radius(theme::R_XS).fill(PAL.field).border(1.0, PAL.border).child(text(t.to_string()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text).truncate())
 }
 
 fn numbered(n: u32, body: El) -> El {
@@ -249,7 +249,7 @@ fn create(s: &State) -> El {
         .child(form_row("App Description", value("One line, for example \u{201c}Personal anime tracker\u{201d}"), ""))
         .child(form_row(
             "App Redirect URL",
-            row().gap(8.0).center_y().child(mono(redirect)).child(copy),
+            row().w_full().min_w(0.0).gap(8.0).center_y().flex_wrap().child(mono(redirect)).child(copy),
             "Must match exactly, or the sign-in fails.",
         ))
         .child(form_row("Homepage URL", row().child(mono("https://kotora.moe")), ""))
@@ -257,6 +257,8 @@ fn create(s: &State) -> El {
         .child(form_row("Name / Company Name", value("Your name or nickname"), ""))
         .child(form_row("Purpose of Use", value("hobbyist"), "Or whichever option says hobby or personal use."));
     col()
+        .w_full()
+        .min_w(0.0)
         .gap(14.0)
         .child(title("Create your Client ID"))
         .child(numbered(
@@ -274,6 +276,8 @@ fn create(s: &State) -> El {
 
 fn paste(s: &State) -> El {
     let mut c = col()
+        .w_full()
+        .min_w(0.0)
         .gap(12.0)
         .child(title("Paste the Client ID"))
         .child(para("It is 32 characters long, digits and the letters a to f. Kotora keeps it in its settings file (config.toml), which only you can read."))
@@ -296,6 +300,8 @@ fn paste(s: &State) -> El {
 
 fn sign_in(s: &State) -> El {
     let mut c = col()
+        .w_full()
+        .min_w(0.0)
         .gap(12.0)
         .child(title("Sign in to MyAnimeList"))
         .child(para("Kotora opens MyAnimeList's own sign-in page in your browser. Sign in there if you need to, press Allow, then come back here."))
@@ -320,6 +326,8 @@ fn sign_in(s: &State) -> El {
     if s.auth == Auth::SigningIn {
         let mut wait = col()
             .key("setup/waiting")
+            .w_full()
+            .min_w(0.0)
             .gap(10.0)
             .padding(14.0)
             .radius(theme::R_MD)
@@ -330,14 +338,13 @@ fn sign_in(s: &State) -> El {
                     .gap(10.0)
                     .center_y()
                     .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
-                    .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY_MED).color(PAL.text))
-                    .child(spacer())
+                    .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY_MED).color(PAL.text).wrap().grow(1.0).min_w(0.0))
                     .child(button("setup/cancel", "Cancel", false, Some(online::cancel_sign_in)).h(26.0)),
             );
         if let Some((url, opened)) = &s.sign_in_link {
             let lead = if *opened { "Browser didn't open? Open this link in it:" } else { "Kotora couldn't open your browser. Open this link in it:" };
             let url2 = url.clone();
-            wait = wait.child(text(lead).font(theme::LABEL).color(if *opened { PAL.dim } else { PAL.warn() })).child(
+            wait = wait.child(text(lead).font(theme::LABEL).color(if *opened { PAL.dim } else { PAL.warn() }).wrap()).child(
                 row()
                     .gap(8.0)
                     .center_y()
@@ -370,7 +377,7 @@ fn sign_in(s: &State) -> El {
                 .radius(theme::R_MD)
                 .fill(PAL.err().alpha(0.08))
                 .border(1.0, PAL.err().alpha(0.3))
-                .child(text(head).font(theme::BODY_MED).color(PAL.err()))
+                .child(text(head).font(theme::BODY_MED).color(PAL.err()).wrap())
                 .child(text(why).font(theme::LABEL).color(PAL.text).wrap()),
         );
     }
@@ -458,6 +465,7 @@ pub fn page(s: &State) -> El {
     let card = col()
         .key(format!("setup/{}", step.number()))
         .w_full()
+        .min_w(0.0)
         .max_w(680.0)
         .gap(20.0)
         .padding(24.0)
@@ -465,7 +473,7 @@ pub fn page(s: &State) -> El {
         .fill(PAL.surface)
         .border(1.0, PAL.border)
         .child(head)
-        .child(body)
+        .child(body.w_full().min_w(0.0))
         .child(el().w_full().h(1.0).fill(PAL.border))
         .child(foot);
     col().key("page/setup").w_full().h_full().child(

@@ -13,7 +13,7 @@ use crate::icons;
 use crate::model::{Auth, Msg, State};
 use crate::online;
 use crate::theme::{self, PAL};
-use crate::ui::{button, small_button};
+use crate::ui::{button, field_hint, small_button};
 
 /// MyAnimeList's page where an app (and its Client ID) is registered.
 pub const API_PAGE: &str = "https://myanimelist.net/apiconfig";
@@ -110,7 +110,9 @@ pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
     let input = row()
         .key(format!("{key}/box"))
         .role("textbox")
-        .w(wide)
+        .grow(1.0)
+        .min_w(0.0)
+        .max_w(wide)
         .h(32.0)
         .px(10.0)
         .center_y()
@@ -124,7 +126,7 @@ pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder("Paste the Client ID here", PAL.faint)
+                .placeholder(field_hint(&f.draft, "Paste the Client ID here"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.client_id.draft)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.client_id.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
@@ -133,9 +135,10 @@ pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
                 }),
         );
     let save = if f.saving { button(&format!("{key}/save"), "Saving\u{2026}", true, None) } else { button(&format!("{key}/save"), "Save", true, Some(State::save_client_id)) };
-    let mut c = col().gap(6.0).child(row().gap(8.0).center_y().child(input).child(save));
+    // The box shrinks with its card (up to `wide`), so a narrow window never pushes Save out.
+    let mut c = col().w_full().min_w(0.0).gap(6.0).child(row().w_full().min_w(0.0).gap(8.0).center_y().child(input).child(save));
     if let Some(e) = &f.error {
-        c = c.child(text(e.clone()).key(format!("{key}/error")).font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap().max_w(wide + 80.0));
+        c = c.child(text(e.clone()).key(format!("{key}/error")).font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap().max_w(wide + 80.0).min_w(0.0));
     }
     c
 }
