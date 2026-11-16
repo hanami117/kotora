@@ -4,6 +4,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.2.0] - draft, not released (date set at release)
+
 ### Added
 - **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in
   Settings → Account ("Use AniList"); Kotora keeps one service at a time, and each keeps its own saved list,
@@ -15,6 +17,21 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   details, Airing and `kot` work the same with either service.
 - **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
   no longer throw off "not aired yet" and the Airing timetable.
+
+### Changed
+- **`kot config client-id ID`** saves your own client ID for the service in use (MyAnimeList or AniList), and
+  **Use Kotora's built-in ID** in Settings → Account works for both.
+- A saved list from a newer Kotora is refused with "Update Kotora to open it", and left as it is.
+
+### Upgrading from 0.1
+- Kotora 0.2 upgrades the saved list's database (`~/.local/share/kotora/kotora.db`) when it first starts, and
+  keeps the 0.1 file beside it as `kotora.db.schema-9.bak`. Your list, sign-in, waiting changes and settings
+  carry over; MyAnimeList stays your service until you choose AniList.
+- Kotora 0.1 can't open the upgraded database: it says the saved list is from a newer Kotora, and changes
+  nothing. To go back to 0.1, quit Kotora, put `kotora.db.schema-9.bak` back as `kotora.db` and delete
+  `kotora.db-wal` and `kotora.db-shm` if they are there. Changes made in 0.2 are lost; the next 0.2 start
+  upgrades the file again. Kotora 0.1 doesn't know the AniList sign-in and may drop it: sign in to AniList
+  again after coming back to 0.2.
 
 ## [0.1.3] - 2026-11-16
 
