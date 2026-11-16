@@ -631,6 +631,7 @@ impl State {
 
     pub fn go(&mut self, page: Page) {
         self.sort_menu = false;
+        self.airing.menu = false;
         self.ctx = None;
         if page == Page::Settings && self.page != page {
             self.refresh_login();
@@ -1197,6 +1198,7 @@ impl State {
                 // MyAnimeList's answers go with the account (search results, the open page,
                 // the seasons).
                 self.online = Default::default();
+                self.airing.cancel();
                 self.airing = Default::default();
                 if self.page == Page::Details {
                     self.page = self.lit_page();

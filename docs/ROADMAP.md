@@ -57,6 +57,12 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   `new_episode`. Decided by a thread from the saved list once a minute (`core/src/airnotes.rs`, store tables
   `air_seen` and `announced`, migration 8): no requests of its own, each announced once. macOS:
   `NSApplication.appearance` follows Theme (`app/src/chrome.rs`), and Choose… is an in-process `NSOpenPanel`.
+- **Season picker (2026-11-16):** branch `season-picker` (off `main`). Airing: ‹ › beside the season title, a menu
+  (This season, then the next season and the 8 before, newest first) and `[` / `]` (also Cmd or Alt with Left and
+  Right) show another season as a plain grid (no week, no countdowns). Each season is one `season` fetch (4 pages,
+  through the 20-a-minute budget) on a worker, saved in the store (12 h for the near seasons, 14 days for older
+  ones, at most 6 lists, none older than 30 days; migration 9 drops the old partial copies). Waiting for the
+  user's live test.
 
 ## Stage 0: design
 

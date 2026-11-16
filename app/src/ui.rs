@@ -49,6 +49,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
         // Menus last, so they draw over everything.
         .children(s.sort_menu.then(|| sort_menu(s)))
+        .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
         .children(s.toast.as_ref().map(crate::library::toast))
 }
@@ -106,6 +107,16 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     }
     // The Menu key or Shift+F10 that no focused control took: the selected entry's menu.
     if (k.key == rune::Key::ContextMenu || (k.key == rune::Key::Function(10) && k.mods.shift)) && s.ctx_key() {
+        return true;
+    }
+    // Airing: `[` and `]` (also Cmd+Left and Right) step to the previous and next season.
+    if s.page == Page::Airing
+        && s.has_list()
+        && !s.airing.menu
+        && let Some(by) = crate::airing::step_key(k)
+    {
+        tx.instant();
+        s.airing_step(by);
         return true;
     }
     // P (or Cmd/Ctrl+Return) plays the selected entry's next episode, as a middle-click does.

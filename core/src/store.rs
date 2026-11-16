@@ -8,7 +8,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::airing::{Broadcast, Season, SeasonAnime};
+use crate::airing::{Broadcast, SEASON_MAX_AGE, SEASONS_KEPT, Season, SeasonAnime};
 use crate::service::Details;
 use crate::{ListItem, Media, Status};
 
@@ -160,6 +160,10 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         at INTEGER NOT NULL,
         PRIMARY KEY (service, media_id, what)
      );",
+    // 9: the season picker. A saved season list is now the whole list (the top shows by members),
+    // so the Airing page can show any season from it; before, the previous season kept only its
+    // shows still airing. The old copies are partial: forget them (they are only a cache).
+    "DELETE FROM season;",
 ];
 
 /// Details of titles not on the list kept at most (the newest).
@@ -434,8 +438,9 @@ impl Store {
         Ok(row.and_then(|(body, at)| serde_json::from_str(&body).ok().map(|v| (v, at))))
     }
 
-    /// Saves a season list and forgets every season not in `keep` (no hoarding: only what the
-    /// Airing page shows).
+    /// Saves a season list, then forgets what the page has no use for (no hoarding): lists older
+    /// than [`SEASON_MAX_AGE`], and all but the newest [`SEASONS_KEPT`] lists. `season` and the
+    /// seasons in `keep` (the current and the previous one) are never dropped by the count.
     pub fn save_season(&self, service: &str, season: Season, list: &[SeasonAnime], now: i64, keep: &[Season]) -> Result<()> {
         let body = serde_json::to_string(list).map_err(|e| StoreError(e.to_string()))?;
         self.conn.execute(
@@ -443,11 +448,18 @@ impl Store {
              ON CONFLICT (service, year, season) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at",
             params![service, season.year, season.name(), body, now],
         )?;
-        let kept: Vec<String> = keep.iter().chain([&season]).map(|s| format!("{}/{}", s.year, s.name())).collect();
-        let mut rows = self.conn.prepare("SELECT year, season FROM season WHERE service = ?1")?;
+        self.conn.execute("DELETE FROM season WHERE service = ?1 AND fetched_at < ?2", params![service, now - SEASON_MAX_AGE])?;
+        let protected: Vec<String> = keep.iter().chain([&season]).map(|s| s.key()).collect();
+        let mut rows = self.conn.prepare("SELECT year, season FROM season WHERE service = ?1 ORDER BY fetched_at DESC, year DESC")?;
         let all: Vec<(u16, String)> = rows.query_map([service], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<std::result::Result<_, _>>()?;
+        let mut room = SEASONS_KEPT.saturating_sub(protected.len());
         for (y, s) in all {
-            if !kept.contains(&format!("{y}/{s}")) {
+            if protected.contains(&format!("{y}/{s}")) {
+                continue;
+            }
+            if room > 0 {
+                room -= 1;
+            } else {
                 self.conn.execute("DELETE FROM season WHERE service = ?1 AND year = ?2 AND season = ?3", params![service, y, s])?;
             }
         }
@@ -647,17 +659,33 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn seasons_are_cached_and_only_two_kept() {
+    fn seasons_are_cached_and_the_newest_kept() {
         let mut st = Store::open_memory().unwrap();
         let fall = Season { year: 2026, quarter: 3 };
         let a = SeasonAnime { id: 9201, title: "Kirigaoka no Lantern".into(), broadcast: Some(Broadcast { day: 5, minute: Some(1410) }), members: Some(5), ..Default::default() };
         assert_eq!(st.season("mal", fall).unwrap(), None);
-        st.save_season("mal", fall.previous().previous(), &[], 10, &[]).unwrap();
-        st.save_season("mal", fall.previous(), &[], 20, &[fall]).unwrap();
-        st.save_season("mal", fall, std::slice::from_ref(&a), 30, &[fall.previous()]).unwrap();
-        assert_eq!(st.season("mal", fall).unwrap(), Some((vec![a], 30)));
+        // Browsing back one season at a time: each is kept until the count is over.
+        let day = 86_400;
+        for (i, back) in (2..=8).enumerate() {
+            st.save_season("mal", fall.shift(-back), &[], 10 * day + i as i64, &[fall, fall.previous()]).unwrap();
+        }
+        let kept: Vec<i32> = (0..=8).filter(|&b| st.season("mal", fall.shift(-b)).unwrap().is_some()).collect();
+        assert_eq!(kept, [5, 6, 7, 8], "the 4 newest of the browsed ones (6 less the current and previous)");
+        // The current and the previous season stay whatever was browsed since.
+        st.save_season("mal", fall.previous(), &[], 11 * day, &[fall]).unwrap();
+        st.save_season("mal", fall, std::slice::from_ref(&a), 11 * day + 1, &[fall.previous()]).unwrap();
+        assert_eq!(st.season("mal", fall).unwrap(), Some((vec![a], 11 * day + 1)));
         assert!(st.season("mal", fall.previous()).unwrap().is_some());
-        assert_eq!(st.season("mal", fall.previous().previous()).unwrap(), None, "an older season is forgotten");
+        let n = |st: &Store| (0..=8).filter(|&b| st.season("mal", fall.shift(-b)).unwrap().is_some()).count();
+        assert_eq!(n(&st), SEASONS_KEPT, "at most {SEASONS_KEPT} lists");
+        // One more browsed season pushes out the one fetched longest ago (back 5), not a newer one.
+        st.save_season("mal", fall.shift(-2), &[], 12 * day, &[fall, fall.previous()]).unwrap();
+        assert_eq!(n(&st), SEASONS_KEPT);
+        assert!(st.season("mal", fall.shift(-5)).unwrap().is_none() && st.season("mal", fall.shift(-2)).unwrap().is_some());
+        assert!(st.season("mal", fall.shift(-8)).unwrap().is_some() && st.season("mal", fall).unwrap().is_some());
+        // A list nobody asked for in a month is forgotten at the next save.
+        st.save_season("mal", fall, &[], 11 * day + 2 + SEASON_MAX_AGE, &[fall.previous()]).unwrap();
+        assert!(st.season("mal", fall.shift(-8)).unwrap().is_none() && st.season("mal", fall).unwrap().is_some());
         st.clear_service("mal").unwrap();
         assert_eq!(st.season("mal", fall).unwrap(), None, "sign out forgets the seasons");
     }

@@ -3,16 +3,23 @@
 //! own estimate (`kotora_core::airing::Timetable`, DESIGN.md §5.8).
 //!
 //! - **Data:** the current season and the one before (its shows still airing), from
-//!   `GET /anime/season/{year}/{season}` in pages of 100 (at most [`PAGES_NOW`] and
-//!   [`PAGES_BEFORE`]: 6 requests through the app's one rate budget), saved in the store's `season`
-//!   table and asked for again after [`FRESH_SECS`]. The user's own airing entries come from the
-//!   saved list (the list sync asks for their start date and slot). A worker thread does all of it
-//!   when the page opens; nothing runs headless, offline or signed out.
+//!   `GET /anime/season/{year}/{season}` in pages of 100 (at most [`PAGES`] each: 8 requests
+//!   through the app's one rate budget), saved in the store's `season` table and asked for again
+//!   after [`airing::FRESH_SECS`]. The user's own airing entries come from the saved list (the
+//!   list sync asks for their start date and slot). A worker thread does all of it when the page
+//!   opens; nothing runs headless, offline or signed out.
+//! - **Other seasons:** the picker beside the title (‹ ›, the menu, `[` and `]`) shows one other
+//!   season at a time as a plain grid: no week, no countdowns, no estimates ([`Browse`]). The same
+//!   worker pattern, one season (at most [`PAGES`] requests), from the saved copy when it is still
+//!   good ([`Season::is_fresh`]: a day's half for the near seasons, two weeks for older ones). A
+//!   newer pick stops an older worker between two requests ([`Airing::generation`]).
 //! - **Derived once** ([`State::airing_rebuild`]): the week's slots per day with their texts, the
 //!   grid's order after the filters, and the cards' lines. The view only reads them. While the page
 //!   is on screen, `poll` rebuilds once a minute (the countdowns); nothing ticks elsewhere.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use kotora_core::airing::{self, DAY_SHORT, Season, SeasonAnime, Timetable, WEEK};
 use kotora_core::service::ListService;
@@ -25,12 +32,12 @@ use crate::model::{Auth, Page, State, kind_label};
 use crate::theme::{self, PAL};
 use crate::ui::{action, alert, button, cover, tag, tag_tinted, top};
 
-/// A saved season list younger than this is not asked for again.
-pub const FRESH_SECS: i64 = 12 * 3600;
-/// Pages of 100 asked for the current season (by members: the 400 most followed).
-pub const PAGES_NOW: u32 = 4;
-/// Pages of the season before (only its shows still airing are kept).
-pub const PAGES_BEFORE: u32 = 2;
+/// Pages of 100 asked for a season (by members: the 400 most followed).
+pub const PAGES: u32 = 4;
+/// The picker's menu lists this many seasons after the current one (MyAnimeList has the next
+/// one's list) and this many before.
+pub const AHEAD: i32 = 1;
+pub const BEHIND: i32 = 8;
 
 /// A grid card: cover and the text under it.
 pub const CARD_W: f32 = 128.0;
@@ -155,6 +162,19 @@ pub struct Card {
     pub lit: bool,
 }
 
+/// Another season than the current one, as the picker shows it.
+#[derive(Debug)]
+pub struct Browse {
+    pub season: Season,
+    pub shows: Vec<SeasonAnime>,
+    /// When the saved copy shown was fetched.
+    pub fetched_at: Option<i64>,
+    /// A worker runs.
+    pub loading: bool,
+    /// The last fetch failed (the saved copy, if any, still shows).
+    pub error: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Airing {
     pub view: View,
@@ -170,6 +190,12 @@ pub struct Airing {
     pub loading: bool,
     /// The last fetch failed (the saved copy, if any, still shows).
     pub error: Option<String>,
+    /// Another season, being looked at (`None`: the current season, the page's two views).
+    pub browse: Option<Browse>,
+    /// The season menu is open.
+    pub menu: bool,
+    /// Counts the season picks: a season worker whose number is no longer this one stops.
+    pub generation: Arc<AtomicU64>,
     /// Scenes and tests: a fixed UTC offset instead of the system's zone.
     pub tz: Option<i64>,
     // ---- derived by `airing_rebuild`
@@ -199,6 +225,33 @@ pub struct Answer {
 }
 
 impl Airing {
+    /// The anime the cards and `Card::show` index: the browsed season's, else the page's.
+    pub fn shown(&self) -> &[SeasonAnime] {
+        self.browse.as_ref().map_or(&self.shows, |b| &b.shows)
+    }
+
+    /// A worker runs for what the page shows.
+    pub fn is_loading(&self) -> bool {
+        self.browse.as_ref().map_or(self.loading, |b| b.loading)
+    }
+
+    /// The error of what the page shows.
+    pub fn shown_error(&self) -> Option<&str> {
+        self.browse
+            .as_ref()
+            .map_or(self.error.as_deref(), |b| b.error.as_deref())
+    }
+
+    /// The season the page shows: the browsed one, else the current one.
+    pub fn viewed(&self, current: Season) -> Season {
+        self.browse.as_ref().map_or(current, |b| b.season)
+    }
+
+    /// Stops the season worker that runs, if any (its answer is dropped too).
+    pub(crate) fn cancel(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub(crate) fn clock(&self, t: i64) -> Clock {
         match self.tz {
             Some(o) => Clock::at(t, o),
@@ -218,9 +271,197 @@ const DAY_LONG: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 impl State {
     /// Opens the page (the sidebar): fetches what is missing or old.
     pub fn open_airing(&mut self) {
+        // Coming from another page: this season. The sidebar item on the page keeps the season.
+        if self.page != Page::Airing && self.airing.browse.take().is_some() {
+            self.airing.cancel();
+        }
         self.go(Page::Airing);
         self.airing_rebuild();
-        self.airing_fetch(false);
+        if self.airing.browse.is_some() {
+            self.airing_browse_fetch(false);
+        } else {
+            self.airing_fetch(false);
+        }
+    }
+
+    /// The present season, by the clock (Japan's calendar).
+    pub fn current_season(&self) -> Season {
+        Season::of(self.clock())
+    }
+
+    /// The season the page shows.
+    pub fn viewed_season(&self) -> Season {
+        self.airing.viewed(self.current_season())
+    }
+
+    /// The seasons the picker reaches: the first TV season to the one after the current one.
+    pub fn season_range(&self) -> (Season, Season) {
+        (Season::OLDEST, self.current_season().shift(AHEAD))
+    }
+
+    /// Shows another season (or the current one again); out of range, the nearest in range.
+    /// Returns whether the page changed.
+    pub fn airing_goto(&mut self, season: Season) -> bool {
+        let (first, last) = self.season_range();
+        let season = season.clamp(first, last);
+        self.airing.menu = false;
+        if season == self.viewed_season() {
+            return false;
+        }
+        self.airing.cancel();
+        if season == self.current_season() {
+            self.airing.browse = None;
+            self.airing_rebuild();
+            if self.airing.shows.is_empty() {
+                self.airing_fetch(false);
+            }
+        } else {
+            self.airing.browse = Some(Browse {
+                season,
+                shows: Vec::new(),
+                fetched_at: None,
+                loading: false,
+                error: None,
+            });
+            self.airing_rebuild();
+            self.airing_browse_fetch(false);
+        }
+        true
+    }
+
+    /// The previous (`-1`) or next (`1`) season, or further. At the end of the range: nothing.
+    pub fn airing_step(&mut self, by: i32) -> bool {
+        let to = self.viewed_season().shift(by);
+        self.airing_goto(to)
+    }
+
+    /// The Refresh button: asks MyAnimeList again for the season shown.
+    pub fn airing_refresh(&mut self) {
+        if self.airing.browse.is_some() {
+            self.airing_browse_fetch(true);
+        } else {
+            self.airing_fetch(true);
+        }
+    }
+
+    /// Asks a worker for the browsed season: the saved copy first, then MyAnimeList when it is
+    /// missing or past its time ([`Season::is_fresh`]), or `force`. Never headless, offline or
+    /// signed out (the saved copy still shows). A newer pick stops it between two requests.
+    pub fn airing_browse_fetch(&mut self, force: bool) {
+        let Some(h) = self.handle.clone() else { return };
+        if !self.has_list() {
+            return;
+        }
+        let Some(b) = self.airing.browse.as_mut() else {
+            return;
+        };
+        let season = b.season;
+        b.loading = true;
+        b.error = None;
+        let online = self.auth == Auth::SignedIn && !paths::offline_forced();
+        let token = self.airing.generation.clone();
+        let mine = token.fetch_add(1, Ordering::SeqCst) + 1;
+        std::thread::spawn(move || {
+            let send = |a: Answer| h.update_if(move |s, _| s.airing_browse_answer(a));
+            let now = now_unix();
+            let cur = Season::of(now);
+            let store = Store::open(&paths::db_file()).ok();
+            let saved = store
+                .as_ref()
+                .and_then(|st| st.season("mal", season).ok().flatten());
+            let fresh = saved
+                .as_ref()
+                .is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
+            let fetched_at = saved.as_ref().map(|(_, at)| *at);
+            if let Some((shows, at)) = saved {
+                send(Answer {
+                    season,
+                    shows,
+                    fetched_at: Some(at),
+                    error: None,
+                    done: (fresh && !force) || !online,
+                });
+            }
+            if fresh && !force {
+                return;
+            }
+            if !online {
+                if fetched_at.is_none() {
+                    send(Answer {
+                        season,
+                        shows: Vec::new(),
+                        fetched_at: None,
+                        error: Some("Offline: the season lists come from MyAnimeList.".into()),
+                        done: true,
+                    });
+                }
+                return;
+            }
+            let Some(mut mal) = crate::online::mal_service() else {
+                return send(Answer {
+                    season,
+                    shows: Vec::new(),
+                    fetched_at,
+                    error: Some("Sign in to MyAnimeList to see the seasons.".into()),
+                    done: true,
+                });
+            };
+            let mut all = Vec::new();
+            for page in 0..PAGES {
+                // Another season was picked: its worker has the budget now.
+                if token.load(Ordering::SeqCst) != mine {
+                    return;
+                }
+                match mal.season(season, page) {
+                    Ok((mut v, more)) => {
+                        all.append(&mut v);
+                        if !more {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        return send(Answer {
+                            season,
+                            shows: Vec::new(),
+                            fetched_at,
+                            error: Some(crate::online::error_text(e)),
+                            done: true,
+                        });
+                    }
+                }
+            }
+            if let Some(st) = &store {
+                let _ = st.save_season("mal", season, &all, now, &[cur, cur.previous()]);
+            }
+            send(Answer {
+                season,
+                shows: all,
+                fetched_at: Some(now),
+                error: None,
+                done: true,
+            });
+        });
+    }
+
+    /// The season worker's answer. One for a season no longer shown is dropped; an error keeps
+    /// the shows already shown.
+    pub fn airing_browse_answer(&mut self, a: Answer) -> bool {
+        if !self.has_list() {
+            return false;
+        }
+        let Some(b) = self.airing.browse.as_mut().filter(|b| b.season == a.season) else {
+            return false;
+        };
+        b.loading = !a.done;
+        if a.error.is_none() || b.shows.is_empty() {
+            if !a.shows.is_empty() || a.error.is_none() {
+                b.shows = a.shows;
+            }
+            b.fetched_at = a.fetched_at.or(b.fetched_at);
+        }
+        b.error = a.error;
+        self.airing_rebuild();
+        true
     }
 
     pub fn airing_view(&mut self, v: View) {
@@ -258,9 +499,9 @@ impl State {
             let saved = |se: Season| store.as_ref().and_then(|st| st.season("mal", se).ok().flatten());
             let list = store.as_ref().and_then(|st| st.load_list("mal").ok()).unwrap_or_default();
             let (c, p) = (saved(cur), saved(prev));
-            let fresh = |x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| (0..FRESH_SECS).contains(&(now - at)));
+            let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now));
             let fetched_at = c.as_ref().map(|(_, at)| *at);
-            let need = force || !fresh(&c) || !fresh(&p);
+            let need = force || !fresh(cur, &c) || !fresh(prev, &p);
             if c.is_some() || p.is_some() {
                 let shows = airing::merge(c.as_ref().map_or(&[][..], |x| &x.0), p.as_ref().map_or(&[][..], |x| &x.0), &list);
                 send(Answer { season: cur, shows, fetched_at, error: None, done: !need || !online });
@@ -277,13 +518,11 @@ impl State {
             let Some(mut mal) = crate::online::mal_service() else {
                 return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
             };
-            let mut get = |se: Season, pages: u32, airing_only: bool| -> Result<Vec<SeasonAnime>, String> {
+            // Both whole: the picker shows the previous season from the same saved copy.
+            let mut get = |se: Season| -> Result<Vec<SeasonAnime>, String> {
                 let mut all = Vec::new();
-                for page in 0..pages {
+                for page in 0..PAGES {
                     let (mut v, more) = mal.season(se, page).map_err(crate::online::error_text)?;
-                    if airing_only {
-                        v.retain(SeasonAnime::is_airing);
-                    }
                     all.append(&mut v);
                     if !more {
                         break;
@@ -291,12 +530,12 @@ impl State {
                 }
                 Ok(all)
             };
-            let got = get(cur, PAGES_NOW, false).and_then(|c| Ok((c, get(prev, PAGES_BEFORE, true)?)));
+            let got = get(cur).and_then(|c| Ok((c, get(prev)?)));
             match got {
                 Ok((c, p)) => {
                     if let Some(st) = &store {
-                        let _ = st.save_season("mal", cur, &c, now, &[prev]);
                         let _ = st.save_season("mal", prev, &p, now, &[cur]);
+                        let _ = st.save_season("mal", cur, &c, now, &[prev]);
                     }
                     let shows = airing::merge(&c, &p, &list);
                     send(Answer { season: cur, shows, fetched_at: Some(now), error: None, done: true });
@@ -336,6 +575,19 @@ impl State {
         self.airing_rebuild();
     }
 
+    /// Scenes and tests: another season as if MyAnimeList had answered.
+    pub fn airing_browse_show(&mut self, season: Season, shows: Vec<SeasonAnime>) {
+        let fetched_at = Some(self.clock() - 3600);
+        self.airing.browse = Some(Browse {
+            season,
+            shows,
+            fetched_at,
+            loading: false,
+            error: None,
+        });
+        self.airing_rebuild();
+    }
+
     /// Rebuilds everything the page draws: the week, the grid and their texts. Call it after the
     /// data, a filter, the list or the minute changes; the view only reads the result.
     pub fn airing_rebuild(&mut self) {
@@ -355,16 +607,22 @@ impl State {
         }
         a.untimed.clear();
         a.cards.clear();
-        for (i, show) in a.shows.iter().enumerate() {
+        // Another season: a plain grid. No timetable (the shows aired, or have not started), so no
+        // week, no countdowns and no "airing" notes.
+        let browsing = a.browse.is_some();
+        let src = a.browse.as_ref().map_or(&a.shows, |b| &b.shows);
+        for (i, show) in src.iter().enumerate() {
             let entry = mine.get(&show.id).copied().filter(|(st, _)| *st != Status::Dropped);
             if !a.kind.keeps(&show.format) || !a.mine.keeps(entry.is_some()) {
                 continue;
             }
             // Self-correction: a progress past the estimate moves the episodes forward.
-            let tt = Timetable::of(show).map(|t| match entry {
-                Some((_, p)) => t.with_progress(p, now),
-                None => t,
-            });
+            let tt = Timetable::of(show)
+                .filter(|_| !browsing)
+                .map(|t| match entry {
+                    Some((_, p)) => t.with_progress(p, now),
+                    None => t,
+                });
             let next = tt.and_then(|t| t.next(now));
             // The week.
             match tt {
@@ -384,7 +642,7 @@ impl State {
                         }
                     }
                 }
-                None if show.is_airing() => {
+                None if show.is_airing() && !browsing => {
                     let why = match show.broadcast {
                         Some(b) => format!("{}s in Japan, time not known", DAY_LONG[usize::from(b.day % 7)]),
                         None => "No broadcast slot on MyAnimeList".to_string(),
@@ -448,13 +706,13 @@ impl State {
 
     /// The title of show `i` in the chosen language.
     pub fn airing_title(&self, i: usize) -> &str {
-        let a = &self.airing.shows[i];
+        let a = &self.airing.shown()[i];
         self.prefs.titles.pick(&a.title, a.title_en.as_deref(), a.title_ja.as_deref())
     }
 
     /// "+ Watching" / "+ Plan to watch" on a card or a line: through the queue, as search does.
     pub fn airing_add(&mut self, id: u32, status: Status) {
-        let Some(show) = self.airing.shows.iter().find(|a| a.id == id) else { return };
+        let Some(show) = self.airing.shown().iter().find(|a| a.id == id) else { return };
         let media = show.media();
         match self.add_media(media, status) {
             Ok(_) => self.airing_rebuild(),
@@ -464,8 +722,8 @@ impl State {
 
     /// Opens the details page of show `id`.
     pub fn airing_details(&mut self, id: u32) {
-        let Some(i) = self.airing.shows.iter().position(|a| a.id == id) else { return };
-        let a = &self.airing.shows[i];
+        let Some(i) = self.airing.shown().iter().position(|a| a.id == id) else { return };
+        let a = &self.airing.shown()[i];
         let stub = crate::details::Stub { id, title: self.airing_title(i).to_string(), cover_url: a.cover_url.clone(), format: a.format.clone(), episodes: a.episodes };
         self.open_details(stub);
     }
@@ -503,7 +761,11 @@ impl State {
 
 /// Once a minute while the page is on screen: the countdowns. Returns whether anything changed.
 pub fn tick(s: &mut State, tx: &mut Tx) -> bool {
-    if s.page != Page::Airing || !s.on_screen() || s.airing.shows.is_empty() {
+    if s.page != Page::Airing
+        || !s.on_screen()
+        || s.airing.shows.is_empty()
+        || s.airing.browse.is_some()
+    {
         return false;
     }
     let now = s.clock();
@@ -520,12 +782,11 @@ pub fn tick(s: &mut State, tx: &mut Tx) -> bool {
 /// The page.
 pub fn page(s: &State, width: f32) -> El {
     let a = &s.airing;
-    let season = a.season.map_or_else(String::new, Season::label);
-    let mut head = top(s, "Airing", None, false);
-    if !season.is_empty() {
-        head = head.child(text(season).key("airing/season").font(theme::LABEL).color(PAL.faint).pb(3.0));
+    let mut head = top(s, "Airing", None, false).child(season_picker(s)).child(spacer());
+    // Another season is a plain grid: no week to switch to.
+    if a.browse.is_none() {
+        head = head.child(views(a.view));
     }
-    head = head.child(spacer()).child(views(a.view));
     if s.auth == Auth::SignedIn {
         head = head.child(
             el().key("airing/refresh")
@@ -541,25 +802,223 @@ pub fn page(s: &State, width: f32) -> El {
                 .press(PAL.press())
                 .on_press_tx(|s: &mut State, tx: &mut Tx| {
                     tx.instant();
-                    s.airing_fetch(true);
+                    s.airing_refresh();
                 })
-                .child(rune::icon(&crate::icons::SYNC, 16.0).color(if a.loading { PAL.faint } else { PAL.dim })),
+                .child(rune::icon(&crate::icons::SYNC, 16.0).color(if a.is_loading() { PAL.faint } else { PAL.dim })),
         );
     }
     let mut page = col().key("page/airing").w_full().h_full().child(head);
-    if let Some(e) = &a.error {
-        let retry = button("airing/retry", "Retry", false, Some(|s: &mut State| s.airing_fetch(true)));
-        let msg = if a.shows.is_empty() { e.clone() } else { format!("{e} Showing the saved season.") };
+    let shown = a.shown();
+    if let Some(e) = a.shown_error() {
+        let retry = button("airing/retry", "Retry", false, Some(|s: &mut State| s.airing_refresh()));
+        let msg = if shown.is_empty() { e.to_string() } else { format!("{e} Showing the saved season.") };
         page = page.child(alert("airing/error", PAL.status(Status::Dropped), msg, Some(retry)));
     }
-    if a.shows.is_empty() {
-        return page.child(if a.loading || a.error.is_none() && a.season.is_none() { loading() } else { empty(a.error.is_some()) });
+    if shown.is_empty() {
+        let first = a.browse.is_none() && a.error.is_none() && a.season.is_none();
+        return page.child(if a.is_loading() || first { loading(&s.viewed_season().label()) } else { empty(a.shown_error().is_some()) });
     }
     page = page.child(filters(s));
     match a.view {
+        _ if a.browse.is_some() => page.child(grid(s, width)),
         View::Week => page.child(week(s)),
         View::Season => page.child(grid(s, width)),
     }
+}
+
+// ---------------------------------------------------------------------------- season picker
+
+/// The keys that step the season on the page: `[` and `]`, Cmd or Ctrl `[` and `]`, and Cmd or
+/// Alt with Left and Right. -1 the previous season, 1 the next, `None` other keys.
+pub fn step_key(k: &rune::KeyEvent) -> Option<i32> {
+    let bare = !(k.mods.cmd || k.mods.ctrl || k.mods.alt);
+    match &k.key {
+        rune::Key::Text(t) if bare && t == "[" => Some(-1),
+        rune::Key::Text(t) if bare && t == "]" => Some(1),
+        rune::Key::Left if k.mods.cmd || k.mods.alt => Some(-1),
+        rune::Key::Right if k.mods.cmd || k.mods.alt => Some(1),
+        _ if k.is_command('[') => Some(-1),
+        _ if k.is_command(']') => Some(1),
+        _ => None,
+    }
+}
+
+/// The seasons of the menu, newest first: [`AHEAD`] after the current one, the current one and
+/// [`BEHIND`] before it. The viewed season follows when it is further back (the arrows go on).
+pub fn menu_seasons(current: Season, viewed: Season) -> Vec<Season> {
+    let mut v: Vec<Season> = (-BEHIND..=AHEAD)
+        .rev()
+        .map(|n| current.shift(n))
+        .filter(|se| *se >= Season::OLDEST)
+        .collect();
+    if !v.contains(&viewed) {
+        v.push(viewed);
+    }
+    v
+}
+
+/// `‹  Fall 2026 ▾  ›` beside the title: the arrows step one season, the title opens the menu.
+fn season_picker(s: &State) -> El {
+    let (first, last) = s.season_range();
+    let viewed = s.viewed_season();
+    let open = s.airing.menu;
+    let arrow = |key: &str, label: &str, icon: &'static rune::Icon, by: i32, on: bool| {
+        el().key(key.to_string())
+            .role("button")
+            .label(label.to_string())
+            .focusable(on)
+            .size(28.0, 28.0)
+            .radius(theme::R_SM)
+            .center()
+            .hover(PAL.hover())
+            .press(PAL.press())
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.airing_step(by);
+            })
+            .child(rune::icon(icon, 16.0).color(if on { PAL.dim } else { PAL.faint.alpha(0.4) }))
+    };
+    let toggle = |s: &mut State, tx: &mut Tx| {
+        tx.instant();
+        s.airing.menu = !s.airing.menu;
+    };
+    let title = row()
+        .key("airing/season")
+        .role("button")
+        .label(format!("Season: {}. Choose a season", viewed.label()))
+        .focusable(true)
+        .h(28.0)
+        .px(8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .on_press_tx(toggle)
+        .on_key(move |s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+            if matches!(k.key, rune::Key::Enter | rune::Key::Down) && !s.airing.menu {
+                toggle(s, tx);
+                return true;
+            }
+            false
+        })
+        .child(text(viewed.label()).font(theme::SECTION).color(PAL.text))
+        .child(rune::icon(&crate::icons::DOWN, 14.0).color(PAL.dim));
+    let title = if open { title.fill(PAL.raised) } else { title };
+    row()
+        .key("airing/picker")
+        .gap(2.0)
+        .center_y()
+        .pb(2.0)
+        .child(arrow(
+            "airing/prev",
+            "Previous season",
+            &crate::icons::LEFT,
+            -1,
+            viewed > first,
+        ))
+        .child(title)
+        .child(arrow(
+            "airing/next",
+            "Next season",
+            &crate::icons::RIGHT,
+            1,
+            viewed < last,
+        ))
+}
+
+/// The season menu under the title: "This season" to jump back, then the seasons near the
+/// current one, newest first, with a check on the one shown. It holds the keyboard while open
+/// (arrows move, Return or Space picks, Escape or a press outside closes it and the focus goes
+/// back to the title). Mounted at the window's root so nothing clips it.
+pub(crate) fn season_menu(s: &State) -> El {
+    let current = s.current_season();
+    let viewed = s.viewed_season();
+    let item = |key: String,
+                role: &'static str,
+                label: String,
+                note: Option<&'static str>,
+                on: bool,
+                go: Season| {
+        let r = row()
+            .key(key)
+            .role(role)
+            .label(label.clone())
+            .checked(on)
+            .focusable(true)
+            .focus_selected(on)
+            .focus_highlight(PAL.hover())
+            .h(30.0)
+            .px(8.0)
+            .gap(8.0)
+            .center_y()
+            .radius(theme::R_SM)
+            .press(PAL.press())
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.airing_goto(go);
+                s.airing.menu = false;
+            });
+        let mark = el().size(14.0, 14.0).center().child(if on {
+            rune::icon(&crate::icons::CHECK, 14.0).color(PAL.accent_hi)
+        } else {
+            el()
+        });
+        let r = r.child(mark).child(
+            text(label)
+                .font(if on { theme::BODY_MED } else { theme::BODY })
+                .color(PAL.text),
+        );
+        match note {
+            Some(n) => r
+                .child(spacer())
+                .child(text(n.to_string()).font(theme::SMALL).color(PAL.faint)),
+            None => r,
+        }
+    };
+    let mut m = col()
+        .key("season-menu")
+        .role("menu")
+        .label("Season")
+        .focus_group()
+        .w(220.0)
+        .padding(4.0)
+        .radius(theme::R_MD)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border_strong)
+        .shadow(
+            8.0,
+            24.0,
+            rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }),
+        )
+        .anchored("airing/season", rune::Side::Bottom, rune::Align::Start, 6.0)
+        .modal(true, |s: &mut State| s.airing.menu = false)
+        .focus_return("airing/season")
+        .child(item(
+            "airing/season/this".into(),
+            "menuitem",
+            "This season".into(),
+            None,
+            false,
+            current,
+        ))
+        .child(el().w_full().h(1.0).my(4.0).fill(PAL.border));
+    for se in menu_seasons(current, viewed) {
+        let note = match se.cmp(&current) {
+            std::cmp::Ordering::Greater => Some("Next"),
+            std::cmp::Ordering::Equal => Some("Now"),
+            std::cmp::Ordering::Less => None,
+        };
+        m = m.child(item(
+            format!("airing/season/{}", se.key().replace('/', "-")),
+            "menuitemradio",
+            se.label(),
+            note,
+            se == viewed,
+            se,
+        ));
+    }
+    m
 }
 
 fn views(v: View) -> El {
@@ -616,11 +1075,14 @@ fn filters(s: &State) -> El {
     for m in Mine::ALL {
         r = r.child(chip(format!("airing/mine/{}", m.label()), m.label(), a.mine == m, move |s: &mut State| s.airing_mine(m)));
     }
+    if a.browse.is_some() {
+        return r;
+    }
     r.child(spacer()).child(text("Times are estimated".to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
 }
 
-fn loading() -> El {
-    let mut c = col().key("airing/loading").px(theme::PAGE_PAD).pt(4.0).gap(8.0).child(text("Loading the season\u{2026}").font(theme::LABEL).color(PAL.faint).pb(2.0));
+fn loading(season: &str) -> El {
+    let mut c = col().key("airing/loading").px(theme::PAGE_PAD).pt(4.0).gap(8.0).child(text(format!("Loading {season}\u{2026}")).font(theme::LABEL).color(PAL.faint).pb(2.0));
     for i in 0..4 {
         c = c.child(el().key(format!("airing/skel/{i}")).w_full().h(44.0).radius(theme::R_MD).fill(PAL.raised));
     }
@@ -827,7 +1289,7 @@ fn grid(s: &State, width: f32) -> El {
         col().key("airing/grid").growth(GrowthSpec::default()).virtual_rows(
             rows,
             CARD_ROW_H,
-            move |s: &State, r| s.airing.cards.get(r * per).map_or_else(|| format!("gone-{r}"), |c| format!("cards/{}", s.airing.shows[c.show].id)).into(),
+            move |s: &State, r| s.airing.cards.get(r * per).map_or_else(|| format!("gone-{r}"), |c| format!("cards/{}", s.airing.shown()[c.show].id)).into(),
             move |s: &State, r| {
                 let mut line = row().px(theme::PAGE_PAD).pb(CARD_GAP).gap(CARD_GAP).items_start();
                 for c in s.airing.cards.iter().skip(r * per).take(per) {
@@ -840,7 +1302,7 @@ fn grid(s: &State, width: f32) -> El {
 }
 
 fn card(s: &State, c: &Card) -> El {
-    let a = &s.airing.shows[c.show];
+    let a = &s.airing.shown()[c.show];
     let id = a.id;
     let title = s.airing_title(c.show);
     let tile = cover(id, title, CARD_W, CARD_COVER_H, 24.0).radius(theme::R_MD);
@@ -963,6 +1425,261 @@ pub fn fake_season() -> (Season, Vec<SeasonAnime>) {
         a(9320, "Northern Lantern", None, "tv", Some(12), airing, "2027-01-15", b(4, 12, 0), 21_000, None),
     ];
     (Season { year: 2027, quarter: 0 }, shows)
+}
+
+/// A made-up other season for the scenes and tests: `season` is a quarter of the fake year, its
+/// shows invented (ids 94xx). The fake list's Starfall Delivery Service (1) and Tidepool Radio
+/// (10) are in Fall 2026 too, as long runners still airing.
+pub fn fake_other_season(season: Season) -> Vec<SeasonAnime> {
+    use kotora_core::airing::Broadcast;
+    let b = |day: u8, h: u16, m: u16| {
+        Some(Broadcast {
+            day,
+            minute: Some(h * 60 + m),
+        })
+    };
+    #[allow(clippy::too_many_arguments)]
+    let a = |id: u32,
+             title: &str,
+             en: Option<&str>,
+             format: &str,
+             eps: Option<u32>,
+             air: &str,
+             start: &str,
+             bc: Option<Broadcast>,
+             members: u32,
+             mean: Option<f32>| SeasonAnime {
+        id,
+        title: title.into(),
+        title_en: en.map(Into::into),
+        format: format.into(),
+        episodes: eps,
+        air_status: air.into(),
+        start_date: Some(start.into()),
+        end_date: None,
+        broadcast: bc,
+        members: Some(members),
+        mean,
+        cover_url: Some(format!("https://cdn.example.invalid/s{id}.jpg")),
+        ..Default::default()
+    };
+    let (done, soon) = ("finished_airing", "not_yet_aired");
+    if season > Season::of(crate::model::FAKE_NOW) {
+        return vec![
+            a(
+                9501,
+                "Cloudline Railway Diaries",
+                Some("Diaries of the Cloudline Railway"),
+                "tv",
+                Some(12),
+                soon,
+                "2027-04-04",
+                b(6, 17, 30),
+                88_000,
+                None,
+            ),
+            a(
+                9502,
+                "Salt Garden Sorcery",
+                None,
+                "tv",
+                Some(24),
+                soon,
+                "2027-04-10",
+                b(5, 23, 0),
+                64_000,
+                None,
+            ),
+            a(
+                9503,
+                "Paper Moon Orchestra",
+                None,
+                "ona",
+                Some(8),
+                soon,
+                "2027-04-17",
+                None,
+                41_000,
+                None,
+            ),
+            a(
+                9504,
+                "Evening Bell Mystery",
+                None,
+                "tv",
+                None,
+                soon,
+                "2027-04",
+                None,
+                27_000,
+                None,
+            ),
+            a(
+                9505,
+                "Harbor Light Movie",
+                None,
+                "movie",
+                Some(1),
+                soon,
+                "2027-05-14",
+                None,
+                19_000,
+                None,
+            ),
+        ];
+    }
+    vec![
+        a(
+            9401,
+            "Ember Tower Chronicle",
+            Some("Chronicle of Ember Tower"),
+            "tv",
+            Some(24),
+            done,
+            "2026-10-05",
+            b(0, 23, 30),
+            604_000,
+            Some(8.71),
+        ),
+        a(
+            9402,
+            "Quiet Afternoon Club",
+            None,
+            "tv",
+            Some(12),
+            done,
+            "2026-10-02",
+            b(4, 22, 0),
+            411_000,
+            Some(8.24),
+        ),
+        a(
+            1,
+            "Starfall Delivery Service",
+            Some("Starfall Express"),
+            "tv",
+            Some(13),
+            "currently_airing",
+            "2026-11-25",
+            b(2, 22, 0),
+            268_000,
+            Some(8.1),
+        ),
+        a(
+            9403,
+            "Glass Coast Detective",
+            None,
+            "tv",
+            Some(12),
+            done,
+            "2026-10-08",
+            b(3, 0, 0),
+            255_000,
+            Some(7.96),
+        ),
+        a(
+            9404,
+            "Mountain Pass Spirits",
+            None,
+            "ona",
+            Some(6),
+            done,
+            "2026-10-15",
+            None,
+            190_000,
+            Some(7.71),
+        ),
+        a(
+            9405,
+            "Neon Bakery",
+            Some("The Neon Bakery"),
+            "tv",
+            Some(12),
+            done,
+            "2026-10-04",
+            b(6, 17, 0),
+            176_000,
+            Some(7.55),
+        ),
+        a(
+            9406,
+            "Last Train to Hoshimi",
+            None,
+            "movie",
+            Some(1),
+            done,
+            "2026-10-23",
+            None,
+            140_000,
+            Some(8.05),
+        ),
+        a(
+            9407,
+            "Ninth Street Orchestra",
+            None,
+            "tv",
+            Some(13),
+            done,
+            "2026-10-06",
+            b(1, 23, 0),
+            121_000,
+            Some(7.4),
+        ),
+        a(
+            10,
+            "Tidepool Radio",
+            None,
+            "tv",
+            Some(12),
+            "currently_airing",
+            "2026-11-17",
+            b(1, 0, 30),
+            64_000,
+            Some(6.9),
+        ),
+        a(
+            9408,
+            "Violet Harbor Games",
+            None,
+            "tv",
+            Some(12),
+            done,
+            "2026-10-09",
+            b(4, 23, 30),
+            98_000,
+            Some(7.1),
+        ),
+        a(
+            9409,
+            "Small Planet Bakery",
+            None,
+            "tv",
+            Some(12),
+            done,
+            "2026-10-03",
+            b(5, 9, 0),
+            77_000,
+            Some(6.88),
+        ),
+        a(
+            9410,
+            "Clockwork Orchard",
+            None,
+            "ona",
+            Some(10),
+            done,
+            "2026-10-12",
+            None,
+            52_000,
+            Some(6.5),
+        ),
+    ]
+}
+
+/// Shows another season, as if MyAnimeList had answered (scenes and tests).
+pub fn fake_browse(s: &mut State, season: Season) {
+    s.covers.fake();
+    s.airing_browse_show(season, fake_other_season(season));
 }
 
 /// Fills the page with the fake season, as the scenes show it (Central European winter time).
@@ -1094,6 +1811,373 @@ mod tests {
         s.fixed_now = Some(FAKE + 200);
         s.go(Page::Settings);
         assert!(!tick(&mut s, &mut tx), "other pages never tick");
+    }
+
+    fn browse_page(quarter: u8, year: u16) -> State {
+        let mut s = page();
+        fake_browse(&mut s, Season { year, quarter });
+        s
+    }
+
+    fn label(s: &State) -> String {
+        s.viewed_season().label()
+    }
+
+    #[test]
+    fn the_picker_steps_across_the_year_and_stays_in_range() {
+        let mut s = page();
+        assert_eq!(label(&s), "Winter 2027");
+        assert_eq!(
+            s.season_range(),
+            (
+                Season::OLDEST,
+                Season {
+                    year: 2027,
+                    quarter: 1
+                }
+            )
+        );
+        // Back from Winter: Fall of the year before.
+        assert!(s.airing_step(-1));
+        assert_eq!(label(&s), "Fall 2026");
+        assert_eq!(
+            s.airing.browse.as_ref().map(|b| b.season),
+            Some(Season {
+                year: 2026,
+                quarter: 3
+            })
+        );
+        assert!(s.airing_step(-1));
+        assert_eq!(label(&s), "Summer 2026");
+        // Forward again: Fall, then Winter is the current season, the plain page.
+        assert!(s.airing_step(1) && s.airing_step(1));
+        assert_eq!(label(&s), "Winter 2027");
+        assert!(
+            s.airing.browse.is_none(),
+            "the current season is not a browsed one"
+        );
+        // One more: the next season, the end of the range.
+        assert!(s.airing_step(1));
+        assert_eq!(label(&s), "Spring 2027");
+        assert!(!s.airing_step(1), "no season past the next one");
+        assert_eq!(label(&s), "Spring 2027");
+        // Far back lands on the first TV season and stops there.
+        assert!(s.airing_goto(Season {
+            year: 1900,
+            quarter: 2
+        }));
+        assert_eq!(s.viewed_season(), Season::OLDEST);
+        assert!(!s.airing_step(-1));
+        assert!(s.airing_goto(Season {
+            year: 2999,
+            quarter: 0
+        }));
+        assert_eq!(
+            label(&s),
+            "Spring 2027",
+            "past the range: the last season in it"
+        );
+    }
+
+    #[test]
+    fn every_pick_stops_the_worker_before_it() {
+        let mut s = page();
+        let g = |s: &State| s.airing.generation.load(Ordering::SeqCst);
+        let g0 = g(&s);
+        s.airing_step(-1);
+        let g1 = g(&s);
+        assert!(g1 > g0, "a worker of the old pick sees a new number");
+        assert!(!s.airing_step(0), "same season: nothing changes");
+        assert_eq!(g(&s), g1, "and nobody is stopped");
+        s.airing_step(1);
+        assert!(
+            g(&s) > g1,
+            "back to this season stops the worker of the other one"
+        );
+    }
+
+    #[test]
+    fn the_menu_lists_the_nearby_seasons_newest_first() {
+        let cur = Season {
+            year: 2027,
+            quarter: 0,
+        };
+        let labels = |viewed| {
+            menu_seasons(cur, viewed)
+                .iter()
+                .map(|s| s.label())
+                .collect::<Vec<_>>()
+        };
+        let near = [
+            "Spring 2027",
+            "Winter 2027",
+            "Fall 2026",
+            "Summer 2026",
+            "Spring 2026",
+            "Winter 2026",
+            "Fall 2025",
+            "Summer 2025",
+            "Spring 2025",
+            "Winter 2025",
+        ];
+        assert_eq!(labels(cur), near);
+        assert_eq!(
+            labels(Season {
+                year: 2026,
+                quarter: 3
+            }),
+            near
+        );
+        // Further back than the list: that season ends it, so the check has a row.
+        let far = labels(Season {
+            year: 2019,
+            quarter: 1,
+        });
+        assert_eq!(far.len(), 11);
+        assert_eq!(far.last().map(String::as_str), Some("Spring 2019"));
+        // Near the first season nothing before it is listed.
+        assert!(
+            menu_seasons(Season::OLDEST.shift(2), Season::OLDEST)
+                .iter()
+                .all(|s| *s >= Season::OLDEST)
+        );
+    }
+
+    #[test]
+    fn menu_actions_pick_a_season_and_close_the_menu() {
+        let mut s = page();
+        s.airing.menu = true;
+        assert!(s.airing_goto(Season {
+            year: 2026,
+            quarter: 3
+        }));
+        assert!(!s.airing.menu, "picking closes the menu");
+        s.airing.menu = true;
+        assert!(
+            !s.airing_goto(Season {
+                year: 2026,
+                quarter: 3
+            }),
+            "the one shown: no change"
+        );
+        assert!(!s.airing.menu);
+        // "This season": back to the current one.
+        s.airing.menu = true;
+        let cur = s.current_season();
+        assert!(s.airing_goto(cur));
+        assert!(s.airing.browse.is_none() && !s.airing.menu);
+        // Leaving the page closes the menu; the season stays for a way back from Details.
+        s.airing_step(-1);
+        s.airing.menu = true;
+        s.go(Page::Settings);
+        assert!(!s.airing.menu);
+        s.go(Page::Airing);
+        assert_eq!(label(&s), "Fall 2026");
+        // The sidebar's Airing from another page starts at this season again.
+        s.go(Page::Settings);
+        s.open_airing();
+        assert_eq!(label(&s), "Winter 2027");
+        // The sidebar item on the page itself keeps the season.
+        s.airing_step(-2);
+        s.open_airing();
+        assert_eq!(label(&s), "Summer 2026");
+    }
+
+    #[test]
+    fn keys_step_the_season() {
+        let key = |k: rune::Key, mods: rune::Mods| rune::KeyEvent { key: k, mods };
+        let none = rune::Mods::default();
+        let text = |t: &str| rune::Key::Text(t.into());
+        assert_eq!(step_key(&key(text("["), none)), Some(-1));
+        assert_eq!(step_key(&key(text("]"), none)), Some(1));
+        assert_eq!(
+            step_key(&key(rune::Key::Left, rune::Mods { cmd: true, ..none })),
+            Some(-1)
+        );
+        assert_eq!(
+            step_key(&key(rune::Key::Right, rune::Mods { alt: true, ..none })),
+            Some(1)
+        );
+        assert_eq!(
+            step_key(&key(
+                rune::Key::Command('['),
+                rune::Mods { cmd: true, ..none }
+            )),
+            Some(-1)
+        );
+        assert_eq!(
+            step_key(&key(
+                rune::Key::Command(']'),
+                rune::Mods { cmd: true, ..none }
+            )),
+            Some(1)
+        );
+        // Plain arrows, letters and a text key held with Cmd are not ours.
+        assert_eq!(step_key(&key(rune::Key::Left, none)), None);
+        assert_eq!(step_key(&key(text("p"), none)), None);
+        assert_eq!(
+            step_key(&key(text("["), rune::Mods { cmd: true, ..none })),
+            None
+        );
+        // Through the window's key handler: only on this page, and not under the menu.
+        let mut s = page();
+        let mut tx = rune::Tx::default();
+        assert!(crate::ui::on_key(&mut s, &key(text("["), none), &mut tx));
+        assert_eq!(label(&s), "Fall 2026");
+        assert!(crate::ui::on_key(&mut s, &key(text("]"), none), &mut tx));
+        assert_eq!(label(&s), "Winter 2027");
+        s.airing.menu = true;
+        assert!(
+            !crate::ui::on_key(&mut s, &key(text("["), none), &mut tx),
+            "the menu has the keyboard"
+        );
+        assert_eq!(label(&s), "Winter 2027");
+        s.airing.menu = false;
+        s.go(Page::Settings);
+        assert!(!crate::ui::on_key(&mut s, &key(text("["), none), &mut tx));
+        assert_eq!(label(&s), "Winter 2027");
+    }
+
+    #[test]
+    fn another_season_is_a_plain_grid_with_no_airing_marks() {
+        let s = browse_page(3, 2026);
+        let a = &s.airing;
+        assert_eq!(a.cards.len(), 12);
+        assert!(
+            a.days.iter().all(Vec::is_empty) && a.untimed.is_empty(),
+            "no week for it"
+        );
+        assert!(
+            a.cards
+                .iter()
+                .all(|c| !c.lit && !c.when.contains("ep ") && !c.when.contains(" in ")),
+            "no countdowns: {:?}",
+            a.cards.iter().map(|c| &c.when).collect::<Vec<_>>()
+        );
+        let whens: Vec<&str> = a.cards.iter().map(|c| c.when.as_str()).collect();
+        assert!(
+            whens.contains(&"Finished airing") && whens.contains(&"Wednesdays"),
+            "{whens:?}"
+        );
+        // Cards index the browsed shows, and the list's status is on them.
+        let first = &a.shown()[a.cards[0].show];
+        assert_eq!(first.id, 9401);
+        let starfall = a.cards.iter().find(|c| a.shown()[c.show].id == 1).unwrap();
+        assert_eq!(starfall.status, Some(Status::Watching));
+        // The filters still work.
+        let mut s = s;
+        s.airing_mine(Mine::On);
+        assert_eq!(
+            s.airing
+                .cards
+                .iter()
+                .map(|c| s.airing.shown()[c.show].id)
+                .collect::<Vec<_>>(),
+            [1, 10]
+        );
+        // The page's own season, and `kot airing`, are untouched while looking at another one.
+        assert_eq!(s.airing.shows.len(), 25);
+        assert!(!s.ctl_airing().is_empty());
+        // The coming season: "Starts …", no countdown.
+        let n = browse_page(1, 2027);
+        assert!(
+            n.airing
+                .cards
+                .iter()
+                .all(|c| c.when.starts_with("Starts ") || c.when == "Not yet aired"),
+            "{:?}",
+            n.airing.cards.iter().map(|c| &c.when).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn another_season_follows_the_title_language_and_adds_through_the_queue() {
+        let mut s = browse_page(3, 2026);
+        let title = |s: &State, id: u32| {
+            let i = s.airing.shown().iter().position(|a| a.id == id).unwrap();
+            s.airing_title(i).to_string()
+        };
+        assert_eq!(title(&s, 9401), "Ember Tower Chronicle");
+        s.set_titles(kotora_core::config::TitleLang::English);
+        assert_eq!(title(&s, 9401), "Chronicle of Ember Tower");
+        assert_eq!(
+            title(&s, 9402),
+            "Quiet Afternoon Club",
+            "no English title: the usual one"
+        );
+        s.airing_add(9402, Status::PlanToWatch);
+        let c = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shown()[c.show].id == 9402)
+            .unwrap();
+        assert_eq!(c.status, Some(Status::PlanToWatch));
+        s.airing_details(9403);
+        assert_eq!((s.page, s.lit_page()), (Page::Details, Page::Airing));
+    }
+
+    #[test]
+    fn a_season_answer_for_another_season_is_dropped() {
+        let mut s = page();
+        let fall = Season {
+            year: 2026,
+            quarter: 3,
+        };
+        let ans = |season, shows: Vec<SeasonAnime>, error: Option<&str>, done| Answer {
+            season,
+            shows,
+            fetched_at: Some(5),
+            error: error.map(Into::into),
+            done,
+        };
+        // Nothing browsed: an answer has nowhere to go.
+        assert!(!s.airing_browse_answer(ans(fall, fake_other_season(fall), None, true)));
+        s.airing_goto(fall);
+        // Headless: no worker ran, so start the way the page does with one.
+        s.airing.browse.as_mut().unwrap().loading = true;
+        assert!(s.airing.is_loading() && s.airing.shown().is_empty());
+        // The answer of a season the user already left.
+        assert!(!s.airing_browse_answer(ans(fall.previous(), fake_other_season(fall), None, true)));
+        assert!(s.airing.shown().is_empty() && s.airing.is_loading());
+        // The saved copy first (the worker goes on), then the fresh list.
+        assert!(s.airing_browse_answer(ans(
+            fall,
+            fake_other_season(fall)[..3].to_vec(),
+            None,
+            false
+        )));
+        assert_eq!(
+            (
+                s.airing.shown().len(),
+                s.airing.is_loading(),
+                s.airing.cards.len()
+            ),
+            (3, true, 3)
+        );
+        assert!(s.airing_browse_answer(ans(fall, fake_other_season(fall), None, true)));
+        assert_eq!((s.airing.shown().len(), s.airing.is_loading()), (12, false));
+        // An error keeps the saved list and says so; it does not touch the page's own season.
+        assert!(s.airing_browse_answer(ans(
+            fall,
+            Vec::new(),
+            Some("Can't reach MyAnimeList."),
+            true
+        )));
+        assert_eq!(
+            (s.airing.shown().len(), s.airing.shown_error()),
+            (12, Some("Can't reach MyAnimeList."))
+        );
+        assert_eq!(s.airing.error, None);
+        // Back to this season: a late answer for the other one is dropped.
+        let cur = s.current_season();
+        s.airing_goto(cur);
+        assert!(!s.airing_browse_answer(ans(fall, fake_other_season(fall), None, true)));
+        assert_eq!(s.airing.shown().len(), 25);
+        // Signed out: nothing lands.
+        s.airing_goto(fall);
+        s.auth = crate::model::Auth::SignedOut;
+        assert!(!s.airing_browse_answer(ans(fall, fake_other_season(fall), None, true)));
     }
 
     #[test]

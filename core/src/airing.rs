@@ -260,8 +260,18 @@ impl SeasonAnime {
     }
 }
 
-/// A season: year and `winter`, `spring`, `summer`, `fall`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A saved season list younger than this is not asked for again (the current and the coming
+/// season, and the one before: the Airing page merges its shows still airing).
+pub const FRESH_SECS: i64 = 12 * 3600;
+/// An older season changes slowly (scores, members), so its saved list stays good this long.
+pub const PAST_FRESH_SECS: i64 = 14 * 86_400;
+/// A saved season list is forgotten after this, whatever the page shows (no hoarding).
+pub const SEASON_MAX_AGE: i64 = 30 * 86_400;
+/// Season lists kept at most, the newest fetched (the current and the previous season always).
+pub const SEASONS_KEPT: usize = 6;
+
+/// A season: year and `winter`, `spring`, `summer`, `fall`. Ordered by time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Season {
     pub year: u16,
     /// 0 winter (Jan–Mar), 1 spring, 2 summer, 3 fall (Oct–Dec).
@@ -271,14 +281,56 @@ pub struct Season {
 const SEASONS: [&str; 4] = ["winter", "spring", "summer", "fall"];
 
 impl Season {
+    /// The first season the picker goes back to (the first TV anime aired in 1963).
+    pub const OLDEST: Season = Season {
+        year: 1963,
+        quarter: 0,
+    };
+
     /// The season of `t` in Japan (where the seasons are counted).
     pub fn of(t: i64) -> Season {
         let c = Clock::at(t, JST);
         Season { year: c.year as u16, quarter: ((c.month - 1) / 3) as u8 }
     }
 
+    /// Seasons since year 0's winter: one number that counts across the year roll-over.
+    pub fn index(self) -> i32 {
+        i32::from(self.year) * 4 + i32::from(self.quarter % 4)
+    }
+
+    /// The season `n` seasons from this one (negative: back). Stops at year 0 and 65535.
+    pub fn shift(self, n: i32) -> Season {
+        let i = (self.index() + n).clamp(0, i32::from(u16::MAX) * 4 + 3);
+        Season {
+            year: (i / 4) as u16,
+            quarter: (i % 4) as u8,
+        }
+    }
+
     pub fn previous(self) -> Season {
-        if self.quarter == 0 { Season { year: self.year - 1, quarter: 3 } } else { Season { year: self.year, quarter: self.quarter - 1 } }
+        self.shift(-1)
+    }
+
+    pub fn next(self) -> Season {
+        self.shift(1)
+    }
+
+    /// The store's key for the season: `2026/fall`.
+    pub fn key(self) -> String {
+        format!("{}/{}", self.year, self.name())
+    }
+
+    /// How long a saved list of this season is good, with `current` the present season: the
+    /// current one, the one after it and the one before it are asked for again after
+    /// [`FRESH_SECS`]; an older one after [`PAST_FRESH_SECS`].
+    pub fn fresh_secs(self, current: Season) -> i64 {
+        if self < current.previous() { PAST_FRESH_SECS } else { FRESH_SECS }
+    }
+
+    /// Whether a list fetched at `fetched_at` is still good at `now`. A fetch time in the
+    /// future (the clock was set back) is not.
+    pub fn is_fresh(self, current: Season, fetched_at: i64, now: i64) -> bool {
+        (0..self.fresh_secs(current)).contains(&(now - fetched_at))
     }
 
     /// MyAnimeList's name: `fall`.
@@ -463,6 +515,91 @@ mod tests {
         assert_eq!(Season { year: 2027, quarter: 0 }.previous().label(), "Fall 2026");
         // 2026-12-31 20:00 UTC is already 2027 in Japan.
         assert_eq!(Season::of(at("2026-12-31", 20, 0, 0)).label(), "Winter 2027");
+    }
+
+    #[test]
+    fn seasons_step_across_the_year() {
+        let s = |year, quarter| Season { year, quarter };
+        // Fall -> Winter rolls the year forward, Winter -> Fall back.
+        assert_eq!(s(2026, 3).next(), s(2027, 0));
+        assert_eq!(s(2027, 0).previous(), s(2026, 3));
+        assert_eq!(s(2026, 1).next(), s(2026, 2));
+        assert_eq!(s(2026, 2).previous(), s(2026, 1));
+        // Longer steps, both ways, and back to where we were.
+        assert_eq!(s(2026, 3).shift(5), s(2028, 0));
+        assert_eq!(s(2026, 3).shift(-8), s(2024, 3));
+        assert_eq!(s(2026, 3).shift(-9), s(2024, 2));
+        assert_eq!(s(2026, 3).shift(7).shift(-7), s(2026, 3));
+        assert_eq!(s(2026, 3).shift(0), s(2026, 3));
+        // The index counts the seasons; the order is by time.
+        assert_eq!(s(2027, 0).index() - s(2026, 3).index(), 1);
+        assert!(s(2026, 3) < s(2027, 0) && s(2026, 0) < s(2026, 1));
+        // The ends don't wrap.
+        assert_eq!(s(0, 0).previous(), s(0, 0));
+        assert_eq!(s(65535, 3).next(), s(65535, 3));
+        assert_eq!(Season::OLDEST.label(), "Winter 1963");
+    }
+
+    #[test]
+    fn season_keys_and_lifetimes() {
+        let cur = Season {
+            year: 2026,
+            quarter: 3,
+        };
+        assert_eq!(cur.key(), "2026/fall");
+        assert_eq!(
+            Season {
+                year: 2027,
+                quarter: 0
+            }
+            .key(),
+            "2027/winter"
+        );
+        // The coming, current and previous seasons are asked for again twice a day.
+        for se in [cur.next(), cur, cur.previous()] {
+            assert_eq!(se.fresh_secs(cur), FRESH_SECS, "{}", se.key());
+        }
+        // Older ones keep for two weeks, right across the year roll-over too.
+        for se in [cur.shift(-2), cur.shift(-8), Season::OLDEST] {
+            assert_eq!(se.fresh_secs(cur), PAST_FRESH_SECS, "{}", se.key());
+        }
+        let winter = Season {
+            year: 2027,
+            quarter: 0,
+        };
+        assert_eq!(
+            Season {
+                year: 2026,
+                quarter: 3
+            }
+            .fresh_secs(winter),
+            FRESH_SECS,
+            "fall is the previous season in winter"
+        );
+        assert_eq!(
+            Season {
+                year: 2026,
+                quarter: 2
+            }
+            .fresh_secs(winter),
+            PAST_FRESH_SECS
+        );
+        // Fresh until the lifetime ends; never from the future.
+        let old = cur.shift(-4);
+        assert!(old.is_fresh(cur, 1000, 1000 + PAST_FRESH_SECS - 1));
+        assert!(!old.is_fresh(cur, 1000, 1000 + PAST_FRESH_SECS));
+        assert!(cur.is_fresh(cur, 1000, 1000 + FRESH_SECS - 1));
+        assert!(!cur.is_fresh(cur, 1000, 1000 + FRESH_SECS));
+        assert!(
+            !cur.is_fresh(cur, 2000, 1000),
+            "saved in the future: ask again"
+        );
+        const {
+            assert!(
+                SEASON_MAX_AGE > PAST_FRESH_SECS,
+                "a list is asked for again before it is forgotten"
+            )
+        };
     }
 
     #[test]

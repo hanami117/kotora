@@ -2,6 +2,7 @@
 //! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
 
 use kotora_core::Status;
+use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
 
 use kotora_core::queue::OpState;
@@ -573,6 +574,79 @@ pub const SCENES: &[Scene] = &[
         s.account = None;
         s.go(Page::Airing);
     }),
+    // The season picker (`airing.rs`): the menu, another season (past, coming, far back), and its
+    // loading and offline states. Winter 2027 is the current season.
+    ("airing-season-menu", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing.menu = true;
+    }),
+    ("airing-prev-season", |s| airing_other(s, 3, 2026)),
+    ("airing-prev-season-menu", |s| {
+        airing_other(s, 3, 2026);
+        s.airing.menu = true;
+    }),
+    ("airing-prev-season-mine", |s| {
+        airing_other(s, 3, 2026);
+        s.airing_mine(crate::airing::Mine::On);
+    }),
+    ("airing-next-season", |s| airing_other(s, 1, 2027)),
+    ("airing-far-season-menu", |s| {
+        airing_other(s, 1, 2024);
+        s.airing.menu = true;
+    }),
+    ("airing-prev-season-english", |s| {
+        s.set_titles(TitleLang::English);
+        airing_other(s, 3, 2026);
+    }),
+    ("airing-season-loading", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing.browse = Some(crate::airing::Browse {
+            season: Season {
+                year: 2026,
+                quarter: 3,
+            },
+            shows: Vec::new(),
+            fetched_at: None,
+            loading: true,
+            error: None,
+        });
+        s.airing_rebuild();
+    }),
+    ("airing-season-offline", |s| {
+        airing(s, crate::airing::View::Season);
+        let season = Season {
+            year: 2026,
+            quarter: 3,
+        };
+        s.airing.browse = Some(crate::airing::Browse {
+            season,
+            shows: Vec::new(),
+            fetched_at: None,
+            loading: false,
+            error: None,
+        });
+        s.airing_browse_answer(crate::airing::Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at: None,
+            error: Some("Offline: the season lists come from MyAnimeList.".into()),
+            done: true,
+        });
+    }),
+    ("airing-season-error-saved", |s| {
+        airing_other(s, 3, 2026);
+        let season = Season {
+            year: 2026,
+            quarter: 3,
+        };
+        s.airing_browse_answer(crate::airing::Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at: None,
+            error: Some("Can't reach MyAnimeList.".into()),
+            done: true,
+        });
+    }),
     ("airing-details", |s| {
         airing(s, crate::airing::View::Season);
         s.airing_details(9301);
@@ -933,6 +1007,12 @@ fn airing(s: &mut State, view: crate::airing::View) {
     crate::airing::fake(s);
     s.go(Page::Airing);
     s.airing_view(view);
+}
+
+/// The Airing page on another season (quarter 0 winter … 3 fall), with the fake shows of it.
+fn airing_other(s: &mut State, quarter: u8, year: u16) {
+    airing(s, crate::airing::View::Season);
+    crate::airing::fake_browse(s, Season { year, quarter });
 }
 
 /// The details page of `id` (the fake list's, or a made-up search result), answered.
@@ -1382,6 +1462,14 @@ mod tests {
         let rt = render("airing-error-saved", (1280.0, 800.0));
         assert!(rt.find("airing/error").is_some() && rt.find("airing/week").is_some(), "the saved season stays under the error");
         assert!(render("airing-signed-out", (1280.0, 800.0)).find("welcome").is_some());
+        // The picker is on every state of the page: arrows, title.
+        for name in ["airing-week", "airing-season", "airing-prev-season", "airing-next-season", "airing-season-loading", "airing-season-offline", "airing-empty", "airing-error"] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in ["airing/picker", "airing/prev", "airing/season", "airing/next"] {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+            assert!(rt.find("season-menu").is_none(), "{name}: closed by default");
+        }
         assert!(render("airing-details", (1280.0, 800.0)).find("det-title").is_some());
     }
 
@@ -1705,6 +1793,106 @@ mod tests {
         rt.pointer_up(800.0, ry);
         rt.frame(1.0 / 60.0);
         assert!(rt.find("editor").is_some() && rt.find("page/details").is_none());
+    }
+
+    /// Airing's season menu: "This season", the seasons newest first with a check on the one
+    /// shown, in dark and light; the states of another season.
+    #[test]
+    fn the_season_menu_lists_the_seasons() {
+        for name in [
+            "airing-season-menu",
+            "airing-prev-season-menu",
+            "airing-far-season-menu",
+        ] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in [
+                "season-menu",
+                "airing/season/this",
+                "airing/season/2027-spring",
+                "airing/season/2027-winter",
+                "airing/season/2026-fall",
+                "airing/season/2025-winter",
+            ] {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+        }
+        assert!(
+            render("airing-season-menu", (1280.0, 800.0))
+                .find("airing/season/2024-spring")
+                .is_none()
+        );
+        assert!(
+            render("airing-far-season-menu", (1280.0, 800.0))
+                .find("airing/season/2024-spring")
+                .is_some(),
+            "a season further back has its row"
+        );
+        // Another season is a grid: no week switch, no "estimated" note, no markers of today.
+        let rt = render("airing-prev-season", (1280.0, 800.0));
+        for key in ["airing/grid", "airing/filters", "card/9401"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        for key in [
+            "airing/views",
+            "airing/estimated",
+            "airing/week",
+            "airing/today",
+        ] {
+            assert!(rt.find(key).is_none(), "{key}");
+        }
+        let rt = render("airing-season-loading", (1280.0, 800.0));
+        assert!(rt.find("airing/loading").is_some() && rt.find("airing/grid").is_none());
+        let rt = render("airing-season-offline", (1280.0, 800.0));
+        assert!(
+            rt.find("airing/error").is_some()
+                && rt.find("airing/retry").is_some()
+                && rt.find("airing/empty").is_some()
+        );
+        let rt = render("airing-season-error-saved", (1280.0, 800.0));
+        assert!(
+            rt.find("airing/error").is_some() && rt.find("airing/grid").is_some(),
+            "the saved season stays under the error"
+        );
+    }
+
+    /// The picker by pointer: the arrow steps back, the title opens the menu, a row picks, and
+    /// "This season" comes back to the page's two views.
+    #[test]
+    fn the_season_picker_works_by_pointer() {
+        let click = |rt: &mut Runtime<State>, key: &str| {
+            let (x, y) = rt.find(key).unwrap_or_else(|| panic!("no {key}"));
+            rt.pointer_move(x, y);
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            for _ in 0..3 {
+                rt.frame(1.0 / 60.0);
+            }
+        };
+        let mut rt = render("airing-season", (1280.0, 800.0));
+        assert!(rt.find("airing/views").is_some());
+        click(&mut rt, "airing/prev");
+        assert!(
+            rt.find("airing/views").is_none(),
+            "Fall 2026 is a plain grid"
+        );
+        click(&mut rt, "airing/season");
+        assert!(rt.find("season-menu").is_some());
+        click(&mut rt, "airing/season/2026-summer");
+        assert!(rt.find("season-menu").is_none());
+        let mut label = String::new();
+        rt.update(|s, _| label = s.viewed_season().label());
+        assert_eq!(label, "Summer 2026");
+        click(&mut rt, "airing/season");
+        click(&mut rt, "airing/season/this");
+        assert!(rt.find("season-menu").is_none() && rt.find("airing/views").is_some());
+        let mut browsing = true;
+        rt.update(|s, _| browsing = s.airing.browse.is_some());
+        assert!(!browsing, "This season is the page itself");
+        // The last season has no way forward.
+        click(&mut rt, "airing/next");
+        click(&mut rt, "airing/next");
+        rt.update(|s, _| label = s.viewed_season().label());
+        assert_eq!(label, "Spring 2027");
     }
 
     /// The type column hides below 1100 pt.

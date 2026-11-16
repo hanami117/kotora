@@ -48,6 +48,7 @@ const UNDO_SECS: f64 = 6.0;
 impl State {
     pub fn open_ctx(&mut self, id: u32, at: At) {
         self.sort_menu = false;
+        self.airing.menu = false;
         self.ctx = Some(Ctx { id, at, sub: None });
     }
 
