@@ -829,6 +829,8 @@ impl State {
         let mine: Vec<&crate::precise::PlayerState> = self.players.iter().filter(|s| s.switch == sw).collect();
         // The liveliest source; on a tie (both not running, say) the one that knows the position
         // (IPC socket, MPRIS, web interface) over the process scan.
+        // IINA reached over its socket: that row wins over the process scan, which only sees its open file.
+        let precise = |s: &crate::precise::PlayerState| sw == Switch::Iina && s.via == crate::precise::VIA_IPC && matches!(s.led, kotora_detect::Led::Playing | kotora_detect::Led::Idle);
         let best = mine.iter().max_by_key(|s| {
             let led = match s.led {
                 kotora_detect::Led::Playing => 3,
@@ -836,7 +838,7 @@ impl State {
                 kotora_detect::Led::Problem => 1,
                 kotora_detect::Led::Off => 0,
             };
-            (led, s.via != crate::precise::VIA_PROCESS)
+            (precise(s), led, s.via != crate::precise::VIA_PROCESS)
         });
         match best {
             Some(s) => (format!("{} \u{b7} {}", s.via, s.line), s.led),
@@ -1184,6 +1186,25 @@ mod tests {
         assert!(s.player_line(Switch::Mpv).0.starts_with("IPC socket"));
         s.players = vec![p(VIA_IPC, Led::Off), p(VIA_PROCESS, Led::Playing)];
         assert!(s.player_line(Switch::Mpv).0.starts_with("process"));
+        // mpv is unchanged: the liveliest source shows, whatever the way.
+        s.players = vec![p(VIA_IPC, Led::Idle), p(VIA_PROCESS, Led::Playing)];
+        assert!(s.player_line(Switch::Mpv).0.starts_with("process"));
+    }
+
+    #[test]
+    fn iina_over_its_socket_hides_the_process_row() {
+        use crate::precise::{PlayerState, VIA_IPC, VIA_PROCESS};
+        use kotora_detect::Led;
+        let p = |via, led, line: &str| PlayerState { switch: Switch::Iina, via, line: line.into(), led };
+        let mut s = fresh();
+        // The socket answers (IINA open, nothing playing yet) while the scan sees an open file.
+        s.players = vec![p(VIA_PROCESS, Led::Playing, "video file open"), p(VIA_IPC, Led::Idle, "/tmp/iina.sock: running")];
+        assert_eq!(s.player_line(Switch::Iina).0, "IPC socket \u{b7} /tmp/iina.sock: running");
+        s.players = vec![p(VIA_PROCESS, Led::Playing, "video file open"), p(VIA_IPC, Led::Playing, "/tmp/iina.sock: playing")];
+        assert_eq!(s.player_line(Switch::Iina).0, "IPC socket \u{b7} /tmp/iina.sock: playing");
+        // No socket answer: the process row, as before.
+        s.players = vec![p(VIA_PROCESS, Led::Playing, "video file open"), p(VIA_IPC, Led::Off, "/tmp/iina.sock: not running")];
+        assert!(s.player_line(Switch::Iina).0.starts_with("process"));
     }
 
     #[test]

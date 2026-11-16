@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -234,6 +235,23 @@ fn status(switch: Switch, line: String, led: Led) -> Input {
     Input::Status(SourceStatus { switch, via: Via::MpvIpc, line, led })
 }
 
+/// Connects to the socket. The file shows up with `bind` and answers only after `listen`, so a
+/// connect right after the folder woke us can be refused: when the file is there, try again a few
+/// times (about 0.6 s in all, so a stale file costs little).
+fn connect(socket: &Path) -> std::io::Result<UnixStream> {
+    let mut wait = Duration::from_millis(5);
+    loop {
+        match UnixStream::connect(socket) {
+            Ok(s) => return Ok(s),
+            Err(e) if wait > Duration::from_millis(320) || std::fs::symlink_metadata(socket).is_err() => return Err(e),
+            Err(_) => {
+                std::thread::sleep(wait);
+                wait *= 2;
+            }
+        }
+    }
+}
+
 /// The thread for one socket path: connect, follow, and when there is no mpv, sleep until the
 /// folder changes. Ends only when the folder can't be watched.
 pub fn run(socket: PathBuf, tx: Sender<Input>) {
@@ -242,7 +260,7 @@ pub fn run(socket: PathBuf, tx: Sender<Input>) {
     let dir = socket.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
     let watch = DirWatch::new(&dir).ok();
     loop {
-        match UnixStream::connect(&socket) {
+        match connect(&socket) {
             Ok(stream) => {
                 let _ = tx.send(status(switch, format!("{shown}: running"), Led::Idle));
                 let key = session(stream, &socket, switch, &tx);

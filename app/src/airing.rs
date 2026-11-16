@@ -22,10 +22,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use kotora_core::airing::{self, DAY_SHORT, Season, SeasonAnime, Timetable, WEEK};
-use kotora_core::service::ListService;
+use kotora_core::service::{ListService, ServiceError};
 use kotora_core::store::Store;
 use kotora_core::time::{Clock, now_unix};
-use kotora_core::{Status, paths};
+use kotora_core::{ListItem, Status, paths};
 use rune::{El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, row, spacer, text};
 
 use crate::model::{Auth, Page, State, kind_label};
@@ -345,8 +345,9 @@ impl State {
     }
 
     /// Asks a worker for the browsed season: the saved copy first, then MyAnimeList when it is
-    /// missing or past its time ([`Season::is_fresh`]), or `force`. Never headless, offline or
-    /// signed out (the saved copy still shows). A newer pick stops it between two requests.
+    /// missing or past its time ([`Season::is_fresh`]), or `force`. Without a saved copy the rows
+    /// show as the pages come in. Never headless, offline or signed out (the saved copy still
+    /// shows). A newer pick stops it between two requests.
     pub fn airing_browse_fetch(&mut self, force: bool) {
         let Some(h) = self.handle.clone() else { return };
         if !self.has_list() {
@@ -362,84 +363,14 @@ impl State {
         let token = self.airing.generation.clone();
         let mine = token.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
-            let send = |a: Answer| h.update_if(move |s, _| s.airing_browse_answer(a));
-            let now = now_unix();
-            let cur = Season::of(now);
             let store = Store::open(&paths::db_file()).ok();
-            let saved = store
-                .as_ref()
-                .and_then(|st| st.season("mal", season).ok().flatten());
-            let fresh = saved
-                .as_ref()
-                .is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
-            let fetched_at = saved.as_ref().map(|(_, at)| *at);
-            if let Some((shows, at)) = saved {
-                send(Answer {
-                    season,
-                    shows,
-                    fetched_at: Some(at),
-                    error: None,
-                    done: (fresh && !force) || !online,
-                });
-            }
-            if fresh && !force {
-                return;
-            }
-            if !online {
-                if fetched_at.is_none() {
-                    send(Answer {
-                        season,
-                        shows: Vec::new(),
-                        fetched_at: None,
-                        error: Some("Offline: the season lists come from MyAnimeList.".into()),
-                        done: true,
-                    });
-                }
-                return;
-            }
-            let Some(mut mal) = crate::online::mal_service() else {
-                return send(Answer {
-                    season,
-                    shows: Vec::new(),
-                    fetched_at,
-                    error: Some("Sign in to MyAnimeList to see the seasons.".into()),
-                    done: true,
-                });
-            };
-            let mut all = Vec::new();
-            for page in 0..PAGES {
-                // Another season was picked: its worker has the budget now.
-                if token.load(Ordering::SeqCst) != mine {
-                    return;
-                }
-                match mal.season(season, page) {
-                    Ok((mut v, more)) => {
-                        all.append(&mut v);
-                        if !more {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        return send(Answer {
-                            season,
-                            shows: Vec::new(),
-                            fetched_at,
-                            error: Some(crate::online::error_text(e)),
-                            done: true,
-                        });
-                    }
-                }
-            }
-            if let Some(st) = &store {
-                let _ = st.save_season("mal", season, &all, now, &[cur, cur.previous()]);
-            }
-            send(Answer {
-                season,
-                shows: all,
-                fetched_at: Some(now),
-                error: None,
-                done: true,
-            });
+            let run = Run { store: store.as_ref(), now: now_unix(), force, online };
+            let mut mal = if online { crate::online::mal_service() } else { None };
+            let signed_in = mal.is_some();
+            let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
+            let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
+            let send = &mut |a: Answer| h.update_if(move |s, _| s.airing_browse_answer(a));
+            run_browse(&run, season, get, &|| token.load(Ordering::SeqCst) == mine, send);
         });
     }
 
@@ -479,9 +410,10 @@ impl State {
         self.airing_rebuild();
     }
 
-    /// Asks the worker for the seasons: the saved copies first, then MyAnimeList when they are
-    /// older than [`FRESH_SECS`] (or `force`, the Refresh button). Never headless, offline or
-    /// signed out (the saved copies still show).
+    /// Asks the worker for the seasons: the saved copies first (shown at once, even old ones), then
+    /// MyAnimeList when they are older than [`FRESH_SECS`] (or `force`, the Refresh button). The
+    /// current season comes first and shows as soon as its first page is in; the previous one
+    /// follows. Never headless, offline or signed out (the saved copies still show).
     pub fn airing_fetch(&mut self, force: bool) {
         let Some(h) = self.handle.clone() else { return };
         if self.airing.loading || !self.has_list() {
@@ -490,58 +422,19 @@ impl State {
         self.airing.loading = true;
         self.airing.error = None;
         let online = self.auth == Auth::SignedIn && !paths::offline_forced();
+        let token = self.airing.generation.clone();
+        let mine = token.load(Ordering::SeqCst);
         std::thread::spawn(move || {
-            let send = |a: Answer| h.update_if(move |s, _| s.airing_answer(a));
-            let now = now_unix();
-            let cur = Season::of(now);
-            let prev = cur.previous();
             let store = Store::open(&paths::db_file()).ok();
-            let saved = |se: Season| store.as_ref().and_then(|st| st.season("mal", se).ok().flatten());
             let list = store.as_ref().and_then(|st| st.load_list("mal").ok()).unwrap_or_default();
-            let (c, p) = (saved(cur), saved(prev));
-            let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now));
-            let fetched_at = c.as_ref().map(|(_, at)| *at);
-            let need = force || !fresh(cur, &c) || !fresh(prev, &p);
-            if c.is_some() || p.is_some() {
-                let shows = airing::merge(c.as_ref().map_or(&[][..], |x| &x.0), p.as_ref().map_or(&[][..], |x| &x.0), &list);
-                send(Answer { season: cur, shows, fetched_at, error: None, done: !need || !online });
-            }
-            if !need {
-                return;
-            }
-            if !online {
-                if c.is_none() && p.is_none() {
-                    send(Answer { season: cur, shows: Vec::new(), fetched_at: None, error: Some("Offline: the season lists come from MyAnimeList.".into()), done: true });
-                }
-                return;
-            }
-            let Some(mut mal) = crate::online::mal_service() else {
-                return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
-            };
-            // Both whole: the picker shows the previous season from the same saved copy.
-            let mut get = |se: Season| -> Result<Vec<SeasonAnime>, String> {
-                let mut all = Vec::new();
-                for page in 0..PAGES {
-                    let (mut v, more) = mal.season(se, page).map_err(crate::online::error_text)?;
-                    all.append(&mut v);
-                    if !more {
-                        break;
-                    }
-                }
-                Ok(all)
-            };
-            let got = get(cur).and_then(|c| Ok((c, get(prev)?)));
-            match got {
-                Ok((c, p)) => {
-                    if let Some(st) = &store {
-                        let _ = st.save_season("mal", prev, &p, now, &[cur]);
-                        let _ = st.save_season("mal", cur, &c, now, &[prev]);
-                    }
-                    let shows = airing::merge(&c, &p, &list);
-                    send(Answer { season: cur, shows, fetched_at: Some(now), error: None, done: true });
-                }
-                Err(e) => send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(e), done: true }),
-            }
+            let run = Run { store: store.as_ref(), now: now_unix(), force, online };
+            let mut mal = if online { crate::online::mal_service() } else { None };
+            let signed_in = mal.is_some();
+            let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
+            let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
+            let send = &mut |a: Answer| h.update_if(move |s, _| s.airing_answer(a));
+            // A season picked meanwhile has the budget: the previous season waits.
+            run_current(&run, &list, get, &|| token.load(Ordering::SeqCst) == mine, send);
         });
     }
 
@@ -759,6 +652,151 @@ impl State {
     }
 }
 
+// ------------------------------------------------------------------------------------ workers
+
+/// Where season pages come from: a season and a page number (from 0) give that page's anime and
+/// whether more follow. MyAnimeList in the app, a fake in tests.
+pub type Source<'a> = &'a mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>;
+
+/// What a season worker needs besides its source.
+pub struct Run<'a> {
+    pub store: Option<&'a Store>,
+    pub now: i64,
+    pub force: bool,
+    pub online: bool,
+}
+
+/// Asks for the pages of `season`, calling `each` with everything so far after each page but the
+/// last. `Ok(None)`: `wanted` turned false, so it stopped between two requests.
+fn pages(get: &mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>, season: Season, wanted: &dyn Fn() -> bool, each: &mut dyn FnMut(&[SeasonAnime])) -> Result<Option<Vec<SeasonAnime>>, ServiceError> {
+    let mut all = Vec::new();
+    for page in 0..PAGES {
+        if !wanted() {
+            return Ok(None);
+        }
+        let (mut v, more) = get(season, page)?;
+        all.append(&mut v);
+        if !more {
+            break;
+        }
+        if page + 1 < PAGES {
+            each(&all);
+        }
+    }
+    Ok(Some(all))
+}
+
+/// The worker of the page's own season (see [`State::airing_fetch`]), without the thread:
+/// 1. the saved copies, merged, at once (even stale ones);
+/// 2. the current season from MyAnimeList. With no saved copy of it the rows show after the first
+///    page and grow with each one; with an old copy the page keeps it until the new list is whole;
+/// 3. the previous season (the shows of it still airing) at low priority: only while `wanted`.
+pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &dyn Fn() -> bool, send: &mut dyn FnMut(Answer)) {
+    let (now, force) = (run.now, run.force);
+    let cur = Season::of(now);
+    let prev = cur.previous();
+    let saved = |se: Season| run.store.and_then(|st| st.season("mal", se).ok().flatten());
+    let (c, p) = (saved(cur), saved(prev));
+    let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now));
+    let (need_c, need_p) = (force || !fresh(cur, &c), force || !fresh(prev, &p));
+    let mut fetched_at = c.as_ref().map(|(_, at)| *at);
+    let mut c_shows = c.map_or_else(Vec::new, |x| x.0);
+    let had_c = fetched_at.is_some();
+    let mut p_shows = p.as_ref().map_or_else(Vec::new, |x| x.0.clone());
+    let had_any = had_c || p.is_some();
+    if had_any {
+        send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: !(need_c || need_p) || !run.online });
+    }
+    if !(need_c || need_p) {
+        return;
+    }
+    if !run.online {
+        if !had_any {
+            send(Answer { season: cur, shows: Vec::new(), fetched_at: None, error: Some("Offline: the season lists come from MyAnimeList.".into()), done: true });
+        }
+        return;
+    }
+    let Some(get) = get else {
+        return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
+    };
+    let fail = |e: ServiceError, fetched_at| Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(crate::online::error_text(e)), done: true };
+    if need_c {
+        let mut partial = |v: &[SeasonAnime]| {
+            if !had_c {
+                send(Answer { season: cur, shows: airing::merge(v, &p_shows, list), fetched_at: None, error: None, done: false });
+            }
+        };
+        match pages(get, cur, &|| true, &mut partial) {
+            Ok(all) => {
+                let all = all.unwrap_or_default();
+                if let Some(st) = run.store {
+                    let _ = st.save_season("mal", cur, &all, now, &[prev]);
+                }
+                (c_shows, fetched_at) = (all, Some(now));
+                send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: !need_p });
+            }
+            Err(e) => return send(fail(e, fetched_at)),
+        }
+    }
+    if need_p {
+        if !wanted() {
+            // Another season was picked: it has the budget. The next visit asks again.
+            return send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true });
+        }
+        match pages(get, prev, wanted, &mut |_| {}) {
+            Ok(Some(all)) => {
+                if let Some(st) = run.store {
+                    let _ = st.save_season("mal", prev, &all, now, &[cur]);
+                }
+                p_shows = all;
+                send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true });
+            }
+            Ok(None) => send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true }),
+            Err(e) => send(fail(e, fetched_at)),
+        }
+    }
+}
+
+/// The worker of a browsed season (see [`State::airing_browse_fetch`]), without the thread. A
+/// season picked since (`wanted` false) stops it between two requests, and its answers are dropped.
+pub fn run_browse(run: &Run, season: Season, get: Option<Source>, wanted: &dyn Fn() -> bool, send: &mut dyn FnMut(Answer)) {
+    let (now, force) = (run.now, run.force);
+    let cur = Season::of(now);
+    let saved = run.store.and_then(|st| st.season("mal", season).ok().flatten());
+    let fresh = saved.as_ref().is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
+    let fetched_at = saved.as_ref().map(|(_, at)| *at);
+    if let Some((shows, at)) = saved {
+        send(Answer { season, shows, fetched_at: Some(at), error: None, done: (fresh && !force) || !run.online });
+    }
+    if fresh && !force {
+        return;
+    }
+    if !run.online {
+        if fetched_at.is_none() {
+            send(Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Offline: the season lists come from MyAnimeList.".into()), done: true });
+        }
+        return;
+    }
+    let Some(get) = get else {
+        return send(Answer { season, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
+    };
+    let mut partial = |v: &[SeasonAnime]| {
+        if fetched_at.is_none() {
+            send(Answer { season, shows: v.to_vec(), fetched_at: None, error: None, done: false });
+        }
+    };
+    match pages(get, season, wanted, &mut partial) {
+        Ok(Some(all)) => {
+            if let Some(st) = run.store {
+                let _ = st.save_season("mal", season, &all, now, &[cur, cur.previous()]);
+            }
+            send(Answer { season, shows: all, fetched_at: Some(now), error: None, done: true });
+        }
+        Ok(None) => {}
+        Err(e) => send(Answer { season, shows: Vec::new(), fetched_at, error: Some(crate::online::error_text(e)), done: true }),
+    }
+}
+
 /// Once a minute while the page is on screen: the countdowns. Returns whether anything changed.
 pub fn tick(s: &mut State, tx: &mut Tx) -> bool {
     if s.page != Page::Airing
@@ -782,7 +820,12 @@ pub fn tick(s: &mut State, tx: &mut Tx) -> bool {
 /// The page.
 pub fn page(s: &State, width: f32) -> El {
     let a = &s.airing;
-    let mut head = top(s, "Airing", None, false).child(season_picker(s)).child(spacer());
+    let mut head = top(s, "Airing", None, false).child(season_picker(s));
+    // The rows shown are saved or partial ones and a worker still asks: say so, small.
+    if a.is_loading() && !a.shown().is_empty() {
+        head = head.child(text("Updating\u{2026}").key("airing/updating").font(theme::LABEL).color(PAL.faint).px(12.0));
+    }
+    head = head.child(spacer());
     // Another season is a plain grid: no week to switch to.
     if a.browse.is_none() {
         head = head.child(views(a.view));
@@ -2186,5 +2229,241 @@ mod tests {
         assert_eq!(per_row(1055.0), 7);
         assert_eq!(per_row(735.0), 4);
         assert_eq!(per_row(100.0), 1);
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use std::cell::{Cell, RefCell};
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    const NOW: i64 = crate::model::FAKE_NOW;
+
+    /// 100 anime a page: ids are the season's index, the page and the place, so no two collide.
+    fn page_of(season: Season, page: u32, last: bool) -> (Vec<SeasonAnime>, bool) {
+        let base = (season.index() as u32 % 100) * 10_000 + page * 100;
+        let v = (0..100).map(|i| SeasonAnime { id: base + i, title: format!("S{base} {i}"), members: Some(1_000_000 - (page * 100 + i)), air_status: "currently_airing".into(), ..Default::default() }).collect();
+        (v, !last)
+    }
+
+    /// A season of `PAGES` pages, each `latency` away, and a count of the requests made.
+    struct Slow {
+        latency: Duration,
+        calls: Cell<u32>,
+        asked: RefCell<Vec<(Season, u32)>>,
+    }
+
+    impl Slow {
+        fn new(latency_ms: u64) -> Slow {
+            Slow { latency: Duration::from_millis(latency_ms), calls: Cell::new(0), asked: RefCell::new(Vec::new()) }
+        }
+
+        fn get(&self, se: Season, page: u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
+            self.calls.set(self.calls.get() + 1);
+            self.asked.borrow_mut().push((se, page));
+            std::thread::sleep(self.latency);
+            Ok(page_of(se, page, page + 1 == PAGES))
+        }
+    }
+
+    /// An answer, with how many requests had been made and when it came.
+    struct Seen {
+        calls: u32,
+        at: Duration,
+        shows: usize,
+        done: bool,
+        fetched: Option<i64>,
+        error: Option<String>,
+    }
+
+    fn run_current_with(src: &Slow, store: &Store, force: bool) -> Vec<Seen> {
+        let t0 = Instant::now();
+        let seen = RefCell::new(Vec::new());
+        let run = Run { store: Some(store), now: NOW, force, online: true };
+        let mut get = |se, pg| src.get(se, pg);
+        run_current(&run, &[], Some(&mut get), &|| true, &mut |a: Answer| {
+            seen.borrow_mut().push(Seen { calls: src.calls.get(), at: t0.elapsed(), shows: a.shows.len(), done: a.done, fetched: a.fetched_at, error: a.error });
+        });
+        seen.into_inner()
+    }
+
+    fn cur() -> Season {
+        Season::of(NOW)
+    }
+
+    #[test]
+    fn without_a_cache_the_rows_show_after_the_first_page_and_grow() {
+        let src = Slow::new(40);
+        let store = Store::open_memory().unwrap();
+        let seen = run_current_with(&src, &store, false);
+        // The first rows: after page 1 of the current season, nothing else asked yet.
+        let first = seen.first().expect("an answer");
+        assert_eq!((first.calls, first.shows, first.done), (1, 100, false));
+        assert!(first.at < src.latency * 2, "page 1 is shown before page 2 is in ({:?})", first.at);
+        // Then 200, 300 and the whole 400, each as its page comes in.
+        let grown: Vec<(u32, usize)> = seen.iter().map(|x| (x.calls, x.shows)).collect();
+        assert_eq!(grown[..4], [(1, 100), (2, 200), (3, 300), (4, 400)]);
+        // The previous season comes after the current one is whole: only its airing shows merge in.
+        let asked = src.asked.borrow();
+        assert_eq!(asked[..4].iter().map(|x| x.0).collect::<Vec<_>>(), [cur(); 4]);
+        assert_eq!(asked[4..].iter().map(|x| x.0).collect::<Vec<_>>(), [cur().previous(); 4]);
+        assert!(seen.iter().rev().skip(1).all(|x| !x.done), "only the last answer is final");
+        let last = seen.last().unwrap();
+        assert!(last.done && last.error.is_none() && last.shows == 800);
+        // Both seasons are saved whole.
+        assert_eq!(store.season("mal", cur()).unwrap().map(|(v, at)| (v.len(), at)), Some((400, NOW)));
+        assert_eq!(store.season("mal", cur().previous()).unwrap().map(|(v, _)| v.len()), Some(400));
+    }
+
+    #[test]
+    fn a_saved_season_shows_at_once_even_stale_and_refreshes_in_the_background() {
+        let store = Store::open_memory().unwrap();
+        let old = NOW - 3 * 86_400;
+        let (stale, _) = page_of(cur(), 0, true);
+        store.save_season("mal", cur(), &stale, old, &[]).unwrap();
+        // 2 days old: stale for the current season (12 h), nothing for the previous one.
+        let src = Slow::new(40);
+        let seen = run_current_with(&src, &store, false);
+        let first = &seen[0];
+        assert_eq!((first.calls, first.shows, first.fetched), (0, 100, Some(old)), "the saved rows, before any request");
+        assert!(!first.done, "the refresh goes on");
+        assert!(first.at < Duration::from_millis(30));
+        // The old rows stay while the new list comes: no 100-row flicker down from the saved ones, no partials.
+        assert!(seen[1..].iter().all(|x| x.shows >= 100));
+        assert_eq!(seen[1].calls, 4, "the next answer is the whole current season");
+        let last = seen.last().unwrap();
+        assert_eq!((last.done, last.fetched), (true, Some(NOW)));
+        assert_eq!(store.season("mal", cur()).unwrap().map(|(v, at)| (v.len(), at)), Some((400, NOW)));
+    }
+
+    #[test]
+    fn fresh_saved_seasons_make_no_request() {
+        let store = Store::open_memory().unwrap();
+        let (a, _) = page_of(cur(), 0, true);
+        store.save_season("mal", cur(), &a, NOW - 60, &[]).unwrap();
+        store.save_season("mal", cur().previous(), &a, NOW - 60, &[cur()]).unwrap();
+        let src = Slow::new(10);
+        let seen = run_current_with(&src, &store, false);
+        assert_eq!((seen.len(), src.calls.get(), seen[0].done), (1, 0, true));
+        // The Refresh button asks again.
+        let seen = run_current_with(&src, &store, true);
+        assert_eq!(src.calls.get(), 8);
+        assert!(seen.last().unwrap().done);
+    }
+
+    #[test]
+    fn the_previous_season_waits_when_another_one_was_picked() {
+        let store = Store::open_memory().unwrap();
+        let src = Slow::new(1);
+        let picked = Cell::new(false);
+        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        let mut get = |se, pg| src.get(se, pg);
+        let mut last = None;
+        run_current(&run, &[], Some(&mut get), &|| !picked.get(), &mut |a: Answer| {
+            picked.set(a.shows.len() == 400);
+            last = Some(a);
+        });
+        assert_eq!(src.calls.get(), 4, "only the current season was asked for");
+        let last = last.unwrap();
+        assert!(last.done && last.error.is_none() && last.shows.len() == 400);
+        assert!(store.season("mal", cur().previous()).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_page_draws_rows_while_the_worker_still_asks() {
+        let mut s = State::fake();
+        s.go(Page::Airing);
+        let season = cur();
+        let rows = |n: u32, done| Answer { season, shows: page_of(season, 0, true).0.into_iter().take(n as usize).collect(), fetched_at: None, error: None, done };
+        // Nothing yet: the skeleton. Then the first page: rows, a small "Updating", the worker goes on.
+        assert!(s.airing_answer(rows(100, false)));
+        assert_eq!((s.airing.cards.len(), s.airing.is_loading()), (100, true));
+        assert!(s.airing_answer(rows(100, true)));
+        assert!(!s.airing.is_loading());
+    }
+
+    #[test]
+    fn a_failed_page_keeps_what_is_shown() {
+        let store = Store::open_memory().unwrap();
+        let mut n = 0;
+        let mut get = |se, pg| {
+            n += 1;
+            if n == 3 { Err(ServiceError::Offline("down".into())) } else { Ok(page_of(se, pg, false)) }
+        };
+        let seen = RefCell::new(Vec::new());
+        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        run_current(&run, &[], Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((a.shows.len(), a.error, a.done)));
+        let seen = seen.into_inner();
+        assert_eq!(seen[..2].iter().map(|x| x.0).collect::<Vec<_>>(), [100, 200]);
+        assert_eq!(seen[2], (0, Some("Can't reach MyAnimeList.".into()), true));
+        assert!(store.season("mal", cur()).unwrap().is_none(), "a partial list is never saved");
+    }
+
+    #[test]
+    fn a_browsed_season_streams_too() {
+        let store = Store::open_memory().unwrap();
+        let src = Slow::new(20);
+        let season = cur().shift(-3);
+        let seen = RefCell::new(Vec::new());
+        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        let mut get = |se, pg| src.get(se, pg);
+        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((src.calls.get(), a.shows.len(), a.done)));
+        assert_eq!(seen.into_inner(), [(1, 100, false), (2, 200, false), (3, 300, false), (4, 400, true)]);
+        // Saved: the next visit shows it before any request, and asks nothing (14 days).
+        let seen = RefCell::new(Vec::new());
+        let before = src.calls.get();
+        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((a.shows.len(), a.done)));
+        assert_eq!((seen.into_inner(), src.calls.get() - before), (vec![(400, true)], 0));
+        // Another pick stops the worker between two requests.
+        let other = cur().shift(-4);
+        let n = Cell::new(0);
+        run_browse(&run, other, Some(&mut get), &|| { n.set(n.get() + 1); n.get() < 3 }, &mut |_| {});
+        assert!(store.season("mal", other).unwrap().is_none());
+    }
+
+    /// Time to the first rows with real pacing (1 s between requests, as the app's budget) and
+    /// 250 ms a request. Slow (about 20 s): `cargo test -p kotora --release first_rows -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn first_rows_before_and_after() {
+        use kotora_core::ratelimit::Limiter;
+        let mut limiter = Limiter::mal();
+        let latency = Duration::from_millis(250);
+        let mut paced = |_se: Season, pg: u32| -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
+            let wait = limiter.acquire(Instant::now());
+            std::thread::sleep(wait + latency);
+            Ok(page_of(Season::of(NOW), pg, pg + 1 == PAGES))
+        };
+        // Before: both seasons whole, one answer at the end.
+        let t0 = Instant::now();
+        for se in [cur(), cur().previous()] {
+            for page in 0..PAGES {
+                let _ = paced(se, page);
+            }
+        }
+        let before = t0.elapsed();
+        // After: the same source, with the answers timed.
+        let mut limiter2 = Limiter::mal();
+        let mut paced2 = |se: Season, pg: u32| -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
+            let wait = limiter2.acquire(Instant::now());
+            std::thread::sleep(wait + latency);
+            Ok(page_of(se, pg, pg + 1 == PAGES))
+        };
+        let store = Store::open_memory().unwrap();
+        let t1 = Instant::now();
+        let first = Cell::new(None);
+        let whole = Cell::new(None);
+        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        run_current(&run, &[], Some(&mut paced2), &|| true, &mut |a: Answer| {
+            if first.get().is_none() && !a.shows.is_empty() {
+                first.set(Some(t1.elapsed()));
+            }
+            if a.shows.len() >= 400 && whole.get().is_none() {
+                whole.set(Some(t1.elapsed()));
+            }
+        });
+        println!("first rows: before {before:?}, after {:?}; current season whole after {:?}; all done {:?}", first.get().unwrap(), whole.get().unwrap(), t1.elapsed());
     }
 }

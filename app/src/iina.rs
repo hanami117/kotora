@@ -9,8 +9,12 @@
 //! IINA's preferences are only read, never written. The check runs at start and on Check again,
 //! on a short thread (it runs `defaults`); never headless.
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 use kotora_detect::iinaconf::{self, Setup};
 use kotora_detect::mpvconf::Enabled;
+use kotora_detect::run::Detector;
 use kotora_detect::{Led, Switch};
 use rune::{El, col, row, text};
 
@@ -36,6 +40,9 @@ pub struct Iina {
 /// What to add in IINA's Settings by hand.
 pub const STEPS: &str = "In IINA: Settings \u{2192} Advanced, turn on Enable advanced settings, then under Additional mpv options add input-ipc-server with the value /tmp/iina.sock. Restart IINA.";
 
+/// IINA's socket when nothing else is set (also in `kotora_detect::mpv::default_sockets`).
+const DEFAULT_SOCKET: &str = "/tmp/iina.sock";
+
 fn live(led: Led) -> bool {
     matches!(led, Led::Playing | Led::Idle)
 }
@@ -58,7 +65,7 @@ impl State {
         self.iina.done = None;
         if let Some(h) = self.handle.clone() {
             self.iina.busy = true;
-            check(h);
+            check(h, self.glue.as_ref().map(|g| g.detector()));
         }
     }
 
@@ -69,9 +76,10 @@ impl State {
         }
         let Some(h) = self.handle.clone() else { return };
         self.iina.busy = true;
+        let detector = self.glue.as_ref().map(|g| g.detector());
         let _ = std::thread::Builder::new().name("kotora-iina-conf".into()).spawn(move || {
-            let r = write();
-            let setup = read();
+            let r = write(detector.as_deref());
+            let setup = read(detector.as_deref());
             h.update_if(move |s, _| s.iina_written(r, setup));
         });
     }
@@ -89,9 +97,9 @@ impl State {
 }
 
 /// At start and on Check again (never headless; on a short thread).
-pub fn check(h: crate::model::Handle) {
+pub fn check(h: crate::model::Handle, detector: Option<Arc<Detector>>) {
     let _ = std::thread::Builder::new().name("kotora-iina-conf".into()).spawn(move || {
-        let read = read();
+        let read = read(detector.as_deref());
         h.update_if(move |s, _| {
             let (setup, watched) = match read {
                 Some((setup, watched)) => (Some(setup), watched),
@@ -106,21 +114,42 @@ pub fn check(h: crate::model::Handle) {
     });
 }
 
-/// IINA's setup, and whether the socket it sets is one Kotora watches. Blocks (runs `defaults`).
-fn read() -> Option<(Setup, bool)> {
+/// IINA's setup, and whether Kotora watches the socket it sets. A socket IINA sets that Kotora
+/// doesn't watch yet (a custom path) is added to the running detection here, so it needs no
+/// restart and no `config.toml`. Blocks (runs `defaults`).
+fn read(detector: Option<&Detector>) -> Option<(Setup, bool)> {
     let setup = iinaconf::check().ok()?;
-    let watched = matches!(&setup, Setup::Set { socket, .. } if crate::precise::watched_sockets().contains(socket));
+    let watched = matches!(&setup, Setup::Set { socket, .. } if watch(detector, socket));
     Some((setup, watched))
 }
 
-fn write() -> Precise {
-    let Some(socket) = iina_socket() else {
-        return Precise::Failed("No IINA socket path is set: add one with \u{201c}iina\u{201d} in its name to [players] mpv_sockets in config.toml.".into());
-    };
+/// Kotora watches this socket now: it is in `[players] mpv_sockets` (or the default), or it is
+/// added to the running detection.
+fn watch(detector: Option<&Detector>, socket: &Path) -> bool {
+    if crate::precise::watched_sockets().iter().any(|p| p == socket) {
+        return true;
+    }
+    detector.is_some_and(|d| {
+        d.watch_socket(socket);
+        true
+    })
+}
+
+/// The socket Turn on writes: the one Kotora watches for IINA, else the default.
+fn socket_to_write() -> PathBuf {
+    iina_socket().unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET))
+}
+
+fn write(detector: Option<&Detector>) -> Precise {
+    let socket = socket_to_write();
     match iinaconf::enable(&socket) {
-        Ok(Enabled::Wrote { file, text }) => Precise::Wrote { file: file.display().to_string(), text },
+        Ok(Enabled::Wrote { file, text }) => {
+            // Watched from now on: IINA only has to be restarted.
+            watch(detector, &socket);
+            Precise::Wrote { file: file.display().to_string(), text }
+        }
         Ok(Enabled::AlreadySet { file, socket: set }) => {
-            let watched = crate::precise::watched_sockets().contains(&set);
+            let watched = watch(detector, &set);
             Precise::AlreadySet { file: file.display().to_string(), socket: set.display().to_string(), watched }
         }
         Err(e) => Precise::Failed(format!("Can't turn it on: {e}. {STEPS}")),
