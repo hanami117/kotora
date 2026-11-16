@@ -10,6 +10,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
   it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
   instead of deleting it: Remove anyway, or Keep it.
+- **The list filter searches online when nothing matches:** type a title that isn't on your list in the list's
+  filter box (Ctrl F) and, after a short pause, MyAnimeList's or AniList's results show right under "No match in
+  your list". Open one for its details, or add it with + Watching. It searches like the Search page does
+  (3 letters or more, the same pause and rate limit, answers kept for a while), and not at all while something on
+  your list matches.
 
 ### Changed
 - **Scores in your AniList score format:** the list, the posters, the editor, the details page, the Score menu

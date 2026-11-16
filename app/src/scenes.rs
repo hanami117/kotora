@@ -111,6 +111,20 @@ pub const SCENES: &[Scene] = &[
         s.query.replace_text("zzzz");
         s.refresh();
     }),
+    // No match on the list: the filter searches the service right there (0.2.1): waiting for
+    // the pause, its results (open the details page, + Watching), too short, offline, nothing.
+    ("list-filter-online-searching", |s| filter_online(s, "orchid", None)),
+    ("list-filter-online", |s| filter_online(s, "orchid", Some(crate::search::fake_hits()))),
+    ("list-filter-online-short", |s| filter_online(s, "fz", None)),
+    ("list-filter-online-offline", |s| {
+        s.offline = true;
+        filter_online(s, "orchid", None);
+    }),
+    ("list-filter-online-none", |s| filter_online(s, "zzzz", Some(Vec::new()))),
+    ("list-filter-online-anilist", |s| {
+        anilist(s);
+        filter_online(s, "orchid", Some(crate::search::fake_hits()));
+    }),
     ("list-sort-title", |s| s.set_sort(Sort::Title)),
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
     // The Sort menu open, in each view; a reversed order on the button.
@@ -1200,6 +1214,20 @@ fn iina_by_process(s: &mut State) {
 }
 
 /// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
+/// The Watching page's filter holding `q` (nothing on the list matches it), and the service's
+/// answer, if it came.
+fn filter_online(s: &mut State, q: &str, hits: Option<Vec<kotora_core::service::AnimeHit>>) {
+    s.covers.fake();
+    s.query.replace_text(q);
+    s.search_changed();
+    if let Some(mut hits) = hits {
+        for h in hits.iter_mut().filter(|h| h.id != 9104) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
+    }
+}
+
 fn search(s: &mut State, q: &str, answered: bool) {
     s.covers.fake();
     for e in s.entries.iter_mut().filter(|e| e.id < 12) {
@@ -1804,10 +1832,17 @@ mod tests {
 
     #[test]
     fn search_with_no_match_says_so() {
-        // A query searches the whole list (and MyAnimeList): nothing on the list says so in a line.
+        // A query searches the whole list: nothing there says so in the line to the service,
+        // whose results show under it.
         let rt = render("list-search-none", (1280.0, 800.0));
-        assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
+        assert!(rt.find("sr/find").is_some() && rt.find("sr/online-head").is_some() && rt.find("sr/list-none").is_none());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+        let rt = render("list-filter-online", (1280.0, 800.0));
+        assert!(rt.find("hit/9101").is_some() && rt.find("hit/0").is_none(), "results, not the ones on the list");
+        assert!(rt.find("add").is_some());
+        assert!(render("list-filter-online", (960.0, 600.0)).find("add").is_some(), "fits a small window");
+        assert!(render("list-filter-online-searching", (1280.0, 800.0)).find("sr/note").is_some());
+        assert!(render("list-filter-online-short", (1280.0, 800.0)).find("sr/note").is_some());
     }
 
     /// Airing: both views, the filters and the states find their parts, wide and narrow.
