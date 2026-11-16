@@ -403,9 +403,9 @@ pub(crate) fn kbd(label: &str) -> El {
 fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     let width = size[0];
     let page = match s.page {
-        Page::Setup => crate::setup::page(s),
+        Page::Setup => crate::setup::page(s, width),
         // First run: no Client ID, so the wizard is the only thing a list page can show.
-        Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
+        Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s, width),
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),

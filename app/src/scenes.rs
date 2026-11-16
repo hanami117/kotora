@@ -156,6 +156,17 @@ pub const SCENES: &[Scene] = &[
         s.client_id.draft.replace_text("kotora-app-secret-from-mal");
         s.save_client_id();
     }),
+    // The very first screen: "Which service do you use?" (nothing chosen, no Client ID, no token).
+    // Snap it at --size 700x900 for the stacked cards; a Tab (--script) focuses MyAnimeList.
+    ("setup-service", |s| {
+        setup(s, Step::Service);
+        s.setup_service = true;
+    }),
+    // Welcome after the choice: "Set up MyAnimeList", with Back to the choice.
+    ("setup-welcome-after-service", |s| {
+        setup(s, Step::Welcome);
+        s.setup_service = true;
+    }),
     ("setup-create", |s| setup(s, Step::Create)),
     // The redirect URL copied: the button says so.
     ("setup-create-copied", |s| {
@@ -1089,6 +1100,7 @@ fn update_scene(s: &mut State, install: kotora_core::update::Install, minimum: O
 mod tests {
     use super::SCENES;
     use crate::model::{Page, Sort};
+    use crate::setup::Step;
     use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
@@ -1102,6 +1114,74 @@ mod tests {
             rt.frame(1.0 / 60.0);
         }
         rt
+    }
+
+    fn key(rt: &mut Runtime<State>, key: rune::Key) {
+        rt.key(rune::KeyEvent { key, mods: rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+    }
+
+    fn focused(rt: &Runtime<State>) -> Vec<String> {
+        rt.elements().into_iter().filter(|e| e.focused).filter_map(|e| e.key).collect()
+    }
+
+    fn click(rt: &mut Runtime<State>, k: &str) {
+        let (x, y) = rt.find(k).unwrap_or_else(|| panic!("{k}"));
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+
+    /// First screen: two cards side by side when wide, stacked when narrow; MyAnimeList goes on
+    /// by Tab and Return, by Return alone, or by a click; AniList does nothing.
+    #[test]
+    fn the_service_choice_goes_on_with_mal_only() {
+        let rt = render("setup-service", (1280.0, 800.0));
+        let (mx, my) = rt.find("setup/service-mal").expect("MyAnimeList card");
+        let (ax, ay) = rt.find("setup/service-anilist").expect("AniList card");
+        assert!(rt.find("setup/service").is_some() && rt.find("setup/indicator").is_none(), "unnumbered");
+        assert!(rt.find("setup/next").is_none() && rt.find("setup/back").is_none() && rt.find("setup/close").is_none());
+        assert!((my - ay).abs() < 1.0 && mx < ax, "wide: side by side, MyAnimeList first");
+        let rt = render("setup-service", (700.0, 900.0));
+        let ((_, my), (_, ay)) = (rt.find("setup/service-mal").unwrap(), rt.find("setup/service-anilist").unwrap());
+        assert!(my < ay, "narrow: stacked");
+
+        // Tab walks the sidebar, then reaches MyAnimeList; AniList is never visited. Return goes on.
+        let mut rt = render("setup-service", (1280.0, 800.0));
+        let mut seen = Vec::new();
+        for _ in 0..30 {
+            key(&mut rt, rune::Key::Tab);
+            seen.extend(focused(&rt));
+            if seen.last().is_some_and(|k| k == "setup/service-mal") {
+                break;
+            }
+        }
+        assert_eq!(seen.last().map(String::as_str), Some("setup/service-mal"), "Tab reaches MyAnimeList: {seen:?}");
+        key(&mut rt, rune::Key::Tab);
+        assert!(!focused(&rt).iter().any(|k| k == "setup/service-anilist"), "AniList takes no focus");
+        let ani = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("setup/service-anilist")).unwrap();
+        assert!(!ani.focusable && ani.opacity < 1.0, "dimmed and out of the Tab order");
+        // Back to MyAnimeList (Shift+Tab), then Return.
+        rt.key(rune::KeyEvent { key: rune::Key::Tab, mods: rune::Mods { shift: true, ..rune::Mods::default() } });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(focused(&rt), ["setup/service-mal"]);
+        key(&mut rt, rune::Key::Enter);
+        assert_eq!(rt.state.setup, Step::Welcome);
+        assert!(rt.find("setup/back").is_some(), "Back returns to the choice");
+        click(&mut rt, "setup/back");
+        assert_eq!(rt.state.setup, Step::Service);
+
+        // Return with nothing focused also continues (the card is the default button).
+        let mut rt = render("setup-service", (1280.0, 800.0));
+        key(&mut rt, rune::Key::Enter);
+        assert_eq!(rt.state.setup, Step::Welcome);
+
+        // A click goes on; a click on AniList stays.
+        let mut rt = render("setup-service", (1280.0, 800.0));
+        click(&mut rt, "setup/service-anilist");
+        assert_eq!(rt.state.setup, Step::Service);
+        click(&mut rt, "setup/service-mal");
+        assert_eq!(rt.state.setup, Step::Welcome);
     }
 
     #[test]

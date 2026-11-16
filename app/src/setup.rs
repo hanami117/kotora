@@ -1,4 +1,10 @@
-//! The setup wizard (Stage 5): Welcome, create a MyAnimeList Client ID, paste it, sign in, done.
+//! The setup wizard (Stage 5): the service choice, then Welcome, create a MyAnimeList Client ID,
+//! paste it, sign in, done.
+//!
+//! The choice ("Which service do you use?") is an unnumbered intro, only for someone who has not
+//! chosen yet and has no Client ID or token (`Config::needs_service_choice`); the five numbered
+//! steps are the same for everybody. AniList is a disabled card until v0.3.
+//!
 //! It shows at first run (no Client ID: every list page shows it) and again from Settings →
 //! Accounts → "Set up again". Each step has the indicator ("Step 2 of 5") and Back / Next.
 //!
@@ -17,6 +23,8 @@ use crate::ui::{alert, button, ghost};
 /// The wizard's steps, in order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Step {
+    /// "Which service do you use?" (not numbered, not in [`Step::ALL`]).
+    Service,
     #[default]
     Welcome,
     Create,
@@ -28,9 +36,9 @@ pub enum Step {
 impl Step {
     pub const ALL: [Step; 5] = [Step::Welcome, Step::Create, Step::Paste, Step::SignIn, Step::Done];
 
-    /// 1 to 5.
+    /// 1 to 5; 0 for the service choice.
     pub fn number(self) -> usize {
-        Step::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1
+        Step::ALL.iter().position(|s| *s == self).map_or(0, |i| i + 1)
     }
 
     fn next(self) -> Step {
@@ -65,9 +73,30 @@ impl State {
         if self.page != Page::Setup {
             self.setup_back = self.page;
         }
-        self.setup = Step::Welcome;
+        self.setup = self.setup_first();
         self.client_id.error = None;
         self.go(Page::Setup);
+    }
+
+    /// The wizard's first screen: the service choice while it is due, else Welcome.
+    pub fn setup_first(&self) -> Step {
+        if self.setup_service { Step::Service } else { Step::Welcome }
+    }
+
+    /// The first screen's MyAnimeList card: remember the choice in `[account] service` (a worker
+    /// writes the file; tests and scenes have no handle, so nothing is written) and go on.
+    pub fn choose_service(&mut self) {
+        if self.setup != Step::Service {
+            return;
+        }
+        if self.handle.is_some() {
+            std::thread::spawn(|| {
+                if let Err(e) = kotora_core::config::save_service(&kotora_core::paths::config_file(), kotora_core::config::SERVICE_MAL) {
+                    eprintln!("kotora: {e}");
+                }
+            });
+        }
+        self.setup = Step::Welcome;
     }
 
     /// Whether the wizard can be closed: only once a Client ID is saved (without one, every
@@ -83,11 +112,17 @@ impl State {
             p if self.setup == Step::Done => p.min_list(),
             p => p,
         };
+        // Done with the first run: "Set up again" starts at Welcome from now on.
+        self.setup_service = false;
         self.setup = Step::Welcome;
         self.go(back);
     }
 
     pub fn setup_next(&mut self) {
+        if self.setup == Step::Service {
+            self.choose_service();
+            return;
+        }
         if self.setup == Step::Done {
             self.setup_close();
             return;
@@ -113,7 +148,7 @@ impl State {
     }
 
     pub fn setup_prev(&mut self) {
-        self.setup = self.setup.prev();
+        self.setup = if self.setup == Step::Welcome && self.setup_service { Step::Service } else { self.setup.prev() };
     }
 
     /// Next is enabled: a saved ID to leave Paste, an account to leave Sign in.
@@ -183,12 +218,109 @@ fn open_button(key: &str, label: &str, url: &'static str) -> El {
         .child(icon(&icons::EXTERNAL, 14.0).color(PAL.dim))
 }
 
+fn logo(s: &State) -> El {
+    match &s.logo_big {
+        Some(img) => el().size(56.0, 56.0).radius(theme::R_LG).pixels(img.pixels()),
+        None => el().size(56.0, 56.0),
+    }
+}
+
+/// The first screen: "Which service do you use?" with a card for each service. MyAnimeList is the
+/// only one that works; AniList (v0.3) is dimmed, says so and cannot be focused or pressed.
+/// `width`: the main area's, to put the cards side by side or one under the other.
+fn service(s: &State, width: f32) -> El {
+    // The wizard card's inner width: its 680 max, less the page's and the card's padding.
+    let inner = (width - 2.0 * theme::PAGE_PAD).min(680.0) - 2.0 * 24.0 - 2.0;
+    let side_by_side = inner >= 520.0;
+    let mal = service_tile(
+        "setup/service-mal",
+        "MyAnimeList",
+        "MAL",
+        rune::color::hex("#2e51a2").expect("hex"),
+        "Sync your MyAnimeList list.",
+        true,
+    );
+    let ani = service_tile(
+        "setup/service-anilist",
+        "AniList",
+        "AL",
+        PAL.border_strong,
+        "AniList support comes in a later version.",
+        false,
+    );
+    let cards = if side_by_side {
+        let w = ((inner - 12.0) / 2.0).floor();
+        row().key("setup/services").gap(12.0).focus_group().child(mal.w(w)).child(ani.w(w))
+    } else {
+        col().key("setup/services").gap(12.0).focus_group().child(mal.w_full()).child(ani.w_full())
+    };
+    col()
+        .w_full()
+        .min_w(0.0)
+        .gap(14.0)
+        .child(logo(s))
+        .child(title("Which service do you use?"))
+        .child(para("Kotora keeps your list up to date while you watch. Pick the service your list lives on."))
+        .child(cards)
+}
+
+/// One service card. A live one is a button (Tab or the arrows focus it, Return or a click goes
+/// on); a disabled one is dimmed, has a "Coming soon" pill and ignores the pointer and the keys.
+fn service_tile(key: &str, name: &str, short: &str, badge: rune::Color, line: &str, live: bool) -> El {
+    let mark = el()
+        .size(44.0, 44.0)
+        .radius(theme::R_MD)
+        .fill(badge)
+        .center()
+        .child(text(short.to_string()).font(TextStyle::new(15.0, 700.0)).color(if live { rune::Color::WHITE } else { PAL.dim }));
+    let mut top = row().gap(12.0).center_y().child(mark).child(spacer());
+    if !live {
+        top = top.child(
+            el().px(8.0)
+                .py(3.0)
+                .radius(10.0)
+                .border(1.0, PAL.border_strong)
+                .child(text("Coming soon").font(theme::BADGE).color(PAL.dim)),
+        );
+    }
+    let mut body = col()
+        .gap(4.0)
+        .child(text(name.to_string()).font(TextStyle::new(17.0, 600.0)).color(PAL.text))
+        .child(text(line.to_string()).font(theme::BODY).color(PAL.dim).wrap());
+    if live {
+        body = body.child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .pt(8.0)
+                .child(text("Continue").font(theme::LABEL_BTN).color(PAL.accent_hi))
+                .child(icon(&icons::ARROW, 14.0).color(PAL.accent_hi)),
+        );
+    }
+    let tile = col().key(key.to_string()).role("button").gap(14.0).padding(18.0).radius(theme::R_MD).fill(PAL.bg).border(1.0, PAL.border_strong).child(top).child(body);
+    if live {
+        tile.label(format!("{name}. {line} Continue."))
+            .focusable(true)
+            .default_button()
+            .cursor(rune::Cursor::Pointer)
+            .hover(PAL.hover())
+            .press(PAL.press())
+            .on_press_tx(|s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.choose_service();
+            })
+    } else {
+        tile.label(format!("{name}, coming soon. {line}")).opacity(0.55).cursor(rune::Cursor::NotAllowed)
+    }
+}
+
 fn welcome(s: &State) -> El {
     let mut c = col().gap(12.0).w_full().min_w(0.0);
-    if let Some(img) = &s.logo_big {
-        c = c.child(el().size(56.0, 56.0).radius(theme::R_LG).pixels(img.pixels()));
+    // After the service choice the logo and "Welcome" were already shown.
+    if !s.setup_service {
+        c = c.child(logo(s));
     }
-    c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
+    c.child(text(if s.setup_service { "Set up MyAnimeList" } else { "Welcome to Kotora" }).font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
         .child(para("Kotora keeps your MyAnimeList list up to date while you watch. It notices the episode playing in your own video player and asks before it records it."))
         .child(para("You need two things: a MyAnimeList account, and a free \u{201c}Client ID\u{201d}. MyAnimeList asks every app to register itself; it takes about 2 minutes, and the next steps show you how."))
         .child(text("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap())
@@ -438,32 +570,37 @@ fn done(s: &State) -> El {
 }
 
 /// The wizard page.
-pub fn page(s: &State) -> El {
+pub fn page(s: &State, width: f32) -> El {
     let step = s.setup;
     let body = match step {
+        Step::Service => service(s, width),
         Step::Welcome => welcome(s),
         Step::Create => create(s),
         Step::Paste => paste(s),
         Step::SignIn => sign_in(s),
         Step::Done => done(s),
     };
-    let mut head = row().gap(12.0).center_y().child(indicator(step)).child(spacer());
+    let mut head = row().gap(12.0).center_y();
+    if step != Step::Service {
+        head = head.child(indicator(step));
+    }
+    head = head.child(spacer());
     if s.setup_closable() && step != Step::Done {
         head = head.child(ghost("setup/close", "Close", State::setup_close).h(26.0));
     }
     let mut foot = row().key("setup/foot").gap(8.0).center_y();
-    if step != Step::Welcome && step != Step::Done {
+    if (step != Step::Welcome || s.setup_service) && step != Step::Done {
         foot = foot.child(button("setup/back", "Back", false, Some(State::setup_prev)));
     }
     foot = foot.child(spacer());
     let (label, can) = match step {
-        Step::Welcome => ("Start", true),
+        Step::Service | Step::Welcome => ("Start", true),
         Step::Done => ("Open my list", true),
         _ => ("Next", s.setup_can_go_on()),
     };
     foot = foot.child(button("setup/next", label, true, can.then_some(State::setup_next as fn(&mut State))));
-    let card = col()
-        .key(format!("setup/{}", step.number()))
+    let mut card = col()
+        .key(if step == Step::Service { "setup/service".to_string() } else { format!("setup/{}", step.number()) })
         .w_full()
         .min_w(0.0)
         .max_w(680.0)
@@ -471,11 +608,16 @@ pub fn page(s: &State) -> El {
         .padding(24.0)
         .radius(theme::R_LG)
         .fill(PAL.surface)
-        .border(1.0, PAL.border)
-        .child(head)
-        .child(body.w_full().min_w(0.0))
-        .child(el().w_full().h(1.0).fill(PAL.border))
-        .child(foot);
+        .border(1.0, PAL.border);
+    // The service choice has a head only when there is something to close, and no Back or Next:
+    // a card goes on.
+    if step != Step::Service || s.setup_closable() {
+        card = card.child(head);
+    }
+    card = card.child(body.w_full().min_w(0.0));
+    if step != Step::Service {
+        card = card.child(el().w_full().h(1.0).fill(PAL.border)).child(foot);
+    }
     col().key("page/setup").w_full().h_full().child(
         col()
             .key("setup-scroll")
@@ -535,6 +677,45 @@ mod tests {
         assert_eq!(s.setup, Step::Done);
         s.setup_next();
         assert_eq!(s.page, Page::List(kotora_core::Status::Watching));
+    }
+
+    #[test]
+    fn the_service_choice_comes_first_only_when_due() {
+        // Existing users (a Client ID or a token) never get the flag, so the wizard starts at
+        // Welcome, also from "Set up again".
+        let mut s = State::fake();
+        assert!(!s.setup_service);
+        s.setup_again();
+        assert_eq!(s.setup, Step::Welcome);
+        s.setup_close();
+
+        // First run, nothing chosen: the choice, then Welcome with a way back.
+        let mut s = first_run();
+        s.setup_service = true;
+        s.setup = s.setup_first();
+        assert_eq!((s.setup, s.setup.number()), (Step::Service, 0));
+        assert!(s.handle.is_none(), "tests and scenes never write the config file");
+        s.choose_service();
+        assert_eq!(s.setup, Step::Welcome);
+        s.setup_prev();
+        assert_eq!(s.setup, Step::Service, "Back from Welcome");
+        s.setup_next();
+        s.setup_next();
+        assert_eq!(s.setup, Step::Create);
+        s.setup_prev();
+        s.setup_prev();
+        assert_eq!(s.setup, Step::Service, "Create, Welcome, then the choice");
+        s.choose_service();
+        s.setup_next();
+        // Other steps ignore the choice.
+        s.choose_service();
+        assert_eq!(s.setup, Step::Create);
+
+        // Once the wizard is closed the choice is behind us.
+        s.auth = Auth::SignedOut;
+        s.setup_close();
+        s.setup_again();
+        assert_eq!(s.setup, Step::Welcome);
     }
 
     #[test]

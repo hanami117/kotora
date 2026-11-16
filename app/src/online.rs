@@ -36,6 +36,13 @@ pub fn initial_auth() -> Auth {
     }
 }
 
+/// Whether the wizard begins with the service choice: not chosen yet, no Client ID in the file and
+/// no saved token. Someone who already uses Kotora with MyAnimeList never sees it.
+pub fn wants_service_choice() -> bool {
+    let has_token = TokenStore::new(paths::token_file()).load_mal().is_some();
+    Config::load(&paths::config_file()).is_ok_and(|c| c.needs_service_choice(has_token))
+}
+
 /// At start: show the saved list, then sync if signed in.
 pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
