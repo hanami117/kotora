@@ -166,7 +166,7 @@ say "Writing release notes from CHANGELOG.md"
 - **Other Linux**: download \`$src\`, unpack it and run \`./install.sh\` (needs Rust, pkgconf and a Vulkan
   driver; see the README).
 
-You need your own MyAnimeList Client ID (free, a minute): the setup wizard walks you through it.
+Sign in with MyAnimeList in one click: Kotora has its own client ID built in, so there is nothing to register.
 Checksums are in \`SHA256SUMS\`.
 NOTES
 } >"$out/notes.md"
