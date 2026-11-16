@@ -109,6 +109,25 @@ pub const SCENES: &[Scene] = &[
     }),
     ("list-sort-title", |s| s.set_sort(Sort::Title)),
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
+    // The Sort menu open, in each view; a reversed order on the button.
+    ("list-sort-menu", |s| s.sort_menu = true),
+    ("list-grid-sort-menu", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.set_sort(Sort::Title);
+        s.sort_menu = true;
+    }),
+    ("list-large-sort-menu", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+        s.set_sort(Sort::Score);
+        s.set_sort_rev(true);
+        s.sort_menu = true;
+    }),
+    ("list-sort-reversed", |s| {
+        s.set_sort(Sort::Title);
+        s.set_sort_rev(true);
+    }),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
     // First run: no Client ID in config.toml, so the setup wizard (`setup.rs`), step 1.
@@ -937,7 +956,8 @@ fn signed_out(s: &mut State, auth: Auth) {
 #[cfg(test)]
 mod tests {
     use super::SCENES;
-    use crate::model::Sort;
+    use crate::model::{Page, Sort};
+    use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
     use rune::{Env, Runtime};
@@ -971,6 +991,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The Sort menu: the orders and directions with a check on those in force, in every view;
+    /// picking one closes it.
+    #[test]
+    fn sort_menu_lists_the_orders() {
+        for name in ["list-sort-menu", "list-grid-sort-menu", "list-large-sort-menu"] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in ["sort-menu", "sort/updated", "sort/title", "sort/score", "sort/progress", "sort/dir/0", "sort/dir/1"] {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+        }
+        assert!(render("list", (1280.0, 800.0)).find("sort-menu").is_none(), "closed by default");
+        let mut s = State::fake();
+        s.sort_menu = true;
+        s.set_sort(Sort::Score);
+        s.set_sort_rev(true);
+        let low = s.rows.first().map(|&k| s.entries[k].score);
+        s.set_sort_rev(false);
+        let high = s.rows.first().map(|&k| s.entries[k].score);
+        assert!(low < high, "{low:?} < {high:?}");
+        s.set_sort(Sort::Title);
+        assert!(!s.sort_rev, "a new order starts its own way");
+        s.go(Page::List(Status::Completed));
+        assert!(!s.sort_menu, "leaving the page closes it");
     }
 
     /// The grid views: the switch, cards in rows, +1 always on Watching posters; the table's

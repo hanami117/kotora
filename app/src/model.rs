@@ -114,9 +114,25 @@ impl Sort {
         }
     }
 
-    /// The next order (the Sort control cycles).
-    pub fn next(self) -> Sort {
-        Sort::ALL[(Sort::ALL.iter().position(|s| *s == self).unwrap_or(0) + 1) % Sort::ALL.len()]
+    /// The menu's two directions: the order's own first (what it sorts by at first), then the
+    /// reverse.
+    pub fn directions(self) -> [&'static str; 2] {
+        match self {
+            Sort::Updated => ["Newest first", "Oldest first"],
+            Sort::Title => ["A to Z", "Z to A"],
+            Sort::Score => ["Highest first", "Lowest first"],
+            Sort::Progress => ["Most watched first", "Least watched first"],
+        }
+    }
+
+    /// The `config`-free key used by the menu's items.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Sort::Updated => "updated",
+            Sort::Title => "title",
+            Sort::Score => "score",
+            Sort::Progress => "progress",
+        }
     }
 }
 
@@ -346,6 +362,10 @@ pub struct State {
     pub page: Page,
     pub filter: Filter,
     pub sort: Sort,
+    /// The sort runs the other way ("Oldest first", "Z to A").
+    pub sort_rev: bool,
+    /// The Sort menu is open.
+    pub sort_menu: bool,
     /// The list page's search box: a quick filter of the list.
     pub query: TextEdit,
     /// The search page's field: the list and MyAnimeList.
@@ -442,6 +462,8 @@ impl State {
             page: Page::List(Status::Watching),
             filter: Filter::All,
             sort: Sort::Updated,
+            sort_rev: false,
+            sort_menu: false,
             query: TextEdit::new(""),
             find: TextEdit::new(""),
             search_back: Page::List(Status::Watching),
@@ -573,6 +595,9 @@ impl State {
             Sort::Score => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].score.unwrap_or(0))),
             Sort::Progress => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].progress)),
         }
+        if self.sort_rev {
+            rows.reverse();
+        }
         if !q.is_empty() {
             // The page's status first, then the sidebar's order (stable: the sort stays within).
             rows.sort_by_key(|&i| if e[i].status == st { 0 } else { 1 + Status::ALL.iter().position(|x| *x == e[i].status).unwrap_or(0) });
@@ -581,6 +606,7 @@ impl State {
     }
 
     pub fn go(&mut self, page: Page) {
+        self.sort_menu = false;
         if page == Page::Settings && self.page != page {
             self.refresh_login();
         }
@@ -596,8 +622,17 @@ impl State {
         self.refresh();
     }
 
+    /// A new order starts in its own direction.
     pub fn set_sort(&mut self, sort: Sort) {
+        if self.sort != sort {
+            self.sort_rev = false;
+        }
         self.sort = sort;
+        self.refresh();
+    }
+
+    pub fn set_sort_rev(&mut self, rev: bool) {
+        self.sort_rev = rev;
         self.refresh();
     }
 
@@ -1598,7 +1633,13 @@ mod tests {
         assert_eq!(titles(&s), ["Charlie", "Bravo", "alpha"]);
         s.set_sort(Sort::Progress);
         assert_eq!(titles(&s), ["alpha", "Bravo", "Charlie"]);
-        assert_eq!(Sort::Progress.next(), Sort::Updated);
+        // The other way round: reversed, and a new order starts its own way again.
+        s.set_sort(Sort::Title);
+        s.set_sort_rev(true);
+        assert_eq!(titles(&s), ["Charlie", "Bravo", "alpha"]);
+        s.set_sort(Sort::Score);
+        assert!(!s.sort_rev);
+        assert_eq!(titles(&s), ["Charlie", "Bravo", "alpha"]);
     }
 
     /// Rewatches: start on a completed entry only, stop without counting, and the Watching page
