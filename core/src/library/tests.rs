@@ -237,3 +237,33 @@ fn short_ranges_and_overlaps() {
     assert_eq!(place_name("/media/someone/Archive"), "Archive");
     assert_eq!(place_name("/srv/anime"), "anime");
 }
+
+#[test]
+fn a_real_folder_gives_the_next_episode_file() {
+    let t = tmp("e2e");
+    let show = t.0.join("Lanterns of Kirigaoka");
+    for ep in 1..=4 {
+        touch(&show.join(format!("[Hoshi] Lanterns of Kirigaoka - {ep:02} [1080p].mkv")));
+    }
+    touch(&show.join("[Hoshi] Lanterns of Kirigaoka - 05 [1080p].srt"));
+    touch(&show.join("NCOP1.mkv"));
+    // Many files of shows not on the list: walked and parsed once, then skipped.
+    for i in 0..2000 {
+        touch(&t.0.join("Other").join(format!("Paper Crane Detective {} - {:02}.mkv", i / 24, i % 24 + 1)));
+    }
+    let folder = t.0.to_string_lossy().into_owned();
+    let mut st = Store::open_memory().unwrap();
+    let s = scan(&mut st, &folder).unwrap();
+    assert!(s.online);
+    assert_eq!(s.files, 2004, "video files only, no extras");
+    let again = scan(&mut st, &folder).unwrap();
+    assert_eq!((again.added, again.removed), (0, 0));
+    let items = vec![item(1, "Lanterns of Kirigaoka", Status::Watching, 2, 0)];
+    let idx = Index::build(&load_all(&st).unwrap(), &items, &none, &Relations::default());
+    assert_eq!(idx.episodes(1), [1, 2, 3, 4]);
+    let online = |f: &str| f == folder;
+    let Next::Ready { episode, path } = idx.next(1, 2, None, &online) else { panic!("episode 3 is there") };
+    assert_eq!(episode, 3);
+    assert!(path.ends_with("[Hoshi] Lanterns of Kirigaoka - 03 [1080p].mkv"), "{path}");
+    assert_eq!(idx.next(1, 4, None, &online), Next::Missing { episode: 5 });
+}

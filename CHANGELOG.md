@@ -4,6 +4,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Play next in the tray:** the menu bar (macOS) or tray (Linux) menu lists up to 8 Watching anime whose next
+  episode is a file in your library folders ("Title · Ep N", most recently updated first); picking one opens it
+  as ▶ Play does. Opening the menu (macOS) or the window looks for new files.
+
+### Changed
+- Library folders are no longer walked every 5 minutes: Kotora looks again when the window is shown or the tray
+  menu opens (at most once a minute), on Rescan, and when the folders change. At rest nothing runs.
+
 ### Fixed
 - Now Playing: when the playing file matches no anime, the "Offer at N%" label and the threshold tick are
   hidden (no update is ever offered), and the button says "Pick anime…" instead of "Wrong anime…".
