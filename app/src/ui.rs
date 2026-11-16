@@ -1053,6 +1053,22 @@ pub(crate) fn row_cover(s: &State, e: &Entry) -> El {
     }
 }
 
+/// The cover address of a queued change: its entry's, if the entry is on the list. A change
+/// for something not on the list (an add still waiting) has none, so it keeps the tile.
+pub(crate) fn op_cover_url(s: &State, media_id: u32) -> Option<&str> {
+    s.entries.iter().find(|e| e.id == media_id).and_then(|e| e.cover_url.as_deref())
+}
+
+/// A queued change's poster: the tile, with the real cover over it once it is in memory.
+fn op_cover(s: &State, op: &Op, title: &str) -> El {
+    let (w, h) = (34.0, 48.0);
+    let tile = cover(op.media_id, title, w, h, 12.0);
+    match s.covers.get(op.media_id, op_cover_url(s, op.media_id), w, h) {
+        Some(img) => tile.child(el().key("cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
+        None => tile,
+    }
+}
+
 /// Small words the initials skip (English and romaji particles).
 const SMALL_WORDS: [&str; 10] = ["the", "of", "to", "no", "on", "a", "an", "and", "in", "wa"];
 
@@ -1173,7 +1189,7 @@ fn queue_page(s: &State) -> El {
         );
     }
     for op in s.ops.iter().filter(|o| o.state == OpState::Conflict) {
-        body = body.child(conflict_card(op, s.op_title(op), now).mx(theme::PAGE_PAD));
+        body = body.child(conflict_card(s, op, s.op_title(op), now).mx(theme::PAGE_PAD));
     }
     type Group = (&'static str, &'static str, fn(OpState) -> bool);
     let groups: [Group; 3] = [
@@ -1195,7 +1211,7 @@ fn queue_page(s: &State) -> El {
             if i > 0 {
                 list = list.child(el().w_full().h(1.0).fill(PAL.border));
             }
-            list = list.child(queue_row(op, s.op_title(op), now));
+            list = list.child(queue_row(s, op, s.op_title(op), now));
         }
     }
     if any {
@@ -1215,7 +1231,7 @@ fn changes(n: u32) -> String {
 
 /// One change: cover, title, what changes (and the service's words when it failed), its state
 /// or its actions, and when it was made or sent.
-fn queue_row(op: &Op, title: &str, now: i64) -> El {
+fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
     let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
@@ -1250,10 +1266,10 @@ fn queue_row(op: &Op, title: &str, now: i64) -> El {
     let when = op.sent_at.unwrap_or(op.edited_at);
     let r = row()
         .key(format!("q/{id}"))
-        .h(48.0)
+        .h(58.0)
         .gap(14.0)
         .center_y()
-        .child(cover(op.media_id, title, 26.0, 36.0, 9.0))
+        .child(op_cover(s, op, title))
         .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).truncate().w(240.0))
         .child(what)
         .child(end)
@@ -1282,7 +1298,7 @@ fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
 }
 
 /// A conflict: the user's change and the service's entry side by side, Keep mine / Take theirs.
-fn conflict_card(op: &Op, title: &str, now: i64) -> El {
+fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let side = |key: &str, head: String, big: String, act: El, on: bool| {
         col()
@@ -1317,6 +1333,7 @@ fn conflict_card(op: &Op, title: &str, now: i64) -> El {
             row()
                 .gap(8.0)
                 .center_y()
+                .child(op_cover(s, op, title))
                 .child(icon(&icons::ALERT, 16.0).color(PAL.accent))
                 .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
                 .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
@@ -2437,6 +2454,15 @@ mod tests {
     }
 
     /// The playing anime's cover: the entry's, else the one found with a match off the list.
+    #[test]
+    fn op_cover_url_is_the_entrys_or_none() {
+        let mut s = crate::model::State::fake();
+        let id = s.entries[0].id;
+        s.entries[0].cover_url = Some("https://cdn.example.invalid/x.jpg".into());
+        assert_eq!(super::op_cover_url(&s, id), Some("https://cdn.example.invalid/x.jpg"));
+        assert_eq!(super::op_cover_url(&s, 4_000_000), None, "not on the list: the tile");
+    }
+
     #[test]
     fn now_cover_url_from_the_entry_or_the_match() {
         let mut s = crate::model::State::fake();
