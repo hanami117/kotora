@@ -54,6 +54,9 @@ pub struct Shared {
     sockets: Mutex<HashSet<PathBuf>>,
     /// Windows: what the process scan says about MPC-HC / MPC-BE, for their web source.
     mpc_process: Mutex<MpcProcess>,
+    /// Windows: how often the process scan saw the last mpv or mpv.net process go. A pipe
+    /// connection that sees this move ends, so a player that is gone never stays on screen.
+    mpv_gone: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Whether an MPC-HC or MPC-BE process runs, as the process scan sees it.
@@ -70,7 +73,7 @@ pub enum MpcProcess {
 impl Shared {
     #[cfg(test)]
     pub(crate) fn for_tests(settings: Settings) -> Shared {
-        Shared { settings: Mutex::new(settings), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown) }
+        Shared { settings: Mutex::new(settings), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown), mpv_gone: Arc::default() }
     }
 
     fn get(&self) -> Settings {
@@ -96,6 +99,11 @@ impl Shared {
 
     pub fn mpc_process(&self) -> MpcProcess {
         *self.mpc_process.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The process scan saw the last mpv or mpv.net process go.
+    pub fn mpv_processes_gone(&self) {
+        self.mpv_gone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn set_mpc_process(&self, p: MpcProcess) {
@@ -143,8 +151,8 @@ fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> 
     if !shared.sockets.lock().unwrap_or_else(|e| e.into_inner()).insert(sock.to_path_buf()) {
         return false;
     }
-    let (sock, tx) = (sock.to_path_buf(), tx.clone());
-    let _ = std::thread::Builder::new().name("kotora-mpv".into()).spawn(move || crate::mpv::run(sock, tx));
+    let (sock, tx, gone) = (sock.to_path_buf(), tx.clone(), shared.mpv_gone.clone());
+    let _ = std::thread::Builder::new().name("kotora-mpv".into()).spawn(move || crate::mpv::run(sock, tx, gone));
     true
 }
 
@@ -152,7 +160,7 @@ fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> 
 /// thread.
 pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Detector {
     let (tx, rx) = mpsc::channel::<Input>();
-    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown) });
+    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown), mpv_gone: Arc::default() });
     for sock in &settings.mpv_sockets {
         spawn_socket(&shared, &tx, sock);
     }

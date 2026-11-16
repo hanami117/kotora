@@ -187,6 +187,7 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>, mpc_wake:
     let mut scanner = Scanner::new(System);
     let mut reporter = Reporter::default();
     let mut mpc_before = None;
+    let mut mpvs_before = 0;
     loop {
         let on = shared.processes();
         let seen = if on {
@@ -207,6 +208,13 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>, mpc_wake:
                 let _ = w.send(());
             }
         }
+        // The last mpv or mpv.net process went: its pipe connection ends now, whatever the
+        // pipe itself says.
+        let mpvs = seen.iter().filter(|s| s.family.mpv_net().is_some()).count();
+        if mpvs == 0 && mpvs_before > 0 {
+            shared.mpv_processes_gone();
+        }
+        mpvs_before = mpvs;
         for input in reporter.apply(&seen, crate::clock()) {
             if tx.send(input).is_err() {
                 return;
