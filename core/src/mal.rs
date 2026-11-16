@@ -100,10 +100,25 @@ const VERIFIER_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 /// `len` random characters from the PKCE alphabet (RFC 7636), from the OS random source.
 fn random_string(len: usize) -> std::io::Result<String> {
-    use std::io::Read;
     let mut bytes = vec![0u8; len];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    fill_random(&mut bytes)?;
     Ok(bytes.iter().map(|b| VERIFIER_CHARS[*b as usize % VERIFIER_CHARS.len()] as char).collect())
+}
+
+/// Random bytes from the system: `/dev/urandom`.
+#[cfg(not(windows))]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+/// Random bytes from the system: Windows' preferred generator.
+#[cfg(windows)]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    use windows_sys::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
+    // SAFETY: the buffer is writable for its length; no algorithm handle with this flag.
+    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status == 0 { Ok(()) } else { Err(std::io::Error::other(format!("the system's random generator failed ({status:#x})"))) }
 }
 
 /// One sign-in attempt: the verifier (also the `plain` challenge) and the `state`.

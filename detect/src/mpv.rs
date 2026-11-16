@@ -401,7 +401,9 @@ mod tests {
         assert!(steps[8].ask_time && !steps[8].changed, "restart asks for the position");
         let p = m.snapshot();
         assert_eq!(p.key, "mpv:/run/user/1000/mpv.sock");
-        assert_eq!(p.path.as_deref(), Some("/media/anime/Lanterns/[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv"));
+        // mpv's folder and the file name, joined with the system's separator.
+        let joined = Path::new("/media/anime/Lanterns").join("[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv");
+        assert_eq!(p.path.as_deref(), joined.to_str());
         assert_eq!(p.title, None, "a local file goes by its name");
         assert_eq!((p.position, p.duration, p.state, p.at), (Some(12.25), Some(1420.5), PlayState::Playing, 5.0));
     }

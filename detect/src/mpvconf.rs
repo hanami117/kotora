@@ -232,16 +232,18 @@ mod tests {
 
     #[test]
     fn finds_mpv_conf_like_mpv() {
-        let e = Env { mpv_home: None, xdg_config_home: None, home: Some("/h".into()) };
-        assert_eq!(e.conf_file().unwrap(), PathBuf::from("/h/.config/mpv/mpv.conf"));
-        let e = Env { xdg_config_home: Some("/x".into()), ..e };
-        assert_eq!(e.conf_file().unwrap(), PathBuf::from("/x/mpv/mpv.conf"));
+        // Absolute on every system: a drive in front on Windows.
+        let abs = |p: &str| if cfg!(windows) { format!("C:{p}") } else { p.to_string() };
+        let e = Env { mpv_home: None, xdg_config_home: None, home: Some(abs("/h").into()) };
+        assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/h/.config/mpv/mpv.conf")));
+        let e = Env { xdg_config_home: Some(abs("/x").into()), ..e };
+        assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/x/mpv/mpv.conf")));
         let e2 = Env { xdg_config_home: Some("relative".into()), ..e.clone() };
-        assert_eq!(e2.conf_file().unwrap(), PathBuf::from("/h/.config/mpv/mpv.conf"), "a relative XDG path is ignored");
-        let e = Env { mpv_home: Some("/m".into()), ..e };
-        assert_eq!(e.conf_file().unwrap(), PathBuf::from("/m/mpv.conf"));
-        assert_eq!(e.expand("~~/sock"), PathBuf::from("/m/sock"));
-        assert_eq!(e.expand("~/s"), PathBuf::from("/h/s"));
+        assert_eq!(e2.conf_file().unwrap(), PathBuf::from(abs("/h/.config/mpv/mpv.conf")), "a relative XDG path is ignored");
+        let e = Env { mpv_home: Some(abs("/m").into()), ..e };
+        assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/m/mpv.conf")));
+        assert_eq!(e.expand("~~/sock"), PathBuf::from(abs("/m/sock")));
+        assert_eq!(e.expand("~/s"), PathBuf::from(abs("/h/s")));
         assert_eq!(Env::default().conf_file(), None);
     }
 

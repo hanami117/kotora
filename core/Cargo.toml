@@ -23,6 +23,7 @@ anitomy-ng = { version = "1.0.10", default-features = false }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# The same on Windows (`time.rs`): the system's time zone rules. The windows-sys Rune already builds.
+# The same on Windows (`time.rs`): the system's time zone rules; and random bytes for the
+# sign-in (`mal.rs`). The windows-sys Rune already builds.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Time"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Time"] }

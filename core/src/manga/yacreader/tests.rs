@@ -301,11 +301,13 @@ fn a_read_only_folder_opens() {
 #[test]
 fn odd_characters_in_the_library_path() {
     let s = Scratch::new("odd");
-    let root = s.0.join("Manga & Comics #1 (100%) what?");
+    // Windows allows no `?` in a name.
+    let root = s.0.join(if cfg!(windows) { "Manga & Comics #1 (100%) what" } else { "Manga & Comics #1 (100%) what?" });
     fs::create_dir_all(&root).unwrap();
     let rows = [row("/Lantern Road/c021.cbz", 4, 20, false, Some(100))];
     let lib = make_library(&root, SCHEMA_10_5, &rows, true);
     assert_eq!(lib_db(&lib).opened_since(0).unwrap().len(), 1);
+    #[cfg(unix)]
     assert_eq!(
         immutable_uri(Path::new("/a b/c#d?e%f/ü.ydb")),
         "file:/a%20b/c%23d%3Fe%25f/%C3%BC.ydb?immutable=1"

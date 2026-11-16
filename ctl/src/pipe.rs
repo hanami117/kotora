@@ -183,10 +183,12 @@ pub fn connect(path: &Path) -> io::Result<File> {
         match std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_IDENTIFICATION).open(&name) {
             Ok(f) => return Ok(f),
             // Every instance is busy for a moment: wait for a free one.
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && tries < 5 => {
+            // (About a second in all: the app always keeps a spare instance, so longer means
+            // it is going away.)
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && tries < 4 => {
                 tries += 1;
                 // SAFETY: `wname` is NUL-terminated.
-                unsafe { WaitNamedPipeW(wname.as_ptr(), 2000) };
+                unsafe { WaitNamedPipeW(wname.as_ptr(), 250) };
             }
             Err(e) => return Err(e),
         }
