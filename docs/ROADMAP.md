@@ -36,6 +36,12 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   libproc open-file scan is tested for real against fake `mpv`, `IINA` and `VLC` processes; IINA gets
   precise detection from Settings → Players (one click when IINA uses a config folder, else the steps).
   Waiting for the user's live test on the Mac. No tray, login item or `.app` yet (next stage).
+- **Mac integration and tray (2026-11-16):** built on branch `mac-integration` (on top of `mac-detection`).
+  The macOS menu bar (About, Settings… ⌘,, a Go menu), a tray icon (Linux StatusNotifierItem, macOS
+  menu bar item) so closing the window keeps detection running, Settings → Startup (start at login,
+  start in the background) and `packaging/macos/build.sh` for a minimal ad-hoc-signed
+  `target/macos/Kotora.app`. Waiting for the user's live test on both systems. The Linux tray brings
+  Rune's `dbus` feature back (about +2 MB on Linux, which was 29.9 MB): measure on Arch and decide.
 
 ## Stage 0: design
 
