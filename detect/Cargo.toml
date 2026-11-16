@@ -8,10 +8,16 @@ description = "Kotora's now-playing sources (MPRIS, mpv IPC, VLC's web interface
 
 [dependencies]
 serde_json = "1"
-# inotify / kqueue for the mpv socket's folder.
-libc = "0.2"
 # VLC's web interface (macOS). Already in the build for MyAnimeList (core), so no new code.
 ureq = "3"
+
+# inotify / kqueue for the mpv socket's folder; getuid and libproc for the process source.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The fake mpv of the named-pipe test. The windows-sys Rune already builds.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes"] }
 
 # MPRIS on Linux: zbus 5, the copy Rune's AT-SPI accessibility already builds
 # (`async-io`, no tokio), plus its blocking API. No second zbus.

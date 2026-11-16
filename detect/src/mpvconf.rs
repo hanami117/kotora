@@ -31,6 +31,11 @@ pub struct Env {
 impl Env {
     pub fn current() -> Env {
         let get = |k| std::env::var_os(k).filter(|v| !v.is_empty());
+        // Windows: mpv reads `%APPDATA%\mpv\mpv.conf`, which is the XDG rule with APPDATA as
+        // the config home; the home folder is USERPROFILE.
+        #[cfg(windows)]
+        return Env { mpv_home: get("MPV_HOME"), xdg_config_home: get("APPDATA"), home: get("USERPROFILE") };
+        #[cfg(not(windows))]
         Env { mpv_home: get("MPV_HOME"), xdg_config_home: get("XDG_CONFIG_HOME"), home: get("HOME") }
     }
 

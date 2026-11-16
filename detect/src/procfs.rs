@@ -22,9 +22,12 @@
 //! a running player; nothing at all when the source is off.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+#[cfg(unix)]
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
 use crate::run::{Input, Shared};
@@ -86,11 +89,13 @@ pub trait Procs {
 }
 
 /// `/proc` on Linux. The root is a parameter so tests use a fake tree.
+#[cfg(unix)]
 pub struct ProcFs {
     root: PathBuf,
     uid: u32,
 }
 
+#[cfg(unix)]
 impl ProcFs {
     pub fn new(root: impl Into<PathBuf>, uid: u32) -> ProcFs {
         ProcFs { root: root.into(), uid }
@@ -103,6 +108,7 @@ impl ProcFs {
     }
 }
 
+#[cfg(unix)]
 impl Procs for ProcFs {
     fn pids(&mut self) -> Vec<u32> {
         let Ok(dir) = std::fs::read_dir(&self.root) else { return Vec::new() };
@@ -285,6 +291,7 @@ pub fn snapshot(pid: u32, kind: Kind, path: &str, now: f64) -> Playing {
 
 /// The thread: scan, report, sleep [`INTERVAL`] (or until the settings change). While the
 /// source is off it blocks until the settings change.
+#[cfg(unix)]
 pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>) {
     #[cfg(target_os = "macos")]
     let procs = crate::libproc::LibProc::new();
@@ -312,7 +319,12 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>) {
     }
 }
 
-#[cfg(test)]
+/// Windows has no process source yet (it will read the players' command lines): the thread is
+/// never started there.
+#[cfg(not(unix))]
+pub fn run(_shared: Arc<Shared>, _wake: Receiver<()>, _tx: Sender<Input>) {}
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;

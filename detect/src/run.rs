@@ -126,7 +126,7 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
         let tx = tx.clone();
         let _ = std::thread::Builder::new().name("kotora-mpris".into()).spawn(move || crate::mpris::run(tx));
     }
-    let vlc_wake = if cfg!(target_os = "macos") {
+    let vlc_wake = if crate::VLC_WEB {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx) = (shared.clone(), tx.clone());
         let _ = std::thread::Builder::new().name("kotora-vlc".into()).spawn(move || crate::vlc::run(sh, wrx, tx));

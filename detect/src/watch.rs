@@ -285,7 +285,7 @@ impl Watch {
 }
 
 fn file_name(f: &str) -> &str {
-    f.rsplit('/').next().unwrap_or(f)
+    crate::file_name(f)
 }
 
 fn reached(slot: &Slot) -> Report {

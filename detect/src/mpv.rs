@@ -10,6 +10,7 @@
 //! [`Model`] is the parsing, tested on recorded messages; [`run`] is the thread.
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -17,6 +18,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+#[cfg(unix)]
 use crate::dirwatch::DirWatch;
 use crate::run::Input;
 use crate::{Led, PlayState, Playing, SourceStatus, Switch, Via};
@@ -127,7 +129,7 @@ impl Model {
                     "duration" => self.set(|m| &mut m.duration, data.as_f64()),
                     "working-directory" => {
                         self.cwd = data.as_str().map(str::to_string);
-                        Step { changed: self.path.as_deref().is_some_and(|p| !p.starts_with('/')), ask_time: false }
+                        Step { changed: self.path.as_deref().is_some_and(|p| !crate::is_absolute(p)), ask_time: false }
                     }
                     "pause" => {
                         let pause = data.as_bool().unwrap_or(false);
@@ -183,7 +185,7 @@ impl Model {
         if p.contains("://") {
             return None;
         }
-        if p.starts_with('/') {
+        if crate::is_absolute(p) {
             return Some(p.to_string());
         }
         let cwd = self.cwd.as_deref()?;
@@ -223,7 +225,10 @@ pub fn switch_for(socket: &Path) -> Switch {
 
 /// The socket paths to watch when `config.toml` names none.
 pub fn default_sockets() -> Vec<PathBuf> {
-    if cfg!(target_os = "macos") {
+    if cfg!(windows) {
+        // mpv's manual uses the first name in its example; the second is the other common one.
+        vec![PathBuf::from(r"\\.\pipe\mpvsocket"), PathBuf::from(r"\\.\pipe\mpv")]
+    } else if cfg!(target_os = "macos") {
         vec![PathBuf::from("/tmp/mpv.sock"), PathBuf::from("/tmp/iina.sock")]
     } else {
         let run = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -238,6 +243,7 @@ fn status(switch: Switch, line: String, led: Led) -> Input {
 /// Connects to the socket. The file shows up with `bind` and answers only after `listen`, so a
 /// connect right after the folder woke us can be refused: when the file is there, try again a few
 /// times (about 0.6 s in all, so a stale file costs little).
+#[cfg(unix)]
 fn connect(socket: &Path) -> std::io::Result<UnixStream> {
     let mut wait = Duration::from_millis(5);
     loop {
@@ -254,6 +260,7 @@ fn connect(socket: &Path) -> std::io::Result<UnixStream> {
 
 /// The thread for one socket path: connect, follow, and when there is no mpv, sleep until the
 /// folder changes. Ends only when the folder can't be watched.
+#[cfg(unix)]
 pub fn run(socket: PathBuf, tx: Sender<Input>) {
     let switch = switch_for(&socket);
     let shown = socket.display().to_string();
@@ -263,7 +270,10 @@ pub fn run(socket: PathBuf, tx: Sender<Input>) {
         match connect(&socket) {
             Ok(stream) => {
                 let _ = tx.send(status(switch, format!("{shown}: running"), Led::Idle));
-                let key = session(stream, &socket, switch, &tx);
+                let key = match stream.try_clone() {
+                    Ok(read) => session(read, stream, &socket, switch, &tx),
+                    Err(_) => Model::new(&socket, switch).key,
+                };
                 if tx.send(Input::Gone(key)).is_err() {
                     return;
                 }
@@ -289,12 +299,49 @@ pub fn run(socket: PathBuf, tx: Sender<Input>) {
     }
 }
 
+/// How often the Windows thread looks for mpv's pipe while there is no mpv.
+#[cfg(windows)]
+const PIPE_POLL: Duration = Duration::from_secs(3);
+
+/// Windows: mpv's IPC is a named pipe (`input-ipc-server=\\.\pipe\mpvsocket`) with the same JSON
+/// lines. A pipe has no folder to watch, so while there is no mpv the thread looks for the pipe
+/// every [`PIPE_POLL`]. One blocking handle is enough: every write follows a read on this thread.
+#[cfg(windows)]
+pub fn run(socket: PathBuf, tx: Sender<Input>) {
+    let switch = switch_for(&socket);
+    let shown = socket.display().to_string();
+    let mut said_off = false;
+    loop {
+        let pipe = std::fs::OpenOptions::new().read(true).write(true).open(&socket);
+        match pipe.and_then(|write| Ok((write.try_clone()?, write))) {
+            Ok((read, write)) => {
+                said_off = false;
+                let _ = tx.send(status(switch, format!("{shown}: running"), Led::Idle));
+                let key = session(read, write, &socket, switch, &tx);
+                if tx.send(Input::Gone(key)).is_err() {
+                    return;
+                }
+            }
+            Err(_) if !said_off => {
+                said_off = true;
+                if tx.send(status(switch, format!("{shown}: not running"), Led::Off)).is_err() {
+                    return;
+                }
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(PIPE_POLL);
+    }
+}
+
+/// Neither Unix nor Windows: no mpv IPC.
+#[cfg(not(any(unix, windows)))]
+pub fn run(_socket: PathBuf, _tx: Sender<Input>) {}
+
 /// One connection, until mpv quits. Returns the player's key.
-fn session(stream: UnixStream, socket: &Path, switch: Switch, tx: &Sender<Input>) -> String {
+fn session(read: impl std::io::Read, mut write: impl Write, socket: &Path, switch: Switch, tx: &Sender<Input>) -> String {
     let mut model = Model::new(socket, switch);
     let key = model.key.clone();
-    let Ok(read) = stream.try_clone() else { return key };
-    let mut write = stream;
     for line in SETUP {
         if writeln!(write, "{line}").is_err() {
             return key;
@@ -403,6 +450,7 @@ mod tests {
     /// A fake mpv on a temp socket: the thread connects, sends the setup, and reports the file;
     /// when the fake quits, the player is gone.
     #[test]
+    #[cfg(unix)]
     fn talks_to_a_fake_mpv_on_a_temp_socket() {
         use std::os::unix::net::UnixListener;
         use std::sync::mpsc;
@@ -446,5 +494,58 @@ mod tests {
         assert_eq!(gone, format!("mpv:{}", sock.display()));
         drop(listener);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same on Windows: a fake mpv on a named pipe.
+    #[test]
+    #[cfg(windows)]
+    fn talks_to_a_fake_mpv_on_a_named_pipe() {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use std::sync::mpsc;
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+        let name = PathBuf::from(format!(r"\\.\pipe\kot-mpv-test-{}", std::process::id()));
+        let wide: Vec<u16> = name.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: a NUL-terminated name; the handle is owned by the File right away.
+        let server = unsafe {
+            let h = CreateNamedPipeW(wide.as_ptr(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, std::ptr::null());
+            assert_ne!(h, INVALID_HANDLE_VALUE);
+            std::fs::File::from_raw_handle(h)
+        };
+        let (tx, rx) = mpsc::channel();
+        let path = name.clone();
+        std::thread::spawn(move || run(path, tx));
+        // SAFETY: a valid pipe handle; a client that is already there counts as connected.
+        unsafe { ConnectNamedPipe(server.as_raw_handle(), std::ptr::null_mut()) };
+        let mut lines = BufReader::new(server.try_clone().unwrap()).lines();
+        for want in SETUP {
+            assert_eq!(lines.next().unwrap().unwrap(), want);
+        }
+        let mut w = server;
+        for l in RECORDED {
+            writeln!(w, "{l}").unwrap();
+        }
+        let mut got = None;
+        while let Ok(i) = rx.recv_timeout(Duration::from_secs(5)) {
+            if let Input::Update(p) = i
+                && p.position == Some(12.25)
+            {
+                got = Some(p);
+                break;
+            }
+        }
+        let p = got.expect("an update with the position");
+        assert!(p.path.unwrap().ends_with("Lanterns of Kirigaoka - 06 (1080p).mkv"));
+        drop(w);
+        drop(lines);
+        let gone = loop {
+            match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Input::Gone(k) => break k,
+                _ => continue,
+            }
+        };
+        assert_eq!(gone, format!("mpv:{}", name.display()));
     }
 }
