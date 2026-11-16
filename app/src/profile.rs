@@ -98,7 +98,7 @@ fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
         face = face.child(el().absolute(0.0, 0.0).size(SIZE, SIZE).radius(SIZE / 2.0).pixels(img.pixels()));
     }
     let joined = joined_text(p).map_or_else(|| service.to_string(), |j| format!("{service} \u{b7} Joined {j}"));
-    let url = format!("https://myanimelist.net/profile/{name}");
+    let url = s.service.profile_url(name);
     row()
         .key("profile/head")
         .gap(18.0)
@@ -120,7 +120,7 @@ fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
             row()
                 .key("profile/open-mal")
                 .role("link")
-                .label("Open on MyAnimeList")
+                .label(format!("Open on {}", s.service.title()))
                 .focusable(true)
                 .h(32.0)
                 .px(12.0)
@@ -133,7 +133,7 @@ fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
                 .press(PAL.press())
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut State| crate::online::open_url(s, url.clone()))
-                .child(text("Open on MyAnimeList").font(theme::LABEL_BTN).color(PAL.text))
+                .child(text(format!("Open on {}", s.service.title())).font(theme::LABEL_BTN).color(PAL.text))
                 .child(rune::icon(&crate::icons::EXTERNAL, 14.0).color(PAL.dim)),
         )
 }
@@ -193,7 +193,7 @@ fn anime_card(s: &State, stats: Option<&AnimeStats>) -> El {
     match stats {
         Some(x) if x.rewatched > 0 => c.child(text(format!("Rewatched {}", kotora_core::queue::times(x.rewatched))).font(theme::LABEL).color(PAL.faint)),
         Some(_) => c,
-        None => c.child(text("MyAnimeList's numbers come with the next sync; the counts are from your saved list.").key("profile/pending").font(theme::LABEL).color(PAL.faint).wrap()),
+        None => c.child(text(format!("{}'s numbers come with the next sync; the counts are from your saved list.", s.service.title())).key("profile/pending").font(theme::LABEL).color(PAL.faint).wrap()),
     }
 }
 

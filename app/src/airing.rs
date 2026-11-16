@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use kotora_core::airing::{self, DAY_SHORT, Season, SeasonAnime, Timetable, WEEK};
-use kotora_core::service::{ListService, ServiceError};
+use kotora_core::service::ServiceError;
 use kotora_core::store::Store;
 use kotora_core::time::{Clock, now_unix};
 use kotora_core::{ListItem, Status, paths};
@@ -365,7 +365,7 @@ impl State {
         std::thread::spawn(move || {
             let store = Store::open(&paths::db_file()).ok();
             let run = Run { store: store.as_ref(), now: now_unix(), force, online };
-            let mut mal = if online { crate::online::mal_service() } else { None };
+            let mut mal = if online { crate::account::open() } else { None };
             let signed_in = mal.is_some();
             let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
             let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
@@ -428,7 +428,7 @@ impl State {
             let store = Store::open(&paths::db_file()).ok();
             let list = store.as_ref().and_then(|st| st.load_list("mal").ok()).unwrap_or_default();
             let run = Run { store: store.as_ref(), now: now_unix(), force, online };
-            let mut mal = if online { crate::online::mal_service() } else { None };
+            let mut mal = if online { crate::account::open() } else { None };
             let signed_in = mal.is_some();
             let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
             let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
@@ -538,7 +538,7 @@ impl State {
                 None if show.is_airing() && !browsing => {
                     let why = match show.broadcast {
                         Some(b) => format!("{}s in Japan, time not known", DAY_LONG[usize::from(b.day % 7)]),
-                        None => "No broadcast slot on MyAnimeList".to_string(),
+                        None => format!("No broadcast slot on {}", self.service.title()),
                     };
                     a.untimed.push((i, why));
                 }
@@ -722,7 +722,7 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
     let (now, force) = (run.now, run.force);
     let cur = Season::of(now);
     let prev = cur.previous();
-    let saved = |se: Season| run.store.and_then(|st| st.season("mal", se).ok().flatten());
+    let saved = |se: Season| run.store.and_then(|st| st.season(crate::account::name(), se).ok().flatten());
     let (c, p) = (saved(cur), saved(prev));
     let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now));
     let (need_c, need_p) = (force || !fresh(cur, &c), force || !fresh(prev, &p));
@@ -739,12 +739,12 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
     }
     if !run.online {
         if !had_any {
-            send(Answer { season: cur, shows: Vec::new(), fetched_at: None, error: Some("Offline: the season lists come from MyAnimeList.".into()), done: true });
+            send(Answer { season: cur, shows: Vec::new(), fetched_at: None, error: Some(format!("Offline: the season lists come from {}.", crate::account::active().title())), done: true });
         }
         return;
     }
     let Some(get) = get else {
-        return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
+        return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(format!("Sign in to {} to see the seasons.", crate::account::active().title())), done: true });
     };
     let fail = |e: ServiceError, fetched_at| Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(crate::online::error_text(e)), done: true };
     if need_c {
@@ -757,7 +757,7 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
             Ok(all) => {
                 let all = all.unwrap_or_default();
                 if let Some(st) = run.store {
-                    let _ = st.save_season("mal", cur, &all, now, &[prev]);
+                    let _ = st.save_season(crate::account::name(), cur, &all, now, &[prev]);
                 }
                 (c_shows, fetched_at) = (all, Some(now));
                 send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: !need_p });
@@ -773,7 +773,7 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
         match pages(get, prev, wanted, &mut |_| {}) {
             Ok(Some(all)) => {
                 if let Some(st) = run.store {
-                    let _ = st.save_season("mal", prev, &all, now, &[cur]);
+                    let _ = st.save_season(crate::account::name(), prev, &all, now, &[cur]);
                 }
                 p_shows = all;
                 send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true });
@@ -789,7 +789,7 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
 pub fn run_browse(run: &Run, season: Season, get: Option<Source>, wanted: &dyn Fn() -> bool, send: &mut dyn FnMut(Answer)) {
     let (now, force) = (run.now, run.force);
     let cur = Season::of(now);
-    let saved = run.store.and_then(|st| st.season("mal", season).ok().flatten());
+    let saved = run.store.and_then(|st| st.season(crate::account::name(), season).ok().flatten());
     let fresh = saved.as_ref().is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
     let fetched_at = saved.as_ref().map(|(_, at)| *at);
     if let Some((shows, at)) = saved {
@@ -800,12 +800,12 @@ pub fn run_browse(run: &Run, season: Season, get: Option<Source>, wanted: &dyn F
     }
     if !run.online {
         if fetched_at.is_none() {
-            send(Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Offline: the season lists come from MyAnimeList.".into()), done: true });
+            send(Answer { season, shows: Vec::new(), fetched_at: None, error: Some(format!("Offline: the season lists come from {}.", crate::account::active().title())), done: true });
         }
         return;
     }
     let Some(get) = get else {
-        return send(Answer { season, shows: Vec::new(), fetched_at, error: Some("Sign in to MyAnimeList to see the seasons.".into()), done: true });
+        return send(Answer { season, shows: Vec::new(), fetched_at, error: Some(format!("Sign in to {} to see the seasons.", crate::account::active().title())), done: true });
     };
     let mut partial = |v: &[SeasonAnime]| {
         if fetched_at.is_none() {
@@ -815,7 +815,7 @@ pub fn run_browse(run: &Run, season: Season, get: Option<Source>, wanted: &dyn F
     match pages(get, season, wanted, &mut partial) {
         Ok(Some(all)) => {
             if let Some(st) = run.store {
-                let _ = st.save_season("mal", season, &all, now, &[cur, cur.previous()]);
+                let _ = st.save_season(crate::account::name(), season, &all, now, &[cur, cur.previous()]);
             }
             send(Answer { season, shows: all, fetched_at: Some(now), error: None, done: true });
         }
@@ -886,7 +886,7 @@ pub fn page(s: &State, width: f32) -> El {
     }
     if shown.is_empty() {
         let first = a.browse.is_none() && a.error.is_none() && a.season.is_none();
-        return page.child(if a.is_loading() || first { loading(&s.viewed_season().label()) } else { empty(a.shown_error().is_some()) });
+        return page.child(if a.is_loading() || first { loading(&s.viewed_season().label()) } else { empty(a.shown_error().is_some(), s.service.title()) });
     }
     page = page.child(filters(s));
     match a.view {
@@ -1159,11 +1159,11 @@ fn loading(season: &str) -> El {
     c
 }
 
-fn empty(failed: bool) -> El {
+fn empty(failed: bool, svc: &str) -> El {
     let (title, help) = if failed {
-        ("No season to show", "Kotora shows the season once MyAnimeList answers.")
+        ("No season to show", format!("Kotora shows the season once {svc} answers."))
     } else {
-        ("Nothing airing", "MyAnimeList lists no anime for this season yet.")
+        ("Nothing airing", format!("{svc} lists no anime for this season yet."))
     };
     col()
         .key("airing/empty")
@@ -1207,7 +1207,7 @@ fn week(s: &State) -> El {
                 Some(WeekRow::Day(d)) => day_head(s, *d),
                 Some(WeekRow::Slot(d, k)) => s.airing.days[usize::from(*d)].get(*k).map_or_else(el, |sl| slot_row(s, sl)),
                 Some(WeekRow::Nothing(_)) => row().h(36.0).px(theme::PAGE_PAD).pl(theme::PAGE_PAD + 64.0).center_y().child(text("Nothing airs").font(theme::LABEL).color(PAL.faint)),
-                Some(WeekRow::UntimedHead) => head_line("No broadcast time".into(), false, Some("airing on MyAnimeList, no time to estimate".into())),
+                Some(WeekRow::UntimedHead) => head_line("No broadcast time".into(), false, Some(format!("airing on {}, no time to estimate", s.service.title()))),
                 Some(WeekRow::Untimed(k)) => s.airing.untimed.get(*k).map_or_else(el, |(j, why)| untimed_row(s, *j, why)),
                 None => el(),
             },

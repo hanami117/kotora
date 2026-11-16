@@ -665,7 +665,7 @@ impl State {
             Found::List { why, .. } => format!("In your list, not sure: {why}"),
             Found::NotOnList { .. } => match self.relation_text(n) {
                 Some(why) => format!("Not on your list: {why}"),
-                None => "Not on your list (found on MyAnimeList)".into(),
+                None => format!("Not on your list (found on {})", self.service.title()),
             },
             Found::Ignored => "Marked as not an anime".into(),
             Found::Nothing => "Not found on your list".into(),

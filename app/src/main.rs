@@ -8,6 +8,7 @@
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
+mod account;
 mod airing;
 mod airnotes;
 mod art;
@@ -247,8 +248,10 @@ fn main() {
         });
     }
     let app = app.init(move || {
+        let service = account::load();
         let mut s = State::start(online::initial_auth());
-        s.client_id.hint = clientid::saved_hint();
+        s.service = service;
+        s.client_id.hint = clientid::saved_hint(service);
         s.setup_service = s.auth == model::Auth::NoClientId && online::wants_service_choice();
         s.setup = s.setup_first();
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());

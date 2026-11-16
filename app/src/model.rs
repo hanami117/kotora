@@ -377,6 +377,12 @@ pub struct State {
     /// The page the search page returns to (Escape).
     pub search_back: Page,
     pub auth: Auth,
+    /// The active list service (`[account] service`). Views read it here; workers ask
+    /// `account::active()`, which follows it.
+    pub service: kotora_core::service::ServiceId,
+    /// Counts sign-in attempts: an answer of an older one (a browser wait a pasted token took
+    /// over) is dropped.
+    pub sign_in_seq: u64,
     /// The signed-in user name and service; `None` when signed out.
     pub account: Option<(String, &'static str)>,
     /// The account's profile picture URL; the sidebar draws it round, else the initial.
@@ -492,6 +498,8 @@ impl State {
             find: TextEdit::new(""),
             search_back: Page::List(Status::Watching),
             auth: Auth::SignedIn,
+            service: Default::default(),
+            sign_in_seq: 0,
             account: Some(("demo_user".into(), "MyAnimeList")),
             avatar: None,
             profile: Some(crate::profile::fake()),
@@ -995,7 +1003,7 @@ impl State {
 
     /// The queue as `kot queue` prints it.
     pub fn ctl_queue(&self) -> Vec<kotora_ctl::QueueItem> {
-        let service = "MyAnimeList";
+        let service = self.service.title();
         self.ops
             .iter()
             .map(|o| kotora_ctl::QueueItem {
@@ -1053,7 +1061,7 @@ impl State {
     }
 
     fn apply_msg(&mut self, msg: Msg) -> bool {
-        let service = "MyAnimeList";
+        let service = self.service.title();
         match msg {
             Msg::Cache { items, user, picture, profile, synced_at, ops } => {
                 self.ops = ops;
@@ -1193,33 +1201,40 @@ impl State {
                 changed
             }
             Msg::SignedOut => {
-                self.covers.clear();
-                // MyAnimeList's answers go with the account (search results, the open page,
-                // the seasons).
-                self.online = Default::default();
-                self.airing.cancel();
-                self.airing = Default::default();
-                if self.page == Page::Details {
-                    self.page = self.lit_page();
-                }
-                self.detail = None;
+                self.forget_account();
                 self.auth = Auth::SignedOut;
-                self.account = None;
-                self.avatar = None;
-                self.profile = None;
-                self.entries.clear();
-                self.ops.clear();
-                self.queue = 0;
-                self.editor = None;
-                self.synced_at = None;
-                self.syncing = false;
-                self.loading = false;
-                self.offline = false;
-                self.error = None;
                 self.refresh();
                 true
             }
         }
+    }
+
+    /// What the window shows of the account goes (sign out, or a switch to the other service):
+    /// the list, the queue, the user, and the service's answers (search results, the open page,
+    /// the seasons). Nothing on disk is touched here.
+    pub fn forget_account(&mut self) {
+        self.covers.clear();
+        self.online = Default::default();
+        self.airing.cancel();
+        self.airing = Default::default();
+        if self.page == Page::Details {
+            self.page = self.lit_page();
+        }
+        self.detail = None;
+        self.account = None;
+        self.avatar = None;
+        self.profile = None;
+        self.entries.clear();
+        self.ops.clear();
+        self.queue = 0;
+        self.editor = None;
+        self.synced_at = None;
+        self.syncing = false;
+        self.loading = false;
+        self.offline = false;
+        self.error = None;
+        self.cancel = None;
+        self.sign_in_link = None;
     }
 
     pub fn ctl_status(&self) -> kotora_ctl::Status {

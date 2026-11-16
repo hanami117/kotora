@@ -10,6 +10,7 @@
 use std::sync::LazyLock;
 
 use kotora_core::config;
+use kotora_core::service::ServiceId;
 use kotora_detect::Switch;
 use rune::{El, Icon, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
 
@@ -82,7 +83,7 @@ impl Section {
         match self {
             Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("MyAnimeList"), vec![Row::Mal, Row::ClientId, Row::Token]), (Some("AniList"), vec![Row::AniList])],
+            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList]), (Some("Sign-in"), vec![Row::ClientId, Row::Token])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
                 if cfg!(target_os = "macos") {
@@ -199,10 +200,10 @@ const SPECS: &[Spec] = &[
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
-    spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in.", "mal account sign in sign out log in login logout user"),
-    spec(Row::ClientId, Section::Account, "MyAnimeList Client ID", "The ID of your own MyAnimeList API app. Set up again.", "client id api key apiconfig setup wizard set up again"),
+    spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in. Or switch to it.", "mal myanimelist account service sign in sign out log in login logout user switch use"),
+    spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app or AniList API client. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
-    spec(Row::AniList, Section::Account, "AniList", "Coming in v0.3.", "anilist account sign in"),
+    spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", "VLC on the Mac reports through its web interface, with a password.", "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
@@ -780,7 +781,7 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::Titles => line(
             "Titles",
-            "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn\u{2019}t have in that language shows in romaji.",
+            format!("The list, Now Playing, search, details, the queue and kot. A title {} doesn\u{2019}t have in that language shows in romaji.", s.service.title()),
             choice("set/titles", &config::TitleLang::ALL, p.titles, config::TitleLang::label, config::TitleLang::key, State::set_titles),
         ),
         Row::Intro => line(
@@ -788,15 +789,7 @@ fn row_el(s: &State, r: Row) -> El {
             "Claw marks when Kotora opens. Showing the window again doesn\u{2019}t play it; with Reduce Motion it is a short fade.",
             switch("set/intro".into(), "Startup animation", p.intro, State::set_intro),
         ),
-        Row::Mal => {
-            let (line, action) = match (&s.account, s.auth) {
-                (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
-                (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
-                (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
-                (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
-            };
-            service_row("acct/mal", "MAL", hex("#2e51a2"), "MyAnimeList", line, action, true)
-        }
+        Row::Mal => account_row(s, ServiceId::Mal),
         Row::ClientId => crate::clientid::settings_row(s),
         Row::Token => row()
             .key("token-note")
@@ -817,7 +810,7 @@ fn row_el(s: &State, r: Row) -> El {
                             .wrap(),
                     ),
             ),
-        Row::AniList => service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.3".into(), small_button("anilist", "Sign in", false, None), false),
+        Row::AniList => account_row(s, ServiceId::AniList),
         Row::Player(sw) => player(s, sw),
         Row::VlcWeb => line(
             "VLC web interface",
@@ -908,7 +901,7 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::About => about(s),
         Row::Licences => col().key("set/licences").w_full().gap(3.0).py(12.0).child(text("Licences").font(theme::BODY_MED).color(PAL.text)).child(
-            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList.")
+            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList or AniList.")
                 .font(theme::LABEL)
                 .color(PAL.dim)
                 .wrap(),
@@ -1032,6 +1025,30 @@ fn about(s: &State) -> El {
                         .wrap(),
                 ),
         )
+}
+
+/// One service of Settings → Account. The active one says how its sign-in stands (Sign in,
+/// Sign out); the other offers "Use …", which switches services and keeps both lists.
+fn account_row(s: &State, id: ServiceId) -> El {
+    let (key, badge, fill) = match id {
+        ServiceId::Mal => ("acct/mal", "MAL", hex("#2e51a2")),
+        ServiceId::AniList => ("acct/anilist", "AL", hex("#1d3550")),
+    };
+    if s.service != id {
+        let switch: fn(&mut State) = match id {
+            ServiceId::Mal => |s| crate::online::switch_service(s, ServiceId::Mal),
+            ServiceId::AniList => |s| crate::online::switch_service(s, ServiceId::AniList),
+        };
+        let line = format!("Not in use. Kotora keeps one list at a time: your {} list now.", s.service.title());
+        return service_row(key, badge, fill, id.title(), line, small_button(&format!("{key}/use"), &format!("Use {}", id.title()), false, Some(switch)), false);
+    }
+    let (line, action) = match (&s.account, s.auth) {
+        (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
+        (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
+        (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
+        (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
+    };
+    service_row(key, badge, fill, id.title(), line, action, true)
 }
 
 #[cfg(test)]

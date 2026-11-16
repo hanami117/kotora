@@ -18,7 +18,6 @@ use crate::details::Stub;
 use crate::model::State;
 use crate::notes::{Act, Kind, Note};
 
-const SERVICE: &str = "mal";
 /// How often the thread looks without being asked: the estimate is to the minute.
 const EVERY: Duration = Duration::from_secs(60);
 /// Note ids remembered for clicks (the newest).
@@ -50,7 +49,7 @@ fn run(h: &crate::model::Handle, rx: &Receiver<()>) {
             store = Store::open(&paths::db_file()).ok();
         }
         if let Some(st) = store.as_mut() {
-            match airnotes::pass(st, SERVICE, kotora_core::time::now_unix()) {
+            match airnotes::pass(st, crate::account::name(), kotora_core::time::now_unix()) {
                 Ok(due) if !due.is_empty() => h.update_if(move |s, _| s.air_notes(&due)),
                 Ok(_) => {}
                 Err(e) => eprintln!("kotora: airing notifications: {e}"),

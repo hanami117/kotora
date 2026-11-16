@@ -13,17 +13,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use kotora_core::config::Config;
-use kotora_core::mal::{Client, Mal, UreqTransport};
 use kotora_core::queue::{self, Outcome, Step};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::tokens::TokenStore;
 use kotora_core::{Change, Media, Status, paths};
 
 use crate::model::{Fail, Handle, Msg, State};
 
-const SERVICE: &str = "mal";
 
 #[derive(Clone, Debug)]
 pub enum Cmd {
@@ -77,11 +73,11 @@ fn report(h: &Handle, msg: Msg) {
 /// The queue and the touched entries, as the UI shows them.
 fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
     let now = now_unix();
-    let ops = store.queue(SERVICE, now).unwrap_or_default();
+    let ops = store.queue(crate::account::name(), now).unwrap_or_default();
     let mut items = Vec::new();
     let mut gone = Vec::new();
     for &id in touched {
-        match store.load_item(SERVICE, id) {
+        match store.load_item(crate::account::name(), id) {
             Ok(Some(it)) => items.push(it),
             Ok(None) => gone.push(id),
             Err(_) => {}
@@ -93,13 +89,13 @@ fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
 /// Applies one command to the store; returns the entry it touched.
 fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>, String> {
     let now = now_unix();
-    let media = |store: &Store, id: i64| store.queue(SERVICE, now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| o.media_id);
+    let media = |store: &Store, id: i64| store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| o.media_id);
     let r = match cmd {
-        Cmd::Edit { media_id, change } => store.enqueue(SERVICE, media_id, change, now).map(|_| Some(media_id)),
-        Cmd::Add { media, status, progress } => store.add_to_list(SERVICE, &media, status, progress, now).map(|_| Some(media.id)),
+        Cmd::Edit { media_id, change } => store.enqueue(crate::account::name(), media_id, change, now).map(|_| Some(media_id)),
+        Cmd::Add { media, status, progress } => store.add_to_list(crate::account::name(), &media, status, progress, now).map(|_| Some(media.id)),
         Cmd::Kick { refresh: r } => {
             *refresh |= r;
-            store.retry_now(SERVICE).map(|_| None)
+            store.retry_now(crate::account::name()).map(|_| None)
         }
         Cmd::KeepMine(id) => {
             let m = media(store, id);
@@ -107,25 +103,22 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
         }
         Cmd::TakeTheirs(id) => {
             let m = media(store, id);
-            store.take_theirs(SERVICE, id).map(|_| m)
+            store.take_theirs(crate::account::name(), id).map(|_| m)
         }
         Cmd::Discard(id) => {
             let m = media(store, id);
-            store.discard(SERVICE, id).map(|_| m)
+            store.discard(crate::account::name(), id).map(|_| m)
         }
     };
     r.map_err(|e| e.to_string())
 }
 
 /// The service, if Kotora may send now: online, signed in, not held.
-fn service(w: &Worker) -> Option<Mal<UreqTransport>> {
-    if w.hold.load(Ordering::Relaxed) || paths::offline_forced() {
+fn service(w: &Worker) -> Option<crate::account::Service> {
+    if w.hold.load(Ordering::Relaxed) {
         return None;
     }
-    let id = Config::load(&paths::config_file()).ok()?.mal_client_id?;
-    let tokens = TokenStore::new(paths::token_file());
-    tokens.load_mal()?;
-    Some(Mal::new(Client::new(id, UreqTransport::default()), tokens))
+    crate::account::open()
 }
 
 fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
@@ -136,8 +129,8 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             return report(h, Msg::QueueError(format!("Can't open the saved list: {e}")));
         }
     };
-    let _ = store.queue_start(SERVICE, now_unix());
-    let mut svc: Option<Mal<UreqTransport>> = None;
+    let _ = store.queue_start(crate::account::name(), now_unix());
+    let mut svc: Option<crate::account::Service> = None;
     let mut refresh = false;
     let mut next: Option<Cmd> = None;
     loop {
@@ -153,10 +146,14 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         if !touched.is_empty() {
             report(h, snapshot(&store, &touched, None));
         }
+        // A switch to the other service: its client from now on.
+        if svc.as_ref().is_some_and(|c| c.name() != crate::account::name()) {
+            svc = None;
+        }
         if svc.is_none() {
             svc = service(w);
         }
-        let wait = match svc.as_mut() {
+        let wait = match svc.as_deref_mut() {
             Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(&mut store, service, now_unix(), !w.ask_on_higher.load(Ordering::Relaxed)) {
                 Ok(Step::Handled { kind, media_id, outcome }) => {
                     let offline = match outcome {

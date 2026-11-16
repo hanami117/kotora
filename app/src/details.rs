@@ -9,7 +9,7 @@
 //! titles on the list, and others only a week, the newest 100 (no hoarding; `Store::save_details`).
 //! A fetch for an anime on the list also refreshes its saved titles, count and cover.
 
-use kotora_core::service::{AnimeHit, Details, ListService};
+use kotora_core::service::{AnimeHit, Details};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
 use kotora_core::{ListItem, Status, paths};
@@ -96,7 +96,7 @@ impl State {
         std::thread::spawn(move || {
             let store = Store::open(&paths::db_file()).ok();
             let now = now_unix();
-            let saved = store.as_ref().and_then(|st| st.details("mal", id).ok().flatten());
+            let saved = store.as_ref().and_then(|st| st.details(crate::account::name(), id).ok().flatten());
             let fresh = saved.as_ref().is_some_and(|(_, at)| now - at < FRESH_SECS);
             let had = saved.is_some();
             if let Some((d, _)) = saved {
@@ -105,15 +105,15 @@ impl State {
                     return;
                 }
             }
-            let result = match crate::online::mal_service() {
+            let result = match crate::account::open() {
                 Some(mut mal) => mal.details(id).map_err(crate::online::error_text),
-                None => Err("Offline or signed out: the information comes from MyAnimeList.".into()),
+                None => Err(format!("Offline or signed out: the information comes from {}.", crate::account::active().title())),
             };
             let mut item = None;
             if let (Ok(d), Some(st)) = (&result, &store) {
-                let _ = st.save_details("mal", d, now);
-                if st.refresh_media("mal", &d.media(), now).unwrap_or(false) {
-                    item = st.load_item("mal", id).ok().flatten();
+                let _ = st.save_details(crate::account::name(), d, now);
+                if st.refresh_media(crate::account::name(), &d.media(), now).unwrap_or(false) {
+                    item = st.load_item(crate::account::name(), id).ok().flatten();
                 }
             }
             match result {
@@ -418,7 +418,7 @@ fn stats(d: &Detail) -> El {
 }
 
 /// Below the header: Synopsis and Information, or the error, or the skeleton while loading.
-fn body_cards(d: &Detail) -> El {
+fn body_cards(d: &Detail, svc: &str) -> El {
     let mut c = col().gap(16.0);
     match (&d.info, &d.error) {
         (Some(i), _) => {
@@ -467,7 +467,7 @@ fn body_cards(d: &Detail) -> El {
             );
         }
         (None, None) => {
-            let mut sk = col().key("det-loading").gap(8.0).child(text("Loading from MyAnimeList\u{2026}").font(theme::LABEL).color(PAL.faint));
+            let mut sk = col().key("det-loading").gap(8.0).child(text(format!("Loading from {svc}\u{2026}")).font(theme::LABEL).color(PAL.faint));
             for i in 0..3 {
                 sk = sk.child(el().key(format!("det-skel/{i}")).w_full().h(if i == 2 { 90.0 } else { 36.0 }).radius(theme::R_MD).fill(PAL.raised));
             }
@@ -629,7 +629,7 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
                         .child(text(st.label()).font(theme::LABEL).color(PAL.dim)),
                 );
             }
-            c = c.child(more).child(text("It goes to the sync queue first, then to MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap().pt(10.0));
+            c = c.child(more).child(text(format!("It goes to the sync queue first, then to {}.", s.service.title())).font(theme::LABEL).color(PAL.faint).wrap().pt(10.0));
         }
     }
     if glass {
@@ -650,15 +650,15 @@ pub fn page(s: &State, wide: bool) -> El {
         page = page.child(crate::ui::alert("det/alert", PAL.status(Status::Dropped), e.clone(), None));
     }
     let scroll = col().key(format!("details-scroll/{}", d.id())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0);
-    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(d)).child(scroll.child(header_narrow(s, d))) }
+    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(d, s.service)).child(scroll.child(header_narrow(s, d))) }
 }
 
 fn updating(d: &Detail) -> El {
     if d.loading && d.info.is_some() { text("Updating\u{2026}").font(theme::LABEL).color(PAL.dim) } else { el() }
 }
 
-fn mal_url(d: &Detail) -> String {
-    format!("https://myanimelist.net/anime/{}", d.id())
+fn mal_url(d: &Detail, svc: kotora_core::service::ServiceId) -> String {
+    svc.media_url(kotora_core::Kind::Anime, d.id())
 }
 
 /// A: the banner, then two columns (cover, title and the information; the entry on the right).
@@ -680,7 +680,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
                 .child(back_button(true))
                 .child(spacer())
                 .child(updating(d))
-                .child(link_button("det/open-mal", "MyAnimeList", mal_url(d), true)),
+                .child(link_button("det/open-mal", s.service.title(), mal_url(d, s.service), true)),
         );
     let title = text(shown_title(s, d).to_string()).key("det-title").font(crate::look::HERO_TITLE).color(PAL.text).wrap().max_lines(3).selectable(true);
     let head = row()
@@ -690,7 +690,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
         .mt(-LIFT)
         .child(big_cover(s, d, 176.0, 264.0))
         .child(col().grow(1.0).min_w(0.0).pt(48.0).gap(6.0).selection_group(true).child(title).child(other_titles(s, d)).child(stats(d).mt(18.0)).child(tags(d).mt(6.0)));
-    let left = col().grow(1.0).min_w(0.0).gap(20.0).child(head).child(body_cards(d));
+    let left = col().grow(1.0).min_w(0.0).gap(20.0).child(head).child(body_cards(d, s.service.title()));
     let right = mine_column(s, d, false).w(320.0).mt(-LIFT + 56.0);
     col().w_full().child(banner).child(
         row().px(theme::PAGE_PAD + 4.0).gap(24.0).pb(theme::PAGE_PAD).max_w(1240.0).items_start().child(left).child(right),
@@ -698,7 +698,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
 }
 
 /// The narrow page's top bar: Back, the page's name, the link to MyAnimeList.
-fn top_bar(d: &Detail) -> El {
+fn top_bar(d: &Detail, svc: kotora_core::service::ServiceId) -> El {
     row()
         .key("top")
         .gap(12.0)
@@ -710,7 +710,7 @@ fn top_bar(d: &Detail) -> El {
         .child(text("Anime information").font(theme::SECTION).color(PAL.dim))
         .child(spacer())
         .child(updating(d))
-        .child(link_button("det/open-mal", "Open on MyAnimeList", mal_url(d), false))
+        .child(link_button("det/open-mal", &format!("Open on {}", svc.title()), mal_url(d, svc), false))
 }
 
 /// B: one banner card (cover, tags, titles, numbers and the glass entry panel), then the rest.
@@ -741,7 +741,7 @@ fn header_narrow(s: &State, d: &Detail) -> El {
         .pb(theme::PAGE_PAD)
         .child(banner)
         .children(crate::library::details_block(s, d.id()))
-        .child(body_cards(d).max_w(760.0))
+        .child(body_cards(d, s.service.title()).max_w(760.0))
 }
 
 /// The title of a list row or the Now Playing card as a link to the details page.

@@ -18,6 +18,8 @@ pub type Scene = (&'static str, fn(&mut State));
 pub const SCENES: &[Scene] = &[
     // The main list, as in the design mockup.
     ("list", |_| {}),
+    // Signed in to AniList: the same list, AniList's account in the sidebar.
+    ("list-anilist", anilist),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
     ("list-covers", fake_covers),
     // 320 entries on Watching, with covers: frame time on a long list.
@@ -195,6 +197,33 @@ pub const SCENES: &[Scene] = &[
     }),
     // Waiting for the browser, with the link in case it didn't open.
     ("setup-signing-in", |s| signing_in(s, true)),
+    // AniList: the first steps in AniList's words, and the wait with the token field (for a
+    // client registered with AniList's PIN page).
+    ("setup-anilist-welcome", |s| {
+        setup(s, Step::Welcome);
+        s.setup_service = true;
+        s.service = kotora_core::service::ServiceId::AniList;
+    }),
+    ("setup-anilist-create", |s| {
+        setup(s, Step::Create);
+        s.service = kotora_core::service::ServiceId::AniList;
+    }),
+    ("setup-anilist-signing-in", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.client_id.hint = Some("2345".into());
+        s.auth = Auth::SigningIn;
+        let url = kotora_core::anilist::authorize_url("12345");
+        s.apply(crate::model::Msg::SignInUrl { url, opened: true });
+    }),
+    ("setup-anilist-token-error", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.client_id.hint = Some("2345".into());
+        s.auth = Auth::SigningIn;
+        s.client_id.token.replace_text("12345");
+        crate::online::sign_in_with_token(s);
+    }),
     ("setup-signing-in-no-browser", |s| {
         signing_in(s, false);
         s.client_id.link_copied = true;
@@ -682,6 +711,11 @@ pub const SCENES: &[Scene] = &[
     ("settings-general", |s| crate::settings::open(s, Section::General)),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
     ("settings-account", |s| crate::settings::open(s, Section::Account)),
+    // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
+    ("settings-account-anilist", |s| {
+        anilist(s);
+        crate::settings::open(s, Section::Account)
+    }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
     ("settings-library", |s| {
         crate::library::fake(s);
@@ -1233,6 +1267,12 @@ fn many(s: &mut State) {
 }
 
 /// The wizard at `step`, first run (no Client ID, nobody signed in).
+/// AniList is the active service and signed in (the fake list is the same).
+fn anilist(s: &mut State) {
+    s.service = kotora_core::service::ServiceId::AniList;
+    s.account = Some(("demo_user".into(), "AniList"));
+}
+
 fn setup(s: &mut State, step: Step) {
     signed_out(s, Auth::NoClientId);
     s.client_id.hint = None;
@@ -1285,6 +1325,7 @@ mod tests {
     use super::SCENES;
     use crate::model::{Page, Sort};
     use crate::setup::Step;
+    use kotora_core::service::ServiceId;
     use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
@@ -1316,10 +1357,11 @@ mod tests {
         rt.frame(1.0 / 60.0);
     }
 
-    /// First screen: two cards side by side when wide, stacked when narrow; MyAnimeList goes on
-    /// by Tab and Return, by Return alone, or by a click; AniList does nothing.
+    /// The first screen: both cards are buttons, one focus group. Tab reaches MyAnimeList, the
+    /// arrow moves to AniList; Return alone picks MyAnimeList (the default button); a click on
+    /// AniList sets up AniList.
     #[test]
-    fn the_service_choice_goes_on_with_mal_only() {
+    fn the_service_choice_goes_on_with_either_service() {
         let rt = render("setup-service", (1280.0, 800.0));
         let (mx, my) = rt.find("setup/service-mal").expect("MyAnimeList card");
         let (ax, ay) = rt.find("setup/service-anilist").expect("AniList card");
@@ -1330,7 +1372,7 @@ mod tests {
         let ((_, my), (_, ay)) = (rt.find("setup/service-mal").unwrap(), rt.find("setup/service-anilist").unwrap());
         assert!(my < ay, "narrow: stacked");
 
-        // Tab walks the sidebar, then reaches MyAnimeList; AniList is never visited. Return goes on.
+        // Tab walks the sidebar, then reaches MyAnimeList; the arrow goes on to AniList.
         let mut rt = render("setup-service", (1280.0, 800.0));
         let mut seen = Vec::new();
         for _ in 0..30 {
@@ -1341,31 +1383,25 @@ mod tests {
             }
         }
         assert_eq!(seen.last().map(String::as_str), Some("setup/service-mal"), "Tab reaches MyAnimeList: {seen:?}");
-        key(&mut rt, rune::Key::Tab);
-        assert!(!focused(&rt).iter().any(|k| k == "setup/service-anilist"), "AniList takes no focus");
-        let ani = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("setup/service-anilist")).unwrap();
-        assert!(!ani.focusable && ani.opacity < 1.0, "dimmed and out of the Tab order");
-        // Back to MyAnimeList (Shift+Tab), then Return.
-        rt.key(rune::KeyEvent { key: rune::Key::Tab, mods: rune::Mods { shift: true, ..rune::Mods::default() } });
-        rt.frame(1.0 / 60.0);
+        key(&mut rt, rune::Key::Right);
+        assert_eq!(focused(&rt), ["setup/service-anilist"]);
+        key(&mut rt, rune::Key::Left);
         assert_eq!(focused(&rt), ["setup/service-mal"]);
         key(&mut rt, rune::Key::Enter);
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
         assert!(rt.find("setup/back").is_some(), "Back returns to the choice");
         click(&mut rt, "setup/back");
         assert_eq!(rt.state.setup, Step::Service);
 
-        // Return with nothing focused also continues (the card is the default button).
+        // Return with nothing focused also continues with MyAnimeList (the default button).
         let mut rt = render("setup-service", (1280.0, 800.0));
         key(&mut rt, rune::Key::Enter);
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
 
-        // A click goes on; a click on AniList stays.
+        // A click on AniList sets up AniList.
         let mut rt = render("setup-service", (1280.0, 800.0));
         click(&mut rt, "setup/service-anilist");
-        assert_eq!(rt.state.setup, Step::Service);
-        click(&mut rt, "setup/service-mal");
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::AniList));
     }
 
     #[test]

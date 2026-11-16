@@ -472,7 +472,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         m = m.child(p);
     }
     if let Some(a) = &s.ask {
-        m = m.child(ask_bar(a));
+        m = m.child(ask_bar(a, s.service));
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
     if let Some(u) = crate::update::banner(s) {
@@ -483,7 +483,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
 
 /// "Mark anyway?": an edit by hand (`+1`, the editor) of an episode that hasn't aired yet by the
 /// estimate waits here. Escape or Cancel drops it.
-fn ask_bar(a: &crate::model::Ask) -> El {
+fn ask_bar(a: &crate::model::Ask, svc: kotora_core::service::ServiceId) -> El {
     row()
         .key("ask")
         .mx(theme::PAGE_PAD)
@@ -502,7 +502,7 @@ fn ask_bar(a: &crate::model::Ask) -> El {
                 .min_w(0.0)
                 .gap(3.0)
                 .child(text(a.question.clone()).key("ask/question").font(theme::BODY).color(PAL.text).wrap())
-                .child(text("Times are estimated from MyAnimeList's weekly slot.").font(theme::LABEL).color(PAL.dim)),
+                .child(text(if svc == kotora_core::service::ServiceId::AniList { "Times come from AniList\u{2019}s airing schedule." } else { "Times are estimated from MyAnimeList's weekly slot." }).font(theme::LABEL).color(PAL.dim)),
         )
         .child(text("Mark anyway?").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
         .child(button("ask/anyway", "Mark anyway", true, Some(|s: &mut State| {
@@ -719,7 +719,7 @@ fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
         return page.child(loading());
     }
     if count == 0 {
-        return page.child(empty(st));
+        return page.child(empty(st, s.service.title()));
     }
     page = page.child(if wide { chips(s, st) } else { chips(s, st).child(spacer()).child(crate::grid::switcher(s, st, false).mt(-3.0)) });
     if s.rows.is_empty() {
@@ -799,7 +799,7 @@ fn search_view(s: &State, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&s.find, "Search your list and MyAnimeList, or paste a MyAnimeList link"), PAL.faint)
+                .placeholder(field_hint(&s.find, &format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title())), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
@@ -831,13 +831,13 @@ fn search_view(s: &State, wide: bool) -> El {
         .child(top(s, "Search", count, false))
         .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).child(field.grow(1.0).max_w(720.0)));
     if !s.searching() {
-        return page.child(search_hint());
+        return page.child(search_hint(s.service.title()));
     }
     results(s, page, "search-scroll".into(), wide)
 }
 
 /// The empty search page: what it finds.
-fn search_hint() -> El {
+fn search_hint(svc: &str) -> El {
     let line = |t: &str| text(t.to_string()).font(theme::LABEL).color(PAL.dim).wrap();
     col()
         .key("search-hint")
@@ -849,8 +849,8 @@ fn search_hint() -> El {
         .fill(PAL.surface)
         .border(1.0, PAL.border)
         .child(text("Find any anime").font(theme::SECTION).color(PAL.text))
-        .child(line("Titles in English, Japanese or romaji search your list first, then MyAnimeList (3 letters or more)."))
-        .child(line("A MyAnimeList link or id (such as 41590) opens that anime's page, on your list or not."))
+        .child(line(&format!("Titles in English, Japanese or romaji search your list first, then {svc} (3 letters or more).")))
+        .child(line(&format!("A {svc} link or id (such as 41590) opens that anime's page, on your list or not.")))
         .child(text("Esc goes back. The box on a list page filters that list.").font(theme::LABEL).color(PAL.faint).wrap().mt(4.0))
 }
 
@@ -1272,13 +1272,13 @@ pub fn initials(title: &str) -> String {
 
 // ------------------------------------------------------------------------------------- states
 
-fn empty(st: Status) -> El {
+fn empty(st: Status, svc: &str) -> El {
     let help = match st {
-        Status::Watching => "Anime you're watching on MyAnimeList show up here.",
-        Status::PlanToWatch => "Anime you plan to watch on MyAnimeList show up here.",
-        Status::Completed => "Anime you finish on MyAnimeList show up here.",
-        Status::OnHold => "Anime you put on hold on MyAnimeList show up here.",
-        Status::Dropped => "Entries you drop on MyAnimeList show up here.",
+        Status::Watching => format!("Anime you're watching on {svc} show up here."),
+        Status::PlanToWatch => format!("Anime you plan to watch on {svc} show up here."),
+        Status::Completed => format!("Anime you finish on {svc} show up here."),
+        Status::OnHold => format!("Anime you put on hold on {svc} show up here."),
+        Status::Dropped => format!("Entries you drop on {svc} show up here."),
     };
     col()
         .key("empty")
@@ -1342,7 +1342,8 @@ fn queue_page(s: &State) -> El {
                 "queue/expired",
                 PAL.warn(),
                 format!(
-                    "Sign in again. Your MyAnimeList sign-in expired. {} wait{} in the queue; nothing is lost.",
+                    "Sign in again. Your {} sign-in expired. {} wait{} in the queue; nothing is lost.",
+                    s.service.title(),
                     changes(n),
                     if n == 1 { "s" } else { "" }
                 ),
@@ -1355,7 +1356,7 @@ fn queue_page(s: &State) -> El {
             alert(
                 "queue/offline",
                 PAL.warn(),
-                "You are offline. Your changes are kept here and go out when MyAnimeList answers again.".into(),
+                format!("You are offline. Your changes are kept here and go out when {} answers again.", s.service.title()),
                 Some(button("queue/try-now", "Try now", false, Some(State::sync_now))),
             )
             .mb(0.0),
@@ -1376,7 +1377,7 @@ fn queue_page(s: &State) -> El {
                 .gap(4.0)
                 .pb(60.0)
                 .child(text("Nothing waiting").font(theme::SECTION).color(PAL.text))
-                .child(text("Your changes go here first, then to MyAnimeList.").font(theme::LABEL).color(PAL.dim)),
+                .child(text(format!("Your changes go here first, then to {}.", s.service.title())).font(theme::LABEL).color(PAL.dim)),
         );
     }
     for op in s.ops.iter().filter(|o| o.state == OpState::Conflict) {
@@ -1506,11 +1507,11 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) => (format!("MyAnimeList \u{b7} changed {}", sync_age(now - r.updated_at)), conflict_values(op, &r.values), "Take theirs"),
-        None => ("MyAnimeList".to_string(), "Removed from your list".to_string(), "Remove here too"),
+        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values), "Take theirs"),
+        None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
     let aside = match &op.remote {
-        Some(r) => format!("MyAnimeList has {}", remote_text(r, op.episodes)),
+        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes)),
         None => "removed on another device".into(),
     };
     col()
@@ -1529,7 +1530,7 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
                 .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
                 .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
         )
-        .child(text("MyAnimeList changed after your edit. Kotora did not overwrite it. Pick one.").font(theme::LABEL).color(PAL.dim))
+        .child(text(format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title())).font(theme::LABEL).color(PAL.dim))
         .child(
             row()
                 .gap(12.0)
@@ -1610,7 +1611,7 @@ fn status_alert(s: &State) -> Option<El> {
         return Some(alert(
             "alert/expired",
             PAL.warn(),
-            "MyAnimeList needs you to sign in again. Your saved list still works.".into(),
+            format!("{} needs you to sign in again. Your saved list still works.", s.service.title()),
             Some(button("alert/sign-in", "Sign in", true, Some(online::sign_in))),
         ));
     }
@@ -1639,7 +1640,7 @@ fn welcome(s: &State) -> El {
     match s.auth {
         Auth::SigningIn => {
             c = c
-                .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY).color(PAL.dim))
+                .child(text(format!("Waiting for {} in your browser\u{2026}", s.service.title())).font(theme::BODY).color(PAL.dim))
                 .child(row().mt(6.0).child(button("cancel", "Cancel", false, Some(online::cancel_sign_in))));
         }
         _ => {
@@ -1654,7 +1655,7 @@ fn welcome(s: &State) -> El {
                 );
             }
             c = c
-                .child(text("Sign in to MyAnimeList to see and update your list.").font(theme::BODY).color(PAL.dim))
+                .child(text(format!("Sign in to {} to see and update your list.", s.service.title())).font(theme::BODY).color(PAL.dim))
                 .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in))));
         }
     }
@@ -1816,7 +1817,7 @@ fn banner(s: &State) -> El {
             (true, false) => "Updated automatically",
             (false, false) => "Updated",
         };
-        let waiting = s.entries.iter().find(|e| e.id == r.id).and_then(|e| e.waiting).unwrap_or("Sent to MyAnimeList");
+        let waiting = s.entries.iter().find(|e| e.id == r.id).and_then(|e| e.waiting).unwrap_or(if s.service == kotora_core::service::ServiceId::AniList { "Sent to AniList" } else { "Sent to MyAnimeList" });
         b = b
             .child(
                 col()
@@ -1938,7 +1939,7 @@ fn match_text(s: &State, n: &Now) -> (String, Color) {
             let st = s.entries.iter().find(|e| e.id == *media_id).map_or("", |e| e.status.label());
             if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
         }
-        Found::NotOnList { .. } => (format!("Not on your list: {} (found on MyAnimeList)", s.not_on_list_title(n).unwrap_or_default()), PAL.dim),
+        Found::NotOnList { .. } => (format!("Not on your list: {} (found on {})", s.not_on_list_title(n).unwrap_or_default(), s.service.title()), PAL.dim),
         Found::Ignored => ("You marked this file as not an anime".into(), PAL.faint),
         Found::Nothing if n.recognizing => ("Looking\u{2026}".into(), PAL.faint),
         Found::Nothing => ("Not found on your list".into(), PAL.faint),
@@ -2182,13 +2183,13 @@ fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
     }
 }
 
-fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Option<u32>) -> El {
+fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Option<u32>, svc: &str) -> El {
     let (say, add) = match episode {
         Some(ep) => (
-            format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it as Watching and record episode {ep} in one change."),
+            format!("{svc} knows this as {title}, but it isn't on your list. Add it as Watching and record episode {ep} in one change."),
             format!("Add as Watching at episode {ep}"),
         ),
-        None => (format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."), "Add as Watching".to_string()),
+        None => (format!("{svc} knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."), "Add as Watching".to_string()),
     };
     let mut c = card("np-not-on-list", "Not on your list").child(
         text(say)
@@ -2246,7 +2247,7 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
             side = side.child(unsure_card(s, n));
         } else if let Found::NotOnList { media_id, .. } = &n.found {
             let title = s.not_on_list_title(n).unwrap_or_default();
-            side = side.child(not_on_list_card(*media_id, &title, s.relation_text(n).as_deref(), n.episode().filter(|ep| *ep > 0)));
+            side = side.child(not_on_list_card(*media_id, &title, s.relation_text(n).as_deref(), n.episode().filter(|ep| *ep > 0), s.service.title()));
         }
     }
     side = side.child(players_status_card(s));

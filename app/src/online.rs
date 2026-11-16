@@ -1,4 +1,5 @@
-//! The workers: load the saved list, sync with MyAnimeList, sign in and out. Each runs on its own
+//! The workers: load the saved list, sync with the active service (MyAnimeList or AniList), sign
+//! in and out, switch services. Each runs on its own
 //! short-lived thread and reports to the UI thread with `AppHandle::update_if` (`State::apply`).
 //! Nothing here runs in headless mode, and nothing waits when there is no work (no timers).
 //!
@@ -8,14 +9,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use kotora_core::anilist::{self, AniList};
 use kotora_core::config::Config;
 use kotora_core::loopback;
 use kotora_core::mal::{self, Client, Mal, Pkce, UreqTransport};
 use kotora_core::paths;
-use kotora_core::service::{ListService, ServiceError};
+use kotora_core::service::{ListService, ServiceError, ServiceId, User};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
 use kotora_core::tokens::TokenStore;
+
+use crate::account;
 
 use crate::model::{Auth, Fail, Handle, Msg, State};
 
@@ -26,12 +30,19 @@ fn send(h: &Handle, msg: Msg) {
     h.update_if(move |s, _| s.apply(msg));
 }
 
-/// What to show first: the Client ID and the token file decide.
+/// What to show first for the active service: the Client ID and the token file decide.
 pub fn initial_auth() -> Auth {
-    match Config::load(&paths::config_file()) {
-        Ok(c) if c.mal_client_id.is_some() => {
-            if TokenStore::new(paths::token_file()).load_mal().is_some() { Auth::SignedIn } else { Auth::SignedOut }
-        }
+    auth_for(account::active())
+}
+
+/// MyAnimeList needs its Client ID for every request (the token refresh); AniList only to sign
+/// in, so a saved AniList token is enough.
+pub fn auth_for(id: ServiceId) -> Auth {
+    let cfg = Config::load(&paths::config_file()).unwrap_or_default();
+    let has_id = cfg.client_id(id).is_some();
+    match (id, account::has_token(id), has_id) {
+        (ServiceId::AniList, true, _) | (ServiceId::Mal, true, true) => Auth::SignedIn,
+        (_, _, true) => Auth::SignedOut,
         _ => Auth::NoClientId,
     }
 }
@@ -39,7 +50,7 @@ pub fn initial_auth() -> Auth {
 /// Whether the wizard begins with the service choice: not chosen yet, no Client ID in the file and
 /// no saved token. Someone who already uses Kotora with MyAnimeList never sees it.
 pub fn wants_service_choice() -> bool {
-    let has_token = TokenStore::new(paths::token_file()).load_mal().is_some();
+    let has_token = ServiceId::ALL.into_iter().any(account::has_token);
     Config::load(&paths::config_file()).is_ok_and(|c| c.needs_service_choice(has_token))
 }
 
@@ -56,11 +67,15 @@ pub fn start(s: &mut State) {
         };
         // The saved list first, so the app is useful before (and without) the network.
         let now = now_unix();
-        let _ = store.queue_start("mal", now);
-        if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (store.load_list("mal"), store.account("mal"), store.synced_at("mal"), store.queue("mal", now)) {
-            let picture = store.picture("mal").ok().and_then(|(url, _)| url);
-            let profile = store.profile("mal").ok().flatten().map(Box::new);
-            send(&h, Msg::Cache { items, user, picture, profile, synced_at, ops });
+        let svc = account::name();
+        let _ = store.queue_start(svc, now);
+        if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (store.load_list(svc), store.account(svc), store.synced_at(svc), store.queue(svc, now)) {
+            let picture = store.picture(svc).ok().and_then(|(url, _)| url);
+            let profile = store.profile(svc).ok().flatten().map(Box::new);
+            // A switch meanwhile: this cache is the other service's.
+            if svc == account::name() {
+                send(&h, Msg::Cache { items, user, picture, profile, synced_at, ops });
+            }
         }
         if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
     });
@@ -81,20 +96,29 @@ pub fn refresh(s: &mut State) {
 }
 
 fn sync_now(h: &Handle, mut store: Store) {
-    let id = match Config::load(&paths::config_file()) {
-        Ok(Config { mal_client_id: Some(id), .. }) => id,
-        Ok(_) => return send(h, Msg::SyncFailed(Fail::Other("No MyAnimeList Client ID in config.toml.".into()))),
-        Err(e) => return send(h, Msg::SyncFailed(Fail::Other(e))),
+    let active = account::active();
+    let Some(mut service) = account::open() else {
+        let fail = match Config::load(&paths::config_file()) {
+            Err(e) => Fail::Other(e),
+            Ok(c) if active == ServiceId::Mal && c.mal_client_id.is_none() => Fail::Other("No MyAnimeList Client ID in config.toml.".into()),
+            Ok(_) => Fail::SignInAgain,
+        };
+        return send(h, Msg::SyncFailed(fail));
     };
-    let mut service = Mal::new(Client::new(id, UreqTransport::default()), TokenStore::new(paths::token_file()));
-    let msg = sync_with(&mut service, &mut store, now_unix());
+    let msg = sync_with(service.as_mut(), &mut store, now_unix());
+    // Switched to the other service while this one synced: its answer is not shown.
+    if account::active() != active {
+        return send(h, Msg::Idle);
+    }
     let synced = matches!(msg, Msg::Synced { .. });
     send(h, msg);
     if synced {
-        // The manga list, only once Manga mode was turned on (off by default: no request).
-        // Nothing shows it yet (stage 4); a failure here never fails the anime sync.
-        let _ = kotora_core::sync::sync_manga(&mut service, &mut store, now_unix());
-        for m in refresh_user(&mut service, &store, now_unix()) {
+        // The manga list, only once Manga mode was turned on (off by default: no request), and
+        // only on MyAnimeList (AniList is anime only for now). A failure never fails the sync.
+        if active == ServiceId::Mal {
+            let _ = kotora_core::sync::sync_manga(service.as_mut(), &mut store, now_unix());
+        }
+        for m in refresh_user(service.as_mut(), &store, now_unix()) {
             send(h, m);
         }
     }
@@ -138,25 +162,13 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     }
 }
 
-/// A signed-in MyAnimeList client for a short worker (search, details, `kot add`): `None` when
-/// offline by choice (`KOTORA_OFFLINE`), with no Client ID, or with no token. Shares the app's
-/// one rate budget.
-pub fn mal_service() -> Option<Mal<UreqTransport>> {
-    if paths::offline_forced() {
-        return None;
-    }
-    let id = Config::load(&paths::config_file()).ok()?.mal_client_id?;
-    let tokens = TokenStore::new(paths::token_file());
-    tokens.load_mal()?;
-    Some(Mal::new(Client::new(id, UreqTransport::default()), tokens))
-}
-
 /// A service error in the words a page shows.
 pub fn error_text(e: ServiceError) -> String {
+    let title = account::active().title();
     match e {
-        ServiceError::Offline(_) => "Can't reach MyAnimeList.".into(),
-        ServiceError::SignInAgain => "MyAnimeList needs you to sign in again.".into(),
-        ServiceError::RateLimited => "MyAnimeList asked Kotora to slow down. Try again in a minute.".into(),
+        ServiceError::Offline(_) => format!("Can't reach {title}."),
+        ServiceError::SignInAgain => format!("{title} needs you to sign in again."),
+        ServiceError::RateLimited => format!("{title} asked Kotora to slow down. Try again in a minute."),
         ServiceError::Other(m) => m,
     }
 }
@@ -173,18 +185,40 @@ pub fn sign_in(s: &mut State) {
     s.auth = Auth::SigningIn;
     s.error = None;
     s.sign_in_link = None;
-    std::thread::spawn(move || match sign_in_flow(&h, &cancel) {
-        Ok((user, picture)) => {
-            send(&h, Msg::SignedIn { user, picture });
-            // The first list after a sign-in.
-            h.update_if(|s, _| {
+    s.sign_in_seq += 1;
+    let seq = s.sign_in_seq;
+    let service = s.service;
+    std::thread::spawn(move || {
+        let r = match service {
+            ServiceId::Mal => sign_in_flow(&h, seq, &cancel),
+            ServiceId::AniList => anilist_flow(&h, seq, &cancel),
+        };
+        signed_in(&h, seq, r);
+    });
+}
+
+/// The end of a sign-in: the account shows and the first list is asked for. A sign-in that a
+/// pasted token (or a new attempt) took over says nothing.
+fn signed_in(h: &Handle, seq: u64, r: Result<(String, Option<String>), String>) {
+    h.update_if(move |s, _| {
+        if s.sign_in_seq != seq {
+            return false;
+        }
+        match r {
+            Ok((user, picture)) => {
+                s.apply(Msg::SignedIn { user, picture });
+                // The first list after a sign-in.
                 s.syncing = false;
                 refresh(s);
                 true
-            });
+            }
+            Err(m) => s.apply(Msg::SignInFailed(m)),
         }
-        Err(m) => send(&h, Msg::SignInFailed(m)),
     });
+}
+
+fn send_link(h: &Handle, seq: u64, url: String, opened: bool) {
+    h.update_if(move |s, _| s.sign_in_seq == seq && s.apply(Msg::SignInUrl { url, opened }));
 }
 
 pub fn cancel_sign_in(s: &mut State) {
@@ -193,7 +227,62 @@ pub fn cancel_sign_in(s: &mut State) {
     }
 }
 
-fn sign_in_flow(h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
+/// AniList: a token pasted from AniList's page (or the address the browser ended on). Ends
+/// the browser wait, checks the token with AniList and saves it.
+pub fn sign_in_with_token(s: &mut State) {
+    let raw = s.client_id.token.text.clone();
+    let token = match anilist::parse_token_input(&raw, now_unix()) {
+        Ok(t) => t,
+        Err(e) => {
+            s.client_id.token_error = Some(e);
+            return;
+        }
+    };
+    s.client_id.token_error = None;
+    let Some(h) = s.handle.clone() else { return };
+    cancel_sign_in(s);
+    s.sign_in_seq += 1;
+    let seq = s.sign_in_seq;
+    s.auth = Auth::SigningIn;
+    s.error = None;
+    s.client_id.token.clear();
+    std::thread::spawn(move || signed_in(&h, seq, finish_anilist(&token)));
+}
+
+/// Checks an AniList token, saves it and the account. The user name and picture.
+fn finish_anilist(token: &kotora_core::tokens::Token) -> Result<(String, Option<String>), String> {
+    let mut service = AniList::new(anilist::Client::new(UreqTransport::default()), TokenStore::new(paths::token_file()));
+    let user = service.complete_sign_in(token).map_err(|e| match e {
+        ServiceError::SignInAgain => "AniList refused the token. Sign in again.".to_string(),
+        other => other.to_string(),
+    })?;
+    save_account(ServiceId::AniList, &user)
+}
+
+fn save_account(id: ServiceId, user: &User) -> Result<(String, Option<String>), String> {
+    let store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
+    store.set_account(id.name(), &user.name).map_err(|e| e.to_string())?;
+    let _ = store.set_picture(id.name(), user.picture.as_deref(), now_unix());
+    let _ = store.set_profile(id.name(), &user.profile);
+    Ok((user.name.clone(), user.picture.clone()))
+}
+
+/// AniList's implicit grant: AniList's page, then its redirect to the loopback page, which
+/// posts the token back. A client registered with AniList's PIN page instead shows the token
+/// there, to paste ([`sign_in_with_token`]).
+fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
+    let id = Config::load(&paths::config_file())?.anilist_client_id.ok_or("No AniList Client ID in config.toml.")?;
+    let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for AniList's reply: {e}", mal::PORT))?;
+    let url = anilist::authorize_url(&id);
+    let opened = open_browser(&url).is_ok();
+    send_link(h, seq, url, opened);
+    let posted = loopback::wait_for_token(&listener, SIGN_IN_TIMEOUT, cancel)?;
+    drop(listener);
+    let token = anilist::parse_token_input(&posted, now_unix())?;
+    finish_anilist(&token)
+}
+
+fn sign_in_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
     let id = Config::load(&paths::config_file())?.mal_client_id.ok_or("No MyAnimeList Client ID in config.toml.")?;
     // Bind first: if the port is busy there is no point in opening the browser.
     let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for MyAnimeList's reply: {e}", mal::PORT))?;
@@ -201,7 +290,7 @@ fn sign_in_flow(h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<Strin
     let url = mal::authorize_url(&id, &pkce);
     // The link shows while Kotora waits, for a browser that didn't open (or opened elsewhere).
     let opened = open_browser(&url).is_ok();
-    send(h, Msg::SignInUrl { url, opened });
+    send_link(h, seq, url, opened);
     let code = loopback::wait_for_code(&listener, &pkce.state, SIGN_IN_TIMEOUT, cancel)?;
     drop(listener);
     let mut service = Mal::new(Client::new(id, UreqTransport::default()), TokenStore::new(paths::token_file()));
@@ -211,10 +300,7 @@ fn sign_in_flow(h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<Strin
     };
     service.complete_sign_in(&code, &pkce.verifier).map_err(err)?;
     let user = service.user().map_err(err)?;
-    let store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
-    store.set_account("mal", &user.name).map_err(|e| e.to_string())?;
-    let _ = store.set_picture("mal", user.picture.as_deref(), now_unix());
-    Ok((user.name, user.picture))
+    save_account(ServiceId::Mal, &user)
 }
 
 /// A link in Settings: opened by the system browser on a short thread (never in headless runs).
@@ -250,17 +336,50 @@ fn open_browser(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Sign out: the token file goes, and so does the saved list (the MAL API licence).
+/// Sign out of the active service: its token goes, and so does its saved list (the MAL API
+/// licence; AniList's terms: no copy of the list of our own). The other service's token and
+/// list stay.
 pub fn sign_out(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
+    let id = s.service;
     std::thread::spawn(move || {
-        let _ = TokenStore::new(paths::token_file()).delete();
+        let _ = TokenStore::new(paths::token_file()).forget(id.name());
         kotora_core::covers::clear(&kotora_core::covers::dir());
         if let Ok(mut store) = Store::open(&paths::db_file()) {
-            let _ = store.clear_service("mal");
+            let _ = store.clear_service(id.name());
         }
         send(&h, Msg::SignedOut);
     });
+}
+
+/// Settings → Account → "Use AniList" (or MyAnimeList): that service becomes the active one.
+/// Nothing is deleted: each service keeps its token, saved list and waiting changes, and
+/// switching back shows them again. The choice is saved in `[account] service`.
+pub fn switch_service(s: &mut State, id: ServiceId) {
+    if s.service == id {
+        return;
+    }
+    cancel_sign_in(s);
+    s.sign_in_seq += 1;
+    s.forget_account();
+    s.service = id;
+    if s.handle.is_none() {
+        // Tests and scenes: the state only.
+        s.auth = Auth::SignedOut;
+        return;
+    }
+    account::set_active(id);
+    std::thread::spawn(move || {
+        if let Err(e) = kotora_core::config::save_service(&paths::config_file(), id.name()) {
+            eprintln!("kotora: {e}");
+        }
+    });
+    s.auth = initial_auth();
+    s.client_id.hint = crate::clientid::saved_hint(id);
+    s.loading = s.auth == Auth::SignedIn;
+    s.refresh();
+    start(s);
+    s.queue_cmd(crate::queue::Cmd::Kick { refresh: true });
 }
 
 /// "Check again" on the no-Client-ID screen: read `config.toml` once more.
@@ -390,6 +509,57 @@ mod tests {
         assert_eq!(store.picture("mal").unwrap(), (Some("https://cdn.example.invalid/u.jpg?t=2".into()), Some(1060)));
         assert_eq!(store.profile("mal").unwrap().and_then(|p| p.stats).map(|s| s.completed), Some(2));
         assert_eq!(store.account("mal").unwrap().as_deref(), Some("demo_user"));
+    }
+
+    /// The same fake under another service's name.
+    struct Named(&'static str, Vec<ListItem>);
+
+    impl ListService for Named {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn title(&self) -> &'static str {
+            "Fake"
+        }
+        fn user_name(&mut self) -> Result<String, ServiceError> {
+            Ok("demo_user".into())
+        }
+        fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+            Ok(self.1.clone())
+        }
+        fn get_entry(&mut self, _: u32) -> Result<Option<Remote>, ServiceError> {
+            unreachable!()
+        }
+        fn update_entry(&mut self, _: u32, _: &Change) -> Result<Remote, ServiceError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn each_service_keeps_its_own_list() {
+        let mut store = Store::open_memory().unwrap();
+        assert!(matches!(sync_with(&mut Named("mal", vec![item(1)]), &mut store, 100), Msg::Synced { .. }));
+        assert!(matches!(sync_with(&mut Named("anilist", vec![item(1), item(2)]), &mut store, 200), Msg::Synced { items, .. } if items.len() == 2));
+        assert_eq!((store.load_list("mal").unwrap().len(), store.load_list("anilist").unwrap().len()), (1, 2), "the same id on both, kept apart");
+        store.enqueue("anilist", 2, Change { progress: Some(5), ..Default::default() }, 300).unwrap();
+        assert!(store.queue("mal", 300).unwrap().is_empty(), "each service its own queue");
+        // Signing out of AniList keeps MyAnimeList's list.
+        store.clear_service("anilist").unwrap();
+        assert_eq!((store.load_list("mal").unwrap().len(), store.load_list("anilist").unwrap().len()), (1, 0));
+        assert_eq!(store.synced_at("mal").unwrap(), Some(100));
+    }
+
+    #[test]
+    fn a_switch_shows_nothing_of_the_other_service() {
+        let mut s = State::fake();
+        assert_eq!(s.service, ServiceId::Mal);
+        let seq = s.sign_in_seq;
+        switch_service(&mut s, ServiceId::AniList);
+        assert_eq!(s.service, ServiceId::AniList);
+        assert!(s.entries.is_empty() && s.account.is_none() && s.ops.is_empty() && s.queue == 0);
+        assert!(s.sign_in_seq > seq, "an AniList sign-in under way would be dropped");
+        switch_service(&mut s, ServiceId::AniList);
+        assert_eq!(s.service, ServiceId::AniList, "the same service: nothing happens");
     }
 
     #[test]

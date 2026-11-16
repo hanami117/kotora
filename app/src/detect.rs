@@ -14,20 +14,16 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use kotora_core::config::{self, Config};
-use kotora_core::mal::{Client, Mal, UreqTransport};
 use kotora_core::paths;
 use kotora_core::recognize::relations::{self, Relations};
 use kotora_core::recognize::{self, Found, Parsed};
-use kotora_core::service::ListService;
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::tokens::TokenStore;
 use kotora_detect::{Detector, Report, Settings, Switch};
 
 use crate::model::{Handle, Msg, State};
 use crate::now::{AltTitles, Prefs, Relation, Seen};
 
-const SERVICE: &str = "mal";
 
 enum In {
     Report(Report),
@@ -174,7 +170,7 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                         Some(id) => (id, "user"),
                         None => (0, "ignore"),
                     };
-                    if let Err(e) = st.set_recognition(SERVICE, &key, id, source, "", now_unix()) {
+                    if let Err(e) = st.set_recognition(crate::account::name(), &key, id, source, "", now_unix()) {
                         send(h, Msg::QueueError(format!("Can't save your pick: {e}")));
                     }
                 }
@@ -186,7 +182,7 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                         None => Found::Ignored,
                     };
                     // The picked anime may move the file's episode (or not move it).
-                    let items = open(&mut store).and_then(|st| st.load_list(SERVICE).ok()).unwrap_or_default();
+                    let items = open(&mut store).and_then(|st| st.load_list(crate::account::name()).ok()).unwrap_or_default();
                     if let Some(p) = &mut c.parsed {
                         p.episode = c.file_episode;
                         c.found = recognize::redirect(found, p, &items, rules(&mut rel, tx, download));
@@ -218,16 +214,16 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
     let Some(mut parsed) = recognize::parse(file) else { return nothing(None) };
     let file_episode = parsed.episode;
     let Some(st) = open(store) else { return nothing(Some(parsed)) };
-    let items = st.load_list(SERVICE).unwrap_or_default();
+    let items = st.load_list(crate::account::name()).unwrap_or_default();
     let key = parsed.key();
-    let cached = st.recognition(SERVICE, &key).ok().flatten();
+    let cached = st.recognition(crate::account::name(), &key).ok().flatten();
     let candidates = recognize::candidates(&parsed, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
     let found = match recognize::on_list(&parsed, &items, &cached, rel) {
         Some(f) => f,
         None => match cached.filter(|(_, src, _)| src == "search") {
             // Searched before (30 days): no second call.
             Some((0, _, _)) => Found::Nothing,
-            Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: "found by a MyAnimeList search".into() },
+            Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
             Some((id, _, title)) => Found::NotOnList { media_id: id, title },
             None => search(st, &parsed, &items, &key),
         },
@@ -264,11 +260,11 @@ fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Opti
 /// else one details fetch (signed in and online), saved like the details page's, so the next
 /// file asks nothing.
 fn not_on_list_details(st: &Store, id: u32) -> (Option<String>, AltTitles) {
-    let d = match st.details(SERVICE, id).ok().flatten() {
+    let d = match st.details(crate::account::name(), id).ok().flatten() {
         Some((d, _)) => d,
         None => {
-            let Some(d) = crate::online::mal_service().and_then(|mut m| m.details(id).ok()) else { return (None, AltTitles::default()) };
-            let _ = st.save_details(SERVICE, &d, now_unix());
+            let Some(d) = crate::account::open().and_then(|mut m| m.details(id).ok()) else { return (None, AltTitles::default()) };
+            let _ = st.save_details(crate::account::name(), &d, now_unix());
             d
         }
     };
@@ -280,20 +276,15 @@ fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &st
     if paths::offline_forced() || items.is_empty() {
         return Found::Nothing;
     }
-    let Some(id) = Config::load(&paths::config_file()).ok().and_then(|c| c.mal_client_id) else { return Found::Nothing };
-    let tokens = TokenStore::new(paths::token_file());
-    if tokens.load_mal().is_none() {
-        return Found::Nothing;
-    }
-    let mut mal = Mal::new(Client::new(id, UreqTransport::default()), tokens);
-    let Ok(hits) = mal.search(&parsed.title) else { return Found::Nothing };
+    let Some(mut svc) = crate::account::open() else { return Found::Nothing };
+    let Ok(hits) = svc.search(&parsed.title) else { return Found::Nothing };
     let found = recognize::from_search(parsed, &hits, items);
     let (mid, title) = match &found {
         Found::List { media_id, .. } => (*media_id, String::new()),
         Found::NotOnList { media_id, title } => (*media_id, title.clone()),
         _ => (0, String::new()),
     };
-    let _ = st.set_recognition(SERVICE, key, mid, "search", &title, now_unix());
+    let _ = st.set_recognition(crate::account::name(), key, mid, "search", &title, now_unix());
     found
 }
 
