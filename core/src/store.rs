@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::airing::{Broadcast, NextAiring, SEASON_MAX_AGE, SEASONS_KEPT, Season, SeasonAnime};
 use crate::service::Details;
@@ -288,12 +288,24 @@ impl From<rusqlite::Error> for StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// Held while a database file is backed up and migrated (see [`Store::open`]).
+static UPGRADE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn user_version(conn: &Connection) -> Result<usize> {
+    Ok(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize)
+}
+
 pub struct Store {
     pub(crate) conn: Connection,
 }
 
 impl Store {
     /// Opens (and creates, and migrates) the database file. The folder is created 0700.
+    ///
+    /// Several threads open their own `Store` at start (the UI, sign-in, the queue, …). The
+    /// backup and the migrations of one file run one opener at a time in this process
+    /// ([`UPGRADE_LOCK`]), and each migration step takes the write lock first and checks the
+    /// version again inside it, so a step another connection already ran is skipped.
     pub fn open(path: &Path) -> Result<Store> {
         if let Some(dir) = path.parent() {
             crate::paths::create_private_dir(dir).map_err(|e| StoreError(format!("can't create {}: {e}", dir.display())))?;
@@ -302,6 +314,11 @@ impl Store {
         // Another thread of ours may write while the UI loads: wait a little instead of failing.
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+        if user_version(&conn)? >= MIGRATIONS.len() {
+            // Up to date (or newer: `init` says so). No lock needed.
+            return Store::init(conn);
+        }
+        let _upgrading = UPGRADE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         Store::back_up_before_upgrade(&conn, path)?;
         Store::init(conn)
     }
@@ -309,9 +326,10 @@ impl Store {
     /// Before an existing database is upgraded, a whole copy goes beside it
     /// ([`backup_path`]); without one nothing is migrated. A copy already there (from an earlier
     /// try) is kept as it is: it is the older one. `VACUUM INTO` reads a consistent snapshot,
-    /// WAL included.
+    /// WAL included. It writes to a temporary name first and the copy only takes its real name
+    /// when none is there yet, so a half-written copy never looks like a backup.
     fn back_up_before_upgrade(conn: &Connection, path: &Path) -> Result<()> {
-        let version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize;
+        let version = user_version(conn)?;
         if version == 0 || version >= MIGRATIONS.len() {
             return Ok(());
         }
@@ -319,9 +337,17 @@ impl Store {
         if copy.exists() {
             return Ok(());
         }
-        let target = copy.to_str().ok_or_else(|| StoreError(format!("can't name a backup of {}", path.display())))?;
-        conn.execute("VACUUM INTO ?1", [target]).map_err(|e| StoreError(format!("can't keep a copy of the database before upgrading it ({e}); nothing was changed")))?;
-        Ok(())
+        let fail = |e: String| StoreError(format!("can't keep a copy of the database before upgrading it ({e}); nothing was changed"));
+        let mut tmp = copy.clone().into_os_string();
+        tmp.push(format!(".part-{}", std::process::id()));
+        let tmp = std::path::PathBuf::from(tmp);
+        let _ = std::fs::remove_file(&tmp);
+        let target = tmp.to_str().ok_or_else(|| StoreError(format!("can't name a backup of {}", path.display())))?;
+        conn.execute("VACUUM INTO ?1", [target]).map_err(|e| fail(e.to_string()))?;
+        // Another process may have made the copy meanwhile: the first one stays.
+        let placed = if copy.exists() { Ok(()) } else { std::fs::hard_link(&tmp, &copy).or_else(|e| if copy.exists() { Ok(()) } else { Err(e) }) };
+        let _ = std::fs::remove_file(&tmp);
+        placed.map_err(|e| fail(e.to_string()))
     }
 
     pub fn open_memory() -> Result<Store> {
@@ -335,14 +361,20 @@ impl Store {
 
     fn init(mut conn: Connection) -> Result<Store> {
         conn.pragma_update(None, "foreign_keys", true)?;
-        let version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize;
-        if version > MIGRATIONS.len() {
-            return Err(StoreError(format!("it was saved by a newer Kotora (database schema {version}, this one knows {}). Update Kotora to open it; nothing was changed", MIGRATIONS.len())));
-        }
-        for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
-            let tx = conn.transaction()?;
-            tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", (i + 1) as u32)?;
+        // One step at a time, each under the write lock (IMMEDIATE), the version read again
+        // inside it: another connection to the same file may have run the step already.
+        loop {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let version = user_version(&tx)?;
+            if version > MIGRATIONS.len() {
+                return Err(StoreError(format!("it was saved by a newer Kotora (database schema {version}, this one knows {}). Update Kotora to open it; nothing was changed", MIGRATIONS.len())));
+            }
+            if version == MIGRATIONS.len() {
+                tx.commit()?;
+                break;
+            }
+            tx.execute_batch(MIGRATIONS[version])?;
+            tx.pragma_update(None, "user_version", (version + 1) as u32)?;
             tx.commit()?;
         }
         Ok(Store { conn })
@@ -792,6 +824,15 @@ pub(crate) mod tests {
             std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kotora-0.1.1.db"), &path).unwrap();
             (Scratch(dir), path)
         }
+
+        fn with_0_1_3(name: &str) -> (Scratch, std::path::PathBuf) {
+            let dir = std::env::temp_dir().join(format!("kotora-mig-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("kotora.db");
+            std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kotora-0.1.3.db"), &path).unwrap();
+            (Scratch(dir), path)
+        }
     }
 
     impl Drop for Scratch {
@@ -908,6 +949,57 @@ pub(crate) mod tests {
         assert_eq!(std::fs::read(&bak).unwrap(), bak_before);
         assert_eq!(s.load_list("mal").unwrap().len(), 4);
         assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1);
+    }
+
+    /// The bug 0.2 hit live: the UI and the sign-in thread both open a schema-9 file at once.
+    /// Both must open it; the upgrade runs once and one copy is kept.
+    #[test]
+    fn two_threads_open_an_old_database_at_once() {
+        for round in 0..8 {
+            let (_g, path) = Scratch::with_0_1_3(&format!("race-{round}"));
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let threads: Vec<_> = (0..2)
+                .map(|_| {
+                    let (b, p) = (barrier.clone(), path.clone());
+                    std::thread::spawn(move || {
+                        b.wait();
+                        Store::open(&p).map(|s| s.schema_version().unwrap())
+                    })
+                })
+                .collect();
+            for t in threads {
+                assert_eq!(t.join().unwrap().unwrap(), MIGRATIONS.len());
+            }
+            let dir = path.parent().unwrap();
+            let baks: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.contains(".bak")).collect();
+            assert_eq!(baks, ["kotora.db.schema-9.bak"]);
+            let b = Connection::open(backup_path(&path, SCHEMA_0_1)).unwrap();
+            assert_eq!(user_version(&b).unwrap(), SCHEMA_0_1);
+        }
+    }
+
+    /// The same without the in-process lock (two processes, say): each step re-reads the version
+    /// under the write lock, so a step already run is skipped instead of failing.
+    #[test]
+    fn two_connections_migrate_the_same_file_once() {
+        for round in 0..8 {
+            let (_g, path) = Scratch::with_0_1_3(&format!("race-conn-{round}"));
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let threads: Vec<_> = (0..2)
+                .map(|_| {
+                    let (b, p) = (barrier.clone(), path.clone());
+                    std::thread::spawn(move || {
+                        let c = Connection::open(&p).unwrap();
+                        c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+                        b.wait();
+                        Store::from_connection(c).map(|s| s.schema_version().unwrap())
+                    })
+                })
+                .collect();
+            for t in threads {
+                assert_eq!(t.join().unwrap().unwrap(), MIGRATIONS.len());
+            }
+        }
     }
 
     /// A migration that fails changes nothing: the version and every row stay, and the next
