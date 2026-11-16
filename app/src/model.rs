@@ -264,7 +264,7 @@ impl Entry {
     }
 
     pub fn values(&self) -> Values {
-        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched }
+        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched, volumes: 0 }
     }
 
     /// The entry as `kot` prints it.
@@ -770,7 +770,7 @@ impl State {
             (_, None, Some(p)) => p,
             _ => 0,
         };
-        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock() };
+        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock(), volumes: 0 };
         let mut e = Entry::from_item(&item, self.prefs.titles);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
@@ -1551,6 +1551,9 @@ mod tests {
                 cover_url: None,
                 start_date: None,
                 broadcast: None,
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
             },
             status,
             progress,
@@ -1558,6 +1561,7 @@ mod tests {
             rewatching: false,
             times_rewatched: 0,
             updated_at,
+            volumes: 0,
         }
     }
 
@@ -1843,7 +1847,7 @@ mod tests {
     #[test]
     fn an_added_anime_shows_at_once_and_waits() {
         let mut s = loaded();
-        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None };
+        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() };
         let i = s.add_media(m.clone(), Status::Completed).unwrap();
         let e = &s.entries[i];
         assert_eq!((e.status, e.progress, e.waiting), (Status::Completed, 10, Some("Waiting to sync")));
@@ -1853,7 +1857,7 @@ mod tests {
         assert_eq!(s.entries.iter().filter(|e| e.id == 77).count(), 1);
         assert_eq!(s.entries.iter().find(|e| e.id == 77).unwrap().status, Status::OnHold);
         let mut out = State::start(Auth::SignedOut);
-        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None }, Status::Watching).is_err());
+        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() }, Status::Watching).is_err());
     }
 
     #[test]

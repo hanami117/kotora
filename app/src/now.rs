@@ -1055,8 +1055,11 @@ mod tests {
             cover_url: None,
             start_date: None,
             broadcast: None,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
         };
-        let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7 };
+        let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7, volumes: 0 };
         s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(5, Some(8))], gone: vec![], offline: None });
         assert!(!s.banner(), "same progress: Not now holds");
         s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(6, Some(8))], gone: vec![], offline: None });

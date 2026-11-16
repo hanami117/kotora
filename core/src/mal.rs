@@ -755,6 +755,7 @@ impl ListStatus {
                 score: (self.score > 0).then_some(self.score.min(10)),
                 rewatching: self.is_rewatching,
                 times_rewatched: self.num_times_rewatched,
+                volumes: 0,
             },
             updated_at: self.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
         })
@@ -829,6 +830,9 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
                 cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
                 start_date: non_empty(n.start_date),
                 broadcast: n.broadcast.and_then(RawBroadcast::parse),
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
             },
             status,
             progress: ls.num_episodes_watched,
@@ -836,6 +840,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
             rewatching: ls.is_rewatching,
             times_rewatched: ls.num_times_rewatched,
             updated_at: ls.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
+            volumes: 0,
         });
     }
     Ok((out, page.paging.and_then(|p| p.next).filter(|n| !n.is_empty())))
@@ -1272,7 +1277,7 @@ mod tests {
         let (mut c, _) = client(f);
         let r = c.patch_entry("acc", 1001, &Change { progress: Some(0), rewatching: Some(true), ..Default::default() }).unwrap();
         assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, Some(8)) });
-        let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None };
+        let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None, volumes: None };
         let r = c.patch_entry("acc", 1001, &end).unwrap();
         assert_eq!((r.values.rewatching, r.values.times_rewatched, r.values.progress), (false, 2, 12));
         let seen = seen.lock().unwrap();

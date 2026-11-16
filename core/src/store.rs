@@ -525,6 +525,9 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
             cover_url: r.get(8)?,
             start_date: r.get(15)?,
             broadcast: r.get::<_, Option<String>>(16)?.as_deref().and_then(Broadcast::from_text),
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
         },
         status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
         progress: r.get(10)?,
@@ -532,6 +535,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
         rewatching: r.get(12)?,
         times_rewatched: r.get(14)?,
         updated_at: r.get(13)?,
+        volumes: 0,
     })
 }
 
@@ -553,6 +557,9 @@ pub(crate) mod tests {
                 cover_url: Some(format!("https://example.invalid/{id}.jpg")),
                 start_date: None,
                 broadcast: None,
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
             },
             status,
             progress,
@@ -560,6 +567,7 @@ pub(crate) mod tests {
             rewatching: false,
             times_rewatched: 0,
             updated_at,
+            volumes: 0,
         }
     }
 

@@ -1,10 +1,15 @@
 //! The data model the store, the services and the UI share.
 
-use crate::Status;
+use crate::{Kind, Status};
 
-/// An anime, as far as Kotora keeps it: only media on the user's list (no hoarding).
+/// An anime or a manga, as far as Kotora keeps it: only media on the user's list (no hoarding).
+/// For a manga, `episodes` is the chapter count, `format` the MAL `media_type` (`manga`,
+/// `light_novel`, `manhwa`, `one_shot`, …) and `air_status` the publishing status
+/// (`currently_publishing`, `finished`, `on_hiatus`, …).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Media {
+    /// Anime or manga: the id is only unique within one kind.
+    pub kind: Kind,
     /// The service's id (MyAnimeList id in v0.1).
     pub id: u32,
     pub title: String,
@@ -23,11 +28,25 @@ pub struct Media {
     pub start_date: Option<String>,
     /// The weekly slot in Japan time (MAL `broadcast`), when known.
     pub broadcast: Option<crate::airing::Broadcast>,
+    /// Manga: the volume count (`None`: unknown or still publishing). Always `None` for anime.
+    pub volumes: Option<u32>,
+    /// Manga: the authors, "First Last" (empty for anime).
+    pub authors: Vec<String>,
 }
 
 impl Media {
     pub fn is_airing(&self) -> bool {
         self.air_status == "currently_airing"
+    }
+
+    /// A manga still coming out (MAL `currently_publishing`).
+    pub fn is_publishing(&self) -> bool {
+        self.air_status == "currently_publishing"
+    }
+
+    /// A light novel or novel (MAL lists them as manga).
+    pub fn is_novel(&self) -> bool {
+        matches!(self.format.as_str(), "light_novel" | "novel")
     }
 
     /// The title to show in `lang` (romaji when that one is missing).
@@ -57,11 +76,15 @@ pub struct ListItem {
     pub rewatching: bool,
     /// Finished rewatches (MAL `num_times_rewatched`).
     pub times_rewatched: u32,
+    /// Manga: volumes read (MAL `num_volumes_read`); 0 for anime.
+    pub volumes: u32,
     /// The remote `updated_at`, unix seconds (the base for conflict checks in stage 3).
     pub updated_at: i64,
 }
 
-/// The list fields an edit can change: status, progress, score and the rewatch.
+/// The list fields an edit can change: status, progress, score, the rewatch, and for manga the
+/// volumes. A manga's chapters read are `progress`, its reread is the rewatch (MAL
+/// `is_rereading`, `num_times_reread`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Values {
     pub status: Status,
@@ -70,12 +93,14 @@ pub struct Values {
     pub score: Option<u8>,
     pub rewatching: bool,
     pub times_rewatched: u32,
+    /// Manga: volumes read; always 0 for anime.
+    pub volumes: u32,
 }
 
 impl Values {
-    /// Status, progress and score; not rewatching, never rewatched.
+    /// Status, progress and score; not rewatching, never rewatched, no volumes.
     pub const fn new(status: Status, progress: u32, score: Option<u8>) -> Values {
-        Values { status, progress, score, rewatching: false, times_rewatched: 0 }
+        Values { status, progress, score, rewatching: false, times_rewatched: 0, volumes: 0 }
     }
 }
 
@@ -88,6 +113,8 @@ pub struct Change {
     pub score: Option<Option<u8>>,
     pub rewatching: Option<bool>,
     pub times_rewatched: Option<u32>,
+    /// Manga: volumes read.
+    pub volumes: Option<u32>,
 }
 
 impl Change {
@@ -98,8 +125,24 @@ impl Change {
         Change { status: Some(st), progress, ..Default::default() }
     }
 
+    /// [`Change::to_status`] for a manga: Completed also sets the last volume when the count is
+    /// known. For an anime it is `to_status`.
+    pub fn to_status_of(st: Status, media: &Media) -> Change {
+        let mut c = Change::to_status(st, media.episodes);
+        if media.kind == Kind::Manga && st == Status::Completed {
+            c.volumes = media.volumes.filter(|n| *n > 0);
+        }
+        c
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.status.is_none() && self.progress.is_none() && self.score.is_none() && self.rewatching.is_none() && self.times_rewatched.is_none()
+        self.status.is_none() && self.progress.is_none() && self.score.is_none() && self.rewatching.is_none() && self.times_rewatched.is_none() && self.volumes.is_none()
+    }
+
+    /// Only the progress (and, for manga, the volumes) moves: the kind of change a higher count
+    /// may win in a conflict.
+    pub fn is_count_only(&self) -> bool {
+        self.status.is_none() && self.score.is_none() && self.rewatching.is_none() && self.times_rewatched.is_none() && (self.progress.is_some() || self.volumes.is_some())
     }
 
     /// `later` on top of `self`: the newer value of each field wins.
@@ -110,6 +153,7 @@ impl Change {
             score: later.score.or(self.score),
             rewatching: later.rewatching.or(self.rewatching),
             times_rewatched: later.times_rewatched.or(self.times_rewatched),
+            volumes: later.volumes.or(self.volumes),
         }
     }
 
@@ -121,6 +165,7 @@ impl Change {
             score: self.score.filter(|s| *s != v.score),
             rewatching: self.rewatching.filter(|r| *r != v.rewatching),
             times_rewatched: self.times_rewatched.filter(|n| *n != v.times_rewatched),
+            volumes: self.volumes.filter(|n| *n != v.volumes),
         }
     }
 
@@ -131,6 +176,7 @@ impl Change {
             score: self.score.unwrap_or(v.score),
             rewatching: self.rewatching.unwrap_or(v.rewatching),
             times_rewatched: self.times_rewatched.unwrap_or(v.times_rewatched),
+            volumes: self.volumes.unwrap_or(v.volumes),
         }
     }
 
@@ -175,7 +221,7 @@ pub struct Remote {
 
 impl ListItem {
     pub fn values(&self) -> Values {
-        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched }
+        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched, volumes: self.volumes }
     }
 }
 
@@ -218,11 +264,44 @@ mod tests {
         // A rewatch: one change ends it and counts it.
         let re = Values { progress: 11, rewatching: true, ..done(1) };
         let c = ep(12).completes(&re, Some(12));
-        assert_eq!(c, Change { progress: Some(12), status: Some(Status::Completed), rewatching: Some(false), times_rewatched: Some(2), score: None });
+        assert_eq!(c, Change { progress: Some(12), status: Some(Status::Completed), rewatching: Some(false), times_rewatched: Some(2), score: None, volumes: None });
         assert_eq!(c.apply(re), Values { progress: 12, rewatching: false, times_rewatched: 2, ..done(1) });
         assert_eq!(ep(5).completes(&re, Some(12)), ep(5), "mid-rewatch: normal counting");
         // A status picked by hand wins.
         let drop = Change { status: Some(Status::Dropped), ..ep(12) };
         assert_eq!(drop.completes(&re, Some(12)), drop);
+    }
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::*;
+
+    fn manga(chapters: Option<u32>, volumes: Option<u32>) -> Media {
+        Media { kind: Kind::Manga, id: 7, title: "Paper Lanterns".into(), episodes: chapters, volumes, format: "manga".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn completing_a_manga_takes_the_last_chapter_and_volume() {
+        let c = Change::to_status_of(Status::Completed, &manga(Some(120), Some(14)));
+        assert_eq!((c.progress, c.volumes), (Some(120), Some(14)));
+        let c = Change::to_status_of(Status::Completed, &manga(None, None));
+        assert_eq!((c.progress, c.volumes), (None, None), "still publishing: counts stay");
+        let anime = Media { volumes: Some(3), ..manga(Some(12), None) };
+        let anime = Media { kind: Kind::Anime, ..anime };
+        assert_eq!(Change::to_status_of(Status::Completed, &anime).volumes, None, "anime never sets volumes");
+    }
+
+    #[test]
+    fn volumes_merge_apply_and_compare_like_the_other_fields() {
+        let v = Values { volumes: 2, ..Values::new(Status::Watching, 10, None) };
+        let a = Change { volumes: Some(3), ..Change::default() };
+        let b = Change { progress: Some(12), ..Change::default() };
+        let m = a.merge(b);
+        assert_eq!(m.apply(v), Values { volumes: 3, progress: 12, ..v });
+        assert!(Change { volumes: Some(2), ..Change::default() }.without_same(&v).is_empty());
+        assert!(a.is_count_only() && m.is_count_only());
+        assert!(!Change { volumes: Some(3), score: Some(Some(8)), ..Change::default() }.is_count_only());
+        assert!(!Change::default().is_count_only());
     }
 }

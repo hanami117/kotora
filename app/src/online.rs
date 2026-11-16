@@ -310,6 +310,9 @@ mod tests {
                 cover_url: None,
                 start_date: None,
                 broadcast: None,
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
             },
             status: Status::Watching,
             progress: 1,
@@ -317,6 +320,7 @@ mod tests {
             rewatching: false,
             times_rewatched: 0,
             updated_at: 10,
+            volumes: 0,
         }
     }
 

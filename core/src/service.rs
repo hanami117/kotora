@@ -75,6 +75,9 @@ impl AnimeHit {
             cover_url: self.cover_url.clone(),
             start_date: None,
             broadcast: None,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
         }
     }
 
@@ -167,6 +170,9 @@ impl Details {
             cover_url: self.cover_small.clone().or_else(|| self.cover_url.clone()),
             start_date: self.start_date.clone(),
             broadcast: None,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
         }
     }
 

@@ -230,6 +230,9 @@ impl SeasonAnime {
             cover_url: self.cover_url.clone(),
             start_date: self.start_date.clone(),
             broadcast: self.broadcast,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
         }
     }
 

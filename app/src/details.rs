@@ -214,6 +214,9 @@ impl State {
                 cover_url: d.stub.cover_url.clone(),
                 start_date: None,
                 broadcast: None,
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
             },
         };
         if let Err(e) = self.add_media(media, status) {

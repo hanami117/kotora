@@ -87,6 +87,7 @@ impl State {
             score: Some(old.score),
             rewatching: Some(old.rewatching),
             times_rewatched: Some(old.times_rewatched),
+            volumes: None,
         };
         self.toast = Some(Toast { text: done, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some((id, back)) });
     }

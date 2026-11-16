@@ -203,6 +203,7 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
                 score: score_in(r.get(21)?).flatten(),
                 rewatching: r.get::<_, Option<bool>>(28)?.unwrap_or(false),
                 times_rewatched: r.get::<_, Option<u32>>(29)?.unwrap_or(0),
+                volumes: 0,
             },
             updated_at,
         }),
@@ -215,13 +216,14 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
         media_id,
         title: if title.is_empty() { format!("Anime {media_id}") } else { title },
         episodes: r.get(3)?,
-        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?), rewatching: r.get(24)?, times_rewatched: r.get(25)? },
+        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?), rewatching: r.get(24)?, times_rewatched: r.get(25)?, volumes: None },
         old: Values {
             status: status_in(r.get(7)?).unwrap_or(Status::PlanToWatch),
             progress: r.get(8)?,
             score: score_in(r.get(9)?).flatten(),
             rewatching: r.get(26)?,
             times_rewatched: r.get(27)?,
+            volumes: 0,
         },
         base_updated_at: r.get(10)?,
         created_at: r.get(11)?,
@@ -249,6 +251,7 @@ fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(
                 score: r.get(2)?,
                 rewatching: r.get(4)?,
                 times_rewatched: r.get(5)?,
+                volumes: 0,
             };
             Ok((v, r.get(3)?))
         },
