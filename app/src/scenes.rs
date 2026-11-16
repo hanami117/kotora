@@ -883,6 +883,21 @@ mod tests {
         }
     }
 
+    /// The new headers: Now Playing's hero, the details banner (wide) and banner card (narrow),
+    /// the sidebar's playing card.
+    #[test]
+    fn heroes_and_banners() {
+        let rt = render("now-playing-covers", (1280.0, 800.0));
+        assert!(rt.find("np-card").is_some() && rt.find("backdrop").is_some() && rt.find("np-recog").is_some());
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("details-on-list", size);
+            for key in ["det-banner", "det-title", "det-cover", "det-stats", "det-mine", "det/back", "det/open-mal"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(render("now-playing-page", size).find("np-mini").is_some());
+        }
+    }
+
     #[test]
     fn list_shows_rows_and_states_show_theirs() {
         let rt = render("list", (1280.0, 800.0));
