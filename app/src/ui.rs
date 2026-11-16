@@ -72,9 +72,16 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     now || airing || toast || intro || settings
 }
 
+/// The list pages Ctrl 1 to 5 open, in order.
+const LIST_PAGES: [kotora_core::Status; 5] = {
+    use kotora_core::Status::*;
+    [Watching, PlanToWatch, Completed, OnHold, Dropped]
+};
+
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
 /// pages; on a list page Ctrl F jumps to its filter box. Escape closes the inline editor, a
-/// menu, the details page or the search page.
+/// menu, the details page or the search page. Ctrl , (Cmd , on macOS) opens Settings and Ctrl 1 to 5
+/// open Watching, Plan to Watch, Completed, On Hold and Dropped, as the Go menu does on macOS.
 pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     // Any key skips the startup intro, and does nothing else.
     if s.intro.is_some() {
@@ -86,6 +93,14 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         && let Some(used) = crate::settings::on_key(s, k, tx)
     {
         return used;
+    }
+    if k.is_command(',') {
+        go_to(s, Page::Settings, tx);
+        return true;
+    }
+    if let Some(status) = ['1', '2', '3', '4', '5'].into_iter().zip(LIST_PAGES).find_map(|(c, st)| k.is_command(c).then_some(st)) {
+        go_to(s, Page::List(status), tx);
+        return true;
     }
     if k.is_command('k') || (k.is_command('f') && !matches!(s.page, Page::List(_))) {
         tx.instant();
@@ -2315,6 +2330,45 @@ pub(crate) fn switch_if(key: String, label: &str, on: bool, enabled: bool, set: 
 #[cfg(test)]
 mod tests {
     use super::initials;
+
+    /// Ctrl (Cmd on macOS) with a key, as the platform sends it.
+    fn chord(c: char) -> rune::KeyEvent {
+        let mods = if cfg!(target_os = "macos") { rune::Mods { cmd: true, ..Default::default() } } else { rune::Mods { ctrl: true, ..Default::default() } };
+        rune::KeyEvent { key: rune::Key::Command(c), mods }
+    }
+
+    #[test]
+    fn ctrl_comma_opens_settings() {
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        assert!(super::on_key(&mut s, &chord(','), &mut tx));
+        assert_eq!(s.page, crate::model::Page::Settings);
+    }
+
+    #[test]
+    fn ctrl_digits_open_the_list_pages() {
+        use crate::model::Page;
+        use kotora_core::Status::*;
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([Watching, PlanToWatch, Completed, OnHold, Dropped]) {
+            s.go(Page::Settings);
+            assert!(super::on_key(&mut s, &chord(c), &mut tx));
+            assert_eq!(s.page, Page::List(st), "chord {c}");
+        }
+        assert!(!super::on_key(&mut s, &chord('6'), &mut tx));
+    }
+
+    #[test]
+    fn plain_comma_and_digits_do_nothing() {
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        let before = s.page;
+        for c in [',', '1'] {
+            super::on_key(&mut s, &rune::KeyEvent { key: rune::Key::Text(c.to_string()), mods: Default::default() }, &mut tx);
+        }
+        assert_eq!(s.page, before);
+    }
 
     #[test]
     fn initials_skip_small_words() {
