@@ -372,6 +372,11 @@ pub fn next_for(s: &State, e: &Entry) -> Option<Next> {
     Some(s.library.index.next(e.id, e.progress, e.episodes, &|f| s.library.online(f)))
 }
 
+/// Whether the entry's next episode is a file in an online folder.
+pub fn has_next_file(s: &State, e: &Entry) -> bool {
+    matches!(next_for(s, e), Some(Next::Ready { .. }))
+}
+
 /// The tray's Play next menu: the Watching (or rewatching) anime whose next episode is a file in
 /// an online folder, most recently updated first, at most [`PLAY_MENU_MAX`]. Each is (media id,
 /// "Title · Ep N"). Empty without folders.

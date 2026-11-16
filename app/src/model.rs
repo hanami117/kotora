@@ -1016,27 +1016,16 @@ impl State {
 
     /// The entry `q` names: a whole title first, then a part of one that matches one entry.
     pub fn find(&self, q: &str) -> Result<usize, String> {
+        self.find_for(q, Want::Any)
+    }
+
+    /// As [`State::find`], and when several match, the command narrows them ([`Want`]).
+    pub fn find_for(&self, q: &str, want: Want) -> Result<usize, String> {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
-        let q = q.trim().to_lowercase();
-        if q.is_empty() {
-            return Err("Which anime? Give a part of its title.".into());
-        }
-        let whole: Vec<usize> = (0..self.entries.len()).filter(|&i| self.entries[i].search.lines().any(|t| t == q)).collect();
-        if whole.len() == 1 {
-            return Ok(whole[0]);
-        }
-        let part: Vec<usize> = if whole.is_empty() { (0..self.entries.len()).filter(|&i| self.entries[i].search.contains(&q)).collect() } else { whole };
-        match part.as_slice() {
-            [] => Err(format!("No anime on your list matches \u{201c}{q}\u{201d}.")),
-            [i] => Ok(*i),
-            many => {
-                let names: Vec<&str> = many.iter().take(5).map(|&i| self.entries[i].title.as_str()).collect();
-                let more = if many.len() > 5 { format!(" and {} more", many.len() - 5) } else { String::new() };
-                Err(format!("{} anime match \u{201c}{q}\u{201d}: {}{more}. Give more of the title.", many.len(), names.join(", ")))
-            }
-        }
+        let has_next = |e: &Entry| crate::library::has_next_file(self, e);
+        find_in(&self.entries, q, want, &has_next)
     }
 
     fn set_items(&mut self, items: &[ListItem]) {
@@ -1497,6 +1486,51 @@ pub(crate) fn airing_entry(s: &mut State, id: u32, aired: u32) {
     e.timetable = Some(Timetable { first, episodes: e.episodes, shift: 0, until: None });
 }
 
+/// What the command that names an anime does with it: it decides which matches win.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Want {
+    /// `rewatch`, and the rest: no preference.
+    Any,
+    /// `+1`, `set`: the anime being watched (or rewatched).
+    Watching,
+    /// `next`: those being watched, then those whose next episode is a file in the library.
+    Next,
+}
+
+/// The matches of `q` in `entries`: a title that is exactly `q` (any title, any case) beats a part
+/// of a title; several are narrowed by `want` (never to none), and one left is the answer.
+fn find_in(entries: &[Entry], q: &str, want: Want, has_next: &dyn Fn(&Entry) -> bool) -> Result<usize, String> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() {
+        return Err("Which anime? Give a part of its title.".into());
+    }
+    let mut part: Vec<usize> = (0..entries.len()).filter(|&i| entries[i].search.lines().any(|t| t == q)).collect();
+    if part.is_empty() {
+        part = (0..entries.len()).filter(|&i| entries[i].search.contains(&q)).collect();
+    }
+    if part.len() > 1 && want != Want::Any {
+        let watching: Vec<usize> = part.iter().copied().filter(|&i| entries[i].status == Status::Watching || entries[i].rewatching).collect();
+        if !watching.is_empty() {
+            part = watching;
+        }
+    }
+    if part.len() > 1 && want == Want::Next {
+        let ready: Vec<usize> = part.iter().copied().filter(|&i| has_next(&entries[i])).collect();
+        if !ready.is_empty() {
+            part = ready;
+        }
+    }
+    match part.as_slice() {
+        [] => Err(format!("No anime on your list matches \u{201c}{q}\u{201d}.")),
+        [i] => Ok(*i),
+        many => {
+            let names: Vec<&str> = many.iter().take(5).map(|&i| entries[i].title.as_str()).collect();
+            let more = if many.len() > 5 { format!(" and {} more", many.len() - 5) } else { String::new() };
+            Err(format!("{} anime match \u{201c}{q}\u{201d}: {}{more}. Give more of the title.", many.len(), names.join(", ")))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use kotora_core::Media;
@@ -1625,6 +1659,71 @@ mod tests {
         assert_eq!(s.editor.unwrap().progress, 12, "Completed fills the progress");
         s.toggle_editor(2);
         assert!(s.editor.is_none(), "a second press closes it");
+    }
+
+    /// A Re:Zero-like list: one name is the whole title of the first season and a part of the others.
+    fn rezero() -> Vec<Entry> {
+        let mk = |id: u32, title: &str, syn: &[&str], status: Status, rewatching: bool| {
+            let mut it = item(id, title, status, 0, None, 0);
+            it.media.title_en = None;
+            it.media.synonyms = syn.iter().map(|s| s.to_string()).collect();
+            it.rewatching = rewatching;
+            Entry::from_item(&it, TitleLang::default())
+        };
+        vec![
+            mk(1, "Re:Zero kara Hajimeru Isekai Seikatsu", &["Re:Zero"], Status::Completed, false),
+            mk(2, "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season", &[], Status::Completed, false),
+            mk(3, "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season Part 2", &[], Status::Watching, false),
+            mk(4, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", &[], Status::Watching, false),
+            mk(5, "Re:Zero kara Hajimeru Isekai Seikatsu: Hyouketsu no Kizuna", &[], Status::Completed, true),
+        ]
+    }
+
+    fn id_of(entries: &[Entry], r: Result<usize, String>) -> Result<u32, String> {
+        r.map(|i| entries[i].id)
+    }
+
+    #[test]
+    fn an_exact_title_beats_the_parts() {
+        let e = rezero();
+        let none = |_: &Entry| false;
+        // "Re:Zero" is a whole alternative title of S1 and a part of all five.
+        for want in [Want::Any, Want::Watching, Want::Next] {
+            assert_eq!(id_of(&e, find_in(&e, "  RE:zero ", want, &none)), Ok(1), "{want:?}");
+        }
+        assert_eq!(id_of(&e, find_in(&e, "re:zero kara hajimeru isekai seikatsu 2nd season", Want::Any, &none)), Ok(2));
+    }
+
+    #[test]
+    fn set_and_plus_one_prefer_what_is_being_watched() {
+        let e = rezero();
+        let none = |_: &Entry| false;
+        let err = find_in(&e, "isekai seikatsu", Want::Any, &none).unwrap_err();
+        assert!(err.starts_with("5 anime match"), "{err}");
+        // Watching 3 and 4, and the rewatch 5: three left.
+        let err = find_in(&e, "isekai seikatsu", Want::Watching, &none).unwrap_err();
+        assert!(err.starts_with("3 anime match") && !err.contains("Seikatsu, ") && err.contains("Part 2"), "{err}");
+        assert_eq!(id_of(&e, find_in(&e, "part 2", Want::Watching, &none)), Ok(3));
+        assert_eq!(id_of(&e, find_in(&e, "hyouketsu", Want::Watching, &none)), Ok(5), "a rewatch counts");
+        assert_eq!(id_of(&e, find_in(&e, "3rd season", Want::Watching, &none)), Ok(4));
+        // Nothing watching: the whole set stays.
+        assert!(find_in(&e[..2], "isekai", Want::Watching, &none).unwrap_err().starts_with("2 anime match"));
+    }
+
+    #[test]
+    fn next_then_prefers_a_file_in_the_library() {
+        let e = rezero();
+        let only = |id: u32| move |x: &Entry| x.id == id;
+        assert_eq!(id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(4))), Ok(4));
+        assert_eq!(id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(5))), Ok(5));
+        // A file for one that is not being watched doesn't count: the three watching stay.
+        let err = find_in(&e, "isekai seikatsu", Want::Next, &only(2)).unwrap_err();
+        assert!(err.starts_with("3 anime match"), "{err}");
+        let both = |x: &Entry| x.id == 3 || x.id == 4;
+        assert!(find_in(&e, "isekai seikatsu", Want::Next, &both).unwrap_err().starts_with("2 anime match"));
+        assert!(find_in(&e, "isekai seikatsu", Want::Next, &|_: &Entry| false).unwrap_err().starts_with("3 anime match"));
+        // Rewatch and the rest keep today's rules.
+        assert!(find_in(&e, "isekai seikatsu", Want::Any, &only(4)).unwrap_err().starts_with("5 anime match"));
     }
 
     #[test]

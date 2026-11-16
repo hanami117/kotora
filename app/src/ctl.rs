@@ -9,7 +9,7 @@ use std::time::Duration;
 use kotora_core::{Change, Status};
 use kotora_ctl::{Reply, Request, Server};
 
-use crate::model::{Handle, State};
+use crate::model::{Handle, State, Want};
 
 /// How long a request waits for the UI thread (it answers within a frame unless it's stuck).
 const UI_TIMEOUT: Duration = Duration::from_secs(5);
@@ -140,7 +140,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             }
         }
         Request::Next { title } => reply(on_ui(handle, true, move |s| {
-            let i = s.find(&title)?;
+            let i = s.find_for(&title, Want::Next)?;
             let id = s.entries[i].id;
             crate::library::play_next(s, id).map(|message| Reply::Done { message: format!("{message}.") })
         })),
@@ -157,7 +157,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
 /// `kot +1`: an episode that hasn't aired yet (by the estimate) is held: the reply says so and
 /// `kot` asks "Mark anyway?" (or says to run it again with `--anyway`).
 fn plus_one(s: &mut State, title: &str, anyway: bool) -> Result<Reply, String> {
-    let i = s.find(title)?;
+    let i = s.find_for(title, Want::Watching)?;
     let (id, next) = (s.entries[i].id, s.entries[i].progress + 1);
     if !anyway && let Some(message) = s.not_aired_text(id, &Change { progress: Some(next), ..Default::default() }) {
         return Ok(Reply::Error { message, anyway: true });
@@ -168,7 +168,7 @@ fn plus_one(s: &mut State, title: &str, anyway: bool) -> Result<Reply, String> {
 
 /// `kot set`: as `kot +1`, an episode not aired yet is held. Past the count is refused.
 fn set(s: &mut State, title: &str, change: Change, anyway: bool) -> Result<Reply, String> {
-    let i = s.find(title)?;
+    let i = s.find_for(title, Want::Watching)?;
     let id = s.entries[i].id;
     if !anyway && let Some(message) = s.not_aired_text(id, &change) {
         return Ok(Reply::Error { message, anyway: true });

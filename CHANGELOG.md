@@ -4,6 +4,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Fixed
+- **`kot` picks the right anime when a title matches several:** a title that is exactly what you typed (any
+  title, any case) wins over titles that only contain it. `kot next`, `kot +1` and `kot set` prefer the anime you
+  are watching or rewatching, and `kot next` then the ones whose next episode is in your library. If more than
+  one is left, the "N anime match" error lists those first.
+
 ## [0.1.1] - 2026-11-16
 
 ### Added
