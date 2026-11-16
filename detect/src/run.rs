@@ -2,6 +2,7 @@
 //! read, a folder watch, the bus, a channel); the hub sleeps until the next threshold crossing
 //! or the next report. Nothing ticks.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -47,6 +48,8 @@ impl Default for Settings {
 /// The settings the threads share.
 pub struct Shared {
     settings: Mutex<Settings>,
+    /// The mpv / IINA sockets with a thread, so one is never watched twice.
+    sockets: Mutex<HashSet<PathBuf>>,
 }
 
 impl Shared {
@@ -75,8 +78,12 @@ pub struct Detector {
 }
 
 impl Detector {
-    /// New settings: the threshold and switches apply at once.
+    /// New settings: the threshold and switches apply at once, and sockets that aren't watched yet
+    /// start to be (a socket dropped from the list stays watched until the app ends).
     pub fn set(&self, s: Settings) {
+        for sock in &s.mpv_sockets {
+            self.watch_socket(sock);
+        }
         *self.shared.settings.lock().unwrap_or_else(|e| e.into_inner()) = s;
         let _ = self.tx.send(Input::Settings);
         for w in [&self.vlc_wake, &self.proc_wake].into_iter().flatten() {
@@ -85,14 +92,34 @@ impl Detector {
     }
 }
 
+impl Detector {
+    /// Starts watching an mpv / IINA socket at once (no restart). `false`: it was watched already.
+    pub fn watch_socket(&self, sock: &std::path::Path) -> bool {
+        spawn_socket(&self.shared, &self.tx, sock)
+    }
+
+    /// The socket has a thread, from the settings or [`Detector::watch_socket`].
+    pub fn watches(&self, sock: &std::path::Path) -> bool {
+        self.shared.sockets.lock().unwrap_or_else(|e| e.into_inner()).contains(sock)
+    }
+}
+
+fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> bool {
+    if !shared.sockets.lock().unwrap_or_else(|e| e.into_inner()).insert(sock.to_path_buf()) {
+        return false;
+    }
+    let (sock, tx) = (sock.to_path_buf(), tx.clone());
+    let _ = std::thread::Builder::new().name("kotora-mpv".into()).spawn(move || crate::mpv::run(sock, tx));
+    true
+}
+
 /// Starts every source of this system and the hub. `sink` gets the hub's reports, on the hub's
 /// thread.
 pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Detector {
     let (tx, rx) = mpsc::channel::<Input>();
-    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()) });
+    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()) });
     for sock in &settings.mpv_sockets {
-        let (sock, tx) = (sock.clone(), tx.clone());
-        let _ = std::thread::Builder::new().name("kotora-mpv".into()).spawn(move || crate::mpv::run(sock, tx));
+        spawn_socket(&shared, &tx, sock);
     }
     #[cfg(target_os = "linux")]
     {

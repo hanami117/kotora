@@ -43,6 +43,12 @@ pub struct Glue {
     detector: Arc<Detector>,
 }
 
+impl Glue {
+    pub fn detector(&self) -> Arc<Detector> {
+        self.detector.clone()
+    }
+}
+
 /// The detection settings from `config.toml`.
 pub fn settings(c: &Config) -> Settings {
     let d = Settings::default();
@@ -66,8 +72,6 @@ pub fn start(s: &mut State) {
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     crate::precise::check_conf(h.clone());
-    #[cfg(target_os = "macos")]
-    crate::iina::check(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
     let tx_for_refresh = tx.clone();
@@ -75,8 +79,12 @@ pub fn start(s: &mut State) {
         let _ = rtx.send(In::Report(r));
     });
     let relations_download = c.recognition.relations_download;
+    let detector = Arc::new(detector);
+    // IINA's own settings may name a socket Kotora doesn't watch yet: add it to the running detection.
+    #[cfg(target_os = "macos")]
+    crate::iina::check(h.clone(), Some(detector.clone()));
     let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
-    s.glue = Some(Glue { tx, detector: Arc::new(detector) });
+    s.glue = Some(Glue { tx, detector });
 }
 
 /// Remembers the user's pick (or "not an anime") for a title.
