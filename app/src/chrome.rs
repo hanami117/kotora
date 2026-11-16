@@ -10,6 +10,7 @@
 use kotora_core::config::Theme;
 
 /// The `NSAppearanceName` for a theme; `None`: follow the system (nil).
+#[cfg(any(target_os = "macos", test))]
 pub fn appearance_name(theme: Theme) -> Option<&'static str> {
     match theme {
         Theme::System => None,

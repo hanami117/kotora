@@ -756,7 +756,10 @@ mod tests {
         let e = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().clone();
         // Lanterns: progress 5, episode 6 is there.
         assert!(matches!(next_for(&s, &e(&s, 0)), Some(Next::Ready { episode: 6, .. })));
-        assert!(play_next(&mut s, 0).unwrap().contains("episode 6 of Lanterns of Kirigaoka in IINA"));
+        // The last player seen was IINA, which is macOS only (elsewhere Automatic falls back to the system's).
+        let said = play_next(&mut s, 0).unwrap();
+        assert!(said.contains("episode 6 of Lanterns of Kirigaoka in "), "{said}");
+        assert_eq!(said.ends_with("in IINA"), cfg!(target_os = "macos"), "{said}");
         // Neon Ronin: progress 22, on the unplugged drive.
         assert_eq!(play_next(&mut s, 4).unwrap_err(), "Episode 23 is on Archive, which is offline");
         // Ghost of the Library Stacks: progress 11, files up to 10.

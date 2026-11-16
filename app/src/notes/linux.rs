@@ -254,7 +254,7 @@ mod tests {
         let caps = Caps::from(&["actions".into(), "body-markup".into()]);
         let n = Note { body: "Kaze & Mori <TV>".into(), ..note(Kind::Detected) };
         let r = build(&n, 0, caps);
-        assert_eq!(r.body, "Kaze &amp; Mori &lt;TV&gt;");
+        assert_eq!(r.body, "Kaze &amp; Mori &lt;TV&gt; Open Kotora, or run kot confirm.", "no buttons for Detected: the tail stays");
         assert_eq!(r.summary, "Update Kaze & Mori to episode 6?", "the summary is never markup");
         assert_eq!((r.urgency, r.transient), (0, true));
         assert_eq!(r.actions, ["default", "Open Kotora"]);
