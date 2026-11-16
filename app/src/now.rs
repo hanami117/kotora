@@ -155,12 +155,14 @@ pub struct Prefs {
     pub background: bool,
     /// Settings → About Kotora → Check for updates (`[app] check_updates`).
     pub check_updates: bool,
+    /// Settings → General → Keyboard: the modifier with 1 to 5 for the list pages (`[keys] pages`).
+    pub page_keys: kotora_core::config::PageKeys,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
     }
 }
 
@@ -184,6 +186,7 @@ impl Prefs {
             login_busy: false,
             background: c.startup.background,
             check_updates: c.app.check_updates,
+            page_keys: c.keys.pages,
         }
     }
 }
@@ -665,7 +668,7 @@ impl State {
             Found::List { why, .. } => format!("In your list, not sure: {why}"),
             Found::NotOnList { .. } => match self.relation_text(n) {
                 Some(why) => format!("Not on your list: {why}"),
-                None => "Not on your list (found on MyAnimeList)".into(),
+                None => format!("Not on your list (found on {})", self.service.title()),
             },
             Found::Ignored => "Marked as not an anime".into(),
             Found::Nothing => "Not found on your list".into(),
@@ -1055,8 +1058,13 @@ mod tests {
             cover_url: None,
             start_date: None,
             broadcast: None,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
+            next_airing: None,
+            id_mal: None,
         };
-        let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7 };
+        let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7, volumes: 0 };
         s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(5, Some(8))], gone: vec![], offline: None });
         assert!(!s.banner(), "same progress: Not now holds");
         s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(6, Some(8))], gone: vec![], offline: None });
@@ -1158,10 +1166,14 @@ mod tests {
         let mut s = fresh();
         let mut v = seen("Velvet Comet - 04.mkv", None, true, true);
         v.found = Found::NotOnList { media_id: 9001, title: "Velvet Comet".into() };
+        v.cover_url = Some("https://img.example/9001.jpg".into());
+        v.alt_titles = AltTitles { en: Some("The Velvet Comet".into()), ja: None };
         s.now_seen(Some(v));
         s.add_playing();
         let e = s.entries.iter().find(|e| e.id == 9001).expect("added");
         assert_eq!((e.status, e.progress, e.waiting), (Status::Watching, 4, Some("Waiting to sync")));
+        // What recognition saw goes with the add (the queue worker asks for the rest).
+        assert_eq!((e.cover_url.as_deref(), e.title_en.as_deref()), (Some("https://img.example/9001.jpg"), Some("The Velvet Comet")));
         let n = s.now.as_ref().unwrap();
         assert_eq!(n.media_id(), Some(9001), "the file counts as this anime now");
         assert!(n.recorded.is_some_and(|r| r.episode == 4 && !r.auto));

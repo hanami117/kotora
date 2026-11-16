@@ -2,10 +2,13 @@
 //!
 //! ```toml
 //! [account]
-//! service = "mal"              # chosen on the first screen; v0.3 adds "anilist"
+//! service = "mal"              # or "anilist": the one service Kotora keeps the list on
 //!
 //! [mal]
 //! client_id = "…"
+//!
+//! [anilist]
+//! client_id = "12345"          # your own AniList API client's id (a number); optional: Kotora has its own
 //!
 //! [updates]
 //! auto = false                 # record confident matches without asking (off by default)
@@ -42,6 +45,9 @@
 //! intro = true                 # the startup animation when Kotora opens with its window
 //! settings_section = "general" # the Settings section opened last (written by the app)
 //!
+//! [keys]
+//! pages = "ctrl"               # with 1 to 5, opens the list pages: "ctrl" ("cmd" on macOS) or "alt"
+//!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
 //!
@@ -65,6 +71,8 @@ pub struct Config {
     /// `None` before they chose. Lower-cased; an empty value counts as none.
     pub service: Option<String>,
     pub mal_client_id: Option<String>,
+    /// `[anilist] client_id`: the id of the user's AniList API client (a number).
+    pub anilist_client_id: Option<String>,
     pub updates: Updates,
     pub players: Players,
     pub vlc: Vlc,
@@ -76,6 +84,7 @@ pub struct Config {
     pub notifications: Notifications,
     pub library: Library,
     pub app: AppSection,
+    pub keys: Keys,
 }
 
 /// Kotora itself (`[app]`). Not `[updates]`, which is about the list.
@@ -198,6 +207,68 @@ impl Theme {
             Theme::Dark => false,
         }
     }
+}
+
+/// `[keys] pages`: the modifier that, with 1 to 5, opens Watching, Plan to watch, Completed,
+/// On hold and Dropped. The other shortcuts (Ctrl , Ctrl K, Ctrl F; ⌘ on macOS) don't change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum PageKeys {
+    /// Ctrl on Linux, ⌘ on macOS. The file says "ctrl" or "cmd"; either reads as this.
+    #[default]
+    #[serde(rename = "ctrl", alias = "cmd")]
+    Primary,
+    /// Alt (Option on macOS).
+    #[serde(rename = "alt", alias = "option")]
+    Alt,
+}
+
+impl PageKeys {
+    pub const ALL: [PageKeys; 2] = [PageKeys::Primary, PageKeys::Alt];
+
+    /// The `config.toml` value.
+    pub fn key(self) -> &'static str {
+        match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "cmd",
+            PageKeys::Primary => "ctrl",
+            PageKeys::Alt => "alt",
+        }
+    }
+
+    /// The modifier as Settings and the hints name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "\u{2318} Cmd",
+            PageKeys::Primary => "Ctrl",
+            PageKeys::Alt if cfg!(target_os = "macos") => "\u{2325} Option",
+            PageKeys::Alt => "Alt",
+        }
+    }
+
+    /// The chord with `digit`, in Rune's chord syntax ("mod+1", "alt+1").
+    pub fn chord(self, digit: char) -> String {
+        match self {
+            PageKeys::Primary => format!("mod+{digit}"),
+            PageKeys::Alt => format!("alt+{digit}"),
+        }
+    }
+
+    /// A short hint for the chord with `digit`: "Ctrl 1", "Alt 1", "\u{2318} 1", "\u{2325} 1".
+    pub fn hint(self, digit: char) -> String {
+        let m = match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "\u{2318}",
+            PageKeys::Primary => "Ctrl",
+            PageKeys::Alt if cfg!(target_os = "macos") => "\u{2325}",
+            PageKeys::Alt => "Alt",
+        };
+        format!("{m} {digit}")
+    }
+}
+
+/// `[keys]`: keyboard shortcuts that can change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    pub pages: PageKeys,
 }
 
 /// Display settings.
@@ -434,6 +505,7 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("service", &self.service)
             .field("mal_client_id", &self.mal_client_id.as_ref().map(|_| "<set>"))
+            .field("anilist_client_id", &self.anilist_client_id.as_ref().map(|_| "<set>"))
             .field("updates", &self.updates)
             .field("players", &self.players)
             .field("vlc_port", &self.vlc.port)
@@ -445,6 +517,7 @@ impl std::fmt::Debug for Config {
             .field("notifications", &self.notifications)
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
+            .field("keys", &self.keys)
             .finish()
     }
 }
@@ -455,6 +528,8 @@ struct File {
     account: Account,
     #[serde(default)]
     mal: Mal,
+    #[serde(default)]
+    anilist: Mal,
     #[serde(default)]
     updates: Updates,
     #[serde(default)]
@@ -477,6 +552,8 @@ struct File {
     library: Library,
     #[serde(default)]
     app: AppSection,
+    #[serde(default)]
+    keys: Keys,
 }
 
 #[derive(Deserialize, Default)]
@@ -499,6 +576,7 @@ impl Config {
         Ok(Config {
             service: f.account.service.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()),
             mal_client_id: f.mal.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            anilist_client_id: f.anilist.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             updates,
             players: f.players,
             vlc: f.vlc,
@@ -510,6 +588,7 @@ impl Config {
             notifications: f.notifications,
             library: f.library,
             app: f.app,
+            keys: f.keys,
         })
     }
 
@@ -517,15 +596,33 @@ impl Config {
     /// chosen, has no Client ID in the file and has no saved token. Anyone who already uses
     /// Kotora with MyAnimeList skips it, and nothing is written for them.
     pub fn needs_service_choice(&self, has_token: bool) -> bool {
-        self.service.is_none() && self.mal_client_id.is_none() && !has_token
+        self.service.is_none() && self.mal_client_id.is_none() && self.anilist_client_id.is_none() && !has_token
     }
 
-    /// The Client ID Kotora signs in with: the environment variable `KOTORA_MAL_CLIENT_ID`
-    /// (development), else the one in `config.toml` ("Use my own client ID"), else the one built
-    /// into Kotora.
-    pub fn effective_client_id(&self) -> Option<String> {
-        let env = std::env::var("KOTORA_MAL_CLIENT_ID").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        env.or_else(|| self.mal_client_id.clone()).or_else(|| crate::service::MAL_CLIENT_ID.map(str::to_string))
+    /// The service Kotora keeps the list on: `[account] service`, MyAnimeList when none is
+    /// chosen (everybody from 0.1) or the value is unknown.
+    pub fn service_id(&self) -> crate::service::ServiceId {
+        self.service.as_deref().and_then(crate::service::ServiceId::from_name).unwrap_or_default()
+    }
+
+    /// The Client ID of `service`, when one is saved.
+    pub fn client_id(&self, service: crate::service::ServiceId) -> Option<&str> {
+        match service {
+            crate::service::ServiceId::Mal => self.mal_client_id.as_deref(),
+            crate::service::ServiceId::AniList => self.anilist_client_id.as_deref(),
+        }
+    }
+
+    /// The Client ID Kotora signs in with: the environment variable (development), else the
+    /// one in `config.toml` ("Use my own client ID"), else the one built into Kotora.
+    pub fn effective_client_id(&self, service: crate::service::ServiceId) -> Option<String> {
+        let env = std::env::var(service.client_id_env()).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        env.or_else(|| self.client_id(service).map(str::to_string)).or_else(|| service.built_in_client_id().map(str::to_string))
+    }
+
+    /// Whether Kotora has a Client ID to sign in with, saved or built in.
+    pub fn has_client_id(&self, service: crate::service::ServiceId) -> bool {
+        self.effective_client_id(service).is_some()
     }
 
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
@@ -619,10 +716,50 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
 
 /// The services the first screen offers: the value written to `[account] service`.
 pub const SERVICE_MAL: &str = "mal";
+pub const SERVICE_ANILIST: &str = "anilist";
 
-/// Goes back to Kotora's built-in Client ID: blanks `[mal] client_id` (a blank one counts as none).
-pub fn clear_client_id(path: &Path) -> Result<(), String> {
-    write_setting(path, "mal", "client_id", &quote(""))
+/// Checks a pasted AniList Client ID: AniList's are whole numbers (its client secrets are 40
+/// letters and digits, never needed). Returns the cleaned ID.
+pub fn check_anilist_client_id(raw: &str) -> Result<String, String> {
+    let id = raw.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`').trim();
+    if id.is_empty() {
+        return Err("Paste the Client ID first.".into());
+    }
+    if id.chars().any(char::is_whitespace) {
+        return Err("A Client ID is one word, with no spaces in it.".into());
+    }
+    if !id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(if id.len() >= 30 {
+            "That looks like the Client Secret. Kotora doesn't need it: copy the ID instead (a number).".into()
+        } else {
+            "That doesn't look like an AniList Client ID: it is a number, like 12345.".into()
+        });
+    }
+    if id.len() > 10 || id.trim_start_matches('0').is_empty() {
+        return Err("That doesn't look like an AniList Client ID: it is a number, like 12345.".into());
+    }
+    Ok(id.to_string())
+}
+
+/// Saves the AniList Client ID (`[anilist] client_id`), after [`check_anilist_client_id`].
+pub fn save_anilist_client_id(path: &Path, raw: &str) -> Result<String, String> {
+    let id = check_anilist_client_id(raw)?;
+    write_setting(path, "anilist", "client_id", &quote(&id))?;
+    Ok(id)
+}
+
+/// Saves the Client ID of `service`, checked the way that service's IDs look.
+pub fn save_client_id_for(path: &Path, service: crate::service::ServiceId, raw: &str) -> Result<String, String> {
+    match service {
+        crate::service::ServiceId::Mal => save_client_id(path, raw),
+        crate::service::ServiceId::AniList => save_anilist_client_id(path, raw),
+    }
+}
+
+/// Goes back to Kotora's built-in Client ID for `service`: blanks `[mal] client_id` or
+/// `[anilist] client_id` (a blank one counts as none).
+pub fn clear_client_id(path: &Path, service: crate::service::ServiceId) -> Result<(), String> {
+    write_setting(path, service.name(), "client_id", &quote(""))
 }
 
 /// Saves the chosen service (`[account] service`).
@@ -677,6 +814,25 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_keys_are_ctrl_by_default_and_alt_on_request() {
+        assert_eq!(Config::parse("").unwrap().keys.pages, PageKeys::Primary);
+        assert_eq!(Config::parse("[keys]\npages = \"alt\"\n").unwrap().keys.pages, PageKeys::Alt);
+        assert_eq!(Config::parse("[keys]\npages = \"ctrl\"\n").unwrap().keys.pages, PageKeys::Primary);
+        assert_eq!(Config::parse("[keys]\npages = \"cmd\"\n").unwrap().keys.pages, PageKeys::Primary, "the macOS name reads too");
+        assert!(Config::parse("[keys]\npages = \"hyper\"\n").is_err(), "an unknown value is refused");
+        for k in PageKeys::ALL {
+            let t = set_line("[display]\ntheme = \"dark\"\n", "keys", "pages", &quote(k.key()));
+            let c = Config::parse(&t).unwrap();
+            assert_eq!(c.keys.pages, k);
+            assert_eq!(c.display.theme, Theme::Dark, "the other sections stay");
+        }
+        assert_eq!(PageKeys::Alt.chord('3'), "alt+3");
+        assert_eq!(PageKeys::Primary.chord('1'), "mod+1");
+        assert_eq!(PageKeys::Alt.hint('2'), if cfg!(target_os = "macos") { "\u{2325} 2" } else { "Alt 2" });
+        assert_eq!(PageKeys::Primary.hint('5'), if cfg!(target_os = "macos") { "\u{2318} 5" } else { "Ctrl 5" });
+    }
 
     #[test]
     fn library_folders_round_trip() {
@@ -855,15 +1011,46 @@ mod tests {
     }
 
     #[test]
+    fn anilist_ids_and_the_chosen_service_are_read() {
+        use crate::service::ServiceId;
+        let c = Config::parse("[account]\nservice = \"anilist\"\n[anilist]\nclient_id = \" 12345 \"\n").unwrap();
+        assert_eq!((c.service_id(), c.client_id(ServiceId::AniList), c.client_id(ServiceId::Mal)), (ServiceId::AniList, Some("12345"), None));
+        assert!(!c.needs_service_choice(false));
+        assert!(!Config { anilist_client_id: Some("1".into()), ..Config::default() }.needs_service_choice(false), "an AniList ID counts too");
+        assert_eq!(Config::default().service_id(), ServiceId::Mal, "0.1 users are on MyAnimeList");
+        assert_eq!(Config::parse("[account]\nservice = \"kitsu\"\n").unwrap().service_id(), ServiceId::Mal);
+        assert!(!format!("{c:?}").contains("12345"));
+    }
+
+    #[test]
     fn the_client_id_falls_back_to_the_built_in_one() {
-        use crate::service::MAL_CLIENT_ID;
+        use crate::service::{ANILIST_CLIENT_ID, MAL_CLIENT_ID, ServiceId};
         // No environment variable is set for this one in tests.
-        let built_in = MAL_CLIENT_ID.unwrap();
-        assert_eq!(built_in.len(), 32, "a MyAnimeList id: 32 hex characters");
-        assert!(check_client_id(built_in).is_ok());
-        assert_eq!(Config::default().effective_client_id().as_deref(), Some(built_in));
-        let own = Config { mal_client_id: Some("mine".into()), ..Config::default() };
-        assert_eq!(own.effective_client_id().as_deref(), Some("mine"), "the user's own wins");
+        let empty = Config::default();
+        assert_eq!(empty.effective_client_id(ServiceId::AniList).as_deref(), Some(ANILIST_CLIENT_ID));
+        assert!(empty.has_client_id(ServiceId::AniList));
+        let mal = MAL_CLIENT_ID.unwrap();
+        assert_eq!(mal.len(), 32, "a MyAnimeList id: 32 hex characters");
+        assert!(check_client_id(mal).is_ok());
+        assert_eq!(empty.effective_client_id(ServiceId::Mal).as_deref(), Some(mal));
+        assert!(empty.has_client_id(ServiceId::Mal));
+        let own = Config { anilist_client_id: Some("777".into()), mal_client_id: Some("m".into()), ..Config::default() };
+        assert_eq!(own.effective_client_id(ServiceId::AniList).as_deref(), Some("777"), "the user's own wins");
+        assert_eq!(own.effective_client_id(ServiceId::Mal).as_deref(), Some("m"));
+        assert!(ANILIST_CLIENT_ID.parse::<u32>().is_ok_and(|n| n > 0));
+        // The saved ID alone still says whether the user brought their own.
+        assert_eq!(empty.client_id(ServiceId::AniList), None);
+    }
+
+    #[test]
+    fn anilist_client_ids_are_checked() {
+        assert_eq!(check_anilist_client_id(" \"12345\"\n").unwrap(), "12345");
+        assert!(check_anilist_client_id("").unwrap_err().contains("Paste"));
+        assert!(check_anilist_client_id("12 345").unwrap_err().contains("no spaces"));
+        assert!(check_anilist_client_id("aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7d").unwrap_err().contains("Client Secret"));
+        assert!(check_anilist_client_id("abc").unwrap_err().contains("a number"));
+        assert!(check_anilist_client_id("0").is_err());
+        assert!(check_anilist_client_id("12345678901").is_err());
     }
 
     #[test]
@@ -871,10 +1058,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kotora-clear-id-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        std::fs::write(&path, "[mal]\nclient_id = \"0123456789abcdef0123456789abcdef\" # mine\n\n[updates]\nauto = true\n").unwrap();
-        clear_client_id(&path).unwrap();
+        std::fs::write(&path, "[mal]\nclient_id = \"0123456789abcdef0123456789abcdef\" # mine\n\n[anilist]\nclient_id = \"12345\"\n\n[updates]\nauto = true\n").unwrap();
+        clear_client_id(&path, crate::service::ServiceId::Mal).unwrap();
         let c = Config::load(&path).unwrap();
-        assert_eq!(c.mal_client_id, None);
+        assert_eq!((c.mal_client_id.as_deref(), c.anilist_client_id.as_deref()), (None, Some("12345")), "only that service's");
+        clear_client_id(&path, crate::service::ServiceId::AniList).unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.anilist_client_id, None);
         assert!(c.updates.auto, "the rest stays");
         std::fs::remove_dir_all(&dir).unwrap();
     }

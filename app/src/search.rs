@@ -87,21 +87,44 @@ pub fn mal_id(q: &str) -> Option<(u32, bool)> {
     query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(digits).map(|id| (id, true))
 }
 
+/// An AniList anime id in the search box: a pasted `anilist.co/anime/170001[/slug]` link, or a
+/// bare number (as [`mal_id`]).
+pub fn anilist_id(q: &str) -> Option<(u32, bool)> {
+    let q = q.trim();
+    if let Some(bare) = mal_id(q).filter(|(_, link)| !link) {
+        return Some(bare);
+    }
+    let rest = q.strip_prefix("https://").or_else(|| q.strip_prefix("http://")).unwrap_or(q);
+    let t = rest.strip_prefix("www.").unwrap_or(rest).strip_prefix("anilist.co/anime/")?;
+    let end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+    let ok = end > 0 && matches!(t[end..].chars().next(), None | Some('/' | '?' | '#'));
+    t[..end].parse::<u32>().ok().filter(|n| ok && *n > 0).map(|id| (id, true))
+}
+
+/// The active service's id in the search box (a link of that service, or a number).
+pub fn link_id(q: &str, svc: kotora_core::service::ServiceId) -> Option<(u32, bool)> {
+    match svc {
+        kotora_core::service::ServiceId::Mal => mal_id(q),
+        kotora_core::service::ServiceId::AniList => anilist_id(q),
+    }
+}
+
 fn norm(q: &str) -> String {
     q.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
-/// Why MyAnimeList isn't searched now, if it isn't.
+/// Why the service isn't searched now, if it isn't.
 pub fn blocked(s: &State) -> Option<String> {
     let q = norm(s.search_text());
+    let svc = s.service.title();
     if s.auth == Auth::Expired {
-        return Some("Sign in again to search MyAnimeList.".into());
+        return Some(format!("Sign in again to search {svc}."));
     }
     if s.offline {
-        return Some("Offline: searching MyAnimeList needs the network. Your list is searched above.".into());
+        return Some(format!("Offline: searching {svc} needs the network. Your list is searched above."));
     }
     if q.chars().count() < 3 {
-        return Some("Type 3 letters or more to search MyAnimeList too.".into());
+        return Some(format!("Type 3 letters or more to search {svc} too."));
     }
     None
 }
@@ -110,7 +133,7 @@ impl State {
     /// Every edit of the search box: the list part at once, MyAnimeList after a pause. A pasted
     /// MyAnimeList link opens its details page at once (and leaves the box empty).
     pub fn search_changed(&mut self) {
-        if let Some((id, true)) = mal_id(self.search_text()) {
+        if let Some((id, true)) = link_id(self.search_text(), self.service) {
             if self.page == Page::Search { self.find.replace_text("") } else { self.query.replace_text("") }
             self.refresh();
             self.open_mal_id(id);
@@ -152,9 +175,9 @@ impl State {
             if g.load(Ordering::Relaxed) != seq {
                 return;
             }
-            let r = match crate::online::mal_service() {
-                Some(mut mal) => kotora_core::service::ListService::browse(&mut mal, &q, LIMIT).map_err(crate::online::error_text),
-                None => Err("Sign in to search MyAnimeList.".into()),
+            let r = match crate::account::open() {
+                Some(mut svc) => svc.browse(&q, LIMIT).map_err(crate::online::error_text),
+                None => Err(format!("Sign in to search {}.", crate::account::active().title())),
             };
             h.update_if(move |s, _| s.online_answer(seq, q, r));
         });
@@ -205,14 +228,14 @@ impl State {
         let stub = match (self.entries.iter().find(|e| e.id == id), self.online.hits.iter().find(|h| h.id == id)) {
             (Some(e), _) => crate::details::Stub::from_entry(e),
             (None, Some(h)) => crate::details::Stub::from_hit(h, self.prefs.titles),
-            (None, None) => crate::details::Stub::bare(id, &format!("MyAnimeList #{id}")),
+            (None, None) => crate::details::Stub::bare(id, &format!("{} #{id}", self.service.title())),
         };
         self.open_details(stub);
     }
 
     /// Enter in the search box: a bare id opens its page. Returns whether it did.
     pub fn search_submit(&mut self) -> bool {
-        let Some((id, _)) = mal_id(self.search_text()) else { return false };
+        let Some((id, _)) = link_id(self.search_text(), self.service) else { return false };
         self.open_mal_id(id);
         true
     }
@@ -275,7 +298,7 @@ pub enum SRow {
 /// The lines of the search results, top to bottom.
 pub fn layout(s: &State) -> Vec<SRow> {
     let mut v = Vec::new();
-    if let Some((id, false)) = mal_id(s.search_text()) {
+    if let Some((id, false)) = link_id(s.search_text(), s.service) {
         v.push(SRow::Id(id));
     }
     // The list page's filter: the way to MyAnimeList first, then the list's matches.
@@ -347,7 +370,7 @@ pub fn line(s: &State, r: SRow) -> El {
             } else {
                 None
             };
-            head("sr/online-head-line", "On MyAnimeList".into(), end)
+            head("sr/online-head-line", format!("On {}", s.service.title()), end)
         }
         SRow::Note => note(s),
         SRow::Find => find_line(s),
@@ -369,14 +392,14 @@ fn find_line(s: &State) -> El {
         .gap(10.0)
         .center_y()
         .role("button")
-        .label("Search MyAnimeList too")
+        .label(format!("Search {} too", s.service.title()))
         .hover(PAL.hover())
         .on_press_tx(|s: &mut State, tx: &mut Tx| {
             tx.instant();
             s.search_for_query();
         })
         .child(icon(&icons::SEARCH, 16.0).color(PAL.accent_hi))
-        .child(text(format!("Search MyAnimeList for \u{201c}{}\u{201d}", s.query.text.trim())).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
+        .child(text(format!("Search {} for \u{201c}{}\u{201d}", s.service.title(), s.query.text.trim())).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
         .child(spacer())
         .child(crate::ui::kbd(kbd))
 }
@@ -385,8 +408,8 @@ fn find_line(s: &State) -> El {
 fn id_line(s: &State, id: u32) -> El {
     let known = s.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).or_else(|| s.online.hits.iter().find(|h| h.id == id).map(|h| h.title.clone()));
     let what = match known {
-        Some(t) => format!("MyAnimeList #{id}: {t}"),
-        None => format!("MyAnimeList #{id}"),
+        Some(t) => format!("{} #{id}: {t}", s.service.title()),
+        None => format!("{} #{id}", s.service.title()),
     };
     row()
         .key("sr/id-line")
@@ -395,7 +418,7 @@ fn id_line(s: &State, id: u32) -> El {
         .gap(10.0)
         .center_y()
         .role("button")
-        .label(format!("Open MyAnimeList anime {id}"))
+        .label(format!("Open {} anime {id}", s.service.title()))
         .hover(PAL.hover())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
@@ -413,7 +436,7 @@ fn note(s: &State) -> El {
         return base.child(text(why).font(theme::BODY).color(PAL.faint).wrap().grow(1.0).min_w(0.0));
     }
     if s.online.pending {
-        return base.child(text("Searching MyAnimeList\u{2026}").font(theme::BODY).color(PAL.faint));
+        return base.child(text(format!("Searching {}\u{2026}", s.service.title())).font(theme::BODY).color(PAL.faint));
     }
     if let Some(e) = &s.online.error {
         return base
@@ -421,9 +444,9 @@ fn note(s: &State) -> El {
             .child(ghost("sr/retry", "Try again", State::search_again).h(26.0));
     }
     let line = if s.online.hits.is_empty() {
-        format!("MyAnimeList found nothing for \u{201c}{}\u{201d}.", s.search_text().trim())
+        format!("{} found nothing for \u{201c}{}\u{201d}.", s.service.title(), s.search_text().trim())
     } else {
-        "Everything MyAnimeList found is on your list already.".into()
+        format!("Everything {} found is on your list already.", s.service.title())
     };
     base.child(text(line).font(theme::BODY).color(PAL.faint))
 }
@@ -588,6 +611,7 @@ pub fn fake_hits() -> Vec<AnimeHit> {
         season: season.map(|(y, s)| (y, s.to_string())),
         mean,
         cover_url: None,
+        ..Default::default()
     };
     vec![
         h(9101, "Lanterns of Kirigaoka: Festival Night", Some("Lanterns: Festival Night"), "movie", Some(1), "finished_airing", Some((2026, "summer")), Some(8.31)),
@@ -637,6 +661,19 @@ mod tests {
 
     /// A pasted link opens the page at once and empties the box; a number keeps the search
     /// and offers the id, which Enter opens. Both work for anime not on the list.
+    #[test]
+    fn anilist_links_and_ids() {
+        use kotora_core::service::ServiceId;
+        assert_eq!(link_id("170001", ServiceId::AniList), Some((170001, false)));
+        for link in ["https://anilist.co/anime/170001", "https://anilist.co/anime/170001/Kirigaoka-no-Lantern/", "anilist.co/anime/170001?x=1"] {
+            assert_eq!(link_id(link, ServiceId::AniList), Some((170001, true)), "{link}");
+        }
+        for not in ["https://anilist.co/manga/5", "https://anilist.co/anime/abc", "https://myanimelist.net/anime/41590"] {
+            assert_eq!(link_id(not, ServiceId::AniList), None, "{not}");
+        }
+        assert_eq!(link_id("https://anilist.co/anime/170001", ServiceId::Mal), None, "each service its own links");
+    }
+
     #[test]
     fn an_id_opens_the_details_page() {
         let mut s = searching("https://myanimelist.net/anime/41590/Velvet_Orchard");

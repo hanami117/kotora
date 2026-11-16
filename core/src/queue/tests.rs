@@ -1,7 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::*;
-use crate::{ListItem, Media};
+use crate::Scope;
+use crate::{Kind, ListItem, Media};
 
 /// A made-up service: its own copy of the list, scripted errors, and a log of every call.
 #[derive(Default)]
@@ -65,6 +66,11 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
             cover_url: None,
             start_date: None,
             broadcast: None,
+            authors: Vec::new(),
+            kind: Default::default(),
+            volumes: None,
+            next_airing: None,
+            id_mal: None,
         },
         status: Status::Watching,
         progress,
@@ -72,6 +78,7 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
         rewatching: false,
         times_rewatched: 0,
         updated_at,
+        volumes: 0,
     }
 }
 
@@ -134,8 +141,8 @@ fn the_worker_sends_and_saves_the_services_answer() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(4), 500).unwrap();
     s.enqueue("mal", 2, Change { status: Some(Status::Completed), score: Some(None), progress: Some(12), ..Default::default() }, 501).unwrap();
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
-    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { media_id: 2, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 2, outcome: Outcome::Sent });
     assert_eq!(step(&mut s, &mut f, 602).unwrap(), Step::Idle);
     assert_eq!(f.calls, ["get 1", "patch 1", "get 2", "patch 2"]);
     assert_eq!(f.remote[&2].values, v(Status::Completed, 12, None));
@@ -157,7 +164,7 @@ fn a_change_made_elsewhere_is_a_conflict_and_nothing_is_overwritten() {
     s.enqueue("mal", 1, Change { score: Some(Some(9)), ..Default::default() }, 500).unwrap();
     // The phone set the score to 6 after our base.
     f.remote.insert(1, Remote { values: v(Status::Watching, 3, Some(6)), updated_at: 400 });
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Conflict });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
     assert_eq!(f.calls, ["get 1"], "no PATCH");
     let op = s.queue("mal", 600).unwrap().remove(0);
     assert_eq!(op.state, OpState::Conflict);
@@ -168,7 +175,7 @@ fn a_change_made_elsewhere_is_a_conflict_and_nothing_is_overwritten() {
 
     // Keep mine: sent over the service's version.
     s.keep_mine(op.id).unwrap();
-    assert_eq!(step(&mut s, &mut f, 602).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 602).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
     assert_eq!(f.remote[&1].values.score, Some(9));
 }
 
@@ -192,8 +199,8 @@ fn a_higher_progress_wins_on_its_own_and_a_lower_one_asks() {
     s.enqueue("mal", 2, progress(4), 500).unwrap();
     f.remote.insert(1, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
     f.remote.insert(2, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 2, outcome: Outcome::Conflict });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 2, outcome: Outcome::Conflict });
     assert_eq!(f.remote[&1].values.progress, 6);
 }
 
@@ -202,7 +209,7 @@ fn with_the_setting_off_a_higher_progress_asks_too() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
     f.remote.insert(1, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
-    assert_eq!(step_with(&mut s, &mut f, 600, false).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Conflict });
+    assert_eq!(step_with(&mut s, &mut f, 600, false).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
 }
 
 #[test]
@@ -210,7 +217,7 @@ fn values_already_on_the_service_count_as_sent() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
     f.remote.insert(1, Remote { values: v(Status::Watching, 6, Some(7)), updated_at: 450 });
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::AlreadyThere });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::AlreadyThere });
     assert_eq!(f.calls, ["get 1"]);
     assert_eq!(entry(&s, 1).updated_at, 450);
 }
@@ -232,7 +239,7 @@ fn no_network_backs_off_and_tries_again_later() {
     assert_eq!(s.queue("mal", 630).unwrap()[0].next_try, 690, "60 s after the second try");
     // Sync now: no waiting.
     s.retry_now("mal").unwrap();
-    assert_eq!(step(&mut s, &mut f, 631).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 631).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
 }
 
 #[test]
@@ -286,7 +293,7 @@ fn a_refused_change_fails_with_the_services_words_until_edited_or_discarded() {
     f.errors.extend([ServiceError::Other("MyAnimeList answered HTTP 400 (out of range)".into())]);
     // The error comes on the read here; the same path holds for the write.
     let st = step(&mut s, &mut f, 600).unwrap();
-    assert_eq!(st, Step::Handled { media_id: 1, outcome: Outcome::Failed("MyAnimeList answered HTTP 400 (out of range)".into()) });
+    assert_eq!(st, Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Failed("MyAnimeList answered HTTP 400 (out of range)".into()) });
     let op = s.queue("mal", 600).unwrap().remove(0);
     assert_eq!((op.state, op.error.as_deref()), (OpState::Failed, Some("MyAnimeList answered HTTP 400 (out of range)")));
     assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Idle, "a failed change is not retried by itself");
@@ -315,11 +322,11 @@ fn a_full_sync_keeps_waiting_changes_on_top() {
     let q = s.queue("mal", 800).unwrap();
     assert_eq!(q[0].title, "Show 1");
     let mut f = Fake::default();
-    assert_eq!(step(&mut s, &mut f, 900).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Conflict });
+    assert_eq!(step(&mut s, &mut f, 900).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
     assert_eq!(s.queue("mal", 900).unwrap()[0].remote, None, "removed there");
     // Keep mine puts it back on the list; take theirs would have dropped it.
     s.keep_mine(q[0].id).unwrap();
-    assert_eq!(step(&mut s, &mut f, 901).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 901).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
     assert_eq!(f.remote[&1].values.progress, 5);
 }
 
@@ -344,11 +351,11 @@ fn an_edit_while_sending_waits_behind_and_starts_from_the_new_state() {
     assert_eq!(s.queue("mal", 501).unwrap()[1].old.progress, 4);
     // The first lands: the service answers progress 4 with a new time.
     s.set_state(first, OpState::Queued).unwrap();
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
     assert_eq!(entry(&s, 1).progress, 5, "the second change still shows");
     let q = s.queue("mal", 600).unwrap();
     assert_eq!(q[0].base_updated_at, f.remote[&1].updated_at, "rebased on our own write");
-    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
     assert_eq!(f.remote[&1].values.progress, 5);
 }
 
@@ -361,7 +368,7 @@ fn a_change_caught_mid_send_goes_again_at_start() {
     s.queue_start("mal", 600).unwrap();
     // It did reach the service before the crash: found there, not sent twice.
     f.remote.insert(1, Remote { values: v(Status::Watching, 4, Some(7)), updated_at: 550 });
-    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { media_id: 1, outcome: Outcome::AlreadyThere });
+    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::AlreadyThere });
 }
 
 #[test]
@@ -398,7 +405,7 @@ fn changes_read_plainly() {
 }
 
 fn new_media(id: u32, episodes: Option<u32>) -> Media {
-    Media { id, title: format!("New {id}"), title_en: None, title_ja: None, synonyms: vec![], episodes, format: "tv".into(), air_status: "finished_airing".into(), cover_url: None, start_date: None, broadcast: None }
+    Media { id, title: format!("New {id}"), title_en: None, title_ja: None, synonyms: vec![], episodes, format: "tv".into(), air_status: "finished_airing".into(), cover_url: None, start_date: None, broadcast: None, ..Default::default() }
 }
 
 #[test]
@@ -411,7 +418,7 @@ fn an_add_shows_at_once_and_is_sent_as_a_new_entry() {
     assert_eq!((op.id, op.added, op.change.status), (id, true, Some(Status::Watching)));
     assert_eq!(describe_op(op), "Add as Watching");
     // Not on the service yet: that is no conflict.
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 7, outcome: Outcome::Sent });
     assert_eq!(f.remote[&7].values.status, Status::Watching);
     assert_eq!(entry(&s, 7).updated_at, f.remote[&7].updated_at);
 }
@@ -437,7 +444,7 @@ fn an_add_can_start_at_an_episode() {
     let q = s.queue("mal", 500).unwrap();
     assert_eq!(q.len(), 1, "one change");
     assert_eq!(describe_op(&q[0]), "Add as Watching, progress 4");
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 7, outcome: Outcome::Sent });
     assert_eq!((f.remote[&7].values.status, f.remote[&7].values.progress), (Status::Watching, 4));
     // Never past the count; an unknown count takes the episode as it is.
     s.add_to_list("mal", &new_media(8, Some(12)), Status::Watching, Some(30), 700).unwrap();
@@ -496,12 +503,12 @@ fn an_add_finds_the_anime_already_on_the_service() {
     let (mut s, mut f) = setup();
     f.remote.insert(7, Remote { values: v(Status::Completed, 12, Some(9)), updated_at: 300 });
     s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap();
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::Conflict }, "nothing overwritten");
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 7, outcome: Outcome::Conflict }, "nothing overwritten");
     // Same values there: already there.
     let (mut s, mut f) = setup();
     f.remote.insert(7, Remote { values: v(Status::Watching, 0, None), updated_at: 300 });
     s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap();
-    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { media_id: 7, outcome: Outcome::AlreadyThere });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 7, outcome: Outcome::AlreadyThere });
 }
 
 /// A rewatch goes through the queue like any edit: start, count, finish in one change, and the
@@ -533,4 +540,204 @@ fn a_rewatch_is_queued_and_sent() {
     f.remote.insert(1, Remote { values: Values { times_rewatched: 1, ..v(Status::Completed, 12, Some(8)) }, updated_at: 300 });
     assert!(matches!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { outcome: Outcome::Sent, .. }));
     assert_eq!(f.remote[&1].values.times_rewatched, 2);
+}
+
+// ------------------------------------------------------------------------------------- manga
+
+/// A made-up service with an anime list and a manga list, ids overlapping on purpose.
+#[derive(Default)]
+struct Both {
+    anime: HashMap<u32, Remote>,
+    manga: HashMap<u32, Remote>,
+    calls: Vec<String>,
+    clock: i64,
+}
+
+impl Both {
+    fn list(&mut self, kind: Kind) -> &mut HashMap<u32, Remote> {
+        if kind == Kind::Manga { &mut self.manga } else { &mut self.anime }
+    }
+
+    fn get(&mut self, kind: Kind, id: u32) -> Option<Remote> {
+        self.calls.push(format!("get {} {id}", kind.name()));
+        self.list(kind).get(&id).copied()
+    }
+
+    fn patch(&mut self, kind: Kind, id: u32, change: &Change) -> Remote {
+        self.calls.push(format!("patch {} {id}", kind.name()));
+        self.clock += 1;
+        let at = self.clock;
+        let old = self.list(kind).get(&id).map_or(Values::new(Status::PlanToWatch, 0, None), |r| r.values);
+        let r = Remote { values: change.apply(old), updated_at: at };
+        self.list(kind).insert(id, r);
+        r
+    }
+}
+
+impl ListService for Both {
+    fn name(&self) -> &'static str {
+        "mal"
+    }
+    fn title(&self) -> &'static str {
+        "MyAnimeList"
+    }
+    fn user_name(&mut self) -> std::result::Result<String, ServiceError> {
+        Ok("demo_user".into())
+    }
+    fn fetch_list(&mut self) -> std::result::Result<Vec<ListItem>, ServiceError> {
+        Ok(vec![])
+    }
+    fn get_entry(&mut self, id: u32) -> std::result::Result<Option<Remote>, ServiceError> {
+        Ok(self.get(Kind::Anime, id))
+    }
+    fn update_entry(&mut self, id: u32, change: &Change) -> std::result::Result<Remote, ServiceError> {
+        Ok(self.patch(Kind::Anime, id, change))
+    }
+    fn get_manga_entry(&mut self, id: u32) -> std::result::Result<Option<Remote>, ServiceError> {
+        Ok(self.get(Kind::Manga, id))
+    }
+    fn update_manga_entry(&mut self, id: u32, change: &Change) -> std::result::Result<Remote, ServiceError> {
+        Ok(self.patch(Kind::Manga, id, change))
+    }
+}
+
+const MANGA: Scope = Scope::new("mal", Kind::Manga);
+
+fn manga_item(id: u32, chapters: u32, volumes: u32, updated_at: i64) -> ListItem {
+    let mut it = item(id, chapters, updated_at);
+    it.media.kind = Kind::Manga;
+    it.media.title = format!("Manga {id}");
+    it.media.episodes = Some(120);
+    it.media.volumes = Some(14);
+    it.volumes = volumes;
+    it
+}
+
+fn read(chapters: u32, volumes: u32) -> Values {
+    Values { volumes, ..v(Status::Watching, chapters, Some(7)) }
+}
+
+/// Anime 1 (progress 3) and manga 1 (chapter 21, volume 3), both at updated 100, and a
+/// service that agrees.
+fn setup_both() -> (Store, Both) {
+    let mut s = Store::open_memory().unwrap();
+    s.replace_list("mal", &[item(1, 3, 100)], 100).unwrap();
+    s.replace_list(MANGA, &[manga_item(1, 21, 3, 100)], 100).unwrap();
+    let mut f = Both { clock: 1000, ..Default::default() };
+    f.anime.insert(1, Remote { values: v(Status::Watching, 3, Some(7)), updated_at: 100 });
+    f.manga.insert(1, Remote { values: read(21, 3), updated_at: 100 });
+    (s, f)
+}
+
+fn chapters(c: u32, vol: Option<u32>) -> Change {
+    Change { progress: Some(c), volumes: vol, ..Default::default() }
+}
+
+#[test]
+fn a_manga_edit_queues_apart_from_the_anime_with_the_same_id() {
+    let (mut s, mut f) = setup_both();
+    let a = s.enqueue("mal", 1, progress(4), 500).unwrap().unwrap();
+    let m = s.enqueue(MANGA, 1, chapters(22, Some(4)), 501).unwrap().unwrap();
+    assert_ne!(a, m, "two changes: the same id in two lists");
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes, mi.updated_at), (22, 4, 501));
+    assert_eq!(entry(&s, 1).progress, 4, "the anime has its own edit");
+    let q = s.queue("mal", 501).unwrap();
+    assert_eq!(q.iter().map(|o| (o.kind, o.title.as_str())).collect::<Vec<_>>(), [(Kind::Anime, "Show 1"), (Kind::Manga, "Manga 1")]);
+    assert_eq!(q[1].old, read(21, 3));
+    assert_eq!(describe_op(&q[1]), "Chapters 21 \u{2192} 22, volumes 3 \u{2192} 4");
+    assert_eq!(s.open_count("mal").unwrap(), 2, "one badge for both");
+    // A second manga edit merges into the manga change only.
+    s.enqueue(MANGA, 1, chapters(23, None), 502).unwrap();
+    let q = s.queue("mal", 502).unwrap();
+    assert_eq!((q.len(), q[1].change.progress, q[1].change.volumes, q[1].edits), (2, Some(23), Some(4), 2));
+    // The worker sends each with its own kind's calls.
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(f.calls, ["get anime 1", "patch anime 1", "get manga 1", "patch manga 1"]);
+    assert_eq!(f.manga[&1].values, read(23, 4));
+    assert_eq!(f.anime[&1].values.progress, 4);
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes, mi.updated_at), (23, 4, 1002), "the service's answer is saved");
+    assert_eq!(s.open_count("mal").unwrap(), 0);
+}
+
+#[test]
+fn an_edit_back_of_the_volumes_cancels() {
+    let (mut s, _) = setup_both();
+    s.enqueue(MANGA, 1, chapters(21, Some(4)), 500).unwrap();
+    assert_eq!(s.enqueue(MANGA, 1, chapters(21, Some(3)), 501).unwrap(), None);
+    assert_eq!(s.open_count("mal").unwrap(), 0);
+    assert_eq!(s.load_item(MANGA, 1).unwrap().unwrap().updated_at, 100);
+}
+
+#[test]
+fn a_manga_conflict_keeps_the_volumes_and_higher_counts_win() {
+    let (mut s, mut f) = setup_both();
+    // Read further on another device: chapter 25, volume 4.
+    f.manga.insert(1, Remote { values: read(25, 4), updated_at: 200 });
+    s.enqueue(MANGA, 1, chapters(30, Some(5)), 500).unwrap();
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 1, outcome: Outcome::Sent }, "both counts higher: ours win");
+    // A lower chapter count is a conflict, even with more volumes.
+    f.manga.insert(1, Remote { values: read(40, 6), updated_at: 5000 });
+    s.enqueue(MANGA, 1, chapters(35, Some(7)), 700).unwrap();
+    assert_eq!(step(&mut s, &mut f, 800).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 1, outcome: Outcome::Conflict });
+    let op = s.queue("mal", 800).unwrap().into_iter().find(|o| o.state == OpState::Conflict).unwrap();
+    assert_eq!((op.kind, op.remote.unwrap().values), (Kind::Manga, read(40, 6)));
+    // Take theirs: the manga entry takes the service's values; the anime 1 is untouched.
+    s.take_theirs("mal", op.id).unwrap();
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes, mi.updated_at), (40, 6, 5000));
+    assert_eq!(entry(&s, 1).progress, 3);
+}
+
+#[test]
+fn a_manga_conflict_can_keep_mine_or_be_discarded() {
+    let (mut s, mut f) = setup_both();
+    // Read further elsewhere: ours (22) is lower, so it asks.
+    f.manga.insert(1, Remote { values: read(30, 3), updated_at: 200 });
+    s.enqueue(MANGA, 1, chapters(22, None), 500).unwrap();
+    assert!(matches!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { outcome: Outcome::Conflict, .. }));
+    let id = s.queue("mal", 600).unwrap()[0].id;
+    s.keep_mine(id).unwrap();
+    assert!(matches!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Manga, outcome: Outcome::Sent, .. }));
+    assert_eq!(f.manga[&1].values.progress, 22);
+    // Discard puts the manga entry back.
+    s.enqueue(MANGA, 1, chapters(23, Some(4)), 700).unwrap();
+    let id = s.queue("mal", 700).unwrap()[0].id;
+    s.discard("mal", id).unwrap();
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes), (22, 3));
+}
+
+#[test]
+fn adding_a_manga_and_a_full_manga_sync() {
+    let (mut s, mut f) = setup_both();
+    let mut m = manga_item(5, 0, 0, 0).media;
+    m.volumes = Some(6);
+    m.episodes = Some(48);
+    // Added as Completed: last chapter and last volume.
+    s.add_to_list("mal", &m, Status::Completed, None, 500).unwrap();
+    let it = s.load_item(MANGA, 5).unwrap().unwrap();
+    assert_eq!((it.status, it.progress, it.volumes, it.media.kind), (Status::Completed, 48, 6, Kind::Manga));
+    assert!(s.load_item("mal", 5).unwrap().is_none(), "not an anime");
+    let op = s.queue("mal", 500).unwrap().pop().unwrap();
+    assert!(op.added);
+    assert_eq!(describe_op(&op), "Add as Completed, chapter 48, volume 6");
+    // A manga sync before the add is sent keeps it on the list; the anime list is untouched.
+    s.replace_list(MANGA, &[manga_item(1, 21, 3, 100)], 550).unwrap();
+    assert!(s.load_item(MANGA, 5).unwrap().is_some());
+    assert_eq!(s.load_list("mal").unwrap().len(), 1);
+    assert!(matches!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 5, outcome: Outcome::Sent }));
+    assert_eq!(f.manga[&5].values, Values { volumes: 6, ..v(Status::Completed, 48, None) });
+    assert!(!f.anime.contains_key(&5));
+}
+
+#[test]
+fn manga_words() {
+    let old = Values { volumes: 2, times_rewatched: 0, ..v(Status::Completed, 48, Some(8)) };
+    assert_eq!(describe_in(Kind::Manga, &Change { status: Some(Status::Watching), ..Default::default() }, &old), "Status \u{2192} Reading");
+    assert_eq!(describe_in(Kind::Manga, &Change { rewatching: Some(true), progress: Some(0), ..Default::default() }, &old), "Chapters 48 \u{2192} 0, reread started");
+    assert_eq!(describe_in(Kind::Manga, &Change { times_rewatched: Some(2), ..Default::default() }, &old), "Reread twice");
+    assert_eq!(describe(&Change { rewatching: Some(true), progress: Some(0), ..Default::default() }, &old), "Progress 48 \u{2192} 0, rewatch started", "anime words unchanged");
 }

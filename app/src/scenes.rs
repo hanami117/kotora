@@ -18,6 +18,8 @@ pub type Scene = (&'static str, fn(&mut State));
 pub const SCENES: &[Scene] = &[
     // The main list, as in the design mockup.
     ("list", |_| {}),
+    // Signed in to AniList: the same list, AniList's account in the sidebar.
+    ("list-anilist", anilist),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
     ("list-covers", fake_covers),
     // 320 entries on Watching, with covers: frame time on a long list.
@@ -170,6 +172,40 @@ pub const SCENES: &[Scene] = &[
     }),
     // Waiting for the browser, with the link in case it didn't open.
     ("setup-signing-in", |s| signing_in(s, true)),
+    // AniList: the first steps in AniList's words, and the wait with the token field (for a
+    // client registered with AniList's PIN page).
+    ("setup-anilist-welcome", |s| {
+        setup(s, Step::Welcome);
+        s.setup_service = true;
+        s.service = kotora_core::service::ServiceId::AniList;
+    }),
+    // AniList has its own Client ID built in: Welcome, then straight to "Sign in with AniList".
+    ("setup-anilist-sign-in", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SignedOut;
+    }),
+    ("setup-anilist-signing-in", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SigningIn;
+        let url = kotora_core::anilist::authorize_url(kotora_core::service::ANILIST_CLIENT_ID);
+        s.apply(crate::model::Msg::SignInUrl { url, opened: true });
+    }),
+    ("setup-anilist-token-error", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SigningIn;
+        s.client_id.token.replace_text("12345");
+        crate::online::sign_in_with_token(s);
+    }),
+    // The loopback failed (a busy port): the error, "Try again", and the token field.
+    ("setup-anilist-loopback-failed", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SignedOut;
+        s.error = Some("Can't listen on port 47321 for AniList's reply: Address already in use".into());
+    }),
     ("setup-signing-in-no-browser", |s| {
         signing_in(s, false);
         s.client_id.link_copied = true;
@@ -655,8 +691,31 @@ pub const SCENES: &[Scene] = &[
     ("settings-page", |s| s.go(Page::Settings)),
     // Settings, one scene per section (fake library folders for Library).
     ("settings-general", |s| crate::settings::open(s, Section::General)),
+    // Settings → General → Keyboard with Alt picked for the list pages.
+    ("settings-keys-alt", |s| {
+        s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
+        crate::settings::open(s, Section::General)
+    }),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
     ("settings-account", |s| crate::settings::open(s, Section::Account)),
+    // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
+    ("settings-account-anilist", |s| {
+        anilist(s);
+        crate::settings::open(s, Section::Account)
+    }),
+    // AniList's Client ID is built in (none saved): "Use my own client ID\u{2026}" is the advanced link.
+    ("settings-account-anilist-built-in", |s| {
+        anilist(s);
+        s.client_id.hint = None;
+        crate::settings::open(s, Section::Account)
+    }),
+    // ... and it opens the field.
+    ("settings-account-anilist-own-id", |s| {
+        anilist(s);
+        s.client_id.hint = None;
+        s.client_id.editing = true;
+        crate::settings::open(s, Section::Account)
+    }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
     ("settings-library", |s| {
         crate::library::fake(s);
@@ -1208,6 +1267,12 @@ fn many(s: &mut State) {
 }
 
 /// The wizard at `step`, first run (no Client ID, nobody signed in).
+/// AniList is the active service and signed in (the fake list is the same).
+fn anilist(s: &mut State) {
+    s.service = kotora_core::service::ServiceId::AniList;
+    s.account = Some(("demo_user".into(), "AniList"));
+}
+
 fn setup(s: &mut State, step: Step) {
     signed_out(s, Auth::NoClientId);
     s.client_id.hint = None;
@@ -1260,6 +1325,7 @@ mod tests {
     use super::SCENES;
     use crate::model::{Page, Sort};
     use crate::setup::Step;
+    use kotora_core::service::ServiceId;
     use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
@@ -1291,10 +1357,11 @@ mod tests {
         rt.frame(1.0 / 60.0);
     }
 
-    /// First screen: two cards side by side when wide, stacked when narrow; MyAnimeList goes on
-    /// by Tab and Return, by Return alone, or by a click; AniList does nothing.
+    /// The first screen: both cards are buttons, one focus group. Tab reaches MyAnimeList, the
+    /// arrow moves to AniList; Return alone picks MyAnimeList (the default button); a click on
+    /// AniList sets up AniList.
     #[test]
-    fn the_service_choice_goes_on_with_mal_only() {
+    fn the_service_choice_goes_on_with_either_service() {
         let rt = render("setup-service", (1280.0, 800.0));
         let (mx, my) = rt.find("setup/service-mal").expect("MyAnimeList card");
         let (ax, ay) = rt.find("setup/service-anilist").expect("AniList card");
@@ -1305,7 +1372,7 @@ mod tests {
         let ((_, my), (_, ay)) = (rt.find("setup/service-mal").unwrap(), rt.find("setup/service-anilist").unwrap());
         assert!(my < ay, "narrow: stacked");
 
-        // Tab walks the sidebar, then reaches MyAnimeList; AniList is never visited. Return goes on.
+        // Tab walks the sidebar, then reaches MyAnimeList; the arrow goes on to AniList.
         let mut rt = render("setup-service", (1280.0, 800.0));
         let mut seen = Vec::new();
         for _ in 0..30 {
@@ -1316,31 +1383,47 @@ mod tests {
             }
         }
         assert_eq!(seen.last().map(String::as_str), Some("setup/service-mal"), "Tab reaches MyAnimeList: {seen:?}");
-        key(&mut rt, rune::Key::Tab);
-        assert!(!focused(&rt).iter().any(|k| k == "setup/service-anilist"), "AniList takes no focus");
-        let ani = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("setup/service-anilist")).unwrap();
-        assert!(!ani.focusable && ani.opacity < 1.0, "dimmed and out of the Tab order");
-        // Back to MyAnimeList (Shift+Tab), then Return.
-        rt.key(rune::KeyEvent { key: rune::Key::Tab, mods: rune::Mods { shift: true, ..rune::Mods::default() } });
-        rt.frame(1.0 / 60.0);
+        key(&mut rt, rune::Key::Right);
+        assert_eq!(focused(&rt), ["setup/service-anilist"]);
+        key(&mut rt, rune::Key::Left);
         assert_eq!(focused(&rt), ["setup/service-mal"]);
         key(&mut rt, rune::Key::Enter);
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
         assert!(rt.find("setup/back").is_some(), "Back returns to the choice");
         click(&mut rt, "setup/back");
         assert_eq!(rt.state.setup, Step::Service);
 
-        // Return with nothing focused also continues (the card is the default button).
+        // Return with nothing focused also continues with MyAnimeList (the default button).
         let mut rt = render("setup-service", (1280.0, 800.0));
         key(&mut rt, rune::Key::Enter);
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
 
-        // A click goes on; a click on AniList stays.
+        // A click on AniList sets up AniList.
         let mut rt = render("setup-service", (1280.0, 800.0));
         click(&mut rt, "setup/service-anilist");
-        assert_eq!(rt.state.setup, Step::Service);
-        click(&mut rt, "setup/service-mal");
-        assert_eq!(rt.state.setup, Step::Welcome);
+        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::AniList));
+    }
+
+    #[test]
+    fn anilist_sign_in_is_one_click() {
+        // Welcome, Sign in, Done: no form to fill and no Client ID to paste.
+        let rt = render("setup-anilist-sign-in", (1280.0, 800.0));
+        assert!(rt.find("setup/sign-in").is_some());
+        for gone in ["setup/form", "setup/cid/input", "setup/copy-redirect", "setup/open-api"] {
+            assert!(rt.find(gone).is_none(), "{gone}");
+        }
+        assert!(rt.find("setup/token/input").is_none(), "the token field waits for a failed or running sign-in");
+        // The fallbacks: while waiting, and after the loopback failed.
+        for name in ["setup-anilist-signing-in", "setup-anilist-loopback-failed"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("setup/token/input").is_some(), "{name}");
+        }
+        assert!(render("setup-anilist-loopback-failed", (1280.0, 800.0)).find("setup/sign-in").is_some(), "Try again");
+        // Settings: the built-in ID needs nothing, and the advanced link opens the field.
+        let rt = render("settings-account-anilist-built-in", (1280.0, 800.0));
+        assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
+        let rt = render("settings-account-anilist-own-id", (1280.0, 800.0));
+        assert!(rt.find("set/cid/input").is_some());
     }
 
     #[test]
@@ -1665,6 +1748,42 @@ mod tests {
         rt.update(|s, _| s.set_theme(Theme::Light));
         rt.frame(1.0 / 60.0);
         assert!(crate::theme::is_light(), "Light picked");
+    }
+
+    /// `[keys] pages = "alt"`: Alt+2 in the focused list filter goes to Plan to watch and types
+    /// nothing; a plain 2 still types; Ctrl+2 no longer goes anywhere. The Settings row shows it.
+    #[test]
+    fn alt_digits_go_to_the_list_pages_even_from_a_field() {
+        use kotora_core::Status;
+        let rt = render("settings-keys-alt", (1280.0, 800.0));
+        let primary = format!("set/page-keys/{}", kotora_core::config::PageKeys::Primary.key());
+        for key in ["set/row/page-keys", primary.as_str(), "set/page-keys/alt"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        let mut s = State::fake();
+        s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
+        s.go(Page::List(Status::Watching));
+        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        rt.on_key = Some(crate::ui::on_key);
+        rt.frame(1.0 / 60.0);
+        click(&mut rt, "search-input");
+        assert_eq!(focused(&rt), ["search-input"]);
+        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.query.text, "2", "a plain digit types");
+        assert_eq!(rt.state.page, Page::List(Status::Watching));
+        let ctrl = if cfg!(target_os = "macos") { rune::Mods { cmd: true, logo: true, ..Default::default() } } else { rune::Mods { cmd: true, ctrl: true, ..Default::default() } };
+        rt.key(rune::KeyEvent { key: rune::Key::Command('3'), mods: ctrl });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::Watching), "Ctrl 3 is not the page key now");
+        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::PlanToWatch), "Alt 2 from the field");
+        assert_eq!(rt.state.query.text, "2", "Alt 2 typed nothing");
+        // Nothing focused: Alt 5 through on_key.
+        rt.key(rune::KeyEvent { key: rune::Key::Text("5".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::Dropped));
     }
 
     /// Settings → Titles: one choice lit, and every page follows it.

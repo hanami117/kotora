@@ -13,6 +13,7 @@
 // Windows: the parts that are stubs for now (start at login, notifications) leave code unused.
 #![cfg_attr(windows, allow(dead_code))]
 
+mod account;
 mod airing;
 mod airnotes;
 mod art;
@@ -256,8 +257,10 @@ fn main() {
         });
     }
     let app = app.init(move || {
+        let service = account::load();
         let mut s = State::start(online::initial_auth());
-        s.client_id.hint = clientid::saved_hint();
+        s.service = service;
+        s.client_id.hint = clientid::saved_hint(service);
         s.setup_service = s.auth == model::Auth::NoClientId && online::wants_service_choice();
         s.setup = s.setup_first();
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());

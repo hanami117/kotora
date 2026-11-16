@@ -1,7 +1,8 @@
 //! Records where a dev build comes from, for the version shown in About and `--version`.
 //!
 //! It emits `KOTORA_GIT` = `branch<TAB>short hash<TAB>dirty (0/1)<TAB>at release tag (0/1)`, or an
-//! empty string when git facts are unavailable (a source tarball has no `.git`, git may be missing).
+//! empty string when git facts are unavailable (a source tarball has no `.git`, git may be missing, or
+//! the git top level isn't Kotora's workspace root, as when a tarball is unpacked inside another checkout).
 //! The rule that turns these into text is `git_suffix` in `src/lib.rs`. This script never fails the
 //! build.
 
@@ -11,6 +12,20 @@ use std::process::Command;
 fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// True when `top` (git's top level) is the workspace root, i.e. the checkout is Kotora's own.
+/// A source tarball unpacked inside some other checkout (an AUR helper's clone) is not.
+fn is_workspace_root(top: &Path, root: &Path) -> bool {
+    match (top.canonicalize(), root.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn own_repo() -> bool {
+    let Some(root) = std::env::var_os("CARGO_MANIFEST_DIR").map(|d| Path::new(&d).join("..")) else { return false };
+    git(&["rev-parse", "--show-toplevel"]).is_some_and(|top| is_workspace_root(Path::new(&top), &root))
 }
 
 fn facts() -> Option<String> {
@@ -30,6 +45,10 @@ fn facts() -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../BUILD");
+    if !own_repo() {
+        println!("cargo:rustc-env=KOTORA_GIT=");
+        return;
+    }
     // HEAD moves on checkout and commit (a commit rewrites the branch ref); the index changes on `git add`.
     for p in ["HEAD", "index", "packed-refs"] {
         if let Some(path) = git(&["rev-parse", "--git-path", p]).filter(|s| Path::new(s).exists()) {

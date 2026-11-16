@@ -199,12 +199,13 @@ pub enum Request {
     Confirm,
     /// Not now: hides the offer for this file. Replies `Now`.
     Dismiss,
-    /// Saves the user's own MyAnimeList Client ID (as Settings → Account's field does; optional). Replies `Done`.
+    /// Saves the user's own Client ID for the active service (as Settings → Account's field does; optional:
+    /// Kotora has its own). Replies `Done`.
     SetClientId { id: String },
-    /// Starts a rewatch of a completed entry: a part of its title, or its MyAnimeList id.
+    /// Starts a rewatch of a completed entry: a part of its title, or its id on the service.
     /// Replies `Edited`.
     Rewatch { title: String },
-    /// Puts an anime on the list: a MyAnimeList id, or a title MyAnimeList is searched for
+    /// Puts an anime on the list: an id on the service, or a title the service is searched for
     /// (it must find one). `status` as in `List`; Watching when `None`. Replies `Edited`.
     Add {
         query: String,
@@ -356,7 +357,7 @@ pub struct NowInfo {
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entry {
-    /// The service's id (MyAnimeList id).
+    /// The service's id (MyAnimeList or AniList, whichever is active).
     pub id: u32,
     pub title: String,
     /// "Watching", "Plan to watch", …

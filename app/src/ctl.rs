@@ -122,7 +122,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             s.dismiss_now();
             Ok(Reply::Now { now: s.ctl_now() })
         })),
-        Request::SetClientId { id } => match kotora_core::config::save_client_id(&kotora_core::paths::config_file(), &id) {
+        Request::SetClientId { id } => match kotora_core::config::save_client_id_for(&kotora_core::paths::config_file(), crate::account::active(), &id) {
             Err(message) => Reply::Error { message, anyway: false },
             Ok(id) => {
                 let hint = kotora_core::config::client_id_hint(&id);
@@ -192,8 +192,8 @@ fn set(s: &mut State, title: &str, change: Change, anyway: bool) -> Result<Reply
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
 /// a title that matches one result exactly, or a single result. Runs on the connection's thread.
 fn find_online(query: &str) -> Result<kotora_core::Media, String> {
-    use kotora_core::service::ListService;
-    let mut mal = crate::online::mal_service().ok_or("kot add needs MyAnimeList: sign in first (and be online).")?;
+    let title = crate::account::active().title();
+    let mut mal = crate::account::open().ok_or_else(|| format!("kot add needs {title}: sign in first (and be online)."))?;
     let q = query.trim();
     if let Ok(id) = q.parse::<u32>() {
         return mal.details(id).map(|d| d.media()).map_err(crate::online::error_text);
@@ -207,7 +207,7 @@ fn find_online(query: &str) -> Result<kotora_core::Media, String> {
     match (exact.as_slice(), hits.as_slice()) {
         ([one], _) => Ok(one.media()),
         ([], [one]) => Ok(one.media()),
-        (_, []) => Err(format!("MyAnimeList found nothing for \u{201c}{q}\u{201d}.")),
+        (_, []) => Err(format!("{title} found nothing for \u{201c}{q}\u{201d}.")),
         _ => {
             let names: Vec<String> = hits.iter().take(6).map(|h| format!("  {:>6}  {}", h.id, h.title)).collect();
             Err(format!("Several anime match \u{201c}{q}\u{201d}; give the id:\n{}", names.join("\n")))

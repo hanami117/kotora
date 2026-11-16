@@ -4,6 +4,48 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+- **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in
+  Settings → Account ("Use AniList"); Kotora keeps one service at a time, and each keeps its own saved list,
+  sign-in and waiting changes, so switching back loses nothing. Sign-in is one click: Kotora has its own
+  AniList API client built in, so it opens AniList's page in your browser, you press Approve, and you are back
+  in Kotora (no client secret, nothing to register). "Use my own client ID…" in Settings → Account is there
+  for the advanced case, and a token pasted from AniList's page works when the browser can't reach Kotora. Rewatches
+  are AniList's "Repeating"; scores go to AniList in your own score format. Detection, the sync queue, search,
+  details, Airing and `kot` work the same with either service.
+- **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
+  no longer throw off "not aired yet" and the Airing timetable.
+- **Alt 1 to 5 for the list pages:** Settings → General → Keyboard → List page shortcuts picks Ctrl (⌘ on macOS)
+  or Alt (Option) for the keys that open Watching, Plan to watch, Completed, On hold and Dropped (`[keys] pages`
+  in config.toml). They work while you type in a search box too. Ctrl , Ctrl K and Ctrl F stay as they are.
+
+### Changed
+- **`kot config client-id ID`** saves your own client ID for the service in use (MyAnimeList or AniList), and
+  **Use Kotora's built-in ID** in Settings → Account works for both.
+- A saved list from a newer Kotora is refused with "Update Kotora to open it", and left as it is.
+
+### Fixed
+- **An anime added from Now Playing** ("Add as Watching") gets its episode count, type and cover right away.
+  Before, it kept only its title ("3 / ?", a lettered tile, no type) until a later sync, or for good on AniList
+  while the add waited to be sent. Anime already saved that way are filled in at the next sync.
+- **Linux shortcuts:** Ctrl , opens Settings and Ctrl 1 to 5 open Watching, Plan to Watch, Completed, On Hold
+  and Dropped. They only worked from the macOS menu bar before.
+- **`kot --version`** shows branch and commit only for builds made in Kotora's own git repository. A build
+  from a source tarball that sits inside another git checkout (an AUR helper's clone, say) no longer picks
+  up that checkout's facts.
+
+### Upgrading from 0.1
+- Kotora 0.2 upgrades the saved list's database (`~/.local/share/kotora/kotora.db`) when it first starts, and
+  keeps the 0.1 file beside it as `kotora.db.schema-9.bak`. Your list, sign-in, waiting changes and settings
+  carry over; MyAnimeList stays your service until you choose AniList.
+- Kotora 0.1 can't open the upgraded database: it says the saved list is from a newer Kotora, and changes
+  nothing. To go back to 0.1, quit Kotora, put `kotora.db.schema-9.bak` back as `kotora.db` and delete
+  `kotora.db-wal` and `kotora.db-shm` if they are there. Changes made in 0.2 are lost; the next 0.2 start
+  upgrades the file again. Kotora 0.1 doesn't know the AniList sign-in and may drop it: sign in to AniList
+  again after coming back to 0.2.
+
 ## [0.1.3] - 2026-11-16
 
 ### Changed

@@ -4,9 +4,9 @@
 
 A native anime tracker for Linux and macOS, written in Rust.
 
-Kotora ("little tiger") keeps your [MyAnimeList](https://myanimelist.net) list up to date. It sees which
-episode is playing in your media player, and asks before it records it. Your list stays on MyAnimeList;
-Kotora is only a client for your own account.
+Kotora ("little tiger") keeps your [MyAnimeList](https://myanimelist.net) or [AniList](https://anilist.co) list
+up to date. It sees which episode is playing in your media player, and asks before it records it. Your list
+stays on MyAnimeList or AniList; Kotora is only a client for your own account.
 
 Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
@@ -18,17 +18,17 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.1.3. MyAnimeList only; AniList comes later.
+**Status:** version 0.2.0 is out (MyAnimeList or AniList).
 
 ## Features
 
-- Your MyAnimeList list: Watching, Plan to watch, Completed, On hold, Dropped, with covers, progress,
-  score and airing information.
+- Your MyAnimeList or AniList list (from 0.2): Watching, Plan to watch, Completed, On hold, Dropped, with
+  covers, progress, score and airing information. On AniList, airing times are AniList's exact schedule.
 - Recognises the episode in your player and offers to record it ("Update to episode 6"). Updating
   automatically is a switch, and it is off by default.
 - Edit progress, score and status. Changes go to a visible sync queue, so they work offline and conflicts
   are shown, not hidden.
-- Search your list and MyAnimeList, add an anime in one click, open a details page.
+- Search your list and MyAnimeList or AniList, add an anime in one click, open a details page.
 - Fast and small: no browser engine, a single binary, nothing running in the background that you didn't start.
 - A command line, `kot`, to control the running app.
 
@@ -62,7 +62,7 @@ Linux, so it needs a recent glibc; on other distros, building from source is the
 
 ### macOS
 
-Apple silicon, macOS 13 or later. Download `Kotora-0.1.3.dmg` from the
+Apple silicon, macOS 13 or later. Download `Kotora-0.2.0.dmg` from the
 [release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
 
 Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
@@ -87,7 +87,7 @@ cd kotora
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
 keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
-tarball (`kotora-0.1.3.tar.gz`) works the same way.
+tarball (`kotora-0.2.0.tar.gz`) works the same way.
 
 ### From source (macOS)
 
@@ -95,21 +95,29 @@ With Rust and `librsvg` (`brew install librsvg`): `packaging/macos/build.sh` bui
 
 ## First start: sign in
 
-Open Kotora, press **Start**, then **Sign in with MyAnimeList**. Your browser opens MyAnimeList's own page:
-allow Kotora there and you are back in the app with your list. Kotora never sees your password. There is
-nothing to register: Kotora has its own MyAnimeList client ID built in. A client ID is public by design (it
-identifies the app, it is not a secret), as it is in Taiga.
+Open Kotora and pick your service: **MyAnimeList** or **AniList** (AniList from 0.2). Press **Start**, then
+**Sign in with MyAnimeList** (or **AniList**). Your browser opens the service's own page: allow (approve on
+AniList) Kotora there and you are back in the app with your list. Kotora never sees your password. There is
+nothing to register: Kotora has its own MyAnimeList and AniList client IDs built in. A client ID is public by
+design (it identifies the app, it is not a secret), as it is in Taiga.
 
-**Your own client ID (advanced).** If you would rather use an API app of your own, register one at
-<https://myanimelist.net/apiconfig> (app type **other**, redirect URL `http://127.0.0.1:47321/callback`), then
-Settings → Account → **Use my own client ID…** (or `kot config client-id ID`). **Use Kotora's built-in ID**
-there goes back. Developers can also set `KOTORA_MAL_CLIENT_ID`, which wins over both.
+Kotora keeps one list at a time. Settings → Account → **Use AniList** (or **Use MyAnimeList**) switches; each
+service keeps its own saved list, sign-in and waiting changes, so switching back loses nothing. If the browser
+can't reach Kotora after AniList's page, paste the token or the address AniList showed into Kotora.
+
+**Your own client ID (advanced).** If you would rather use an API client of your own, register one (MyAnimeList:
+<https://myanimelist.net/apiconfig>, app type **other**; AniList: <https://anilist.co/settings/developer>) with
+the redirect URL `http://127.0.0.1:47321/callback`, then Settings → Account → **Use my own client ID…** (or
+`kot config client-id ID`, for the service in use). **Use Kotora's built-in ID** there goes back. Developers can
+also set `KOTORA_MAL_CLIENT_ID` or `KOTORA_ANILIST_CLIENT_ID`, which win over both.
 
 ## Privacy
 
 - **No telemetry, no analytics, no account of ours.** Apart from your list service, the update check below is
   the only thing Kotora sends anywhere on its own.
-- Your list lives on MyAnimeList. Kotora keeps a local copy to work offline, and covers in a cache you can delete.
+- Your list lives on MyAnimeList or AniList. Kotora keeps a local copy to work offline, and covers in a cache you
+  can delete. Kotora talks to AniList only for your own account, within AniList's rate limit, and never exports
+  or collects AniList's data.
 - **Update check:** once a day, a plain GET of `https://updates.kotora.moe/latest.json` with the User-Agent
   `Kotora/<version>` and four values: the Kotora version, the OS (Linux or macOS), the processor type
   (x86_64 or arm64) and how it was installed (AUR, install.sh, Homebrew, DMG, …), plus a flag on the first
@@ -118,7 +126,7 @@ there goes back. Developers can also set `KOTORA_MAL_CLIENT_ID`, which wins over
   or device id, no cookies. If that server can't be reached, Kotora asks `https://kotora.moe/latest.json`
   instead, which counts nothing. Kotora never downloads an update by itself: it shows a banner, and you
   choose. Turn it off in Settings → About Kotora → **Check for updates**; then nothing is sent.
-- The sign-in token is stored in a file only you can read (`~/.local/share/kotora/tokens.json`), never in
+- The sign-in tokens (one per service) are stored in a file only you can read (`~/.local/share/kotora/tokens.json`), never in
   the database or logs. Kotora needs no client secret.
 - Files: settings in `~/.config/kotora`, list and token in `~/.local/share/kotora`, covers in `~/.cache/kotora`,
   the update check's last answer and skipped version in `~/.local/state/kotora/update.json`.
@@ -140,7 +148,7 @@ kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
-kot config client-id ID   (optional: your own MyAnimeList client ID)
+kot config client-id ID   (optional: your own client ID for the service in use)
 kot show | kot quit
 ```
 

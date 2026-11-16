@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 2001,
+        "title": "Paper Lanterns of Kirigaoka",
+        "main_picture": { "medium": "https://cdn.example.invalid/m2001m.jpg", "large": "https://cdn.example.invalid/m2001l.jpg" },
+        "alternative_titles": { "synonyms": ["Kirigaoka Lanterns"], "en": "Paper Lanterns", "ja": "霧ヶ丘の紙灯籠" },
+        "media_type": "manga",
+        "num_chapters": 0,
+        "num_volumes": 0,
+        "status": "currently_publishing",
+        "start_date": "2021-04-08",
+        "mean": 7.91,
+        "authors": [ { "node": { "id": 501, "first_name": "Aoi", "last_name": "Hoshimiya" }, "role": "Story & Art" } ]
+      }
+    },
+    {
+      "node": {
+        "id": 2004,
+        "title": "Paper Lanterns: Side Stories",
+        "media_type": "one_shot",
+        "num_chapters": 1,
+        "num_volumes": 1,
+        "status": "finished",
+        "mean": 0
+      }
+    }
+  ],
+  "paging": {}
+}

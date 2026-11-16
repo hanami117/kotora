@@ -10,6 +10,7 @@
 use std::sync::LazyLock;
 
 use kotora_core::config;
+use kotora_core::service::ServiceId;
 use kotora_detect::Switch;
 use rune::{El, Icon, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
 
@@ -80,9 +81,9 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("MyAnimeList"), vec![Row::Mal, Row::ClientId, Row::Token]), (Some("AniList"), vec![Row::AniList])],
+            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList]), (Some("Sign-in"), vec![Row::ClientId, Row::Token])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
                 if kotora_detect::VLC_WEB {
@@ -111,6 +112,8 @@ pub enum Row {
     StartHidden,
     CheckUpdates,
     CheckNow,
+    /// The modifier with 1 to 5 for the list pages.
+    PageKeys,
     Theme,
     Titles,
     Intro,
@@ -147,6 +150,7 @@ impl Row {
             Row::StartHidden => "start-hidden",
             Row::CheckUpdates => "check-updates",
             Row::CheckNow => "check-now",
+            Row::PageKeys => "page-keys",
             Row::Theme => "theme",
             Row::Titles => "titles",
             Row::Intro => "intro",
@@ -196,13 +200,14 @@ const SPECS: &[Spec] = &[
     spec(Row::StartHidden, Section::General, "Start in the background", "At login, show only the tray icon, no window.", "background hidden minimised minimized tray menu bar silent quiet no window autostart startup login"),
     spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
     spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
+    spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
-    spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in.", "mal account sign in sign out log in login logout user"),
-    spec(Row::ClientId, Section::Account, "MyAnimeList Client ID", "The ID of your own MyAnimeList API app. Set up again.", "client id api key apiconfig setup wizard set up again"),
+    spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in. Or switch to it.", "mal myanimelist account service sign in sign out log in login logout user switch use"),
+    spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
-    spec(Row::AniList, Section::Account, "AniList", "Coming in v0.3.", "anilist account sign in"),
+    spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
@@ -420,6 +425,13 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> Option<bool> {
     Some(step(s, by))
 }
 
+/// What the list page keys do, with the chosen modifier, and that the others stay.
+fn page_keys_note(keys: config::PageKeys) -> String {
+    let (first, last) = (keys.hint('1'), keys.hint('5'));
+    let fixed = if cfg!(target_os = "macos") { "\u{2318} , for Settings, \u{2318} K and \u{2318} F" } else { "Ctrl , for Settings, Ctrl K and Ctrl F" };
+    format!("{first} to {last} open Watching, Plan to watch, Completed, On hold and Dropped, also while you type in a search box. {fixed} stay as they are.")
+}
+
 // -------------------------------------------------------------------------------------- view
 
 /// Below this main-area width the sections are a row of tabs on top.
@@ -474,6 +486,9 @@ fn search_box(s: &State, narrow: bool) -> El {
         .on_submit(jump_first)
         // The field would only drop the focus on Escape.
         .on_input_key(|s: &mut State, ev: &KeyEvent, tx: &mut Tx| {
+            if crate::ui::field_page_key(s, ev, tx) {
+                return true;
+            }
             if ev.key != Key::Escape {
                 return false;
             }
@@ -773,6 +788,11 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
+        Row::PageKeys => line(
+            "List page shortcuts",
+            page_keys_note(p.page_keys),
+            choice("set/page-keys", &config::PageKeys::ALL, p.page_keys, config::PageKeys::label, config::PageKeys::key, State::set_page_keys),
+        ),
         Row::Theme => line(
             "Theme",
             "System follows your desktop\u{2019}s light or dark setting, and changes with it.",
@@ -780,7 +800,7 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::Titles => line(
             "Titles",
-            "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn\u{2019}t have in that language shows in romaji.",
+            format!("The list, Now Playing, search, details, the queue and kot. A title {} doesn\u{2019}t have in that language shows in romaji.", s.service.title()),
             choice("set/titles", &config::TitleLang::ALL, p.titles, config::TitleLang::label, config::TitleLang::key, State::set_titles),
         ),
         Row::Intro => line(
@@ -788,15 +808,7 @@ fn row_el(s: &State, r: Row) -> El {
             "Claw marks when Kotora opens. Showing the window again doesn\u{2019}t play it; with Reduce Motion it is a short fade.",
             switch("set/intro".into(), "Startup animation", p.intro, State::set_intro),
         ),
-        Row::Mal => {
-            let (line, action) = match (&s.account, s.auth) {
-                (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
-                (None, Auth::NoClientId) => ("Finish the setup first".to_string(), small_button("sign-in", "Sign in", true, None)),
-                (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
-                (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
-            };
-            service_row("acct/mal", "MAL", hex("#2e51a2"), "MyAnimeList", line, action, true)
-        }
+        Row::Mal => account_row(s, ServiceId::Mal),
         Row::ClientId => crate::clientid::settings_row(s),
         Row::Token => row()
             .key("token-note")
@@ -817,7 +829,7 @@ fn row_el(s: &State, r: Row) -> El {
                             .wrap(),
                     ),
             ),
-        Row::AniList => service_row("acct/anilist", "AL", hex("#1d3550"), "AniList", "Coming in v0.3".into(), small_button("anilist", "Sign in", false, None), false),
+        Row::AniList => account_row(s, ServiceId::AniList),
         Row::Player(sw) => player(s, sw),
         Row::VlcWeb => line(
             "VLC web interface",
@@ -912,7 +924,7 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::About => about(s),
         Row::Licences => col().key("set/licences").w_full().gap(3.0).py(12.0).child(text("Licences").font(theme::BODY_MED).color(PAL.text)).child(
-            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList.")
+            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList or AniList.")
                 .font(theme::LABEL)
                 .color(PAL.dim)
                 .wrap(),
@@ -1038,6 +1050,30 @@ fn about(s: &State) -> El {
         )
 }
 
+/// One service of Settings → Account. The active one says how its sign-in stands (Sign in,
+/// Sign out); the other offers "Use …", which switches services and keeps both lists.
+fn account_row(s: &State, id: ServiceId) -> El {
+    let (key, badge, fill) = match id {
+        ServiceId::Mal => ("acct/mal", "MAL", hex("#2e51a2")),
+        ServiceId::AniList => ("acct/anilist", "AL", hex("#1d3550")),
+    };
+    if s.service != id {
+        let switch: fn(&mut State) = match id {
+            ServiceId::Mal => |s| crate::online::switch_service(s, ServiceId::Mal),
+            ServiceId::AniList => |s| crate::online::switch_service(s, ServiceId::AniList),
+        };
+        let line = format!("Not in use. Kotora keeps one list at a time: your {} list now.", s.service.title());
+        return service_row(key, badge, fill, id.title(), line, small_button(&format!("{key}/use"), &format!("Use {}", id.title()), false, Some(switch)), false);
+    }
+    let (line, action) = match (&s.account, s.auth) {
+        (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
+        (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
+        (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
+        (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
+    };
+    service_row(key, badge, fill, id.title(), line, action, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1082,6 +1118,10 @@ mod tests {
             ("precise", Row::Player(Switch::Mpv)),
             ("vlc", Row::Player(Switch::Vlc)),
             ("english", Row::Titles),
+            ("keyboard", Row::PageKeys),
+            ("shortcuts", Row::PageKeys),
+            ("alt", Row::PageKeys),
+            ("hotkey", Row::PageKeys),
             ("sign out", Row::Mal),
             ("client id", Row::ClientId),
             ("anilist", Row::AniList),

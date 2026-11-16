@@ -99,7 +99,11 @@ pub struct Relations {
     pub rules: Vec<Rule>,
     /// Lines in `::rules` that could not be read (skipped).
     pub skipped: usize,
+    /// Lookups ([`Relations::redirect`]) take and give AniList ids instead of MyAnimeList's:
+    /// set while AniList is the active service.
+    pub anilist: bool,
     by_mal: HashMap<u32, Vec<usize>>,
+    by_anilist: HashMap<u32, Vec<usize>>,
 }
 
 fn parse_id(s: &str, source: Option<u32>) -> Result<Option<u32>, ()> {
@@ -245,6 +249,9 @@ impl Relations {
             if let (Some(_), Some(id)) = (rule.to.mal, rule.from.mal) {
                 r.by_mal.entry(id).or_default().push(i);
             }
+            if let (Some(_), Some(id)) = (rule.to.anilist, rule.from.anilist) {
+                r.by_anilist.entry(id).or_default().push(i);
+            }
         }
         Ok(r)
     }
@@ -260,6 +267,19 @@ impl Relations {
             let episode = rule.map(ep)?;
             let to = rule.to.mal?;
             // A rule that maps an episode to itself changes nothing.
+            (to != id || episode != ep).then(|| Redirect { to, episode, to_title: rule.to_title.clone(), from_title: rule.from_title.clone() })
+        })
+    }
+
+    /// Where episode `ep` of anime `id` goes, in the ids of the active service (MyAnimeList's,
+    /// or AniList's when [`Relations::anilist`] is set).
+    pub fn redirect(&self, id: u32, ep: u32) -> Option<Redirect> {
+        if !self.anilist {
+            return self.mal(id, ep);
+        }
+        self.by_anilist.get(&id)?.iter().map(|&i| &self.rules[i]).find_map(|rule| {
+            let episode = rule.map(ep)?;
+            let to = rule.to.anilist?;
             (to != id || episode != ep).then(|| Redirect { to, episode, to_title: rule.to_title.clone(), from_title: rule.from_title.clone() })
         })
     }

@@ -351,7 +351,7 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
     let item = items.iter().find(|it| it.media.id == best.media_id)?;
     if let (Some(ep), Some(n)) = (p.episode, item.media.episodes)
         && ep > n
-        && rel.mal(best.media_id, ep).is_none()
+        && rel.redirect(best.media_id, ep).is_none()
     {
         sure = false;
         why = format!("episode {ep} is past its {n}");
@@ -408,7 +408,7 @@ pub fn redirect(found: Found, parsed: &mut Parsed, items: &[ListItem], rel: &Rel
         Found::NotOnList { media_id, title } => (*media_id, false, None, Some(title.as_str())),
         _ => return found,
     };
-    let Some(r) = rel.mal(from, ep) else { return found };
+    let Some(r) = rel.redirect(from, ep) else { return found };
     let title_of = |id: u32| items.iter().find(|it| it.media.id == id).map(|it| it.media.title.clone());
     let from_title = title_of(from).or(title_before.map(str::to_string)).or(r.from_title.clone()).unwrap_or_else(|| "this anime".into());
     let to_item = items.iter().find(|it| it.media.id == r.to);

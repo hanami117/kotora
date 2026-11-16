@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 2003,
+        "title": "Tower of Nine Bells",
+        "num_chapters": 120,
+        "num_volumes": 0,
+        "media_type": "manhwa",
+        "status": "on_hiatus"
+      },
+      "list_status": {
+        "status": "plan_to_read",
+        "score": 0,
+        "num_volumes_read": 0,
+        "num_chapters_read": 0,
+        "is_rereading": false,
+        "updated_at": "2026-09-05T08:00:00+00:00"
+      }
+    }
+  ],
+  "paging": {}
+}

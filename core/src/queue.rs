@@ -14,13 +14,16 @@
 //!   is gone: [`Step::SignInAgain`], the queue is kept. Anything else: `failed`, with the
 //!   service's words, until the user edits or discards it.
 //!
+//! - **Kinds:** anime and manga changes share the queue (one worker, one badge, one page);
+//!   each change carries its list's kind, and the worker sends it with that kind's calls.
+//!
 //! No threads and no clock here: the caller passes `now` and does any waiting, so tests drive it.
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::service::{ListService, ServiceError};
 use crate::store::{Result, Store, StoreError};
-use crate::{Change, Media, Remote, Status, Values};
+use crate::{Change, Kind, Media, Remote, Scope, Status, Values};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpState {
@@ -74,6 +77,8 @@ impl OpState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Op {
     pub id: i64,
+    /// The list the entry is on.
+    pub kind: Kind,
     pub media_id: u32,
     pub title: String,
     pub episodes: Option<u32>,
@@ -107,12 +112,23 @@ impl Op {
 
 /// The change in a few words: "Progress 3 → 5", "Status → Completed, score 8", "Score removed".
 pub fn describe(change: &Change, old: &Values) -> String {
+    describe_in(Kind::Anime, change, old)
+}
+
+/// [`describe`] for an entry of a list of `kind`: a manga's change says "chapters", "volumes",
+/// "reread" and its status names ("Status → Reading").
+pub fn describe_in(kind: Kind, change: &Change, old: &Values) -> String {
+    let manga = kind == Kind::Manga;
+    let re = if manga { "reread" } else { "rewatch" };
     let mut parts = Vec::new();
     if let Some(st) = change.status {
-        parts.push(format!("status \u{2192} {}", st.label()));
+        parts.push(format!("status \u{2192} {}", st.label_in(kind)));
     }
     if let Some(p) = change.progress {
-        parts.push(format!("progress {} \u{2192} {p}", old.progress));
+        parts.push(format!("{} {} \u{2192} {p}", if manga { "chapters" } else { "progress" }, old.progress));
+    }
+    if let Some(v) = change.volumes {
+        parts.push(format!("volumes {} \u{2192} {v}", old.volumes));
     }
     match change.score {
         Some(Some(n)) => parts.push(match old.score {
@@ -123,10 +139,10 @@ pub fn describe(change: &Change, old: &Values) -> String {
         None => {}
     }
     match (change.rewatching, change.times_rewatched) {
-        (Some(true), _) => parts.push("rewatch started".into()),
-        (Some(false), Some(n)) if n > old.times_rewatched => parts.push(format!("rewatch finished ({})", times(n))),
-        (Some(false), _) => parts.push("rewatch stopped".into()),
-        (None, Some(n)) => parts.push(format!("rewatched {}", times(n))),
+        (Some(true), _) => parts.push(format!("{re} started")),
+        (Some(false), Some(n)) if n > old.times_rewatched => parts.push(format!("{re} finished ({})", times(n))),
+        (Some(false), _) => parts.push(format!("{re} stopped")),
+        (None, Some(n)) => parts.push(format!("{re}{} {}", if manga { "" } else { "ed" }, times(n))),
         (None, None) => {}
     }
     let mut text = parts.join(", ");
@@ -148,12 +164,15 @@ pub fn times(n: u32) -> String {
 /// [`describe`] for a queued change: an add says so ("Add as Watching, progress 12").
 pub fn describe_op(op: &Op) -> String {
     if !op.added {
-        return describe(&op.change, &op.old);
+        return describe_in(op.kind, &op.change, &op.old);
     }
     let status = op.change.status.unwrap_or(op.old.status);
-    let mut text = format!("Add as {}", status.label());
+    let mut text = format!("Add as {}", status.label_in(op.kind));
     if let Some(p) = op.change.progress.filter(|p| *p > 0) {
-        text.push_str(&format!(", progress {p}"));
+        text.push_str(&format!(", {} {p}", if op.kind == Kind::Manga { "chapter" } else { "progress" }));
+    }
+    if let Some(v) = op.change.volumes.filter(|v| *v > 0) {
+        text.push_str(&format!(", volume {v}"));
     }
     if let Some(Some(n)) = op.change.score {
         text.push_str(&format!(", score {n}"));
@@ -189,8 +208,9 @@ fn status_in(s: Option<String>) -> Option<Status> {
 const OP_SELECT: &str = "SELECT o.id, o.media_id, COALESCE(m.title, ''), m.episodes, o.status, o.progress, o.score,
         o.old_status, o.old_progress, o.old_score, o.base_updated_at, o.created_at, o.edited_at, o.edits,
         o.state, o.attempts, o.next_try, o.error, o.sent_at, o.r_status, o.r_progress, o.r_score, o.r_updated_at, o.added,
-        o.rewatching, o.times_rewatched, o.old_rewatching, o.old_times_rewatched, o.r_rewatching, o.r_times_rewatched
- FROM pending_op o LEFT JOIN media m ON m.service = o.service AND m.id = o.media_id";
+        o.rewatching, o.times_rewatched, o.old_rewatching, o.old_times_rewatched, o.r_rewatching, o.r_times_rewatched,
+        o.kind, o.volumes, o.old_volumes, o.r_volumes
+ FROM pending_op o LEFT JOIN media m ON m.service = o.service AND m.kind = o.kind AND m.id = o.media_id";
 
 fn op_row(r: &Row) -> rusqlite::Result<Op> {
     let state = OpState::from_name(&r.get::<_, String>(14)?);
@@ -203,6 +223,7 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
                 score: score_in(r.get(21)?).flatten(),
                 rewatching: r.get::<_, Option<bool>>(28)?.unwrap_or(false),
                 times_rewatched: r.get::<_, Option<u32>>(29)?.unwrap_or(0),
+                volumes: r.get::<_, Option<u32>>(33)?.unwrap_or(0),
             },
             updated_at,
         }),
@@ -210,18 +231,21 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
     };
     let media_id: u32 = r.get(1)?;
     let title: String = r.get(2)?;
+    let kind = Kind::from_name(&r.get::<_, String>(30)?);
     Ok(Op {
         id: r.get(0)?,
+        kind,
         media_id,
-        title: if title.is_empty() { format!("Anime {media_id}") } else { title },
+        title: if title.is_empty() { format!("{} {media_id}", kind.label()) } else { title },
         episodes: r.get(3)?,
-        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?), rewatching: r.get(24)?, times_rewatched: r.get(25)? },
+        change: Change { status: status_in(r.get(4)?), progress: r.get(5)?, score: score_in(r.get(6)?), rewatching: r.get(24)?, times_rewatched: r.get(25)?, volumes: r.get(31)? },
         old: Values {
             status: status_in(r.get(7)?).unwrap_or(Status::PlanToWatch),
             progress: r.get(8)?,
             score: score_in(r.get(9)?).flatten(),
             rewatching: r.get(26)?,
             times_rewatched: r.get(27)?,
+            volumes: r.get(32)?,
         },
         base_updated_at: r.get(10)?,
         created_at: r.get(11)?,
@@ -237,10 +261,10 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
     })
 }
 
-fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(Values, i64)>> {
+fn entry_values(c: &Connection, sc: Scope, media_id: u32) -> Result<Option<(Values, i64)>> {
     Ok(c.query_row(
-        "SELECT status, progress, score, updated_at, rewatching, times_rewatched FROM entry WHERE service = ?1 AND media_id = ?2",
-        params![service, media_id],
+        "SELECT status, progress, score, updated_at, rewatching, times_rewatched, volumes FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2",
+        params![sc.service, media_id, sc.kind.name()],
         |r| {
             let st: String = r.get(0)?;
             let v = Values {
@@ -249,6 +273,7 @@ fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(
                 score: r.get(2)?,
                 rewatching: r.get(4)?,
                 times_rewatched: r.get(5)?,
+                volumes: r.get(6)?,
             };
             Ok((v, r.get(3)?))
         },
@@ -256,11 +281,11 @@ fn entry_values(c: &Connection, service: &str, media_id: u32) -> Result<Option<(
     .optional()?)
 }
 
-fn set_entry(c: &Connection, service: &str, media_id: u32, v: &Values, updated_at: Option<i64>) -> Result<()> {
+fn set_entry(c: &Connection, sc: Scope, media_id: u32, v: &Values, updated_at: Option<i64>) -> Result<()> {
     c.execute(
-        "UPDATE entry SET status = ?3, progress = ?4, score = ?5, rewatching = ?7, times_rewatched = ?8, updated_at = COALESCE(?6, updated_at)
-         WHERE service = ?1 AND media_id = ?2",
-        params![service, media_id, v.status.mal_name(), v.progress, v.score, updated_at, v.rewatching, v.times_rewatched],
+        "UPDATE entry SET status = ?3, progress = ?4, score = ?5, rewatching = ?7, times_rewatched = ?8, volumes = ?9, updated_at = COALESCE(?6, updated_at)
+         WHERE service = ?1 AND kind = ?10 AND media_id = ?2",
+        params![sc.service, media_id, v.status.mal_name(), v.progress, v.score, updated_at, v.rewatching, v.times_rewatched, v.volumes, sc.kind.name()],
     )?;
     Ok(())
 }
@@ -269,51 +294,53 @@ fn get_op(c: &Connection, id: i64) -> Result<Op> {
     c.query_row(&format!("{OP_SELECT} WHERE o.id = ?1"), [id], op_row).optional()?.ok_or_else(|| StoreError("that change is no longer in the queue".into()))
 }
 
-fn has_other_open(c: &Connection, service: &str, media_id: u32, not: i64) -> Result<bool> {
+fn has_other_open(c: &Connection, sc: Scope, media_id: u32, not: i64) -> Result<bool> {
     let n: i64 = c.query_row(
-        "SELECT COUNT(*) FROM pending_op WHERE service = ?1 AND media_id = ?2 AND id != ?3 AND state != 'done'",
-        params![service, media_id, not],
+        "SELECT COUNT(*) FROM pending_op WHERE service = ?1 AND kind = ?4 AND media_id = ?2 AND id != ?3 AND state != 'done'",
+        params![sc.service, media_id, not, sc.kind.name()],
         |r| r.get(0),
     )?;
     Ok(n > 0)
 }
 
-/// Lays the open changes of `service` (or of one entry) over the saved entries: after a full
+/// Lays the open changes of one list (or of one entry) over the saved entries: after a full
 /// sync, and after one change is settled while others for the same entry still wait.
-pub(crate) fn lay_over(c: &Connection, service: &str) -> Result<()> {
-    lay_over_where(c, service, None)
+pub(crate) fn lay_over(c: &Connection, sc: Scope) -> Result<()> {
+    lay_over_where(c, sc, None)
 }
 
-fn lay_over_where(c: &Connection, service: &str, media_id: Option<u32>) -> Result<()> {
+fn lay_over_where(c: &Connection, sc: Scope, media_id: Option<u32>) -> Result<()> {
     // An anime added here and not yet on the service is not in a fetched list: put it back.
     c.execute(
-        "INSERT INTO entry (service, media_id, status, progress, score, rewatching, updated_at)
-         SELECT o.service, o.media_id, o.old_status, 0, NULL, 0, o.created_at FROM pending_op o
-         WHERE o.service = ?1 AND (?2 IS NULL OR o.media_id = ?2) AND o.added = 1 AND o.state != 'done'
-           AND o.media_id IN (SELECT id FROM media WHERE service = ?1)
-           AND NOT EXISTS (SELECT 1 FROM entry e WHERE e.service = o.service AND e.media_id = o.media_id)
+        "INSERT INTO entry (service, kind, media_id, status, progress, score, rewatching, updated_at)
+         SELECT o.service, o.kind, o.media_id, o.old_status, 0, NULL, 0, o.created_at FROM pending_op o
+         WHERE o.service = ?1 AND o.kind = ?3 AND (?2 IS NULL OR o.media_id = ?2) AND o.added = 1 AND o.state != 'done'
+           AND o.media_id IN (SELECT id FROM media WHERE service = ?1 AND kind = ?3)
+           AND NOT EXISTS (SELECT 1 FROM entry e WHERE e.service = o.service AND e.kind = o.kind AND e.media_id = o.media_id)
          GROUP BY o.media_id",
-        params![service, media_id],
+        params![sc.service, media_id, sc.kind.name()],
     )?;
     c.execute(
         "UPDATE entry SET
-            status = COALESCE((SELECT o.status FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+            status = COALESCE((SELECT o.status FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.status IS NOT NULL ORDER BY o.id DESC LIMIT 1), status),
-            progress = COALESCE((SELECT o.progress FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+            progress = COALESCE((SELECT o.progress FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.progress IS NOT NULL ORDER BY o.id DESC LIMIT 1), progress),
-            score = COALESCE((SELECT NULLIF(o.score, 0) FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+            score = COALESCE((SELECT NULLIF(o.score, 0) FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.score IS NOT NULL ORDER BY o.id DESC LIMIT 1),
-                             CASE WHEN (SELECT o.score FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+                             CASE WHEN (SELECT o.score FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.score IS NOT NULL ORDER BY o.id DESC LIMIT 1) = 0 THEN NULL ELSE score END),
-            rewatching = COALESCE((SELECT o.rewatching FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+            rewatching = COALESCE((SELECT o.rewatching FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.rewatching IS NOT NULL ORDER BY o.id DESC LIMIT 1), rewatching),
-            times_rewatched = COALESCE((SELECT o.times_rewatched FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id
+            times_rewatched = COALESCE((SELECT o.times_rewatched FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
                                AND o.state != 'done' AND o.times_rewatched IS NOT NULL ORDER BY o.id DESC LIMIT 1), times_rewatched),
+            volumes = COALESCE((SELECT o.volumes FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id
+                               AND o.state != 'done' AND o.volumes IS NOT NULL ORDER BY o.id DESC LIMIT 1), volumes),
             updated_at = MAX(updated_at, COALESCE((SELECT MAX(o.edited_at) FROM pending_op o WHERE o.service = entry.service
-                               AND o.media_id = entry.media_id AND o.state != 'done'), 0))
-         WHERE service = ?1 AND (?2 IS NULL OR media_id = ?2)
-           AND EXISTS (SELECT 1 FROM pending_op o WHERE o.service = entry.service AND o.media_id = entry.media_id AND o.state != 'done')",
-        params![service, media_id],
+                               AND o.kind = entry.kind AND o.media_id = entry.media_id AND o.state != 'done'), 0))
+         WHERE service = ?1 AND kind = ?3 AND (?2 IS NULL OR media_id = ?2)
+           AND EXISTS (SELECT 1 FROM pending_op o WHERE o.service = entry.service AND o.kind = entry.kind AND o.media_id = entry.media_id AND o.state != 'done')",
+        params![sc.service, media_id, sc.kind.name()],
     )?;
     Ok(())
 }
@@ -321,17 +348,20 @@ fn lay_over_where(c: &Connection, service: &str, media_id: Option<u32>) -> Resul
 // --------------------------------------------------------------------------------------- store
 
 impl Store {
-    /// An edit: the saved entry changes at once and the change is queued, in one transaction.
-    /// Merges into a change that still waits for the same entry. Returns the queued change's id,
-    /// or `None` when nothing is left to send (the edit put every field back).
-    pub fn enqueue(&mut self, service: &str, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
+    /// An edit of an entry of `scope` (a service name: its anime list): the saved entry changes
+    /// at once and the change is queued, in one transaction. Merges into a change that still
+    /// waits for the same entry. Returns the queued change's id, or `None` when nothing is left
+    /// to send (the edit put every field back).
+    pub fn enqueue<'a>(&mut self, scope: impl Into<Scope<'a>>, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
+        let sc = scope.into();
         let tx = self.conn.transaction()?;
-        let id = enqueue_tx(&tx, service, media_id, change, now)?;
+        let id = enqueue_tx(&tx, sc, media_id, change, now)?;
         tx.commit()?;
         Ok(id)
     }
 
-    /// Open changes first (oldest first), then what was sent in the last day (newest first).
+    /// Open changes of both kinds first (oldest first), then what was sent in the last day
+    /// (newest first).
     pub fn queue(&self, service: &str, now: i64) -> Result<Vec<Op>> {
         let mut st = self.conn.prepare(&format!(
             "{OP_SELECT} WHERE o.service = ?1 AND (o.state != 'done' OR o.sent_at >= ?2)
@@ -341,12 +371,12 @@ impl Store {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Changes still in the queue (the badge).
+    /// Changes still in the queue, both kinds (the badge).
     pub fn open_count(&self, service: &str) -> Result<u32> {
         Ok(self.conn.query_row("SELECT COUNT(*) FROM pending_op WHERE service = ?1 AND state != 'done'", [service], |r| r.get(0))?)
     }
 
-    /// The oldest waiting change that may go now.
+    /// The oldest waiting change that may go now, of either kind.
     pub fn next_due(&self, service: &str, now: i64) -> Result<Option<Op>> {
         Ok(self
             .conn
@@ -396,7 +426,7 @@ impl Store {
     fn mark_conflict(&self, id: i64, remote: Option<&Remote>) -> Result<()> {
         self.conn.execute(
             "UPDATE pending_op SET state = 'conflict', error = NULL, r_status = ?2, r_progress = ?3, r_score = ?4, r_updated_at = ?5,
-                r_rewatching = ?6, r_times_rewatched = ?7 WHERE id = ?1",
+                r_rewatching = ?6, r_times_rewatched = ?7, r_volumes = ?8 WHERE id = ?1",
             params![
                 id,
                 remote.map(|r| r.values.status.mal_name()),
@@ -404,7 +434,8 @@ impl Store {
                 remote.map(|r| r.values.score.unwrap_or(0)),
                 remote.map(|r| r.updated_at),
                 remote.map(|r| r.values.rewatching),
-                remote.map(|r| r.values.times_rewatched)
+                remote.map(|r| r.values.times_rewatched),
+                remote.map(|r| r.values.volumes)
             ],
         )?;
         Ok(())
@@ -413,14 +444,15 @@ impl Store {
     /// The service holds the change now: the entry takes the service's answer, and changes that
     /// wait behind it for the same entry start from the new `updated_at`.
     fn mark_sent(&mut self, service: &str, op: &Op, remote: &Remote, now: i64) -> Result<()> {
+        let sc = Scope::new(service, op.kind);
         let tx = self.conn.transaction()?;
         tx.execute("UPDATE pending_op SET state = 'done', sent_at = ?2, error = NULL WHERE id = ?1", params![op.id, now])?;
         tx.execute(
-            "UPDATE pending_op SET base_updated_at = ?3 WHERE service = ?1 AND media_id = ?2 AND state != 'done' AND id > ?4",
-            params![service, op.media_id, remote.updated_at, op.id],
+            "UPDATE pending_op SET base_updated_at = ?3 WHERE service = ?1 AND kind = ?5 AND media_id = ?2 AND state != 'done' AND id > ?4",
+            params![service, op.media_id, remote.updated_at, op.id, op.kind.name()],
         )?;
-        set_entry(&tx, service, op.media_id, &remote.values, Some(remote.updated_at))?;
-        lay_over_where(&tx, service, Some(op.media_id))?;
+        set_entry(&tx, sc, op.media_id, &remote.values, Some(remote.updated_at))?;
+        lay_over_where(&tx, sc, Some(op.media_id))?;
         tx.commit()?;
         Ok(())
     }
@@ -441,15 +473,16 @@ impl Store {
     pub fn take_theirs(&mut self, service: &str, id: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         let op = get_op(&tx, id)?;
+        let sc = Scope::new(service, op.kind);
         tx.execute("DELETE FROM pending_op WHERE id = ?1", [id])?;
         match op.remote {
-            Some(r) => set_entry(&tx, service, op.media_id, &r.values, Some(r.updated_at))?,
-            None if !has_other_open(&tx, service, op.media_id, id)? => {
-                tx.execute("DELETE FROM entry WHERE service = ?1 AND media_id = ?2", params![service, op.media_id])?;
+            Some(r) => set_entry(&tx, sc, op.media_id, &r.values, Some(r.updated_at))?,
+            None if !has_other_open(&tx, sc, op.media_id, id)? => {
+                tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
             }
             None => {}
         }
-        lay_over_where(&tx, service, Some(op.media_id))?;
+        lay_over_where(&tx, sc, Some(op.media_id))?;
         tx.commit()?;
         Ok(())
     }
@@ -461,15 +494,16 @@ impl Store {
         if op.state == OpState::Sending {
             return Err(StoreError("that change is being sent right now".into()));
         }
+        let sc = Scope::new(service, op.kind);
         tx.execute("DELETE FROM pending_op WHERE id = ?1", [id])?;
-        let alone = !has_other_open(&tx, service, op.media_id, id)?;
+        let alone = !has_other_open(&tx, sc, op.media_id, id)?;
         if op.added && alone {
             // It was never on the list: it leaves again.
-            tx.execute("DELETE FROM entry WHERE service = ?1 AND media_id = ?2", params![service, op.media_id])?;
+            tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
         } else {
-            set_entry(&tx, service, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
+            set_entry(&tx, sc, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
         }
-        lay_over_where(&tx, service, Some(op.media_id))?;
+        lay_over_where(&tx, sc, Some(op.media_id))?;
         tx.commit()?;
         Ok(())
     }
@@ -478,11 +512,17 @@ impl Store {
     /// transaction. Completed starts at the last episode (when the count is known), anything else
     /// at `progress` (Now Playing's "Add as Watching at episode N": add and record in one change)
     /// or 0. An anime already on the list gets a status (and progress) change instead. Returns the queued
-    /// change's id (`None`: nothing to send).
+    /// change's id (`None`: nothing to send). The list is `media.kind`'s; a manga added as
+    /// Completed also starts at the last volume (when known).
     pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
-        if entry_values(&self.conn, service, media.id)?.is_some() {
-            return self.enqueue(service, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
+        let sc = Scope::new(service, media.kind);
+        if entry_values(&self.conn, sc, media.id)?.is_some() {
+            return self.enqueue(sc, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
         }
+        let volumes = match (media.kind, status, media.volumes) {
+            (Kind::Manga, Status::Completed, Some(n)) => n,
+            _ => 0,
+        };
         let progress = match (status, media.episodes, progress) {
             (Status::Completed, Some(n), _) => n,
             (_, Some(n), Some(p)) => p.min(n),
@@ -491,12 +531,14 @@ impl Store {
         };
         let tx = self.conn.transaction()?;
         tx.execute(
-            "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT (service, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
+            "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
+               kind, volumes, authors, start_date)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT (service, kind, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
                title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
                format = excluded.format, air_status = excluded.air_status,
-               cover_url = COALESCE(excluded.cover_url, media.cover_url), fetched_at = excluded.fetched_at",
+               cover_url = COALESCE(excluded.cover_url, media.cover_url), fetched_at = excluded.fetched_at,
+               volumes = excluded.volumes, authors = excluded.authors, start_date = COALESCE(excluded.start_date, media.start_date)",
             params![
                 service,
                 media.id,
@@ -508,19 +550,23 @@ impl Store {
                 media.format,
                 media.air_status,
                 media.cover_url,
-                now
+                now,
+                sc.kind.name(),
+                media.volumes,
+                serde_json::to_string(&media.authors).unwrap_or_else(|_| "[]".into()),
+                if media.kind == Kind::Manga { media.start_date.clone() } else { None }
             ],
         )?;
         tx.execute(
-            "INSERT INTO entry (service, media_id, status, progress, score, rewatching, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5)",
-            params![service, media.id, status.mal_name(), progress, now],
+            "INSERT INTO entry (service, kind, media_id, status, progress, score, rewatching, updated_at, volumes) VALUES (?1, ?6, ?2, ?3, ?4, NULL, 0, ?5, ?7)",
+            params![service, media.id, status.mal_name(), progress, now, sc.kind.name(), volumes],
         )?;
         // `old_*` hold the added status and 0: the change always sends the status.
         tx.execute(
-            "INSERT INTO pending_op (service, media_id, status, progress, score, old_status, old_progress, old_score,
-                base_updated_at, created_at, edited_at, added)
-             VALUES (?1, ?2, ?3, ?4, NULL, ?3, 0, 0, 0, ?5, ?5, 1)",
-            params![service, media.id, status.mal_name(), (progress > 0).then_some(progress), now],
+            "INSERT INTO pending_op (service, kind, media_id, status, progress, score, old_status, old_progress, old_score,
+                base_updated_at, created_at, edited_at, added, volumes)
+             VALUES (?1, ?6, ?2, ?3, ?4, NULL, ?3, 0, 0, 0, ?5, ?5, 1, ?7)",
+            params![service, media.id, status.mal_name(), (progress > 0).then_some(progress), now, sc.kind.name(), (volumes > 0).then_some(volumes)],
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
@@ -528,13 +574,18 @@ impl Store {
     }
 }
 
-fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
-    let (cur, cur_updated) = entry_values(tx, service, media_id)?.ok_or_else(|| StoreError("that anime is not on your saved list".into()))?;
+fn enqueue_tx(tx: &Connection, sc: Scope, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
+    let service = sc.service;
+    let k = sc.kind.name();
+    let (cur, cur_updated) = entry_values(tx, sc, media_id)?
+        .ok_or_else(|| StoreError(format!("that {} is not on your saved list", if sc.kind == Kind::Manga { "manga" } else { "anime" })))?;
     // A change that waits (not one being sent) takes the edit.
     let waiting: Option<Op> = tx
         .query_row(
-            &format!("{OP_SELECT} WHERE o.service = ?1 AND o.media_id = ?2 AND o.state IN ('queued', 'conflict', 'failed') ORDER BY o.id DESC LIMIT 1"),
-            params![service, media_id],
+            &format!(
+                "{OP_SELECT} WHERE o.service = ?1 AND o.kind = ?3 AND o.media_id = ?2 AND o.state IN ('queued', 'conflict', 'failed') ORDER BY o.id DESC LIMIT 1"
+            ),
+            params![service, media_id, k],
             op_row,
         )
         .optional()?;
@@ -548,19 +599,28 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
             if merged.is_empty() {
                 // Back where it started: nothing to send.
                 tx.execute("DELETE FROM pending_op WHERE id = ?1", [op.id])?;
-                let alone = !has_other_open(tx, service, media_id, op.id)?;
-                set_entry(tx, service, media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
+                let alone = !has_other_open(tx, sc, media_id, op.id)?;
+                set_entry(tx, sc, media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
                 return Ok(None);
             }
             // A failed change edited again gets a fresh start; a conflict stays a conflict.
             tx.execute(
-                "UPDATE pending_op SET status = ?2, progress = ?3, score = ?4, rewatching = ?6, times_rewatched = ?7, edits = edits + 1, edited_at = ?5,
+                "UPDATE pending_op SET status = ?2, progress = ?3, score = ?4, rewatching = ?6, times_rewatched = ?7, volumes = ?8, edits = edits + 1, edited_at = ?5,
                     attempts = CASE WHEN state = 'failed' THEN 0 ELSE attempts END,
                     next_try = CASE WHEN state = 'failed' THEN 0 ELSE next_try END,
                     error = CASE WHEN state = 'conflict' THEN error ELSE NULL END,
                     state = CASE WHEN state = 'failed' THEN 'queued' ELSE state END
                  WHERE id = ?1",
-                params![op.id, merged.status.map(Status::mal_name), merged.progress, score_out(merged.score), now, merged.rewatching, merged.times_rewatched],
+                params![
+                    op.id,
+                    merged.status.map(Status::mal_name),
+                    merged.progress,
+                    score_out(merged.score),
+                    now,
+                    merged.rewatching,
+                    merged.times_rewatched,
+                    merged.volumes
+                ],
             )?;
             op.id
         }
@@ -572,15 +632,16 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
             // A change for this entry is on its way: start from the same service state.
             let sending: Option<i64> = tx
                 .query_row(
-                    "SELECT base_updated_at FROM pending_op WHERE service = ?1 AND media_id = ?2 AND state = 'sending' ORDER BY id DESC LIMIT 1",
-                    params![service, media_id],
+                    "SELECT base_updated_at FROM pending_op WHERE service = ?1 AND kind = ?3 AND media_id = ?2 AND state = 'sending' ORDER BY id DESC LIMIT 1",
+                    params![service, media_id, k],
                     |r| r.get(0),
                 )
                 .optional()?;
             tx.execute(
                 "INSERT INTO pending_op (service, media_id, status, progress, score, old_status, old_progress, old_score,
-                    base_updated_at, created_at, edited_at, rewatching, times_rewatched, old_rewatching, old_times_rewatched)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12, ?13, ?14)",
+                    base_updated_at, created_at, edited_at, rewatching, times_rewatched, old_rewatching, old_times_rewatched,
+                    kind, volumes, old_volumes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     service,
                     media_id,
@@ -595,13 +656,16 @@ fn enqueue_tx(tx: &Connection, service: &str, media_id: u32, change: Change, now
                     c.rewatching,
                     c.times_rewatched,
                     cur.rewatching,
-                    cur.times_rewatched
+                    cur.times_rewatched,
+                    k,
+                    c.volumes,
+                    cur.volumes
                 ],
             )?;
             tx.last_insert_rowid()
         }
     };
-    set_entry(tx, service, media_id, &change.apply(cur), Some(now))?;
+    set_entry(tx, sc, media_id, &change.apply(cur), Some(now))?;
     Ok(Some(id))
 }
 
@@ -614,8 +678,8 @@ pub enum Step {
     Idle,
     /// The next change may go in this many seconds (a retry after an error).
     Wait(i64),
-    /// One change was handled; its entry may have changed.
-    Handled { media_id: u32, outcome: Outcome },
+    /// One change was handled; its entry (of list `kind`) may have changed.
+    Handled { kind: Kind, media_id: u32, outcome: Outcome },
     /// The service wants a new sign-in. The change waits again; the queue is kept.
     SignInAgain,
 }
@@ -639,8 +703,9 @@ pub enum Decision {
     Conflict,
 }
 
-/// What to do with `op`, given the service's entry now. `keep_higher`: a progress-only conflict
-/// where ours is higher sends ours (Settings → Updates, on by default).
+/// What to do with `op`, given the service's entry now. `keep_higher`: a conflict on the counts
+/// only (progress, and a manga's volumes) where ours are higher sends ours (Settings → Updates,
+/// on by default). Higher means: no count below the service's, at least one above.
 pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
     match remote {
         None if op.base_updated_at < 0 || op.added => Decision::Send,
@@ -649,9 +714,11 @@ pub fn decide(op: &Op, remote: Option<&Remote>, keep_higher: bool) -> Decision {
         Some(r) if op.base_updated_at < 0 || r.updated_at <= op.base_updated_at => Decision::Send,
         Some(r) if op.change.is_in(&r.values) => Decision::AlreadyThere(*r),
         Some(r) => {
-            // Only the progress, and ours is higher: the higher number wins.
-            let progress_only = op.change.status.is_none() && op.change.score.is_none() && op.change.rewatching.is_none() && op.change.times_rewatched.is_none();
-            if keep_higher && progress_only && op.change.progress.is_some_and(|p| p > r.values.progress) { Decision::Send } else { Decision::Conflict }
+            // Only the counts, and ours are higher: the higher numbers win.
+            let c = &op.change;
+            let not_lower = c.progress.is_none_or(|p| p >= r.values.progress) && c.volumes.is_none_or(|v| v >= r.values.volumes);
+            let above = c.progress.is_some_and(|p| p > r.values.progress) || c.volumes.is_some_and(|v| v > r.values.volumes);
+            if keep_higher && c.is_count_only() && not_lower && above { Decision::Send } else { Decision::Conflict }
         }
     }
 }
@@ -673,12 +740,12 @@ pub fn step_with(store: &mut Store, service: &mut dyn ListService, now: i64, kee
         });
     };
     store.set_state(op.id, OpState::Sending)?;
-    let remote = match service.get_entry(op.media_id) {
+    let remote = match service.get_entry_of(op.kind, op.media_id) {
         Ok(r) => r,
         Err(e) => return give_back(store, &op, e, now),
     };
     let outcome = match decide(&op, remote.as_ref(), keep_higher) {
-        Decision::Send => match service.update_entry(op.media_id, &op.change) {
+        Decision::Send => match service.update_entry_of(op.kind, op.media_id, &op.change) {
             Ok(r) => {
                 store.mark_sent(name, &op, &r, now)?;
                 Outcome::Sent
@@ -694,7 +761,7 @@ pub fn step_with(store: &mut Store, service: &mut dyn ListService, now: i64, kee
             Outcome::Conflict
         }
     };
-    Ok(Step::Handled { media_id: op.media_id, outcome })
+    Ok(Step::Handled { kind: op.kind, media_id: op.media_id, outcome })
 }
 
 fn give_back(store: &Store, op: &Op, e: ServiceError, now: i64) -> Result<Step> {
@@ -714,7 +781,7 @@ fn give_back(store: &Store, op: &Op, e: ServiceError, now: i64) -> Result<Step> 
             Outcome::Failed(m)
         }
     };
-    Ok(Step::Handled { media_id: op.media_id, outcome })
+    Ok(Step::Handled { kind: op.kind, media_id: op.media_id, outcome })
 }
 
 #[cfg(test)]

@@ -264,7 +264,7 @@ impl Entry {
     }
 
     pub fn values(&self) -> Values {
-        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched }
+        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched, volumes: 0 }
     }
 
     /// The entry as `kot` prints it.
@@ -379,6 +379,12 @@ pub struct State {
     /// The page the search page returns to (Escape).
     pub search_back: Page,
     pub auth: Auth,
+    /// The active list service (`[account] service`). Views read it here; workers ask
+    /// `account::active()`, which follows it.
+    pub service: kotora_core::service::ServiceId,
+    /// Counts sign-in attempts: an answer of an older one (a browser wait a pasted token took
+    /// over) is dropped.
+    pub sign_in_seq: u64,
     /// The signed-in user name and service; `None` when signed out.
     pub account: Option<(String, &'static str)>,
     /// The account's profile picture URL; the sidebar draws it round, else the initial.
@@ -494,6 +500,8 @@ impl State {
             find: TextEdit::new(""),
             search_back: Page::List(Status::Watching),
             auth: Auth::SignedIn,
+            service: Default::default(),
+            sign_in_seq: 0,
             account: Some(("demo_user".into(), "MyAnimeList")),
             avatar: None,
             profile: Some(crate::profile::fake()),
@@ -772,7 +780,7 @@ impl State {
             (_, None, Some(p)) => p,
             _ => 0,
         };
-        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock() };
+        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock(), volumes: 0 };
         let mut e = Entry::from_item(&item, self.prefs.titles);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
@@ -981,6 +989,18 @@ impl State {
 
     /// Settings → Appearance: the next frame paints in the new palette (`ui::view`), and
     /// `config.toml` keeps it.
+    /// Settings → General → Keyboard: Ctrl (⌘) or Alt with 1 to 5 for the list pages. The
+    /// macOS Go menu shows the new keys.
+    pub fn set_page_keys(&mut self, keys: kotora_core::config::PageKeys) {
+        if self.prefs.page_keys == keys {
+            return;
+        }
+        self.prefs.page_keys = keys;
+        #[cfg(target_os = "macos")]
+        crate::menu_bar::set_page_keys(self.handle.as_ref(), keys);
+        crate::detect::save_setting(self, "keys", "pages", kotora_core::config::quote(keys.key()));
+    }
+
     pub fn set_theme(&mut self, theme: kotora_core::config::Theme) {
         if self.prefs.theme == theme {
             return;
@@ -997,7 +1017,7 @@ impl State {
 
     /// The queue as `kot queue` prints it.
     pub fn ctl_queue(&self) -> Vec<kotora_ctl::QueueItem> {
-        let service = "MyAnimeList";
+        let service = self.service.title();
         self.ops
             .iter()
             .map(|o| kotora_ctl::QueueItem {
@@ -1055,7 +1075,7 @@ impl State {
     }
 
     fn apply_msg(&mut self, msg: Msg) -> bool {
-        let service = "MyAnimeList";
+        let service = self.service.title();
         match msg {
             Msg::Cache { items, user, picture, profile, synced_at, ops } => {
                 self.ops = ops;
@@ -1196,33 +1216,40 @@ impl State {
                 changed
             }
             Msg::SignedOut => {
-                self.covers.clear();
-                // MyAnimeList's answers go with the account (search results, the open page,
-                // the seasons).
-                self.online = Default::default();
-                self.airing.cancel();
-                self.airing = Default::default();
-                if self.page == Page::Details {
-                    self.page = self.lit_page();
-                }
-                self.detail = None;
+                self.forget_account();
                 self.auth = Auth::SignedOut;
-                self.account = None;
-                self.avatar = None;
-                self.profile = None;
-                self.entries.clear();
-                self.ops.clear();
-                self.queue = 0;
-                self.editor = None;
-                self.synced_at = None;
-                self.syncing = false;
-                self.loading = false;
-                self.offline = false;
-                self.error = None;
                 self.refresh();
                 true
             }
         }
+    }
+
+    /// What the window shows of the account goes (sign out, or a switch to the other service):
+    /// the list, the queue, the user, and the service's answers (search results, the open page,
+    /// the seasons). Nothing on disk is touched here.
+    pub fn forget_account(&mut self) {
+        self.covers.clear();
+        self.online = Default::default();
+        self.airing.cancel();
+        self.airing = Default::default();
+        if self.page == Page::Details {
+            self.page = self.lit_page();
+        }
+        self.detail = None;
+        self.account = None;
+        self.avatar = None;
+        self.profile = None;
+        self.entries.clear();
+        self.ops.clear();
+        self.queue = 0;
+        self.editor = None;
+        self.synced_at = None;
+        self.syncing = false;
+        self.loading = false;
+        self.offline = false;
+        self.error = None;
+        self.cancel = None;
+        self.sign_in_link = None;
     }
 
     pub fn ctl_status(&self) -> kotora_ctl::Status {
@@ -1297,6 +1324,7 @@ pub fn remote_text(r: &Remote, episodes: Option<u32>) -> String {
 fn fake_ops() -> Vec<Op> {
     let op = |id: i64, media_id: u32, change: Change, old: Values, state: OpState, ago: i64| Op {
         id,
+        kind: kotora_core::Kind::Anime,
         media_id,
         title: WATCHING[media_id as usize].title.into(),
         episodes: Some(WATCHING[media_id as usize].episodes),
@@ -1554,6 +1582,11 @@ mod tests {
                 cover_url: None,
                 start_date: None,
                 broadcast: None,
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
+                next_airing: None,
+                id_mal: None,
             },
             status,
             progress,
@@ -1561,6 +1594,7 @@ mod tests {
             rewatching: false,
             times_rewatched: 0,
             updated_at,
+            volumes: 0,
         }
     }
 
@@ -1846,7 +1880,7 @@ mod tests {
     #[test]
     fn an_added_anime_shows_at_once_and_waits() {
         let mut s = loaded();
-        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None };
+        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() };
         let i = s.add_media(m.clone(), Status::Completed).unwrap();
         let e = &s.entries[i];
         assert_eq!((e.status, e.progress, e.waiting), (Status::Completed, 10, Some("Waiting to sync")));
@@ -1856,7 +1890,7 @@ mod tests {
         assert_eq!(s.entries.iter().filter(|e| e.id == 77).count(), 1);
         assert_eq!(s.entries.iter().find(|e| e.id == 77).unwrap().status, Status::OnHold);
         let mut out = State::start(Auth::SignedOut);
-        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None }, Status::Watching).is_err());
+        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() }, Status::Watching).is_err());
     }
 
     #[test]

@@ -28,71 +28,12 @@ const API: &str = "https://api.myanimelist.net/v2";
 const API_PREFIX: &str = "https://api.myanimelist.net/";
 const SERVICE: &str = "mal";
 
+mod manga;
+pub use manga::{manga_type_label, parse_manga_details, parse_manga_hits, parse_manga_list_page};
+
 // ------------------------------------------------------------------------------------ transport
 
-pub struct Request {
-    pub method: &'static str,
-    pub url: String,
-    pub bearer: Option<String>,
-    /// A form-encoded body (POST, PATCH).
-    pub form: Option<String>,
-}
-
-pub struct Response {
-    pub status: u16,
-    pub retry_after: Option<u64>,
-    pub body: String,
-}
-
-/// One HTTP exchange. `Err` means no answer at all (DNS, connect, timeout).
-pub trait Transport {
-    fn send(&self, req: &Request) -> Result<Response, String>;
-}
-
-/// The real transport: blocking `ureq` on the caller's (worker) thread.
-pub struct UreqTransport {
-    agent: ureq::Agent,
-}
-
-impl Default for UreqTransport {
-    fn default() -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .http_status_as_error(false)
-            .user_agent(concat!("Kotora/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
-        UreqTransport { agent }
-    }
-}
-
-impl Transport for UreqTransport {
-    fn send(&self, req: &Request) -> Result<Response, String> {
-        let auth = req.bearer.as_ref().map(|b| format!("Bearer {b}"));
-        let mut resp = match req.method {
-            "POST" | "PATCH" => {
-                let r = if req.method == "POST" { self.agent.post(&req.url) } else { self.agent.patch(&req.url) };
-                let mut r = r.header("Content-Type", "application/x-www-form-urlencoded");
-                if let Some(a) = &auth {
-                    r = r.header("Authorization", a);
-                }
-                r.send(req.form.clone().unwrap_or_default())
-            }
-            _ => {
-                let mut r = self.agent.get(&req.url);
-                if let Some(a) = &auth {
-                    r = r.header("Authorization", a);
-                }
-                r.call()
-            }
-        }
-        .map_err(|e| e.to_string())?;
-        let status = resp.status().as_u16();
-        let retry_after = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
-        let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
-        Ok(Response { status, retry_after, body })
-    }
-}
+pub use crate::http::{Request, Response, Transport, UreqTransport};
 
 // ----------------------------------------------------------------------------------- PKCE etc.
 
@@ -247,7 +188,7 @@ impl<T: Transport> Client<T> {
     }
 
     fn token_request(&mut self, pairs: &[(&str, &str)]) -> Result<Token, CallError> {
-        let req = Request { method: "POST", url: TOKEN_URL.into(), bearer: None, form: Some(form(pairs)) };
+        let req = Request { method: "POST", url: TOKEN_URL.into(), bearer: None, form: Some(form(pairs)), json: None };
         let resp = match self.call(&req) {
             // The token endpoint answers 400 / 401 for a bad code or a dead refresh token.
             Err(CallError::Other(m)) if m.contains("HTTP 400") => return Err(CallError::Unauthorized),
@@ -279,7 +220,7 @@ impl<T: Transport> Client<T> {
         if !url.starts_with(API_PREFIX) {
             return Err(CallError::Other("MyAnimeList sent a link to another site; ignored".into()));
         }
-        self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None })
+        self.call(&Request { method: "GET", url, bearer: Some(access.to_string()), form: None, json: None })
     }
 
     /// The user's list entry for one anime (`GET /anime/{id}?fields=my_list_status{num_times_rewatched}`,
@@ -319,7 +260,7 @@ impl<T: Transport> Client<T> {
             return Err(ServiceError::Other("nothing to send".into()));
         }
         let body = form(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>());
-        let req = Request { method: "PATCH", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body) };
+        let req = Request { method: "PATCH", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: Some(body), json: None };
         let r = self.call(&req)?;
         let ls: ListStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
         ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
@@ -527,6 +468,7 @@ impl FullNode {
             air_status: self.status.unwrap_or_default(),
             mean: self.mean.filter(|m| *m > 0.0),
             cover_url: self.main_picture.and_then(|p| p.medium.or(p.large)),
+            ..AnimeHit::default()
         }
     }
 }
@@ -585,6 +527,7 @@ pub fn parse_season(body: &str) -> Result<(Vec<SeasonAnime>, bool), String> {
                 // The medium size (225 px wide) is plenty for a card.
                 cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
                 mine,
+                next_airing: None,
             }
         })
         .collect();
@@ -609,6 +552,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
             times_rewatched: m.num_times_rewatched,
             start_date: non_empty(m.start_date),
             finish_date: non_empty(m.finish_date),
+            volumes: 0,
         })
     });
     let (cover_url, cover_small) = match n.main_picture {
@@ -639,6 +583,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
         cover_url,
         cover_small,
         mine,
+        ..Details::default()
     })
 }
 
@@ -770,6 +715,7 @@ impl ListStatus {
                 score: (self.score > 0).then_some(self.score.min(10)),
                 rewatching: self.is_rewatching,
                 times_rewatched: self.num_times_rewatched,
+                volumes: 0,
             },
             updated_at: self.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
         })
@@ -844,6 +790,11 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
                 cover_url: n.main_picture.and_then(|p| p.medium.or(p.large)),
                 start_date: non_empty(n.start_date),
                 broadcast: n.broadcast.and_then(RawBroadcast::parse),
+                authors: Vec::new(),
+                kind: Default::default(),
+                volumes: None,
+                next_airing: None,
+                id_mal: None,
             },
             status,
             progress: ls.num_episodes_watched,
@@ -851,6 +802,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
             rewatching: ls.is_rewatching,
             times_rewatched: ls.num_times_rewatched,
             updated_at: ls.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
+            volumes: 0,
         });
     }
     Ok((out, page.paging.and_then(|p| p.next).filter(|n| !n.is_empty())))
@@ -968,6 +920,26 @@ impl<T: Transport> ListService for Mal<T> {
     fn details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
         self.authed(|c, a| c.fetch_details(a, media_id))
     }
+
+    fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+        self.manga_list()
+    }
+
+    fn get_manga_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        self.manga_entry(media_id)
+    }
+
+    fn update_manga_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        self.manga_patch(media_id, change)
+    }
+
+    fn browse_manga(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        self.manga_browse(query, limit)
+    }
+
+    fn manga_details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
+        self.manga_page(media_id)
+    }
 }
 
 // ------------------------------------------------------------------------------------------ tests
@@ -1010,7 +982,7 @@ mod tests {
     /// (method, url, bearer, form body)
     type Sent = (String, String, Option<String>, Option<String>);
 
-    struct Fake {
+    pub(super) struct Fake {
         answers: RefCell<VecDeque<Result<Response, String>>>,
         seen: Seen,
     }
@@ -1022,35 +994,35 @@ mod tests {
         }
     }
 
-    type Seen = Arc<Mutex<Vec<Sent>>>;
+    pub(super) type Seen = Arc<Mutex<Vec<Sent>>>;
 
-    fn fake(answers: Vec<Result<Response, String>>) -> (Fake, Seen) {
+    pub(super) fn fake(answers: Vec<Result<Response, String>>) -> (Fake, Seen) {
         let seen: Seen = Arc::default();
         (Fake { answers: RefCell::new(answers.into()), seen: seen.clone() }, seen)
     }
 
-    fn ok(body: &str) -> Result<Response, String> {
+    pub(super) fn ok(body: &str) -> Result<Response, String> {
         Ok(Response { status: 200, retry_after: None, body: body.into() })
     }
 
-    fn status(code: u16, retry_after: Option<u64>) -> Result<Response, String> {
+    pub(super) fn status(code: u16, retry_after: Option<u64>) -> Result<Response, String> {
         Ok(Response { status: code, retry_after, body: "{}".into() })
     }
 
     const FIXTURE: &str = include_str!("../tests/mal_animelist_page1.json");
     const FIXTURE2: &str = include_str!("../tests/mal_animelist_page2.json");
 
-    fn tok_json(access: &str) -> String {
+    pub(super) fn tok_json(access: &str) -> String {
         format!(r#"{{"token_type":"Bearer","expires_in":3600,"access_token":"{access}","refresh_token":"fake-refresh-{access}"}}"#)
     }
 
-    fn client(f: Fake) -> (Client<Fake>, Arc<Mutex<Vec<Duration>>>) {
+    pub(super) fn client(f: Fake) -> (Client<Fake>, Arc<Mutex<Vec<Duration>>>) {
         let waits: Arc<Mutex<Vec<Duration>>> = Arc::default();
         let w = waits.clone();
         (Client::new("fake-client-id".into(), f).with_own_budget().with_sleep(move |d| w.lock().unwrap().push(d)), waits)
     }
 
-    fn tmp_tokens(name: &str, t: Option<Token>) -> TokenStore {
+    pub(super) fn tmp_tokens(name: &str, t: Option<Token>) -> TokenStore {
         let dir = std::env::temp_dir().join(format!("kotora-mal-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let s = TokenStore::new(dir.join("tokens.json"));
@@ -1060,7 +1032,7 @@ mod tests {
         s
     }
 
-    fn token(access: &str, expires_in: i64) -> Token {
+    pub(super) fn token(access: &str, expires_in: i64) -> Token {
         Token { access_token: access.into(), refresh_token: format!("fake-refresh-{access}"), expires_at: time::now_unix() + expires_in }
     }
 
@@ -1287,7 +1259,7 @@ mod tests {
         let (mut c, _) = client(f);
         let r = c.patch_entry("acc", 1001, &Change { progress: Some(0), rewatching: Some(true), ..Default::default() }).unwrap();
         assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, Some(8)) });
-        let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None };
+        let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None, volumes: None };
         let r = c.patch_entry("acc", 1001, &end).unwrap();
         assert_eq!((r.values.rewatching, r.values.times_rewatched, r.values.progress), (false, 2, 12));
         let seen = seen.lock().unwrap();

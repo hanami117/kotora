@@ -1,0 +1,12 @@
+{"data":{"MediaListCollection":{"hasNextChunk":true,"lists":[
+ {"entries":[
+  {"id":9001,"mediaId":170001,"status":"CURRENT","progress":6,"repeat":0,"score":85,"updatedAt":1763200000,
+   "media":{"id":170001,"idMal":59001,"title":{"romaji":"Kirigaoka no Lantern","english":"Lanterns of Kirigaoka","native":"霧ヶ丘のランタン"},"synonyms":["KiriLan"],"format":"TV","episodes":12,"status":"RELEASING","season":"FALL","seasonYear":2026,"startDate":{"year":2026,"month":10,"day":3},"endDate":{"year":null,"month":null,"day":null},"averageScore":81,"popularity":52011,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/anime/cover/small/bx170001.jpg","large":"https://s4.anilist.example.invalid/media/anime/cover/medium/bx170001.jpg"},"nextAiringEpisode":{"episode":8,"airingAt":1795271400}}},
+  {"id":9002,"mediaId":170002,"status":"REPEATING","progress":3,"repeat":1,"score":0,"updatedAt":1763100000,
+   "media":{"id":170002,"idMal":59002,"title":{"romaji":"Velvet Orchard","english":null,"native":null},"synonyms":[],"format":"TV_SHORT","episodes":24,"status":"FINISHED","season":"SPRING","seasonYear":2024,"startDate":{"year":2024,"month":4,"day":null},"endDate":{"year":2024,"month":9,"day":20},"averageScore":null,"popularity":801,"coverImage":{"medium":null,"large":"https://s4.anilist.example.invalid/media/anime/cover/medium/bx170002.jpg"},"nextAiringEpisode":null}}
+ ]},
+ {"entries":[
+  {"id":9001,"mediaId":170001,"status":"CURRENT","progress":6,"repeat":0,"score":85,"updatedAt":1763200000,
+   "media":{"id":170001,"title":{"romaji":"Kirigaoka no Lantern"},"format":"TV","status":"RELEASING"}}
+ ]}
+]}}}

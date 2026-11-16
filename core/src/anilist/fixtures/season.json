@@ -1,0 +1,4 @@
+{"data":{"Page":{"pageInfo":{"hasNextPage":true},"media":[
+ {"id":170001,"title":{"romaji":"Kirigaoka no Lantern","english":"Lanterns of Kirigaoka"},"format":"TV","episodes":12,"status":"RELEASING","season":"FALL","seasonYear":2026,"startDate":{"year":2026,"month":10,"day":3},"endDate":{},"averageScore":81,"popularity":52011,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/anime/cover/small/bx170001.jpg"},"nextAiringEpisode":{"episode":8,"airingAt":1795271400},"mediaListEntry":{"status":"CURRENT","progress":6}},
+ {"id":170010,"title":{"romaji":"Ame no Hi Kissa"},"format":"TV","episodes":null,"status":"NOT_YET_RELEASED","season":"FALL","seasonYear":2026,"startDate":{"year":2026,"month":12},"endDate":{},"averageScore":null,"popularity":3000,"coverImage":{},"nextAiringEpisode":{"episode":1,"airingAt":1796482800},"mediaListEntry":null}
+]}}}

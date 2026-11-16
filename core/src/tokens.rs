@@ -1,5 +1,6 @@
 //! The token file: `$XDG_DATA_HOME/kotora/tokens.json`, mode 0600, in a 0700 folder. Not encrypted.
-//! Never in the database, never in logs: `Debug` hides the values.
+//! Never in the database, never in logs: `Debug` hides the values. One token per service (`mal`,
+//! `anilist`); saving or forgetting one keeps the other.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Token {
     pub access_token: String,
+    /// Empty for AniList (its tokens can't be refreshed: they last a year).
+    #[serde(default)]
     pub refresh_token: String,
     /// Unix seconds.
     pub expires_at: i64,
@@ -31,6 +34,18 @@ impl Token {
 struct File {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mal: Option<Token>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    anilist: Option<Token>,
+}
+
+impl File {
+    fn slot(&mut self, service: &str) -> Option<&mut Option<Token>> {
+        match service {
+            "mal" => Some(&mut self.mal),
+            "anilist" => Some(&mut self.anilist),
+            _ => None,
+        }
+    }
 }
 
 pub struct TokenStore {
@@ -46,16 +61,47 @@ impl TokenStore {
         &self.path
     }
 
-    pub fn load_mal(&self) -> Option<Token> {
+    fn read(&self) -> Option<File> {
         let text = std::fs::read_to_string(&self.path).ok()?;
-        serde_json::from_str::<File>(&text).ok()?.mal
+        serde_json::from_str::<File>(&text).ok()
+    }
+
+    /// The token of `service` (`mal`, `anilist`).
+    pub fn load(&self, service: &str) -> Option<Token> {
+        self.read()?.slot(service)?.clone()
+    }
+
+    pub fn load_mal(&self) -> Option<Token> {
+        self.load("mal")
+    }
+
+    pub fn load_anilist(&self) -> Option<Token> {
+        self.load("anilist")
+    }
+
+    /// Saves the token of `service`; the other service's token stays.
+    pub fn save(&self, service: &str, t: &Token) -> std::io::Result<()> {
+        let mut file = self.read().unwrap_or_default();
+        *file.slot(service).ok_or_else(|| std::io::Error::other(format!("no token slot for {service}")))? = Some(t.clone());
+        self.write(&file)
     }
 
     pub fn save_mal(&self, t: &Token) -> std::io::Result<()> {
+        self.save("mal", t)
+    }
+
+    pub fn save_anilist(&self, t: &Token) -> std::io::Result<()> {
+        self.save("anilist", t)
+    }
+
+    fn write(&self, file: &File) -> std::io::Result<()> {
+        if file.mal.is_none() && file.anilist.is_none() {
+            return self.delete();
+        }
         if let Some(dir) = self.path.parent() {
             crate::paths::create_private_dir(dir)?;
         }
-        let json = serde_json::to_vec_pretty(&File { mal: Some(t.clone()) }).map_err(std::io::Error::other)?;
+        let json = serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?;
         // Write a temp file that is 0600 from the start, then rename over the old one.
         let tmp = self.path.with_extension("json.tmp");
         let _ = std::fs::remove_file(&tmp);
@@ -70,7 +116,16 @@ impl TokenStore {
         std::fs::rename(&tmp, &self.path)
     }
 
-    /// Sign out: the file goes away.
+    /// Sign out of one service: its token goes, the other's stays (the file goes with the last).
+    pub fn forget(&self, service: &str) -> std::io::Result<()> {
+        let Some(mut file) = self.read() else { return self.delete() };
+        if let Some(slot) = file.slot(service) {
+            *slot = None;
+        }
+        self.write(&file)
+    }
+
+    /// The whole file goes.
     pub fn delete(&self) -> std::io::Result<()> {
         match std::fs::remove_file(&self.path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
@@ -106,6 +161,27 @@ mod tests {
         store.delete().unwrap();
         store.delete().unwrap();
         assert_eq!(store.load_mal(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn each_service_keeps_its_own_token() {
+        let dir = std::env::temp_dir().join(format!("kotora-tok2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = TokenStore::new(dir.join("tokens.json"));
+        let al = Token { access_token: "fake-anilist".into(), refresh_token: String::new(), expires_at: 2000 };
+        store.save_mal(&tok()).unwrap();
+        store.save_anilist(&al).unwrap();
+        assert_eq!((store.load_mal(), store.load_anilist()), (Some(tok()), Some(al.clone())), "saving one keeps the other");
+        store.forget("mal").unwrap();
+        assert_eq!((store.load_mal(), store.load_anilist()), (None, Some(al)));
+        store.forget("anilist").unwrap();
+        assert!(!store.path().exists(), "the last one takes the file with it");
+        // A file from 0.1 (MAL only, no AniList key) still reads.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(store.path(), r#"{"mal":{"access_token":"a","refresh_token":"r","expires_at":5}}"#).unwrap();
+        assert_eq!(store.load_mal().map(|t| t.expires_at), Some(5));
+        assert_eq!(store.load_anilist(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

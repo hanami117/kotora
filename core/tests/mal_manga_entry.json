@@ -1,0 +1,14 @@
+{
+  "id": 2001,
+  "title": "Paper Lanterns of Kirigaoka",
+  "main_picture": { "medium": "https://cdn.example.invalid/m2001m.jpg", "large": "https://cdn.example.invalid/m2001l.jpg" },
+  "my_list_status": {
+    "status": "reading",
+    "score": 8,
+    "num_volumes_read": 3,
+    "num_chapters_read": 21,
+    "is_rereading": false,
+    "num_times_reread": 0,
+    "updated_at": "2026-11-01T09:00:00+00:00"
+  }
+}

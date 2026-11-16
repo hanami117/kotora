@@ -1,70 +1,89 @@
 //! The setup wizard: the service choice, then Welcome, sign in, done.
 //!
-//! Kotora has its own MyAnimeList Client ID built in, so there is nothing to register or paste;
-//! someone with an app of their own sets its ID in Settings → Account.
+//! Kotora has its own MyAnimeList and AniList Client IDs built in (`core::service`), so there is
+//! nothing to register or paste; someone with a client of their own sets its ID in Settings →
+//! Account. The Create and Paste steps stay for a service without a built-in ID (none today).
 //!
 //! The choice ("Which service do you use?") is an unnumbered intro, only for someone who has not
-//! chosen yet and has no Client ID or token (`Config::needs_service_choice`); the three numbered
-//! steps are the same for everybody. AniList is a disabled card until v0.3.
+//! chosen yet and has no Client ID or token (`Config::needs_service_choice`); the numbered steps
+//! are the same for both services, with each one's own words. Settings → Account switches
+//! services later.
 //!
-//! It shows at first run (`Auth::NoClientId`: every list page shows it) and again from Settings →
-//! Account → "Set up again". Each step has the indicator ("Step 2 of 3") and Back / Next.
+//! It shows at first run (no Client ID: every list page shows it) and again from Settings →
+//! Accounts → "Set up again". Each step has the indicator ("Step 2 of 5") and Back / Next.
 //!
-//! Nothing here talks to the network itself: Sign in is `online.rs`. A sign-in moves the wizard
-//! to the last step.
+//! Nothing here talks to the network itself: Save is `clientid.rs`, Sign in is `online.rs`. A
+//! saved ID moves the wizard to the sign-in step, and a sign-in to the last step.
 
 use rune::{El, TextStyle, Tx, col, el, icon, row, spacer, text};
 
-use crate::clientid::copy_button;
+use kotora_core::service::ServiceId;
+
+use crate::clientid::{API_PAGE, copy_button, id_field, token_field};
 use crate::icons;
 use crate::model::{Auth, Page, State};
 use crate::online;
 use crate::theme::{self, PAL};
-use crate::ui::{button, ghost};
+use crate::ui::{alert, button, ghost};
 
 /// The wizard's steps, in order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Step {
-    /// "Which service do you use?" (not numbered, not in [`Step::ALL`]).
+    /// "Which service do you use?" (not numbered, in no list of [`Step::all`]).
     Service,
     #[default]
     Welcome,
+    Create,
+    Paste,
     SignIn,
     Done,
 }
 
 impl Step {
-    pub const ALL: [Step; 3] = [Step::Welcome, Step::SignIn, Step::Done];
+    /// Registering your own client: Welcome, Create, Paste, Sign in, Done.
+    const OWN_ID: [Step; 5] = [Step::Welcome, Step::Create, Step::Paste, Step::SignIn, Step::Done];
+    /// A service with a Client ID built in (AniList): no Create or Paste.
+    const BUILT_IN: [Step; 3] = [Step::Welcome, Step::SignIn, Step::Done];
 
-    /// 1 to 3; 0 for the service choice.
-    pub fn number(self) -> usize {
-        Step::ALL.iter().position(|s| *s == self).map_or(0, |i| i + 1)
+    /// The numbered steps for `svc`: a service with a built-in Client ID skips registering one.
+    pub fn all(svc: ServiceId) -> &'static [Step] {
+        if svc.built_in_client_id().is_some() { &Step::BUILT_IN } else { &Step::OWN_ID }
     }
 
-    fn next(self) -> Step {
-        Step::ALL.get(self.number()).copied().unwrap_or(Step::Done)
+    /// 1 to the last; 0 for the service choice.
+    pub fn number(self, svc: ServiceId) -> usize {
+        Step::all(svc).iter().position(|s| *s == self).map_or(0, |i| i + 1)
     }
 
-    fn prev(self) -> Step {
-        Step::ALL[self.number().saturating_sub(2)]
+    fn next(self, svc: ServiceId) -> Step {
+        Step::all(svc).get(self.number(svc)).copied().unwrap_or(Step::Done)
+    }
+
+    fn prev(self, svc: ServiceId) -> Step {
+        Step::all(svc)[self.number(svc).saturating_sub(2)]
     }
 }
 
 /// What went wrong with the last sign-in, in the wizard's words (`None`: nothing, or cancelled).
-fn sign_in_problem(e: &str) -> Option<(&'static str, String)> {
+fn sign_in_problem(svc: ServiceId, e: &str) -> Option<(String, String)> {
+    let name = svc.title();
     if e.contains("cancelled") {
         return None;
     }
     if e.contains("timed out") {
-        return Some(("No answer from MyAnimeList", "Nothing came back from your browser within 5 minutes. Try again, and press Allow on MyAnimeList's page.".into()));
+        return Some((format!("No answer from {name}"), format!("Nothing came back from your browser within 5 minutes. Try again, and press Allow (Approve on AniList) on {name}'s page.")));
     }
     if e.contains("refused") || e.contains("denied") {
         return Some((
-            "MyAnimeList said no",
-            "The sign-in was denied. Try again and press Allow, so Kotora can read and update your list. If it keeps failing, if you use your own client ID (Settings → Account), check that your app's redirect URL is exactly http://127.0.0.1:47321/callback.".into(),
+            format!("{name} said no"),
+            if svc.built_in_client_id().is_some() {
+                "The sign-in was denied. Try again and approve it, so Kotora can read and update your list. If it keeps failing and you use your own client ID (Settings \u{2192} Account), check that its redirect URL is exactly http://127.0.0.1:47321/callback.".to_string()
+            } else {
+                format!("The sign-in was denied. Try again and allow it, so Kotora can read and update your list. If it keeps failing, check that your {}'s redirect URL is exactly the one from step 2.", if svc == ServiceId::AniList { "client" } else { "app" })
+            },
         ));
     }
-    Some(("Sign-in failed", e.to_string()))
+    Some(("Sign-in failed".into(), e.to_string()))
 }
 
 impl State {
@@ -83,15 +102,26 @@ impl State {
         if self.setup_service { Step::Service } else { Step::Welcome }
     }
 
-    /// The first screen's MyAnimeList card: remember the choice in `[account] service` (a worker
-    /// writes the file; tests and scenes have no handle, so nothing is written) and go on.
-    pub fn choose_service(&mut self) {
+    /// A card of the first screen: remember the choice in `[account] service` (a worker writes
+    /// the file; tests and scenes have no handle, so nothing is written), make it the active
+    /// service, and go on.
+    pub fn choose_service(&mut self, id: ServiceId) {
         if self.setup != Step::Service {
             return;
         }
+        self.service = id;
         if self.handle.is_some() {
-            std::thread::spawn(|| {
-                if let Err(e) = kotora_core::config::save_service(&kotora_core::paths::config_file(), kotora_core::config::SERVICE_MAL) {
+            crate::account::set_active(id);
+            // The choice is made (its file write may still be on its way): no first-run state.
+            self.auth = online::auth_for(id);
+            self.client_id.hint = crate::clientid::saved_hint(id);
+            // A built-in Client ID means the list pages no longer show the wizard by themselves.
+            if self.page != Page::Setup {
+                self.setup_back = self.page;
+                self.page = Page::Setup;
+            }
+            std::thread::spawn(move || {
+                if let Err(e) = kotora_core::config::save_service(&kotora_core::paths::config_file(), id.name()) {
                     eprintln!("kotora: {e}");
                 }
             });
@@ -120,7 +150,7 @@ impl State {
 
     pub fn setup_next(&mut self) {
         if self.setup == Step::Service {
-            self.choose_service();
+            self.choose_service(self.service);
             return;
         }
         if self.setup == Step::Done {
@@ -128,21 +158,38 @@ impl State {
             return;
         }
         if self.setup_can_go_on() {
-            self.setup = self.setup.next();
-            // First run: the wizard was the only page; from the sign-in step on, signing in works.
-            if self.auth == Auth::NoClientId {
+            self.setup = self.setup.next(self.service);
+            if self.setup == Step::Paste && self.client_id.hint.is_none() {
+                self.client_id.draft.focused = true;
+            }
+            // First run: the wizard was the only page; from the sign-in step on, signing in works
+            // (the service has a built-in Client ID).
+            if self.setup == Step::SignIn && self.auth == Auth::NoClientId && self.service.built_in_client_id().is_some() {
                 self.auth = Auth::SignedOut;
             }
         }
     }
 
-    pub fn setup_prev(&mut self) {
-        self.setup = if self.setup == Step::Welcome && self.setup_service { Step::Service } else { self.setup.prev() };
+    /// "Check config.toml again": for an ID written into the file by hand.
+    pub fn setup_recheck(&mut self) {
+        online::recheck_config(self);
+        if self.auth != Auth::NoClientId {
+            self.client_id.hint = crate::clientid::saved_hint(self.service);
+            self.client_id.error = None;
+            if self.setup == Step::Paste {
+                self.setup = Step::SignIn;
+            }
+        }
     }
 
-    /// Next is enabled: an account to leave Sign in.
+    pub fn setup_prev(&mut self) {
+        self.setup = if self.setup == Step::Welcome && self.setup_service { Step::Service } else { self.setup.prev(self.service) };
+    }
+
+    /// Next is enabled: a saved ID to leave Paste, an account to leave Sign in.
     pub fn setup_can_go_on(&self) -> bool {
         match self.setup {
+            Step::Paste => self.client_id.hint.is_some() && self.auth != Auth::NoClientId,
             Step::SignIn => self.account.is_some() && self.auth == Auth::SignedIn,
             _ => true,
         }
@@ -161,18 +208,19 @@ impl Page {
 
 // ---------------------------------------------------------------------------------------- view
 
-/// "Step 2 of 3" and three bars, the done ones orange.
-fn indicator(step: Step) -> El {
-    let n = step.number();
+/// "Step 2 of 5" and five bars, the done ones orange.
+fn indicator(step: Step, svc: ServiceId) -> El {
+    let n = step.number(svc);
+    let total = Step::all(svc).len();
     let mut bars = row().gap(4.0);
-    for i in 1..=Step::ALL.len() {
+    for i in 1..=total {
         bars = bars.child(el().w(28.0).h(4.0).radius(2.0).fill(if i <= n { PAL.accent } else { PAL.border }));
     }
     row()
         .key("setup/indicator")
         .gap(12.0)
         .center_y()
-        .child(text(format!("Step {n} of {}", Step::ALL.len())).font(theme::LABEL_NUM).color(PAL.dim))
+        .child(text(format!("Step {n} of {total}")).font(theme::LABEL_NUM).color(PAL.dim))
         .child(bars)
 }
 
@@ -184,6 +232,28 @@ fn title(t: &str) -> El {
     text(t.to_string()).font(TextStyle::new(22.0, 600.0)).color(PAL.text).wrap().pb(2.0)
 }
 
+/// A button that opens a web page in the browser.
+fn open_button(key: &str, label: &str, url: &'static str) -> El {
+    row()
+        .key(key.to_string())
+        .role("link")
+        .label(label.to_string())
+        .focusable(true)
+        .h(32.0)
+        .px(12.0)
+        .gap(8.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.raised)
+        .border(1.0, PAL.border_strong)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |s: &mut State| online::open_link(s, url))
+        .child(text(label.to_string()).font(theme::LABEL_BTN).color(PAL.text))
+        .child(icon(&icons::EXTERNAL, 14.0).color(PAL.dim))
+}
+
 fn logo(s: &State) -> El {
     match &s.logo_big {
         Some(img) => el().size(56.0, 56.0).radius(theme::R_LG).pixels(img.pixels()),
@@ -191,29 +261,14 @@ fn logo(s: &State) -> El {
     }
 }
 
-/// The first screen: "Which service do you use?" with a card for each service. MyAnimeList is the
-/// only one that works; AniList (v0.3) is dimmed, says so and cannot be focused or pressed.
-/// `width`: the main area's, to put the cards side by side or one under the other.
+/// The first screen: "Which service do you use?" with a card for each service; Return picks
+/// MyAnimeList. `width`: the main area's, to put the cards side by side or one under the other.
 fn service(s: &State, width: f32) -> El {
     // The wizard card's inner width: its 680 max, less the page's and the card's padding.
     let inner = (width - 2.0 * theme::PAGE_PAD).min(680.0) - 2.0 * 24.0 - 2.0;
     let side_by_side = inner >= 520.0;
-    let mal = service_tile(
-        "setup/service-mal",
-        "MyAnimeList",
-        "MAL",
-        rune::color::hex("#2e51a2").expect("hex"),
-        "Sync your MyAnimeList list.",
-        true,
-    );
-    let ani = service_tile(
-        "setup/service-anilist",
-        "AniList",
-        "AL",
-        PAL.border_strong,
-        "AniList support comes in a later version.",
-        false,
-    );
+    let mal = service_tile("setup/service-mal", "MyAnimeList", "MAL", rune::color::hex("#2e51a2").expect("hex"), "Sync your MyAnimeList list.", ServiceId::Mal);
+    let ani = service_tile("setup/service-anilist", "AniList", "AL", rune::color::hex("#1d3550").expect("hex"), "Sync your AniList anime list.", ServiceId::AniList);
     let cards = if side_by_side {
         let w = ((inner - 12.0) / 2.0).floor();
         row().key("setup/services").gap(12.0).focus_group().child(mal.w(w)).child(ani.w(w))
@@ -230,9 +285,10 @@ fn service(s: &State, width: f32) -> El {
         .child(cards)
 }
 
-/// One service card. A live one is a button (Tab or the arrows focus it, Return or a click goes
-/// on); a disabled one is dimmed, has a "Coming soon" pill and ignores the pointer and the keys.
-fn service_tile(key: &str, name: &str, short: &str, badge: rune::Color, line: &str, live: bool) -> El {
+/// One service card: a button (Tab or the arrows focus it, Return or a click goes on).
+/// MyAnimeList's is the default button.
+fn service_tile(key: &str, name: &str, short: &str, badge: rune::Color, line: &str, id: ServiceId) -> El {
+    let live = true;
     let mark = el()
         .size(44.0, 44.0)
         .radius(theme::R_MD)
@@ -264,20 +320,17 @@ fn service_tile(key: &str, name: &str, short: &str, badge: rune::Color, line: &s
         );
     }
     let tile = col().key(key.to_string()).role("button").gap(14.0).padding(18.0).radius(theme::R_MD).fill(PAL.bg).border(1.0, PAL.border_strong).child(top).child(body);
-    if live {
-        tile.label(format!("{name}. {line} Continue."))
-            .focusable(true)
-            .default_button()
-            .cursor(rune::Cursor::Pointer)
-            .hover(PAL.hover())
-            .press(PAL.press())
-            .on_press_tx(|s: &mut State, tx: &mut Tx| {
-                tx.instant();
-                s.choose_service();
-            })
-    } else {
-        tile.label(format!("{name}, coming soon. {line}")).opacity(0.55).cursor(rune::Cursor::NotAllowed)
-    }
+    let tile = tile
+        .label(format!("{name}. {line} Continue."))
+        .focusable(true)
+        .cursor(rune::Cursor::Pointer)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.choose_service(id);
+        });
+    if id == ServiceId::Mal { tile.default_button() } else { tile }
 }
 
 fn welcome(s: &State) -> El {
@@ -286,25 +339,184 @@ fn welcome(s: &State) -> El {
     if !s.setup_service {
         c = c.child(logo(s));
     }
-    c.child(text(if s.setup_service { "Set up MyAnimeList" } else { "Welcome to Kotora" }).font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
-        .child(para("Kotora keeps your MyAnimeList list up to date while you watch. It notices the episode playing in your own video player and asks before it records it."))
-        .child(para("All you need is a MyAnimeList account. Kotora signs you in through MyAnimeList's own page in your browser: one click to allow it, then you are back here."))
-        .child(text("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap())
+    let name = s.service.title();
+    let register = match s.service {
+        ServiceId::Mal => "MyAnimeList asks every app to register itself",
+        ServiceId::AniList => "AniList asks every app to register itself as an \u{201c}API client\u{201d}",
+    };
+    c.child(text(if s.setup_service { format!("Set up {name}") } else { "Welcome to Kotora".to_string() }).font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
+        .child(para(&format!("Kotora keeps your {name} list up to date while you watch. It notices the episode playing in your own video player and asks before it records it.")))
+        .child(if s.service.built_in_client_id().is_some() {
+            para(&format!("All you need is a {name} account. Kotora signs you in through {name}'s own page in your browser: one click to approve, then you are back here."))
+        } else {
+            para(&format!("You need two things: a {name} account, and a free \u{201c}Client ID\u{201d}. {register}; it takes about 2 minutes, and the next steps show you how."))
+        })
+        .child(text(format!("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with {name}.")).font(theme::LABEL).color(PAL.faint).wrap())
 }
 
-fn sign_in(s: &State) -> El {
+/// One line of the form guide: the field's name, what to put, and a note.
+fn form_row(field: &str, value: El, note: &str) -> El {
+    let mut c = col().gap(2.0).grow(1.0).min_w(0.0).child(value);
+    if !note.is_empty() {
+        c = c.child(text(note.to_string()).font(theme::LABEL).color(PAL.faint).wrap());
+    }
+    row()
+        .key(format!("setup/form/{}", field.to_lowercase().replace([' ', '/'], "-")))
+        .gap(12.0)
+        .py(7.0)
+        .items_start()
+        .child(text(field.to_string()).font(theme::LABEL).color(PAL.dim).w(170.0).pt(1.0))
+        .child(c)
+}
+
+fn value(t: &str) -> El {
+    text(t.to_string()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).wrap()
+}
+
+fn mono(t: &str) -> El {
+    el().min_w(0.0).px(8.0).py(3.0).radius(theme::R_XS).fill(PAL.field).border(1.0, PAL.border).child(text(t.to_string()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.text).truncate())
+}
+
+fn numbered(n: u32, body: El) -> El {
+    row()
+        .gap(10.0)
+        .items_start()
+        .child(
+            el().size(20.0, 20.0)
+                .radius(10.0)
+                .fill(PAL.accent.alpha(0.14))
+                .center()
+                .child(text(n.to_string()).font(theme::BADGE).color(PAL.accent_hi)),
+        )
+        .child(col().grow(1.0).min_w(0.0).gap(8.0).child(body))
+}
+
+fn create(s: &State) -> El {
+    if s.service == ServiceId::AniList {
+        return create_anilist(s);
+    }
+    let redirect = kotora_core::mal::REDIRECT_URI;
+    let copy = copy_button("setup/copy-redirect", s.client_id.copied, |s: &mut State, tx: &mut Tx| {
+        tx.copy(kotora_core::mal::REDIRECT_URI);
+        s.client_id.copied = true;
+    });
+    let form = col()
+        .key("setup/form")
+        .px(14.0)
+        .py(6.0)
+        .radius(theme::R_MD)
+        .fill(PAL.bg)
+        .border(1.0, PAL.border)
+        .child(form_row("App Name", value("Anything unique, for example \u{201c}Kotora (yourname)\u{201d}"), ""))
+        .child(form_row("App Type", value("other"), ""))
+        .child(form_row("App Description", value("One line, for example \u{201c}Personal anime tracker\u{201d}"), ""))
+        .child(form_row(
+            "App Redirect URL",
+            row().w_full().min_w(0.0).gap(8.0).center_y().flex_wrap().child(mono(redirect)).child(copy),
+            "Must match exactly, or the sign-in fails.",
+        ))
+        .child(form_row("Homepage URL", row().child(mono("https://kotora.moe")), ""))
+        .child(form_row("Commercial / Non-Commercial", value("Non-Commercial"), ""))
+        .child(form_row("Name / Company Name", value("Your name or nickname"), ""))
+        .child(form_row("Purpose of Use", value("hobbyist"), "Or whichever option says hobby or personal use."));
+    col()
+        .w_full()
+        .min_w(0.0)
+        .gap(14.0)
+        .child(title("Create your Client ID"))
+        .child(numbered(
+            1,
+            col()
+                .gap(8.0)
+                .child(para("Sign in to myanimelist.net in your browser first. Then open the API page and press \u{201c}Create ID\u{201d}."))
+                .child(row().child(open_button("setup/open-api", "Open the API page", API_PAGE))),
+        ))
+        .child(numbered(2, col().gap(8.0).child(para("Fill in the form. If a field is named a little differently, pick the closest; only the redirect URL must be exact.")).child(form)))
+        .child(numbered(3, para("Accept the license agreement and press Submit.")))
+        .child(numbered(4, para("Back on the API page, press \u{201c}Edit\u{201d} next to your app and copy the Client ID.")))
+        .child(alert("setup/no-secret", PAL.warn(), "You do NOT need the Client Secret. Never paste it here.".into(), None).mx(0.0).mb(0.0))
+}
+
+/// AniList: register an API client (a name and the redirect URL; no secret is ever needed).
+fn create_anilist(s: &State) -> El {
+    let redirect = kotora_core::anilist::REDIRECT_URI;
+    let copy = copy_button("setup/copy-redirect", s.client_id.copied, |s: &mut State, tx: &mut Tx| {
+        tx.copy(kotora_core::anilist::REDIRECT_URI);
+        s.client_id.copied = true;
+    });
+    let form = col()
+        .key("setup/form")
+        .px(14.0)
+        .py(6.0)
+        .radius(theme::R_MD)
+        .fill(PAL.bg)
+        .border(1.0, PAL.border)
+        .child(form_row("Name", value("Anything, for example \u{201c}Kotora (yourname)\u{201d}"), ""))
+        .child(form_row(
+            "Redirect URL",
+            row().w_full().min_w(0.0).gap(8.0).center_y().flex_wrap().child(mono(redirect)).child(copy),
+            "Must match exactly, or the sign-in can\u{2019}t come back to Kotora.",
+        ));
+    col()
+        .w_full()
+        .min_w(0.0)
+        .gap(14.0)
+        .child(title("Create your Client ID"))
+        .child(numbered(
+            1,
+            col()
+                .gap(8.0)
+                .child(para("Sign in to anilist.co in your browser first. Then open Settings, Developer, and press \u{201c}Create New Client\u{201d}."))
+                .child(row().child(open_button("setup/open-api", "Open the Developer page", kotora_core::anilist::DEVELOPER_PAGE))),
+        ))
+        .child(numbered(2, col().gap(8.0).child(para("Fill in the form:")).child(form)))
+        .child(numbered(3, para("Press Save. AniList lists your client with its ID, a number such as 12345.")))
+        .child(alert("setup/no-secret", PAL.warn(), "You do NOT need the Client Secret. Never paste it here.".into(), None).mx(0.0).mb(0.0))
+}
+
+fn paste(s: &State) -> El {
+    let what = match s.service {
+        ServiceId::Mal => "It is 32 characters long, digits and the letters a to f.",
+        ServiceId::AniList => "It is a number, such as 12345 (the ID, not the Secret).",
+    };
     let mut c = col()
         .w_full()
         .min_w(0.0)
         .gap(12.0)
-        .child(title("Sign in to MyAnimeList"))
-        .child(para("Kotora opens MyAnimeList's own sign-in page in your browser. Sign in there if you need to, press Allow, then come back here."))
+        .child(title("Paste the Client ID"))
+        .child(para(&format!("{what} Kotora keeps it in its settings file (config.toml), which only you can read.")))
+        .child(id_field(s, "setup/cid", 380.0));
+    if let Some(h) = &s.client_id.hint
+        && s.auth != Auth::NoClientId
+    {
+        c = c.child(
+            row()
+                .key("setup/cid-saved")
+                .gap(6.0)
+                .center_y()
+                .child(icon(&icons::CHECK, 14.0).color(PAL.ok()))
+                .child(text(format!("Client ID saved (ending in {h}).")).font(theme::LABEL).color(PAL.ok())),
+        );
+    }
+    c.child(text("Not the Client Secret: Kotora refuses anything that looks like one.").font(theme::LABEL).color(PAL.faint).wrap())
+        .child(row().child(ghost("setup/recheck", "I put it in config.toml myself: check again", State::setup_recheck).h(26.0).px(0.0)))
+}
+
+fn sign_in(s: &State) -> El {
+    let name = s.service.title();
+    let allow = if s.service == ServiceId::AniList { "Approve" } else { "Allow" };
+    let mut c = col()
+        .w_full()
+        .min_w(0.0)
+        .gap(12.0)
+        .child(title(&format!("Sign in to {name}")))
+        .child(para(&format!("Kotora opens {name}'s own sign-in page in your browser. Sign in there if you need to, press {allow}, then come back here.")))
         .child(
             row()
                 .gap(8.0)
                 .items_start()
                 .child(icon(&icons::LOCK, 14.0).color(PAL.st_completed).mt(2.0))
-                .child(text("Kotora never sees your password. MyAnimeList gives it a key for your list, kept in a file only you can read.").font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
+                .child(text(format!("Kotora never sees your password. {name} gives it a key for your list, kept in a file only you can read.")).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
         );
     if let (Some((name, _)), Auth::SignedIn) = (&s.account, s.auth) {
         return c.child(
@@ -332,7 +544,7 @@ fn sign_in(s: &State) -> El {
                     .gap(10.0)
                     .center_y()
                     .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
-                    .child(text("Waiting for MyAnimeList in your browser\u{2026}").font(theme::BODY_MED).color(PAL.text).wrap().grow(1.0).min_w(0.0))
+                    .child(text(format!("Waiting for {name} in your browser\u{2026}")).font(theme::BODY_MED).color(PAL.text).wrap().grow(1.0).min_w(0.0))
                     .child(button("setup/cancel", "Cancel", false, Some(online::cancel_sign_in)).h(26.0)),
             );
         if let Some((url, opened)) = &s.sign_in_link {
@@ -359,9 +571,16 @@ fn sign_in(s: &State) -> El {
                     })),
             );
         }
+        if s.service == ServiceId::AniList {
+            // If the page can't come back to Kotora (a busy port, a blocked loopback), the address
+            // it ended on holds the token; a client registered with the PIN page shows it there.
+            wait = wait
+                .child(text("The page didn\u{2019}t come back here? Paste the address your browser ended on, or the token AniList showed:").font(theme::LABEL).color(PAL.dim).wrap())
+                .child(token_field(s, "setup/token"));
+        }
         return c.child(wait);
     }
-    if let Some((head, why)) = s.error.as_deref().and_then(sign_in_problem) {
+    if let Some((head, why)) = s.error.as_deref().and_then(|e| sign_in_problem(s.service, e)) {
         c = c.child(
             col()
                 .key("setup/sign-in-error")
@@ -375,8 +594,11 @@ fn sign_in(s: &State) -> El {
                 .child(text(why).font(theme::LABEL).color(PAL.text).wrap()),
         );
     }
-    let label = if s.error.as_deref().and_then(sign_in_problem).is_some() { "Try again" } else { "Sign in with MyAnimeList" };
-    c.child(row().mt(4.0).child(button("setup/sign-in", label, true, Some(online::sign_in)).h(36.0).px(16.0)))
+    if s.service == ServiceId::AniList && s.error.as_deref().and_then(|e| sign_in_problem(s.service, e)).is_some() {
+        c = c.child(text("Or paste the address your browser ended on, or the token AniList showed:").font(theme::LABEL).color(PAL.dim).wrap()).child(token_field(s, "setup/token"));
+    }
+    let label = if s.error.as_deref().and_then(|e| sign_in_problem(s.service, e)).is_some() { "Try again".to_string() } else { format!("Sign in with {name}") };
+    c.child(row().mt(4.0).child(button("setup/sign-in", &label, true, Some(online::sign_in)).h(36.0).px(16.0)))
 }
 
 fn done(s: &State) -> El {
@@ -442,12 +664,14 @@ pub fn page(s: &State, width: f32) -> El {
     let body = match step {
         Step::Service => service(s, width),
         Step::Welcome => welcome(s),
+        Step::Create => create(s),
+        Step::Paste => paste(s),
         Step::SignIn => sign_in(s),
         Step::Done => done(s),
     };
     let mut head = row().gap(12.0).center_y();
     if step != Step::Service {
-        head = head.child(indicator(step));
+        head = head.child(indicator(step, s.service));
     }
     head = head.child(spacer());
     if s.setup_closable() && step != Step::Done {
@@ -465,7 +689,7 @@ pub fn page(s: &State, width: f32) -> El {
     };
     foot = foot.child(button("setup/next", label, true, can.then_some(State::setup_next as fn(&mut State))));
     let mut card = col()
-        .key(if step == Step::Service { "setup/service".to_string() } else { format!("setup/{}", step.number()) })
+        .key(if step == Step::Service { "setup/service".to_string() } else { format!("setup/{}", step.number(s.service)) })
         .w_full()
         .min_w(0.0)
         .max_w(680.0)
@@ -513,8 +737,8 @@ mod tests {
     fn steps_go_forward_only_when_ready() {
         let mut s = first_run();
         assert!(!s.setup_closable(), "first run: nothing else to show");
-        // Kotora's own Client ID is built in: Welcome, Sign in, Done. Nothing to register or paste.
-        assert_eq!(Step::ALL, [Step::Welcome, Step::SignIn, Step::Done]);
+        // Kotora's own MyAnimeList Client ID is built in: Welcome, Sign in, Done.
+        assert_eq!(Step::all(ServiceId::Mal), [Step::Welcome, Step::SignIn, Step::Done]);
         s.setup_next();
         assert_eq!(s.setup, Step::SignIn);
         assert_eq!(s.auth, Auth::SignedOut, "signing in works from here");
@@ -522,14 +746,18 @@ mod tests {
         s.setup_prev();
         assert_eq!(s.setup, Step::Welcome);
         s.setup_next();
+        // A secret's shape is still refused for someone's own ID (Settings).
+        s.client_id.draft.replace_text("0123456789abcdef".repeat(4));
+        s.save_client_id();
+        assert!(s.client_id.error.as_deref().is_some_and(|e| e.contains("Client Secret")));
         // Signing in: the link shows; a denial explains and offers Try again.
         s.auth = Auth::SigningIn;
         s.apply(Msg::SignInUrl { url: "https://myanimelist.net/v1/oauth2/authorize?x".into(), opened: false });
         assert!(s.sign_in_link.is_some());
         s.apply(Msg::SignInFailed("MyAnimeList refused the sign-in (access_denied)".into()));
-        assert!(s.sign_in_link.is_none() && sign_in_problem(s.error.as_deref().unwrap()).is_some_and(|(h, _)| h.contains("said no")));
-        assert!(sign_in_problem("sign-in cancelled").is_none());
-        assert!(sign_in_problem("sign-in timed out").is_some_and(|(h, _)| h.contains("No answer")));
+        assert!(s.sign_in_link.is_none() && sign_in_problem(ServiceId::Mal, s.error.as_deref().unwrap()).is_some_and(|(h, _)| h.contains("said no")));
+        assert!(sign_in_problem(ServiceId::Mal, "sign-in cancelled").is_none());
+        assert!(sign_in_problem(ServiceId::Mal, "sign-in timed out").is_some_and(|(h, _)| h.contains("No answer")));
         s.auth = Auth::SigningIn;
         s.apply(Msg::SignedIn { user: "demo_user".into(), picture: None });
         assert_eq!(s.setup, Step::Done);
@@ -551,9 +779,9 @@ mod tests {
         let mut s = first_run();
         s.setup_service = true;
         s.setup = s.setup_first();
-        assert_eq!((s.setup, s.setup.number()), (Step::Service, 0));
+        assert_eq!((s.setup, s.setup.number(s.service)), (Step::Service, 0));
         assert!(s.handle.is_none(), "tests and scenes never write the config file");
-        s.choose_service();
+        s.choose_service(ServiceId::Mal);
         assert_eq!(s.setup, Step::Welcome);
         s.setup_prev();
         assert_eq!(s.setup, Step::Service, "Back from Welcome");
@@ -562,18 +790,59 @@ mod tests {
         assert_eq!(s.setup, Step::SignIn);
         s.setup_prev();
         s.setup_prev();
-        assert_eq!(s.setup, Step::Service, "Welcome, then the choice");
-        s.choose_service();
+        assert_eq!(s.setup, Step::Service, "Sign in, Welcome, then the choice");
+        s.choose_service(ServiceId::Mal);
         s.setup_next();
         // Other steps ignore the choice.
-        s.choose_service();
-        assert_eq!(s.setup, Step::SignIn);
+        s.choose_service(ServiceId::AniList);
+        assert_eq!((s.setup, s.service), (Step::SignIn, ServiceId::Mal));
 
         // Once the wizard is closed the choice is behind us.
         s.auth = Auth::SignedOut;
         s.setup_close();
         s.setup_again();
         assert_eq!(s.setup, Step::Welcome);
+    }
+
+    #[test]
+    fn the_anilist_card_goes_straight_to_sign_in() {
+        let mut s = first_run();
+        s.setup_service = true;
+        s.setup = s.setup_first();
+        s.choose_service(ServiceId::AniList);
+        assert_eq!((s.setup, s.service), (Step::Welcome, ServiceId::AniList));
+        // Kotora's own Client ID is built in: three steps, no Create or Paste.
+        assert_eq!(Step::all(ServiceId::AniList), [Step::Welcome, Step::SignIn, Step::Done]);
+        assert_eq!(Step::all(ServiceId::Mal).len(), 3, "MyAnimeList's is built in too (0.1.3)");
+        assert_eq!((Step::Welcome.number(ServiceId::AniList), Step::SignIn.number(ServiceId::AniList), Step::Done.number(ServiceId::AniList)), (1, 2, 3));
+        s.setup_next();
+        assert_eq!(s.setup, Step::SignIn);
+        s.setup_prev();
+        assert_eq!(s.setup, Step::Welcome);
+        s.setup_next();
+        // The words are AniList's.
+        assert!(sign_in_problem(ServiceId::AniList, "AniList refused the sign-in (access_denied)").is_some_and(|(h, _)| h == "AniList said no"));
+        // A bad paste says why and keeps waiting.
+        s.auth = Auth::SigningIn;
+        s.client_id.token.replace_text("not a token".to_string());
+        crate::online::sign_in_with_token(&mut s);
+        assert!(s.client_id.token_error.as_deref().is_some_and(|e| e.contains("isn't an AniList token")));
+        assert_eq!(s.auth, Auth::SigningIn);
+        s.apply(Msg::SignedIn { user: "demo_user".into(), picture: None });
+        assert_eq!((s.setup, s.account.as_ref().map(|a| a.1)), (Step::Done, Some("AniList")));
+    }
+
+    #[test]
+    fn a_built_in_id_means_no_missing_client_id() {
+        // Without a saved ID, both services (built in) are signed out, not "no Client ID".
+        let cfg = kotora_core::config::Config::default();
+        assert!(cfg.has_client_id(ServiceId::AniList) && cfg.has_client_id(ServiceId::Mal));
+        let mut s = State::fake();
+        s.service = ServiceId::AniList;
+        s.auth = Auth::SignedOut;
+        s.setup = Step::SignIn;
+        s.go(Page::Setup);
+        assert!(s.setup_closable(), "nothing to register first");
     }
 
     #[test]

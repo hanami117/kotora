@@ -34,7 +34,6 @@ pub const REFRESH_AFTER: Duration = Duration::from_secs(60);
 /// Most anime in the tray's Play next menu.
 pub const PLAY_MENU_MAX: usize = 8;
 
-const SERVICE: &str = "mal";
 
 /// A folder of Settings → Library.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,9 +191,9 @@ fn pass(st: &mut Store, folders: &[String], walk: bool) -> (Vec<Folder>, Index) 
         shown.push(Folder { path: f.clone(), online: r.online, files: r.files, scanned: true });
     }
     let rows = lib::load_all(st).unwrap_or_default();
-    let items = st.load_list(SERVICE).unwrap_or_default();
+    let items = st.load_list(crate::account::name()).unwrap_or_default();
     let rel = relations::load(&paths::cache_dir());
-    let cached = |key: &str| st.recognition(SERVICE, key).ok().flatten();
+    let cached = |key: &str| st.recognition(crate::account::name(), key).ok().flatten();
     (shown, Index::build(&rows, &items, &cached, &rel))
 }
 
@@ -699,6 +698,7 @@ pub fn folders_block(s: &State) -> El {
                     "~/Videos/Anime"
                 }), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.library.draft)
+                .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.library.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
                     tx.blur();

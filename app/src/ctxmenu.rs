@@ -87,6 +87,7 @@ impl State {
             score: Some(old.score),
             rewatching: Some(old.rewatching),
             times_rewatched: Some(old.times_rewatched),
+            volumes: None,
         };
         self.toast = Some(Toast { text: done, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some((id, back)) });
     }
@@ -306,7 +307,7 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
     };
     let has_next = e.episodes.is_none_or(|n| e.progress < n);
     let next = e.progress + 1;
-    let url = format!("https://myanimelist.net/anime/{id}");
+    let url = s.service.media_url(kotora_core::Kind::Anime, id);
     let open = |k: Sub| c.sub.is_some_and(|(o, _)| o == k);
     let mut m = surface("ctx-menu", 230.0)
         .label(format!("{}: actions", e.title))
@@ -328,7 +329,7 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
                 s.open_details(stub);
             }
         }))
-        .child(item("ctx/mal".into(), "Open on MyAnimeList".into(), true, None, move |s, _| {
+        .child(item("ctx/mal".into(), format!("Open on {}", s.service.title()), true, None, move |s, _| {
             s.ctx = None;
             crate::online::open_url(s, url.clone());
         }));

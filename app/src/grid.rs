@@ -8,7 +8,8 @@
 //! - **Performance:** a virtual list of rows, each row a line of cards (Rune has no virtual grid):
 //!   only the rows on screen and two more each way are built.
 //! - **Keyboard:** the arrows move a selection (outlined), Enter opens its details, Escape drops
-//!   it. The list's own shortcuts (Ctrl F, Ctrl K) are as in the table.
+//!   it. The list's own shortcuts (Ctrl F, Ctrl K, Ctrl , and Ctrl or Alt 1 to 5, `[keys] pages`) are as
+//!   in the table.
 
 use std::cell::Cell;
 
