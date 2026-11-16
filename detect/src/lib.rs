@@ -11,6 +11,10 @@
 //! - [`procfs`] (Linux; macOS through `libproc`): no setup at all. Which video file a known
 //!   player has open, from the process table, every 5 s. No position, so the hub counts the time
 //!   the file stays open, and ignores it when an IPC or MPRIS source shows the same file.
+//! - [`winplayers`] (Windows): no setup either. Windows has no public way to list a process's
+//!   open files, so this reads the player's command line and its window title, every 5 s.
+//!   PotPlayer also answers window messages with its position.
+//! - [`mpc`] (Windows): MPC-HC's and MPC-BE's web interface, polled like VLC's.
 //! - [`mpvconf`]: reads and extends the user's `mpv.conf` for the IPC socket ("precise mode"),
 //!   only when the user asks.
 //! - [`iinaconf`] (macOS): the same for IINA, which reads its own settings and, when set, the
@@ -28,6 +32,7 @@ pub mod dirwatch;
 pub mod iinaconf;
 #[cfg(target_os = "macos")]
 pub mod libproc;
+pub mod mpc;
 pub mod mpv;
 pub mod mpvconf;
 #[cfg(target_os = "linux")]
@@ -36,6 +41,9 @@ pub mod procfs;
 pub mod run;
 pub mod vlc;
 pub mod watch;
+pub mod winplayers;
+#[cfg(windows)]
+pub mod winproc;
 
 pub use run::{Detector, Settings, start};
 
@@ -52,7 +60,10 @@ pub enum Via {
     MpvIpc,
     Mpris,
     VlcHttp,
+    /// MPC-HC's and MPC-BE's web interface (Windows).
+    MpcHttp,
     /// The open files of the player's process (`procfs`): no position, duration or pause.
+    /// On Windows the process's command line and window title (`winplayers`).
     Process,
 }
 
@@ -61,7 +72,7 @@ impl Via {
         match self {
             Via::MpvIpc => "IPC socket",
             Via::Mpris => "MPRIS",
-            Via::VlcHttp => "web interface",
+            Via::VlcHttp | Via::MpcHttp => "web interface",
             Via::Process => "process",
         }
     }
@@ -112,10 +123,14 @@ pub enum Switch {
     Vlc,
     MpcQt,
     OtherMpris,
+    /// MPC-HC and MPC-BE (Windows).
+    Mpc,
+    /// PotPlayer (Windows).
+    PotPlayer,
 }
 
 impl Switch {
-    pub const ALL: [Switch; 5] = [Switch::Mpv, Switch::Iina, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris];
+    pub const ALL: [Switch; 7] = [Switch::Mpv, Switch::Iina, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris, Switch::Mpc, Switch::PotPlayer];
 
     /// The key in `config.toml`'s `[players]`.
     pub fn config_key(self) -> &'static str {
@@ -125,6 +140,8 @@ impl Switch {
             Switch::Vlc => "vlc",
             Switch::MpcQt => "mpc_qt",
             Switch::OtherMpris => "other_mpris",
+            Switch::Mpc => "mpc",
+            Switch::PotPlayer => "potplayer",
         }
     }
 
@@ -135,13 +152,15 @@ impl Switch {
             Switch::Vlc => "VLC",
             Switch::MpcQt => "mpc-qt",
             Switch::OtherMpris => "Other MPRIS players",
+            Switch::Mpc => "MPC-HC / MPC-BE",
+            Switch::PotPlayer => "PotPlayer",
         }
     }
 
     /// The switches Settings shows on this system.
     pub fn here() -> &'static [Switch] {
         if cfg!(windows) {
-            &[Switch::Mpv, Switch::Vlc]
+            &[Switch::Mpv, Switch::Mpc, Switch::Vlc, Switch::PotPlayer, Switch::MpcQt]
         } else if cfg!(target_os = "macos") {
             &[Switch::Mpv, Switch::Iina, Switch::Vlc]
         } else { &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris]
@@ -202,6 +221,11 @@ fn is_absolute_on(path: &str, windows: bool) -> bool {
 pub fn file_url_path(url: &str) -> Option<String> {
     let path = file_url_path_raw(url)?;
     Some(if cfg!(windows) { windows_url_path(&path) } else { path })
+}
+
+/// A `file:` URL as a Windows path, on every system (the Windows players' command lines).
+pub(crate) fn windows_file_url(url: &str) -> Option<String> {
+    file_url_path_raw(url).map(|p| windows_url_path(&p))
 }
 
 /// `/C:/v/b.mkv` → `C:\v\b.mkv`; a path with no drive letter keeps its slashes.

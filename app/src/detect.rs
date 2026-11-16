@@ -58,6 +58,7 @@ pub fn settings(c: &Config) -> Settings {
         vlc_password: c.vlc.password.clone(),
         processes: c.players.process_scan,
         process_minutes: c.players.process_minutes.clamp(1, 180),
+        mpc_port: c.mpc.port,
     }
 }
 

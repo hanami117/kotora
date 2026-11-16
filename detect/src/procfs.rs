@@ -319,8 +319,8 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>) {
     }
 }
 
-/// Windows has no process source yet (it will read the players' command lines): the thread is
-/// never started there.
+/// Windows reads the players' command lines and window titles instead (`winplayers.rs`): this
+/// thread is never started there.
 #[cfg(not(unix))]
 pub fn run(_shared: Arc<Shared>, _wake: Receiver<()>, _tx: Sender<Input>) {}
 

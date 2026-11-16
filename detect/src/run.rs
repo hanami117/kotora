@@ -37,11 +37,13 @@ pub struct Settings {
     pub processes: bool,
     /// Process source: minutes a file must stay open to count when its duration is unknown.
     pub process_minutes: u32,
+    /// MPC-HC's and MPC-BE's web interface (Windows).
+    pub mpc_port: u16,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { threshold: 0.8, off: Vec::new(), mpv_sockets: crate::mpv::default_sockets(), vlc_port: 8080, vlc_password: String::new(), processes: true, process_minutes: crate::watch::OPEN_MINUTES }
+        Settings { threshold: 0.8, off: Vec::new(), mpv_sockets: crate::mpv::default_sockets(), vlc_port: 8080, vlc_password: String::new(), processes: true, process_minutes: crate::watch::OPEN_MINUTES, mpc_port: crate::mpc::PORT }
     }
 }
 
@@ -50,9 +52,27 @@ pub struct Shared {
     settings: Mutex<Settings>,
     /// The mpv / IINA sockets with a thread, so one is never watched twice.
     sockets: Mutex<HashSet<PathBuf>>,
+    /// Windows: what the process scan says about MPC-HC / MPC-BE, for their web source.
+    mpc_process: Mutex<MpcProcess>,
+}
+
+/// Whether an MPC-HC or MPC-BE process runs, as the process scan sees it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MpcProcess {
+    /// The process scan is off (or hasn't run yet): the web source finds out by asking.
+    #[default]
+    Unknown,
+    NotRunning,
+    /// "MPC-HC" or "MPC-BE".
+    Running(&'static str),
 }
 
 impl Shared {
+    #[cfg(test)]
+    pub(crate) fn for_tests(settings: Settings) -> Shared {
+        Shared { settings: Mutex::new(settings), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown) }
+    }
+
     fn get(&self) -> Settings {
         self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -67,6 +87,20 @@ impl Shared {
     pub fn processes(&self) -> bool {
         self.get().processes
     }
+
+    /// MPC's web source: switched on, port.
+    pub fn mpc(&self) -> (bool, u16) {
+        let s = self.get();
+        (!s.off.contains(&Switch::Mpc), s.mpc_port)
+    }
+
+    pub fn mpc_process(&self) -> MpcProcess {
+        *self.mpc_process.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set_mpc_process(&self, p: MpcProcess) {
+        *self.mpc_process.lock().unwrap_or_else(|e| e.into_inner()) = p;
+    }
 }
 
 /// The running detection. Dropping it leaves the threads blocked and idle until the app ends.
@@ -75,6 +109,7 @@ pub struct Detector {
     shared: Arc<Shared>,
     vlc_wake: Option<Sender<()>>,
     proc_wake: Option<Sender<()>>,
+    mpc_wake: Option<Sender<()>>,
 }
 
 impl Detector {
@@ -86,7 +121,7 @@ impl Detector {
         }
         *self.shared.settings.lock().unwrap_or_else(|e| e.into_inner()) = s;
         let _ = self.tx.send(Input::Settings);
-        for w in [&self.vlc_wake, &self.proc_wake].into_iter().flatten() {
+        for w in [&self.vlc_wake, &self.proc_wake, &self.mpc_wake].into_iter().flatten() {
             let _ = w.send(());
         }
     }
@@ -117,7 +152,7 @@ fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> 
 /// thread.
 pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Detector {
     let (tx, rx) = mpsc::channel::<Input>();
-    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()) });
+    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown) });
     for sock in &settings.mpv_sockets {
         spawn_socket(&shared, &tx, sock);
     }
@@ -134,6 +169,24 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
     } else {
         None
     };
+    // Windows: MPC-HC's and MPC-BE's web interface. It asks only while the process scan sees
+    // one of them (or while that scan is off).
+    let mpc_wake = if cfg!(windows) {
+        let (wtx, wrx) = mpsc::channel();
+        let (sh, tx) = (shared.clone(), tx.clone());
+        let _ = std::thread::Builder::new().name("kotora-mpc".into()).spawn(move || crate::mpc::run(sh, wrx, tx));
+        Some(wtx)
+    } else {
+        None
+    };
+    #[cfg(windows)]
+    let proc_wake = {
+        let (wtx, wrx) = mpsc::channel();
+        let (sh, tx, mpc) = (shared.clone(), tx.clone(), mpc_wake.clone());
+        let _ = std::thread::Builder::new().name("kotora-procs".into()).spawn(move || crate::winproc::run(sh, wrx, tx, mpc));
+        Some(wtx)
+    };
+    #[cfg(not(windows))]
     let proc_wake = if cfg!(any(target_os = "linux", target_os = "macos")) {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx) = (shared.clone(), tx.clone());
@@ -175,5 +228,5 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
             }
         }
     });
-    Detector { tx, shared, vlc_wake, proc_wake }
+    Detector { tx, shared, vlc_wake, proc_wake, mpc_wake }
 }

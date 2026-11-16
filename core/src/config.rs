@@ -16,14 +16,17 @@
 //! keep_higher_progress = true  # a progress-only conflict where ours is higher sends ours
 //!
 //! [players]
-//! mpv = true                   # also iina, vlc, mpc_qt, other_mpris
+//! mpv = true                   # also iina, vlc, mpc_qt, other_mpris, mpc, potplayer
 //! mpv_sockets = ["/run/user/1000/mpv.sock"]
 //! process_scan = true          # see players' open files, no setup (no position)
 //! process_minutes = 15         # open this long counts as watched (process scan only)
 //!
-//! [vlc]                        # macOS: VLC's web interface
+//! [vlc]                        # macOS and Windows: VLC's web interface
 //! port = 8080
 //! password = "…"
+//!
+//! [mpc]                        # Windows: MPC-HC's and MPC-BE's web interface
+//! port = 13579
 //!
 //! [notices]                    # one-time offers the user has answered
 //! mpv_precise = true           # "enable precise detection" for mpv was shown
@@ -76,6 +79,7 @@ pub struct Config {
     pub updates: Updates,
     pub players: Players,
     pub vlc: Vlc,
+    pub mpc: Mpc,
     pub notices: Notices,
     pub recognition: Recognition,
     pub display: Display,
@@ -448,6 +452,10 @@ pub struct Players {
     pub vlc: bool,
     pub mpc_qt: bool,
     pub other_mpris: bool,
+    /// MPC-HC and MPC-BE (Windows).
+    pub mpc: bool,
+    /// PotPlayer (Windows).
+    pub potplayer: bool,
     /// Empty: the default paths (`kotora_detect::mpv::default_sockets`).
     pub mpv_sockets: Vec<String>,
     /// The process source (players' open files; `kotora_detect::procfs`).
@@ -458,7 +466,7 @@ pub struct Players {
 
 impl Default for Players {
     fn default() -> Self {
-        Players { mpv: true, iina: true, vlc: true, mpc_qt: true, other_mpris: true, mpv_sockets: Vec::new(), process_scan: true, process_minutes: 15 }
+        Players { mpv: true, iina: true, vlc: true, mpc_qt: true, other_mpris: true, mpc: true, potplayer: true, mpv_sockets: Vec::new(), process_scan: true, process_minutes: 15 }
     }
 }
 
@@ -471,6 +479,8 @@ impl Players {
             "vlc" => self.vlc,
             "mpc_qt" => self.mpc_qt,
             "other_mpris" => self.other_mpris,
+            "mpc" => self.mpc,
+            "potplayer" => self.potplayer,
             _ => false,
         }
     }
@@ -482,6 +492,8 @@ impl Players {
             "vlc" => self.vlc = on,
             "mpc_qt" => self.mpc_qt = on,
             "other_mpris" => self.other_mpris = on,
+            "mpc" => self.mpc = on,
+            "potplayer" => self.potplayer = on,
             _ => {}
         }
     }
@@ -497,6 +509,19 @@ pub struct Vlc {
 impl Default for Vlc {
     fn default() -> Self {
         Vlc { port: 8080, password: String::new() }
+    }
+}
+
+/// MPC-HC's and MPC-BE's web interface (Windows).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Mpc {
+    pub port: u16,
+}
+
+impl Default for Mpc {
+    fn default() -> Self {
+        Mpc { port: 13579 }
     }
 }
 
@@ -536,6 +561,8 @@ struct File {
     players: Players,
     #[serde(default)]
     vlc: Vlc,
+    #[serde(default)]
+    mpc: Mpc,
     #[serde(default)]
     notices: Notices,
     #[serde(default)]
@@ -580,6 +607,7 @@ impl Config {
             updates,
             players: f.players,
             vlc: f.vlc,
+            mpc: f.mpc,
             notices: f.notices,
             recognition: f.recognition,
             display: f.display,

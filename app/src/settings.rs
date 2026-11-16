@@ -234,6 +234,8 @@ fn player_words(sw: Switch) -> &'static str {
         Switch::Vlc => "vlc player mpris web interface",
         Switch::MpcQt => "mpc-qt mpc qt mpris player",
         Switch::OtherMpris => "mpris haruna celluloid smplayer other players",
+        Switch::Mpc => "mpc-hc mpc-be media player classic web interface position player",
+        Switch::PotPlayer => "potplayer pot player daum position",
     }
 }
 
