@@ -49,6 +49,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
         // Menus last, so they draw over everything.
         .children(s.sort_menu.then(|| sort_menu(s)))
+        .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
         .children(s.toast.as_ref().map(crate::library::toast))
 }
 
@@ -101,6 +102,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if k.key == rune::Key::Escape && s.page == Page::Search {
         tx.instant();
         s.close_search();
+        return true;
+    }
+    // The Menu key or Shift+F10 that no focused control took: the selected entry's menu.
+    if (k.key == rune::Key::ContextMenu || (k.key == rune::Key::Function(10) && k.mods.shift)) && s.ctx_key() {
         return true;
     }
     // P (or Cmd/Ctrl+Return) plays the selected entry's next episode, as a middle-click does.
@@ -955,6 +960,11 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     // A press on the row opens its editor (`+1` keeps its own press); the middle button plays
     // the next episode.
     .pointer_buttons([rune::PointerButton::Middle])
+    // Right-click (Ctrl-click on macOS): the entry's menu at the pointer.
+    .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+        tx.instant();
+        s.open_ctx(id, crate::ctxmenu::At::Point(p.x, p.y));
+    })
     .on_press_tx(move |s: &mut State, tx: &mut Tx| {
         tx.instant();
         if tx.button() == rune::PointerButton::Middle {

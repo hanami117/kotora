@@ -91,6 +91,13 @@ pub struct Change {
 }
 
 impl Change {
+    /// A move to status `st`, as the editor and MAL make it: Completed also sets the last
+    /// episode when the count is known.
+    pub fn to_status(st: Status, episodes: Option<u32>) -> Change {
+        let progress = if st == Status::Completed { episodes.filter(|n| *n > 0) } else { None };
+        Change { status: Some(st), progress, ..Default::default() }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.status.is_none() && self.progress.is_none() && self.score.is_none() && self.rewatching.is_none() && self.times_rewatched.is_none()
     }
@@ -169,6 +176,18 @@ pub struct Remote {
 impl ListItem {
     pub fn values(&self) -> Values {
         Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched }
+    }
+}
+
+#[cfg(test)]
+mod to_status_tests {
+    use super::*;
+
+    #[test]
+    fn completed_takes_the_last_episode() {
+        assert_eq!(Change::to_status(Status::Completed, Some(12)).progress, Some(12));
+        assert_eq!(Change::to_status(Status::Completed, None).progress, None, "count unknown: progress stays");
+        assert_eq!(Change::to_status(Status::OnHold, Some(12)), Change { status: Some(Status::OnHold), ..Default::default() });
     }
 }
 

@@ -385,6 +385,8 @@ pub struct Toast {
     /// The note is an error ("Episode 7 not in your folders").
     pub warn: bool,
     pub until: std::time::Instant,
+    /// Undo: the entry and the change that puts it back (`State::toast_undo`).
+    pub undo: Option<(u32, kotora_core::Change)>,
 }
 
 /// How long a toast stays.
@@ -398,7 +400,7 @@ impl State {
             Ok(note) => (note, false),
             Err(m) => (m, true),
         };
-        self.toast = Some(Toast { text, warn, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(TOAST_SECS) });
+        self.toast = Some(Toast { text, warn, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(TOAST_SECS), undo: None });
     }
 
     /// The entry P plays: the grid's selection, the list row whose editor is open, or the
@@ -436,7 +438,7 @@ pub fn toast(t: &Toast) -> El {
         .role("status")
         .label(t.text.clone())
         .pin(None, None, Some(24.0), Some(24.0))
-        .max_w(420.0)
+        .max_w(460.0)
         .px(14.0)
         .py(10.0)
         .gap(10.0)
@@ -447,6 +449,7 @@ pub fn toast(t: &Toast) -> El {
         .shadow(8.0, 24.0, rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
         .child(el().size(8.0, 8.0).radius(4.0).fill(c))
         .child(text(t.text.clone()).font(theme::BODY).color(PAL.text).wrap().min_w(0.0))
+        .children(t.undo.is_some().then(|| crate::ui::button("toast/undo", "Undo", false, Some(State::toast_undo)).h(26.0).px(10.0)))
 }
 
 pub(crate) fn press_play(s: &mut State, id: u32) {

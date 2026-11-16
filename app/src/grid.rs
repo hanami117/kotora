@@ -302,6 +302,7 @@ fn open(e: &Entry) -> impl Fn(&mut State, &mut Tx) + 'static {
 
 /// Grid: the poster with its badges and a progress strip, title and "Ep x / y · score" under.
 fn card_dense(s: &State, e: &Entry, st: Status) -> El {
+    let e_id = e.id;
     let z = DENSE;
     let always = st == Status::Watching && has_next(s, e);
     let selected = s.grid.sel == Some(e.id);
@@ -324,6 +325,10 @@ fn card_dense(s: &State, e: &Entry, st: Status) -> El {
         .cursor(rune::Cursor::Pointer)
         .hover_group()
         .pointer_buttons([rune::PointerButton::Middle])
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.open_ctx(e_id, crate::ctxmenu::At::Point(p.x, p.y));
+        })
         .on_press_tx(open(e))
         .child(p)
         .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
@@ -332,6 +337,7 @@ fn card_dense(s: &State, e: &Entry, st: Status) -> El {
 
 /// Large: a card with the poster, two lines of title, a progress bar, "Ep x / y", the score and +1.
 fn card_large(s: &State, e: &Entry, _st: Status) -> El {
+    let e_id = e.id;
     let z = LARGE;
     let selected = s.grid.sel == Some(e.id);
     let p = look::poster(s, e.id, &e.title, e.cover_url.as_deref(), z.w, z.poster_h, 0.0).child(badges(e)).child(hover_layer(s, e, false));
@@ -348,6 +354,10 @@ fn card_large(s: &State, e: &Entry, _st: Status) -> El {
         .cursor(rune::Cursor::Pointer)
         .hover_group()
         .pointer_buttons([rune::PointerButton::Middle])
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.open_ctx(e_id, crate::ctxmenu::At::Point(p.x, p.y));
+        })
         .on_press_tx(open(e))
         .child(p)
         .child(
