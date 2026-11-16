@@ -594,6 +594,35 @@ pub const SCENES: &[Scene] = &[
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Grid);
     }),
+    // The right-click menu of an entry: on a list row, with each submenu, on a poster (opened
+    // with the Menu key, under it) and on a Home card; and the toast with Undo after a move.
+    ("ctx-menu", |s| s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0))),
+    ("ctx-menu-move", |s| {
+        s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Move, false));
+        }
+    }),
+    ("ctx-menu-score", |s| {
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
+    }),
+    ("ctx-menu-grid", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.grid.sel = Some(1);
+        s.ctx_key();
+    }),
+    ("ctx-menu-home", |s| {
+        fake_covers(s);
+        home(s);
+        s.open_ctx(1, crate::ctxmenu::At::Point(620.0, 150.0));
+    }),
+    ("ctx-undo", |s| {
+        s.ctx_move(2, Status::Completed);
+    }),
     // The toast after a middle-click: playing, and the next file missing.
     ("toast-play", |s| {
         crate::library::fake(s);
@@ -1005,6 +1034,24 @@ mod tests {
             rt.frame(1.0 / 60.0);
         }
         rt
+    }
+
+    #[test]
+    fn context_menu_scenes_show_the_menu_and_submenus() {
+        for (name, keys) in [
+            ("ctx-menu", &["ctx-menu", "ctx/move", "ctx/score", "ctx/plus", "ctx/play", "ctx/edit", "ctx/details", "ctx/mal"][..]),
+            ("ctx-menu-move", &["ctx-sub/move", "ctx/move/completed", "ctx/move/watching"][..]),
+            ("ctx-menu-score", &["ctx-sub/score", "ctx/score/10", "ctx/score/none"][..]),
+            ("ctx-menu-grid", &["ctx-menu", "card/1"][..]),
+            ("ctx-menu-home", &["ctx-menu", "page/home"][..]),
+            ("ctx-undo", &["toast", "toast/undo"][..]),
+        ] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in keys {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+        }
+        assert!(render("list", (1280.0, 800.0)).find("ctx-menu").is_none());
     }
 
     /// Middle-click and P play the next episode, as ▶ Play does; the toast says what happened.

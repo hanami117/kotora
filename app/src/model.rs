@@ -461,6 +461,8 @@ pub struct State {
     pub main_size: std::cell::Cell<[f32; 2]>,
     /// A short note at the window's bottom (Play from a middle-click or P).
     pub toast: Option<crate::library::Toast>,
+    /// An entry's right-click menu (`ctxmenu.rs`).
+    pub ctx: Option<crate::ctxmenu::Ctx>,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -522,6 +524,7 @@ impl State {
             grid: Default::default(),
             main_size: Default::default(),
             toast: None,
+            ctx: None,
         };
         s.queue_changed();
         s.refresh();
@@ -622,6 +625,7 @@ impl State {
 
     pub fn go(&mut self, page: Page) {
         self.sort_menu = false;
+        self.ctx = None;
         if page == Page::Settings && self.page != page {
             self.refresh_login();
         }

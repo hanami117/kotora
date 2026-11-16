@@ -199,6 +199,7 @@ fn wide_card(s: &State, e: &Entry) -> El {
         _ => el(),
     };
     let stub = Stub::from_entry(e);
+    let e_id = id;
     el().key(format!("cont/{id}"))
         .role("button")
         .label(format!("About {}", e.title))
@@ -210,6 +211,10 @@ fn wide_card(s: &State, e: &Entry) -> El {
         .cursor(rune::Cursor::Pointer)
         // The middle button plays the next episode, as on the list.
         .pointer_buttons([rune::PointerButton::Middle])
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.open_ctx(e_id, crate::ctxmenu::At::Point(p.x, p.y));
+        })
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
             if tx.button() == rune::PointerButton::Middle {
@@ -250,6 +255,7 @@ fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -
         });
     }
     let stub = Stub::from_entry(e);
+    let e_id = e.id;
     col()
         .key(format!("sc/{}", e.id))
         .role("button")
@@ -260,6 +266,10 @@ fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -
         .hover_group()
         // The middle button plays the next episode, as on the list.
         .pointer_buttons([rune::PointerButton::Middle])
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.open_ctx(e_id, crate::ctxmenu::At::Point(p.x, p.y));
+        })
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
             if tx.button() == rune::PointerButton::Middle {

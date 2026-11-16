@@ -13,6 +13,7 @@ mod art;
 mod autostart;
 mod clientid;
 mod ctl;
+mod ctxmenu;
 mod detect;
 mod details;
 mod grid;
