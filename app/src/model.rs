@@ -25,6 +25,8 @@ pub type Handle = AppHandle<State>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// Shelves: continue watching, airing this week, plan to watch (`home.rs`).
+    Home,
     List(Status),
     NowPlaying,
     Queue,

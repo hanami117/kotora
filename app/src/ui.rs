@@ -126,6 +126,9 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     // and the sync line stay at the bottom.
     let mut nav = col().w_full();
     if s.has_list() {
+        nav = nav.child(nav_item("home", NavMark::Icon(&icons::HOME), "Home", None, lit == Page::Home, Page::Home));
+    }
+    if s.has_list() {
         let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
         nav = nav.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
     }
@@ -374,6 +377,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide, width),
+        Page::Home if !s.has_list() => welcome(s),
+        Page::Home => crate::home::page(s),
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),

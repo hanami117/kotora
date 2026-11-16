@@ -57,6 +57,26 @@ pub const SCENES: &[Scene] = &[
         s.prefs.views.set(Status::Watching, ListView::Grid);
         s.set_filter(Filter::Airing);
     }),
+    // Home: continue watching, airing this week, plan to watch.
+    ("home", home),
+    ("home-covers", |s| {
+        fake_covers(s);
+        home(s);
+    }),
+    // The next files are in the library folders: Play on the Continue watching cards.
+    ("home-library", |s| {
+        crate::library::fake(s);
+        fake_covers(s);
+        home(s);
+    }),
+    // A list with nothing airing, nothing planned: the shelves say so.
+    ("home-quiet", |s| {
+        s.entries.retain(|e| e.status == Status::Watching);
+        home(s);
+        for e in &mut s.entries {
+            e.timetable = None;
+        }
+    }),
     // The account's MyAnimeList profile picture (made up), round in the sidebar.
     ("account-picture", |s| {
         fake_covers(s);
@@ -855,6 +875,19 @@ fn fake_covers(s: &mut State) {
     }
 }
 
+/// Home, with the fake airing shows' next episodes spread over the week (a fixed zone).
+fn home(s: &mut State) {
+    let now = s.clock();
+    s.airing.tz = Some(3600);
+    for (id, hours) in [(0u32, 5i64), (1, 30), (3, 52), (6, 100), (10, 140)] {
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == id) {
+            let first = now + hours * 3600 - i64::from(e.progress) * kotora_core::airing::WEEK;
+            e.timetable = Some(kotora_core::airing::Timetable { first, episodes: e.episodes, shift: 0, until: None });
+        }
+    }
+    s.go(Page::Home);
+}
+
 /// 320 entries on Watching, with made-up covers (the long list for frame times).
 fn many(s: &mut State) {
     fake_covers(s);
@@ -957,6 +990,20 @@ mod tests {
         // 320 entries: only the rows near the screen are built.
         let rt = render("list-many-grid", (1280.0, 800.0));
         assert!(rt.find("card/1000").is_some() && rt.find("card/1319").is_none());
+    }
+
+    #[test]
+    fn home_shows_its_shelves() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("home-covers", size);
+            for key in ["page/home", "nav/home", "home/continue", "home/airing", "home/plan", "home/continue/all", "cont/0", "sc/0"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+        }
+        let rt = render("home-library", (1280.0, 800.0));
+        assert!(rt.find("play").is_some(), "Play when the next file is there");
+        let rt = render("home-quiet", (1280.0, 800.0));
+        assert!(rt.find("home/airing/scroll").is_none() && rt.find("home/plan/scroll").is_none());
     }
 
     /// The new headers: Now Playing's hero, the details banner (wide) and banner card (narrow),

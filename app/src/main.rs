@@ -16,6 +16,7 @@ mod ctl;
 mod detect;
 mod details;
 mod grid;
+mod home;
 mod icons;
 mod library;
 mod look;
