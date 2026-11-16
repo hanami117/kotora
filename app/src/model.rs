@@ -426,6 +426,8 @@ pub struct State {
     pub tick: Option<(bool, u64)>,
     /// Library folders and "Play next episode" (`library.rs`).
     pub library: crate::library::Library,
+    /// The list's grid views: the keyboard selection (`grid.rs`).
+    pub grid: crate::grid::Grid,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -481,6 +483,7 @@ impl State {
             tray: None,
             tick: None,
             library: Default::default(),
+            grid: Default::default(),
         };
         s.queue_changed();
         s.refresh();

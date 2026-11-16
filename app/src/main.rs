@@ -15,6 +15,7 @@ mod clientid;
 mod ctl;
 mod detect;
 mod details;
+mod grid;
 mod icons;
 mod library;
 mod look;

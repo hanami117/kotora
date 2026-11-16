@@ -122,6 +122,8 @@ pub struct Prefs {
     pub titles: kotora_core::config::TitleLang,
     /// Settings → Appearance (`[display] theme`).
     pub theme: kotora_core::config::Theme,
+    /// Each list page's view (`[views]`, the switch in the list's toolbar).
+    pub views: kotora_core::config::Views,
     /// Settings → Startup: what the system says about the login start (`autostart.rs`).
     pub login: crate::autostart::Login,
     /// The login entry is being changed on a worker thread.
@@ -133,7 +135,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: Default::default(), login_busy: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), views: Default::default(), login: Default::default(), login_busy: false, background: false }
     }
 }
 
@@ -150,6 +152,7 @@ impl Prefs {
             notify: c.notifications.clone(),
             titles: c.display.titles,
             theme: c.display.theme,
+            views: c.views,
             // The system's login entry, read by `detect::start`; off until then.
             login: Default::default(),
             login_busy: false,

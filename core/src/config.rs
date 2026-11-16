@@ -37,6 +37,9 @@
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
+//!
+//! [views]                      # each list page's view: "list", "grid" (posters) or "large"
+//! watching = "grid"            # also plan_to_watch, completed, on_hold, dropped
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -57,6 +60,7 @@ pub struct Config {
     pub recognition: Recognition,
     pub display: Display,
     pub startup: Startup,
+    pub views: Views,
     pub notifications: Notifications,
     pub library: Library,
 }
@@ -170,6 +174,82 @@ impl Theme {
 pub struct Display {
     pub titles: TitleLang,
     pub theme: Theme,
+}
+
+/// How a list page shows its entries: the table, a grid of posters, or large cards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListView {
+    #[default]
+    List,
+    Grid,
+    Large,
+}
+
+impl ListView {
+    pub const ALL: [ListView; 3] = [ListView::List, ListView::Grid, ListView::Large];
+
+    /// The `config.toml` value.
+    pub fn key(self) -> &'static str {
+        match self {
+            ListView::List => "list",
+            ListView::Grid => "grid",
+            ListView::Large => "large",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ListView::List => "List",
+            ListView::Grid => "Grid",
+            ListView::Large => "Large",
+        }
+    }
+}
+
+/// `[views]`: the view each list page keeps (the switch in the list's toolbar).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Views {
+    pub watching: ListView,
+    pub plan_to_watch: ListView,
+    pub completed: ListView,
+    pub on_hold: ListView,
+    pub dropped: ListView,
+}
+
+impl Views {
+    /// The `config.toml` key of a list.
+    pub fn key(st: crate::Status) -> &'static str {
+        match st {
+            crate::Status::Watching => "watching",
+            crate::Status::PlanToWatch => "plan_to_watch",
+            crate::Status::Completed => "completed",
+            crate::Status::OnHold => "on_hold",
+            crate::Status::Dropped => "dropped",
+        }
+    }
+
+    pub fn get(&self, st: crate::Status) -> ListView {
+        match st {
+            crate::Status::Watching => self.watching,
+            crate::Status::PlanToWatch => self.plan_to_watch,
+            crate::Status::Completed => self.completed,
+            crate::Status::OnHold => self.on_hold,
+            crate::Status::Dropped => self.dropped,
+        }
+    }
+
+    pub fn set(&mut self, st: crate::Status, v: ListView) {
+        let slot = match st {
+            crate::Status::Watching => &mut self.watching,
+            crate::Status::PlanToWatch => &mut self.plan_to_watch,
+            crate::Status::Completed => &mut self.completed,
+            crate::Status::OnHold => &mut self.on_hold,
+            crate::Status::Dropped => &mut self.dropped,
+        };
+        *slot = v;
+    }
 }
 
 /// Settings → Startup. Whether Kotora starts at login is the login entry itself
@@ -344,6 +424,8 @@ struct File {
     #[serde(default)]
     startup: Startup,
     #[serde(default)]
+    views: Views,
+    #[serde(default)]
     notifications: Notifications,
     #[serde(default)]
     library: Library,
@@ -370,6 +452,7 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
+            views: f.views,
             notifications: f.notifications,
             library: f.library,
         })
@@ -572,6 +655,26 @@ mod tests {
         assert_eq!(n, Notifications { detected: false, offer: true, recorded: true });
         let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
         assert_eq!(n, Notifications { detected: true, offer: false, recorded: true });
+    }
+
+    #[test]
+    fn list_views_read_and_write_per_list() {
+        use crate::Status;
+        let c = Config::parse("").unwrap();
+        assert!(Status::ALL.iter().all(|st| c.views.get(*st) == ListView::List), "the table by default");
+        let mut text = String::new();
+        for (st, v) in [(Status::Watching, ListView::Grid), (Status::Completed, ListView::Large), (Status::OnHold, ListView::Grid)] {
+            text = set_line(&text, "views", Views::key(st), &quote(v.key()));
+        }
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.views.get(Status::Watching), ListView::Grid);
+        assert_eq!(c.views.get(Status::Completed), ListView::Large);
+        assert_eq!(c.views.get(Status::OnHold), ListView::Grid);
+        assert_eq!(c.views.get(Status::PlanToWatch), ListView::List);
+        let mut v = c.views;
+        v.set(Status::Dropped, ListView::Large);
+        assert_eq!(v.get(Status::Dropped), ListView::Large);
+        assert!(Config::parse("[views]\nwatching = \"mosaic\"\n").is_err(), "an unknown value is refused");
     }
 
     #[test]

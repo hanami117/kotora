@@ -2,7 +2,7 @@
 //! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
 
 use kotora_core::Status;
-use kotora_core::config::{Theme, TitleLang};
+use kotora_core::config::{ListView, Theme, TitleLang};
 
 use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
@@ -18,6 +18,45 @@ pub const SCENES: &[Scene] = &[
     ("list", |_| {}),
     // Real covers (made up here) on the rows that have one; two rows have none and keep the tile.
     ("list-covers", fake_covers),
+    // 320 entries on Watching, with covers: frame time on a long list.
+    ("list-many", many),
+    // The same long list as posters and as large cards.
+    ("list-many-grid", |s| {
+        many(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    ("list-many-large", |s| {
+        many(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+    }),
+    // The list views (the toolbar's switch): posters with +1 always on Watching, large cards.
+    ("list-grid", |s| s.prefs.views.set(Status::Watching, ListView::Grid)),
+    ("list-grid-covers", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    ("list-large", |s| s.prefs.views.set(Status::Watching, ListView::Large)),
+    ("list-large-covers", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+    }),
+    // Off Watching, +1 and edit wait for the pointer.
+    ("list-grid-completed", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Completed, ListView::Grid);
+        s.go(Page::List(Status::Completed));
+    }),
+    // A card picked with the arrows (outlined).
+    ("list-grid-selected", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.grid.sel = s.rows.get(2).map(|&k| s.entries[k].id);
+    }),
+    ("list-grid-airing", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.set_filter(Filter::Airing);
+    }),
     // The account's MyAnimeList profile picture (made up), round in the sidebar.
     ("account-picture", |s| {
         fake_covers(s);
@@ -816,6 +855,24 @@ fn fake_covers(s: &mut State) {
     }
 }
 
+/// 320 entries on Watching, with made-up covers (the long list for frame times).
+fn many(s: &mut State) {
+    fake_covers(s);
+    let base = s.entries.clone();
+    s.entries.clear();
+    for i in 0..320u32 {
+        let mut e = base[i as usize % base.len()].clone();
+        e.id = 1000 + i;
+        e.status = Status::Watching;
+        e.rewatching = false;
+        e.title = format!("{} {}", e.title, i as usize / base.len() + 1);
+        e.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", e.id));
+        e.updated_at -= i64::from(i) * 600;
+        s.entries.push(e);
+    }
+    s.refresh();
+}
+
 /// The wizard at `step`, first run (no Client ID, nobody signed in).
 fn setup(s: &mut State, step: Step) {
     signed_out(s, Auth::NoClientId);
@@ -881,6 +938,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The grid views: the switch, cards in rows, +1 always on Watching posters; the table's
+    /// header is gone. Narrow windows move the switch to the chips.
+    #[test]
+    fn grid_views_show_cards() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("list-grid-covers", size);
+            for key in ["views", "view/list", "view/grid", "view/large", "grid", "card/0", "plus"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(rt.find("thead").is_none() && rt.find("rows").is_none(), "no table at {size:?}");
+            let rt = render("list-large-covers", size);
+            assert!(rt.find("grid").is_some() && rt.find("card/0").is_some());
+        }
+        assert!(render("list", (1280.0, 800.0)).find("views").is_some(), "the switch on the table too");
+        // 320 entries: only the rows near the screen are built.
+        let rt = render("list-many-grid", (1280.0, 800.0));
+        assert!(rt.find("card/1000").is_some() && rt.find("card/1319").is_none());
     }
 
     /// The new headers: Now Playing's hero, the details banner (wide) and banner card (narrow),

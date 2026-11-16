@@ -91,7 +91,7 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.close_search();
         return true;
     }
-    false
+    s.grid_key(k, tx)
 }
 
 // ------------------------------------------------------------------------------------ sidebar
@@ -373,7 +373,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         // First run: no Client ID, so the wizard is the only thing a list page can show.
         Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
         Page::List(_) if !s.has_list() => welcome(s),
-        Page::List(st) => list_page(s, st, wide),
+        Page::List(st) => list_page(s, st, wide, width),
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
@@ -549,7 +549,7 @@ fn refresh_button(syncing: bool) -> El {
         .child(icon(&icons::SYNC, 16.0).color(if syncing { PAL.faint } else { PAL.dim }))
 }
 
-fn list_page(s: &State, st: Status, wide: bool) -> El {
+fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     if crate::search::shows(s) && !s.loading {
         return search_page(s, st, wide);
     }
@@ -562,6 +562,10 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
         head = top_extra(s, st.label(), count, format!("+ {rewatches} rewatching"));
     }
     let count = count + rewatches;
+    // The view switch ends the top bar; a narrow window has no room there, so it ends the chips.
+    if !s.loading && wide {
+        head = head.child(crate::grid::switcher(s, st, true));
+    }
     let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(head);
     if let Some(a) = status_alert(s) {
         page = page.child(a);
@@ -572,9 +576,12 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
     if count == 0 {
         return page.child(empty(st));
     }
-    page = page.child(chips(s, st));
+    page = page.child(if wide { chips(s, st) } else { chips(s, st).child(spacer()).child(crate::grid::switcher(s, st, false).mt(-3.0)) });
     if s.rows.is_empty() {
         return page.child(no_match(s));
+    }
+    if s.view_of(st) != kotora_core::config::ListView::List {
+        return page.child(crate::grid::cards(s, st, width));
     }
     let n = s.rows.len();
     page.child(header(wide, s.sort)).child(
