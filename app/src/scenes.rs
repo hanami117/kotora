@@ -867,6 +867,22 @@ pub const SCENES: &[Scene] = &[
         crate::mirror::fake_on(s);
         s.go(Page::Queue);
     }),
+    // The account chip with the mirror on (0.2.1): "MyAnimeList ⇄ AniList", nothing waiting.
+    ("sidebar-mirror", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.link = Some(kotora_core::mirror::Link::of(s.service));
+    }),
+    // Changes wait for the mirror: the dot, and the tooltip as the pointer rests on the chip.
+    ("sidebar-mirror-dot", |s| {
+        crate::mirror::fake_on(s);
+        s.account_tip = true;
+    }),
+    // AniList main, MyAnimeList mirror.
+    ("sidebar-mirror-anilist", |s| {
+        anilist(s);
+        crate::mirror::fake_on(s);
+        s.account_tip = true;
+    }),
     // A mirrored removal stopped: the entry changed on the mirror's website after it.
     ("queue-mirror-removal-conflict", |s| {
         queue_covers(s);
@@ -1748,6 +1764,50 @@ mod tests {
         assert!(rt.find("queue-empty").is_none() && rt.find("queue-mirror/trouble").is_some());
         // Off: no mirror part.
         assert!(render("queue-page", (1280.0, 800.0)).find("queue-mirror").is_none());
+    }
+
+    /// The account chip with the mirror on: both services on its second line, the dot only while
+    /// the mirror has something in the Sync queue (counted into the badge too), and the tooltip
+    /// after the pointer rests on it.
+    #[test]
+    fn the_account_chip_shows_the_mirror() {
+        let mut s = State::fake();
+        let plain = crate::ui::account_line(&s, "MyAnimeList");
+        assert_eq!(plain, "MyAnimeList");
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
+        assert_eq!(crate::ui::account_line(&s, "MyAnimeList"), "MyAnimeList \u{21c4} AniList");
+        assert_eq!(crate::ui::account_tip_text(&s, "AniList"), "Changes also go to AniList.");
+        let mut rt = render("sidebar-mirror", (1280.0, 800.0));
+        assert!(rt.find("account/service").is_some() && rt.find("account/dot").is_none() && rt.find("account-tip").is_none());
+        // Resting on the chip shows the tooltip; leaving hides it.
+        let (x, y) = rt.find("account").unwrap();
+        rt.pointer_move(x, y);
+        for _ in 0..60 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.find("account-tip").is_some(), "the tooltip after a rest");
+        rt.pointer_move(700.0, 500.0);
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.find("account-tip").is_none());
+        // Something waits for the mirror: the dot, and the badge counts it.
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-dot").unwrap().1)(&mut s);
+        assert!(s.mirror.badge() > 0);
+        assert!(crate::ui::account_tip_text(&s, "AniList").contains("in the Sync queue for AniList"));
+        let rt = render("sidebar-mirror-dot", (1280.0, 800.0));
+        assert!(rt.find("account/dot").is_some() && rt.find("account-tip").is_some());
+        // AniList main: the other way round.
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-anilist").unwrap().1)(&mut s);
+        assert_eq!(crate::ui::account_line(&s, "AniList"), "AniList \u{21c4} MyAnimeList");
+        // Off: the plain chip, and no dot even with old mirror changes around.
+        let mut s = State::fake();
+        crate::mirror::fake_on(&mut s);
+        s.mirror.link = None;
+        assert_eq!((crate::ui::account_line(&s, "MyAnimeList").as_str(), s.mirror.badge()), ("MyAnimeList", 0));
+        assert!(render("home", (1280.0, 800.0)).find("account/dot").is_none());
     }
 
     #[test]

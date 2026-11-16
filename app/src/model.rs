@@ -374,6 +374,8 @@ pub struct State {
     pub sort_rev: bool,
     /// The Sort menu is open.
     pub sort_menu: bool,
+    /// The pointer rests on the account chip (its tooltip shows; the mirror only).
+    pub account_tip: bool,
     /// The list page's search box: a quick filter of the list.
     pub query: TextEdit,
     /// The search page's field: the list and MyAnimeList.
@@ -504,6 +506,7 @@ impl State {
             sort: Sort::Updated,
             sort_rev: false,
             sort_menu: false,
+            account_tip: false,
             query: TextEdit::new(""),
             find: TextEdit::new(""),
             search_back: Page::List(Status::Watching),

@@ -75,6 +75,16 @@ impl MirrorUi {
         self.edits.len() as u32 + self.ops.iter().filter(|o| matches!(o.state, OpState::Conflict | OpState::Failed)).count() as u32
     }
 
+    /// The mirror's part of the Sync queue badge, counted like the main queue's (every change
+    /// not sent yet: waiting, sending, in conflict or failed), plus website edits to settle and
+    /// adds still looking up their AniList id. 0 while the mirror is off.
+    pub fn badge(&self) -> u32 {
+        if self.link.is_none() {
+            return 0;
+        }
+        (self.edits.len() + self.waiting() + self.waits.iter().filter(|w| w.error.is_none()).count()) as u32
+    }
+
     /// Changes still waiting for the mirror.
     pub fn waiting(&self) -> usize {
         self.ops.iter().filter(|o| o.state.is_open()).count()

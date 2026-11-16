@@ -43,6 +43,10 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   and `kot` show and set scores the way you score on AniList: 100 points (73), 10 points with a decimal (7.3),
   10 points, 5 stars or 3 smileys. Kotora reads the format from your AniList settings with each sync.
   `kot set TITLE --score 7.3` (or `73`, `***`, `:)`) takes it the same way. MyAnimeList stays 1 to 10.
+- **The account chip shows the mirror:** with the mirror on, the sidebar's account chip reads "MyAnimeList ⇄
+  AniList" (main ⇄ mirror), says where changes also go when you rest the pointer on it, and shows a dot while the
+  mirror has changes waiting, in conflict or failed, or website edits to settle. The Sync queue badge counts the
+  mirror's waiting changes the same way as the main list's.
 - **kotora-bin is built by the release workflow:** a tag push builds the Linux tarball in an Arch container,
   adds it and its checksum to the release, and (after approval) updates kotora-bin on the AUR.
 

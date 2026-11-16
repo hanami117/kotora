@@ -51,7 +51,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children(s.sort_menu.then(|| sort_menu(s)))
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
-        .children(s.toast.as_ref().map(crate::library::toast));
+        .children(s.toast.as_ref().map(crate::library::toast))
+        .children(account_tip(s));
     // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
     // window resize lands every change inside `root` at once, and that must not cut the intro's
     // own tweens short (a window manager that enlarges the window as it opens).
@@ -241,7 +242,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
             "queue",
             NavMark::Icon(&icons::SYNC),
             "Sync queue",
-            (s.queue + s.mirror.attention() > 0).then(|| NavEnd::Badge((s.queue + s.mirror.attention()).to_string())),
+            (s.queue + s.mirror.badge() > 0).then(|| NavEnd::Badge((s.queue + s.mirror.badge()).to_string())),
             lit == Page::Queue,
             Page::Queue,
         ))
@@ -390,10 +391,20 @@ fn account(s: &State, name: &str, service: &str, on: bool) -> El {
     if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), 24.0, 24.0) {
         face = face.child(el().key("avatar-img").absolute(0.0, 0.0).size(24.0, 24.0).radius(12.0).pixels(img.pixels()));
     }
-    row()
+    // The mirror (0.2.1): "MyAnimeList ⇄ AniList" (main ⇄ mirror), a tooltip saying where
+    // changes also go, and a dot while the mirror has something in the Sync queue (the badge's
+    // rule).
+    let mirror = s.mirror_target();
+    let line = account_line(s, service);
+    let dot = mirror.is_some() && s.mirror.badge() > 0;
+    let label = match mirror {
+        Some(to) => format!("Profile: {name}. {}", account_tip_text(s, to)),
+        None => format!("Profile: {name}"),
+    };
+    let mut chip = row()
         .key("account")
         .role("button")
-        .label(format!("Profile: {name}"))
+        .label(label)
         .focusable(true)
         .gap(8.0)
         .padding(8.0)
@@ -410,9 +421,56 @@ fn account(s: &State, name: &str, service: &str, on: bool) -> El {
         .child(
             col()
                 .min_w(0.0)
+                .grow(1.0)
                 .child(text(name.to_string()).font(theme::BODY).color(PAL.text).truncate())
-                .child(text(service.to_string()).font(theme::SMALL).color(PAL.faint)),
-        )
+                .child(text(line).key("account/service").font(theme::SMALL).color(PAL.faint).truncate()),
+        );
+    if dot {
+        chip = chip.child(el().key("account/dot").size(8.0, 8.0).mr(2.0).radius(4.0).fill(PAL.accent));
+    }
+    if mirror.is_some() {
+        chip = chip.hover_delays(std::time::Duration::from_millis(450), std::time::Duration::ZERO).on_hover_change(|s: &mut State, inside: bool, _tx: &mut Tx| s.account_tip = inside);
+    }
+    chip
+}
+
+/// The account chip's second line: the service, or "MyAnimeList ⇄ AniList" (main ⇄ mirror)
+/// with the mirror on.
+pub(crate) fn account_line(s: &State, service: &str) -> String {
+    match (s.mirror_target(), s.mirror.link) {
+        (Some(_), Some(l)) => format!("{} \u{21c4} {}", l.main.title(), l.to.title()),
+        _ => service.to_string(),
+    }
+}
+
+/// The account chip's tooltip with the mirror on: where changes also go, and what waits.
+pub(crate) fn account_tip_text(s: &State, to: &str) -> String {
+    let mut t = format!("Changes also go to {to}.");
+    match s.mirror.badge() {
+        0 => {}
+        n => t.push_str(&format!(" {n} in the Sync queue for {to}.")),
+    }
+    t
+}
+
+/// The account chip's tooltip, under the chip (drawn over the page, like the menus).
+fn account_tip(s: &State) -> Option<El> {
+    let to = s.mirror_target().filter(|_| s.account_tip && s.account.is_some())?;
+    Some(
+        text(account_tip_text(s, to))
+            .key("account-tip")
+            .font(theme::LABEL)
+            .color(PAL.text)
+            .px(10.0)
+            .py(6.0)
+            .max_w(240.0)
+            .wrap()
+            .radius(theme::R_SM)
+            .fill(PAL.raised)
+            .border(1.0, PAL.border_strong)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if PAL.light { 0.12 } else { 0.35 }))
+            .anchored("account", rune::Side::Bottom, rune::Align::Start, 6.0),
+    )
 }
 
 fn nav_heading(label: &str) -> El {
