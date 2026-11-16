@@ -546,7 +546,40 @@ pub const SCENES: &[Scene] = &[
         signed_out(s, Auth::SignedOut);
         s.go(Page::Settings);
     }),
+    // macOS: IINA seen by its open file only, its settings not read: the steps in IINA.
+    #[cfg(target_os = "macos")]
+    ("settings-iina-steps", |s| {
+        iina_by_process(s);
+        s.iina.setup = Some(kotora_detect::iinaconf::Setup::Manual);
+    }),
+    // macOS: IINA reads the mpv.conf of a config folder: Turn on.
+    #[cfg(target_os = "macos")]
+    ("settings-iina-confdir", |s| {
+        iina_by_process(s);
+        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir { file: "~/.config/iina/mpv.conf".into() });
+    }),
+    // macOS: after Turn on.
+    #[cfg(target_os = "macos")]
+    ("settings-iina-written", |s| {
+        iina_by_process(s);
+        s.iina_written(
+            crate::precise::Precise::Wrote {
+                file: "~/.config/iina/mpv.conf".into(),
+                text: "# Added by Kotora: lets Kotora see what mpv plays (position and pause).\ninput-ipc-server=/tmp/iina.sock\n".into(),
+            },
+            None,
+        );
+    }),
 ];
+
+/// macOS: IINA seen by its open file only, on Settings.
+#[cfg(target_os = "macos")]
+fn iina_by_process(s: &mut State) {
+    s.now = None;
+    s.players = crate::iina::fake_process_players();
+    s.prefs.precise_answered = true;
+    s.go(Page::Settings);
+}
 
 /// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
 fn search(s: &mut State, q: &str, answered: bool) {

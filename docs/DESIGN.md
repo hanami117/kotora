@@ -74,7 +74,9 @@ exactly where Kotora should be strongest.
   - **mpc-qt** (the Linux MPC-HC clone): MPRIS. It publishes `org.mpris.MediaPlayer2.MpcQt` (confirmed
     from its source, section 5.5); `xesam:url` content is **(unverified)**. MPC-HC itself is Windows-only
     and out of scope.
-  - **IINA** (macOS): mpv's IPC through "additional mpv options".
+  - **IINA** (macOS): its open file with no setup (process name `IINA`; IINA runs mpv inside the app);
+    the position through mpv's IPC, set in IINA's "additional mpv options" or in the `mpv.conf` of its
+    config folder (one click when IINA uses one, `iinaconf.rs`).
   - Other MPRIS players that publish a `file://` `xesam:url` (Haruna, Celluloid, …) work without being
     named targets.
 - **Recognition:**
@@ -240,7 +242,7 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
    | VLC HTTP interface | macOS | file name (`information.category.meta.filename`), time, length, state from `/requests/status.json` | VLC has no MPRIS on macOS. The user enables the web interface and sets a password in VLC's preferences; Kotora stores that password in the config, so it is opt-in and the Settings page says so. Field names **(unverified)**; check against a live VLC in stage 4. A `libproc` open-files fallback comes later. v0.1 |
    | mpv Lua script → `kot report` | Linux, macOS | path, position, end | dropped 2026-11-15: the one-click precise mode writes the socket line instead |
    | `/proc/<pid>/fd` | Linux | open video files of known players | same user, no permissions; several open files possible (prefetch). Stage 5 (v0.1) |
-   | `libproc` open files | macOS | same | believed to need no permission for the same user **(unverified)**. Stage 5 if it fits, else later |
+   | `libproc` open files | macOS | same | no permission needed for the same user (tested 2026-11-16 with fake `mpv`, `IINA`, `VLC` processes holding a file open). Process names: `mpv` (Homebrew and mpv.app), `IINA`, `VLC` (VLC.app). Stage 5 |
    | window titles | X11, Hyprland, sway, wlroots (foreign-toplevel) | title | **not available on GNOME or KDE Wayland** without an extension or KWin script; opt-in. Later |
    | browser extension | all | URL, page title | native messaging. Later |
 
@@ -248,10 +250,10 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
 
    | player | Linux | macOS |
    |---|---|---|
-   | mpv | IPC socket, and MPRIS with mpv-mpris | IPC socket |
-   | VLC | MPRIS | HTTP interface (above) |
+   | mpv | IPC socket, and MPRIS with mpv-mpris; open file | IPC socket (`~/.config/mpv/mpv.conf`, as on Linux); open file |
+   | VLC | MPRIS; open file | HTTP interface (above); open file |
    | mpc-qt | MPRIS (below) | not available (no macOS build known) **(unverified)** |
-   | IINA | n/a | mpv IPC through "additional mpv options" |
+   | IINA | n/a | mpv IPC through "additional mpv options" or its config folder's `mpv.conf`; open file |
 
    **mpc-qt and MPRIS** (checked 2026-11-14 against the source on GitHub, `src/ipc/mpris.cpp`):
    - **Confirmed:** it serves MPRIS on the session bus as `org.mpris.MediaPlayer2.MpcQt` (a `.instanceN`

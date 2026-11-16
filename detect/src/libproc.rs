@@ -122,3 +122,102 @@ impl Procs for LibProc {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! The real process table: a copy of this test binary, named like a player, holds a dummy
+    //! `.mkv` open (no player, no sound), and the scanner must find it.
+
+    use super::*;
+    use crate::Switch;
+    use crate::procfs::Scanner;
+    use std::io::Read;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const HOLD: &str = "KOTORA_TEST_HOLD_FILE";
+
+    /// Not a test: the body of the fake player. Opens the file in `HOLD` and keeps it open until
+    /// stdin closes.
+    #[test]
+    #[ignore = "helper process for scanner_finds_players_by_their_open_file"]
+    fn hold_open_helper() {
+        let Some(path) = std::env::var_os(HOLD) else { return };
+        let _f = std::fs::File::open(path).unwrap();
+        let mut sink = Vec::new();
+        let _ = std::io::stdin().read_to_end(&mut sink);
+    }
+
+    struct Fake {
+        child: Child,
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            drop(self.child.stdin.take());
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Starts a copy of this test binary named `name`, holding `file` open.
+    fn fake_player(dir: &Path, name: &str, file: &Path) -> Fake {
+        let exe = dir.join(name);
+        let me = std::env::current_exe().unwrap();
+        if std::fs::hard_link(&me, &exe).is_err() {
+            std::fs::copy(&me, &exe).unwrap();
+        }
+        let child = Command::new(&exe)
+            .args(["--ignored", "--exact", "libproc::tests::hold_open_helper", "--test-threads=1", "-q"])
+            .env(HOLD, file)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Fake { child }
+    }
+
+    #[test]
+    fn scanner_finds_players_by_their_open_file() {
+        let dir = std::env::temp_dir().join(format!("kotora-libproc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The kernel reports the real path: `/var/folders` is `/private/var/folders`.
+        let dir: PathBuf = dir.canonicalize().unwrap();
+        let cases = [("mpv", "mpv", Switch::Mpv), ("IINA", "IINA", Switch::Iina), ("VLC", "VLC", Switch::Vlc)];
+        let mut fakes = Vec::new();
+        let mut want = Vec::new();
+        for (i, (name, player, switch)) in cases.iter().enumerate() {
+            let file = dir.join(format!("Kotora Test Show - 0{}.mkv", i + 1));
+            std::fs::write(&file, b"").unwrap();
+            let f = fake_player(&dir, name, &file);
+            want.push((f.child.id(), *player, *switch, file.display().to_string()));
+            fakes.push(f);
+        }
+        let mut sc = Scanner::new(LibProc::new());
+        let start = Instant::now();
+        let mut found = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) {
+            found = sc.scan();
+            if want.iter().all(|(pid, ..)| found.iter().any(|f| f.pid == *pid && f.file.is_some())) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        for (pid, player, switch, file) in &want {
+            let f = found.iter().find(|f| f.pid == *pid).unwrap_or_else(|| panic!("{player} (pid {pid}) not found: {found:?}"));
+            assert_eq!((f.kind.player, f.kind.switch), (*player, *switch));
+            assert_eq!(f.file.as_deref(), Some(file.as_str()));
+        }
+        // The test binary itself has no video open and isn't a player.
+        assert!(!found.iter().any(|f| f.pid == std::process::id()));
+        // A player that quits is gone on the next scan.
+        let (pid, ..) = want[0];
+        drop(fakes.remove(0));
+        assert!(!sc.scan().iter().any(|f| f.pid == pid));
+        drop(fakes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

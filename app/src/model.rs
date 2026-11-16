@@ -363,6 +363,9 @@ pub struct State {
     pub players: Vec<PlayerState>,
     /// The one-time "precise detection" offer for mpv (`precise.rs`).
     pub precise: crate::precise::Offer,
+    /// IINA's precise detection hint (`iina.rs`, macOS).
+    #[cfg(target_os = "macos")]
+    pub iina: crate::iina::Iina,
     /// Settings → Updates and Players.
     pub prefs: Prefs,
     /// The detection threads (`detect.rs`); `None` headless.
@@ -424,6 +427,8 @@ impl State {
             now: Some(fake_now()),
             players: fake_players(),
             precise: Default::default(),
+            #[cfg(target_os = "macos")]
+            iina: Default::default(),
             prefs: Prefs::default(),
             glue: None,
             window: true,

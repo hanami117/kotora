@@ -64,6 +64,8 @@ pub fn start(s: &mut State) {
     s.prefs = Prefs::from_config(&c);
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     crate::precise::check_conf(h.clone());
+    #[cfg(target_os = "macos")]
+    crate::iina::check(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
     let tx_for_refresh = tx.clone();

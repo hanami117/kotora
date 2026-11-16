@@ -2010,7 +2010,7 @@ fn not_on_list_card(id: u32, title: &str, relation: Option<&str>) -> El {
 /// Nothing plays: how to let Kotora see the players.
 fn now_empty() -> El {
     let help = if cfg!(target_os = "macos") {
-        "mpv: add input-ipc-server=/tmp/mpv.sock to mpv.conf. IINA: Settings \u{2192} Advanced \u{2192} additional mpv options, input-ipc-server=/tmp/iina.sock. VLC: turn on its web interface with a password, then put it in config.toml ([vlc] password)."
+        "mpv, IINA and VLC are found by themselves, by the file they have open. For the position too, mpv and IINA use their IPC socket (Kotora offers to turn it on; see Settings \u{2192} Players), and VLC its web interface with a password in config.toml ([vlc] password)."
     } else {
         "mpv, VLC, mpc-qt, Celluloid and Haruna are found by themselves, by the file they have open. For the position too, VLC and mpc-qt use MPRIS, and mpv its IPC socket (Kotora offers to turn it on)."
     };
@@ -2190,6 +2190,12 @@ fn players_card(s: &State) -> El {
         );
         if sw == Switch::Mpv
             && let Some(h) = crate::precise::settings_hint(s)
+        {
+            c = c.child(h);
+        }
+        #[cfg(target_os = "macos")]
+        if sw == Switch::Iina
+            && let Some(h) = crate::iina::settings_hint(s)
         {
             c = c.child(h);
         }

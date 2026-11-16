@@ -13,6 +13,8 @@
 //!   the file stays open, and ignores it when an IPC or MPRIS source shows the same file.
 //! - [`mpvconf`]: reads and extends the user's `mpv.conf` for the IPC socket ("precise mode"),
 //!   only when the user asks.
+//! - [`iinaconf`] (macOS): the same for IINA, which reads its own settings and, when set, the
+//!   `mpv.conf` of its config folder.
 //!
 //! Every source reports [`Playing`] snapshots to the [`watch::Watch`] hub. The hub picks the
 //! player to follow and works out, from the last position and the clock, when the episode passes
@@ -21,6 +23,8 @@
 //! Nothing here knows about anime, the list or the UI: the app gets [`Report`]s.
 
 pub mod dirwatch;
+#[cfg(target_os = "macos")]
+pub mod iinaconf;
 #[cfg(target_os = "macos")]
 pub mod libproc;
 pub mod mpv;

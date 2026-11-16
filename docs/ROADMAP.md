@@ -32,6 +32,10 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
 - **Airing and titles (2026-11-15, user-approved):** built on branch `airing` (on top of `stage-5` at
   9c26d8f): stripped binaries from `install.sh`, the title language setting, and the Airing page
   (the seasons browser, moved from v0.4). Waiting for review and the user's live test. See below.
+- **macOS detection (2026-11-16):** built on branch `mac-detection` (on top of `stage-5` at 38d2f8b). The
+  libproc open-file scan is tested for real against fake `mpv`, `IINA` and `VLC` processes; IINA gets
+  precise detection from Settings → Players (one click when IINA uses a config folder, else the steps).
+  Waiting for the user's live test on the Mac. No tray, login item or `.app` yet (next stage).
 
 ## Stage 0: design
 

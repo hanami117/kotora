@@ -15,6 +15,8 @@ mod ctl;
 mod detect;
 mod details;
 mod icons;
+#[cfg(target_os = "macos")]
+mod iina;
 mod model;
 mod now;
 mod online;

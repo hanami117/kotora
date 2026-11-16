@@ -70,7 +70,7 @@ pub struct Offer {
 }
 
 /// `/home/x/.config/mpv/mpv.conf` → `~/.config/mpv/mpv.conf` (shown, never saved).
-fn tilde(path: &str) -> String {
+pub(crate) fn tilde(path: &str) -> String {
     match std::env::var("HOME") {
         Ok(h) if !h.is_empty() && path.starts_with(&h) => format!("~{}", &path[h.len()..]),
         _ => path.to_string(),
@@ -150,7 +150,7 @@ impl State {
 }
 
 /// The socket paths Kotora watches for mpv (`[players] mpv_sockets`, else the default).
-fn watched_sockets() -> Vec<std::path::PathBuf> {
+pub(crate) fn watched_sockets() -> Vec<std::path::PathBuf> {
     let c = config::Config::load(&paths::config_file()).unwrap_or_default();
     crate::detect::settings(&c).mpv_sockets
 }
