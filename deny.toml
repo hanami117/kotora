@@ -23,3 +23,20 @@ allow = [
     "MPL-2.0",            # anitomy-ng (recognition): file-level copyleft, GPL-3.0 compatible (MPL 2.0 §3.3)
     "CDLA-Permissive-2.0", # webpki-roots (the CA list), once ureq arrives
 ]
+
+# `cargo deny check advisories`. The ignores below are reviewed at each release.
+[advisories]
+ignore = [
+    # zbus 5's helper crates were folded into zbus 6 and are no longer maintained on their own. zbus 5
+    # comes with Rune's accessibility (accesskit_unix, atspi) and is shared by MPRIS and the
+    # notifications; it moves when Rune does. No known vulnerability (2026-11-16).
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, comes with zbus 5 (Rune's accessibility)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, comes with zbus 5 (Rune's accessibility)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, comes with zbus 5 (Rune's accessibility)" },
+]
+
+# `cargo deny check sources`: crates.io, and Rune pinned to one commit of its repo.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = ["https://github.com/anomalyco/rune"]

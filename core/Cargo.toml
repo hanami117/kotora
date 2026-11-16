@@ -11,7 +11,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.2", default-features = false, features = ["std", "serde", "parse"] }
 # SQLite is compiled in (bundled): the same on Arch and macOS, no system library.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 # Blocking HTTP on worker threads (no async runtime of our own).
 ureq = "3"
 # File-name parsing (recognition): a pure-Rust port of anitomy, MPL-2.0 (DESIGN.md §9; decided

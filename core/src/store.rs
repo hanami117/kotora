@@ -216,21 +216,21 @@ impl Store {
 
     fn init(mut conn: Connection) -> Result<Store> {
         conn.pragma_update(None, "foreign_keys", true)?;
-        let version: usize = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize;
         if version > MIGRATIONS.len() {
             return Err(StoreError(format!("the database is from a newer Kotora (schema {version})")));
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
             let tx = conn.transaction()?;
             tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", i + 1)?;
+            tx.pragma_update(None, "user_version", (i + 1) as u32)?;
             tx.commit()?;
         }
         Ok(Store { conn })
     }
 
     pub fn schema_version(&self) -> Result<usize> {
-        Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
+        Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize)
     }
 
     // ----------------------------------------------------------------------------- account
@@ -575,7 +575,7 @@ pub(crate) mod tests {
             let conn = Connection::open(&path).unwrap();
             for (i, m) in MIGRATIONS[..4].iter().enumerate() {
                 conn.execute_batch(m).unwrap();
-                conn.pragma_update(None, "user_version", i + 1).unwrap();
+                conn.pragma_update(None, "user_version", (i + 1) as u32).unwrap();
             }
             conn.execute_batch(
                 "INSERT INTO media (service, id, title, fetched_at) VALUES ('mal', 1, 'Show 1', 1);
