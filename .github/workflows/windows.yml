@@ -48,7 +48,7 @@ jobs:
           $exe = "target\release\kotora.exe"
           & $exe --version | Out-Host
           & $exe --list-scenes | Measure-Object -Line | Out-Host
-          foreach ($scene in "home-covers", "list-covers", "list-grid-covers", "now-playing-offer", "setup-create", "list-editor") {
+          foreach ($scene in "home-covers", "list-covers", "list-grid-covers", "now-playing-offer", "setup-sign-in", "list-editor") {
             & $exe --snap "out\$scene.png" --scene $scene --size 1280x800 --scale 1 2>&1 | Out-Host
             if (-not (Test-Path "out\$scene.png")) { throw "no snap for $scene" }
           }
