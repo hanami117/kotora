@@ -4,7 +4,7 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
-## [0.2.0] - draft, not released (date set at release)
+## [0.2.0] - 2026-11-16
 
 ### Added
 - **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in

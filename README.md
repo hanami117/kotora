@@ -18,7 +18,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.1.3 is out (MyAnimeList). Version 0.2, in preparation, adds AniList.
+**Status:** version 0.2.0 is out (MyAnimeList or AniList).
 
 ## Features
 
@@ -62,7 +62,7 @@ Linux, so it needs a recent glibc; on other distros, building from source is the
 
 ### macOS
 
-Apple silicon, macOS 13 or later. Download `Kotora-0.1.3.dmg` from the
+Apple silicon, macOS 13 or later. Download `Kotora-0.2.0.dmg` from the
 [release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
 
 Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
@@ -87,7 +87,7 @@ cd kotora
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
 keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
-tarball (`kotora-0.1.3.tar.gz`) works the same way.
+tarball (`kotora-0.2.0.tar.gz`) works the same way.
 
 ### From source (macOS)
 
