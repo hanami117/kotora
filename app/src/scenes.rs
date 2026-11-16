@@ -204,25 +204,32 @@ pub const SCENES: &[Scene] = &[
         s.setup_service = true;
         s.service = kotora_core::service::ServiceId::AniList;
     }),
-    ("setup-anilist-create", |s| {
-        setup(s, Step::Create);
+    // AniList has its own Client ID built in: Welcome, then straight to "Sign in with AniList".
+    ("setup-anilist-sign-in", |s| {
+        setup(s, Step::SignIn);
         s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SignedOut;
     }),
     ("setup-anilist-signing-in", |s| {
         setup(s, Step::SignIn);
         s.service = kotora_core::service::ServiceId::AniList;
-        s.client_id.hint = Some("2345".into());
         s.auth = Auth::SigningIn;
-        let url = kotora_core::anilist::authorize_url("12345");
+        let url = kotora_core::anilist::authorize_url(kotora_core::service::ANILIST_CLIENT_ID);
         s.apply(crate::model::Msg::SignInUrl { url, opened: true });
     }),
     ("setup-anilist-token-error", |s| {
         setup(s, Step::SignIn);
         s.service = kotora_core::service::ServiceId::AniList;
-        s.client_id.hint = Some("2345".into());
         s.auth = Auth::SigningIn;
         s.client_id.token.replace_text("12345");
         crate::online::sign_in_with_token(s);
+    }),
+    // The loopback failed (a busy port): the error, "Try again", and the token field.
+    ("setup-anilist-loopback-failed", |s| {
+        setup(s, Step::SignIn);
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.auth = Auth::SignedOut;
+        s.error = Some("Can't listen on port 47321 for AniList's reply: Address already in use".into());
     }),
     ("setup-signing-in-no-browser", |s| {
         signing_in(s, false);
@@ -714,6 +721,19 @@ pub const SCENES: &[Scene] = &[
     // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
     ("settings-account-anilist", |s| {
         anilist(s);
+        crate::settings::open(s, Section::Account)
+    }),
+    // AniList's Client ID is built in (none saved): "Use my own client ID\u{2026}" is the advanced link.
+    ("settings-account-anilist-built-in", |s| {
+        anilist(s);
+        s.client_id.hint = None;
+        crate::settings::open(s, Section::Account)
+    }),
+    // ... and it opens the field.
+    ("settings-account-anilist-own-id", |s| {
+        anilist(s);
+        s.client_id.hint = None;
+        s.client_id.editing = true;
         crate::settings::open(s, Section::Account)
     }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
@@ -1402,6 +1422,28 @@ mod tests {
         let mut rt = render("setup-service", (1280.0, 800.0));
         click(&mut rt, "setup/service-anilist");
         assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::AniList));
+    }
+
+    #[test]
+    fn anilist_sign_in_is_one_click() {
+        // Welcome, Sign in, Done: no form to fill and no Client ID to paste.
+        let rt = render("setup-anilist-sign-in", (1280.0, 800.0));
+        assert!(rt.find("setup/sign-in").is_some());
+        for gone in ["setup/form", "setup/cid/input", "setup/copy-redirect", "setup/open-api"] {
+            assert!(rt.find(gone).is_none(), "{gone}");
+        }
+        assert!(rt.find("setup/token/input").is_none(), "the token field waits for a failed or running sign-in");
+        // The fallbacks: while waiting, and after the loopback failed.
+        for name in ["setup-anilist-signing-in", "setup-anilist-loopback-failed"] {
+            let rt = render(name, (1280.0, 800.0));
+            assert!(rt.find("setup/token/input").is_some(), "{name}");
+        }
+        assert!(render("setup-anilist-loopback-failed", (1280.0, 800.0)).find("setup/sign-in").is_some(), "Try again");
+        // Settings: the built-in ID needs nothing, and the advanced link opens the field.
+        let rt = render("settings-account-anilist-built-in", (1280.0, 800.0));
+        assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
+        let rt = render("settings-account-anilist-own-id", (1280.0, 800.0));
+        assert!(rt.find("set/cid/input").is_some());
     }
 
     #[test]

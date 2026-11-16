@@ -15,8 +15,10 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **`kot schedule`** is another name for `kot airing`.
 - **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in
   Settings → Account ("Use AniList"); Kotora keeps one service at a time, and each keeps its own saved list,
-  sign-in and waiting changes, so switching back loses nothing. Sign-in goes through AniList's page in your
-  browser with your own AniList API client (no client secret), or a token pasted from AniList's page. Rewatches
+  sign-in and waiting changes, so switching back loses nothing. Sign-in is one click: Kotora has its own
+  AniList API client built in, so it opens AniList's page in your browser, you press Approve, and you are back
+  in Kotora (no client secret, nothing to register). "Use my own client ID…" in Settings → Account is there
+  for the advanced case, and a token pasted from AniList's page works when the browser can't reach Kotora. Rewatches
   are AniList's "Repeating"; scores go to AniList in your own score format. Detection, the sync queue, search,
   details, Airing and `kot` work the same with either service.
 - **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
