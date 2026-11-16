@@ -18,7 +18,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.1.2. MyAnimeList only; AniList comes later.
+**Status:** version 0.1.3. MyAnimeList only; AniList comes later.
 
 ## Features
 
@@ -57,12 +57,12 @@ Both install `kotora`, `kot`, the menu entry and the icons, and they conflict wi
 Updates come with your AUR helper. AUR pages: [kotora](https://aur.archlinux.org/packages/kotora) and
 [kotora-bin](https://aur.archlinux.org/packages/kotora-bin).
 
-The release page also has a Linux x86_64 tarball (`kotora-0.1.2-linux-x86_64.tar.gz`). It is built on Arch
+The 0.1.2 release page has a Linux x86_64 tarball (`kotora-0.1.2-linux-x86_64.tar.gz`). It is built on Arch
 Linux, so it needs a recent glibc; on other distros, building from source is the safer way.
 
 ### macOS
 
-Apple silicon, macOS 13 or later. Download `Kotora-0.1.2.dmg` from the
+Apple silicon, macOS 13 or later. Download `Kotora-0.1.3.dmg` from the
 [release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
 
 Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
@@ -87,7 +87,7 @@ cd kotora
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
 keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
-tarball (`kotora-0.1.2.tar.gz`) works the same way.
+tarball (`kotora-0.1.3.tar.gz`) works the same way.
 
 ### From source (macOS)
 
