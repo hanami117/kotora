@@ -39,6 +39,7 @@ mod precise;
 mod profile;
 mod queue;
 mod scenes;
+mod scores;
 mod search;
 mod settings;
 mod setup;

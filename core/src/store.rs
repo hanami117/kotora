@@ -252,6 +252,15 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     // mirroring later). MyAnimeList rows leave both empty.
     "ALTER TABLE media ADD COLUMN next_airing TEXT;
      ALTER TABLE media ADD COLUMN id_mal INTEGER;",
+    // 12: scores on the 100-point scale (0.2.1, `score.rs`), so an AniList 73 stays 73 instead of
+    // a rounded 7. Every score column held 1-10 (0 or NULL: none): times 10. Saved details pages
+    // (`details.body`, JSON) keep the user's entry with its score too.
+    "UPDATE entry SET score = score * 10 WHERE score > 0;
+     UPDATE pending_op SET score = score * 10 WHERE score > 0;
+     UPDATE pending_op SET old_score = old_score * 10 WHERE old_score > 0;
+     UPDATE pending_op SET r_score = r_score * 10 WHERE r_score > 0;
+     UPDATE details SET body = json_set(body, '$.mine.score', json_extract(body, '$.mine.score') * 10)
+       WHERE json_valid(body) AND json_extract(body, '$.mine.score') > 0;",
 ];
 
 /// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside
@@ -762,6 +771,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::score::ten;
     use super::*;
 
     pub fn item(id: u32, title: &str, status: Status, progress: u32, updated_at: i64) -> ListItem {
@@ -786,7 +796,7 @@ pub(crate) mod tests {
             },
             status,
             progress,
-            score: (progress > 3).then_some(8),
+            score: ten(8).filter(|_| progress > 3),
             rewatching: false,
             times_rewatched: 0,
             updated_at,
@@ -821,7 +831,7 @@ pub(crate) mod tests {
         let it = s.load_item("mal", 1).unwrap().unwrap();
         assert_eq!((it.status, it.progress, it.rewatching, it.times_rewatched), (Status::Completed, 12, false, 0));
         let q = s.queue("mal", 10).unwrap();
-        assert_eq!((q[0].change.score, q[0].change.rewatching, q[0].old.times_rewatched), (Some(Some(9)), None, 0));
+        assert_eq!((q[0].change.score, q[0].change.rewatching, q[0].old.times_rewatched), (Some(ten(9)), None, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -915,7 +925,7 @@ pub(crate) mod tests {
         assert_eq!(list.len(), 4);
         assert!(list.iter().all(|i| i.media.kind == Kind::Anime && i.volumes == 0 && i.media.volumes.is_none()));
         let lanterns = s.load_item("mal", 1001).unwrap().unwrap();
-        assert_eq!((lanterns.progress, lanterns.score, lanterns.media.start_date.as_deref()), (5, Some(8), Some("2026-10-03")));
+        assert_eq!((lanterns.progress, lanterns.score, lanterns.media.start_date.as_deref()), (5, ten(8), Some("2026-10-03")));
         assert_eq!(lanterns.media.broadcast, Broadcast::from_text("saturday 23:30"));
         let harbor = s.load_item("mal", 1002).unwrap().unwrap();
         assert_eq!((harbor.rewatching, harbor.times_rewatched), (true, 2));
@@ -936,7 +946,7 @@ pub(crate) mod tests {
         ]);
         assert_eq!(q[0].change.progress, Some(6));
         let r = q[1].remote.unwrap();
-        assert_eq!((r.values.score, r.values.times_rewatched, r.values.volumes, r.updated_at), (Some(7), 2, 0, 1_790_000_650));
+        assert_eq!((r.values.score, r.values.times_rewatched, r.values.volumes, r.updated_at), (ten(7), 2, 0, 1_790_000_650));
         assert!(q[2].added);
         assert_eq!(s.open_count("mal").unwrap(), 3);
         // A sync still lays the waiting changes over the fetched list (the add included).
@@ -1045,6 +1055,40 @@ pub(crate) mod tests {
         assert_eq!(std::fs::read(&bak).unwrap(), first, "the first copy is kept");
     }
 
+    /// Schema 11 (0.2.0) to 12: every saved score goes from 1-10 to the 100-point scale (the
+    /// list, the queue's new, old and service values, and the saved details' entry); no score
+    /// stays none and 0 stays "removes".
+    #[test]
+    fn schema_12_moves_scores_to_100_points() {
+        let conn = Connection::open_in_memory().unwrap();
+        for (i, m) in MIGRATIONS[..11].iter().enumerate() {
+            conn.execute_batch(m).unwrap();
+            conn.pragma_update(None, "user_version", (i + 1) as u32).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO media (service, id, title, fetched_at) VALUES ('anilist', 1, 'A', 0), ('anilist', 2, 'B', 0);
+             INSERT INTO entry (service, media_id, status, progress, score, updated_at) VALUES ('anilist', 1, 'watching', 3, 7, 0), ('anilist', 2, 'watching', 1, NULL, 0);
+             INSERT INTO pending_op (service, media_id, score, old_score, base_updated_at, created_at, edited_at, old_status, old_progress, r_score)
+               VALUES ('anilist', 1, 9, 7, 0, 0, 0, 'watching', 3, 8), ('anilist', 2, 0, 0, 0, 0, 0, 'watching', 1, NULL);
+             INSERT INTO details (service, media_id, body, fetched_at) VALUES
+               ('anilist', 1, '{\"id\":1,\"title\":\"A\",\"mine\":{\"status\":\"watching\",\"progress\":3,\"score\":7,\"rewatching\":false,\"start_date\":null,\"finish_date\":null}}', 0),
+               ('anilist', 2, '{\"id\":2,\"title\":\"B\",\"mine\":null}', 0),
+               ('anilist', 3, 'not json', 0);",
+        )
+        .unwrap();
+        let s = Store::from_connection(conn).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 12);
+        let e: Vec<Option<i64>> = s.conn.prepare("SELECT score FROM entry ORDER BY media_id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(e, [Some(70), None]);
+        let q = s.queue("anilist", 0).unwrap();
+        assert_eq!((q[0].change.score, q[0].old.score), (Some(ten(9)), ten(7)));
+        assert_eq!(q[1].change.score, Some(None), "0 still removes the score");
+        let r: Option<i64> = s.conn.query_row("SELECT r_score FROM pending_op WHERE media_id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(r, Some(80));
+        assert_eq!(s.details("anilist", 1).unwrap().unwrap().0.mine.unwrap().score, ten(7));
+        assert!(s.details("anilist", 2).unwrap().unwrap().0.mine.is_none());
+    }
+
     /// A database written by Kotora 0.1.3 itself (`tests/fixtures/kotora-0.1.3.db`: made up by
     /// 0.1.3's own `Store` calls, WAL mode as installed, schema 9) upgrades to 0.2 (schema 11):
     /// the copy first, every row kept, the AniList columns empty on MyAnimeList rows, and an
@@ -1071,8 +1115,8 @@ pub(crate) mod tests {
             assert_eq!(schema_of(&c), schema_of(&fresh));
         }
         let mut s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 11);
-        assert_eq!(MIGRATIONS.len(), 11, "0.2 is schema 11; a new migration needs its own upgrade test");
+        assert_eq!(s.schema_version().unwrap(), 12);
+        assert_eq!(MIGRATIONS.len(), 12, "0.2.1 is schema 12; a new migration needs its own upgrade test");
         let bak = backup_path(&path, SCHEMA_0_1);
         {
             let b = Connection::open(&bak).unwrap();
@@ -1090,7 +1134,7 @@ pub(crate) mod tests {
         assert_eq!(list.len(), 6);
         assert!(list.iter().all(|i| i.media.kind == Kind::Anime && i.media.next_airing.is_none() && i.media.id_mal.is_none()));
         let lanterns = s.load_item("mal", 5001).unwrap().unwrap();
-        assert_eq!((lanterns.progress, lanterns.score), (6, Some(8)), "the waiting edit lies over the list");
+        assert_eq!((lanterns.progress, lanterns.score), (6, ten(8)), "the waiting edit lies over the list");
         assert_eq!(lanterns.media.broadcast, Broadcast::from_text("saturday 23:30"));
         let harbor = s.load_item("mal", 5002).unwrap().unwrap();
         assert_eq!((harbor.rewatching, harbor.times_rewatched), (true, 2));
@@ -1098,10 +1142,11 @@ pub(crate) mod tests {
         assert_eq!(s.synced_at("mal").unwrap(), Some(1_790_000_000));
         assert!(s.profile("mal").unwrap().is_some());
         assert_eq!(s.recognition("mal", "lanterns of kirigaoka#1").unwrap(), Some((5001, "user".into(), "Lanterns of Kirigaoka".into())));
-        assert!(s.details("mal", 5001).unwrap().is_some());
+        let (d, _) = s.details("mal", 5001).unwrap().unwrap();
+        assert!(d.mine.is_none_or(|m| m.score.is_none_or(|sc| sc.points() % 10 == 0 && sc.points() >= 10)), "saved scores are on the 100 scale");
         let q = s.queue("mal", 1_790_000_100).unwrap();
         assert_eq!(q.len(), 3);
-        assert_eq!((q[0].change.progress, q[1].change.score, q[2].added), (Some(6), Some(Some(10)), true));
+        assert_eq!((q[0].change.progress, q[1].change.score, q[2].added), (Some(6), Some(ten(10)), true));
         assert_eq!(s.open_count("mal").unwrap(), 3);
         // AniList beside it: its own list and account; MyAnimeList's untouched.
         assert!(s.load_list("anilist").unwrap().is_empty() && s.account("anilist").unwrap().is_none());
@@ -1118,7 +1163,7 @@ pub(crate) mod tests {
         // Opening again: nothing runs, the copy stays as it was.
         let bak_before = std::fs::read(&bak).unwrap();
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 11);
+        assert_eq!(s.schema_version().unwrap(), 12);
         assert_eq!(std::fs::read(&bak).unwrap(), bak_before);
         let baks: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.contains(".bak")).collect();
         assert_eq!(baks, ["kotora.db.schema-9.bak"]);
@@ -1357,7 +1402,7 @@ pub(crate) mod tests {
         assert_eq!(s.picture("mal").unwrap(), (None, Some(8)), "none set: asked, nothing to show");
         s.set_picture("mal", Some("https://cdn.example.invalid/u.jpg"), 9).unwrap();
         assert_eq!(s.profile("mal").unwrap(), None);
-        let p = crate::service::Profile { joined: Some("2019-03-02".into()), stats: Some(crate::service::AnimeStats { completed: 3, days: 1.5, ..Default::default() }) };
+        let p = crate::service::Profile { joined: Some("2019-03-02".into()), stats: Some(crate::service::AnimeStats { completed: 3, days: 1.5, ..Default::default() }), ..Default::default() };
         s.set_profile("mal", &p).unwrap();
         assert_eq!(s.profile("mal").unwrap(), Some(p), "the profile keeps through a restart");
         s.clear_service("mal").unwrap();

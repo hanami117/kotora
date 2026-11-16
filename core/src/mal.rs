@@ -233,7 +233,7 @@ impl<T: Transport> Client<T> {
             pairs.push(("num_watched_episodes", p.to_string()));
         }
         if let Some(sc) = change.score {
-            pairs.push(("score", sc.unwrap_or(0).min(10).to_string()));
+            pairs.push(("score", sc.map_or(0, crate::Score::to_ten).to_string()));
         }
         if let Some(r) = change.rewatching {
             pairs.push(("is_rewatching", r.to_string()));
@@ -532,7 +532,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
         Some(MyEntry {
             status,
             progress: m.num_episodes_watched,
-            score: (m.score > 0).then_some(m.score.min(10)),
+            score: crate::Score::from_ten(m.score.into()),
             rewatching: m.is_rewatching,
             times_rewatched: m.num_times_rewatched,
             start_date: non_empty(m.start_date),
@@ -625,7 +625,7 @@ fn parse_user(body: &str) -> Option<User> {
     Some(User {
         name: me.name,
         picture: me.picture.filter(|p| p.starts_with("https://")),
-        profile: Profile { joined: me.joined_at.filter(|j| !j.trim().is_empty()), stats },
+        profile: Profile { joined: me.joined_at.filter(|j| !j.trim().is_empty()), stats, ..Profile::default() },
     })
 }
 
@@ -697,7 +697,7 @@ impl ListStatus {
             values: Values {
                 status,
                 progress: self.num_episodes_watched,
-                score: (self.score > 0).then_some(self.score.min(10)),
+                score: crate::Score::from_ten(self.score.into()),
                 rewatching: self.is_rewatching,
                 times_rewatched: self.num_times_rewatched,
                 volumes: 0,
@@ -783,7 +783,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
             },
             status,
             progress: ls.num_episodes_watched,
-            score: (ls.score > 0).then_some(ls.score.min(10)),
+            score: crate::Score::from_ten(ls.score.into()),
             rewatching: ls.is_rewatching,
             times_rewatched: ls.num_times_rewatched,
             updated_at: ls.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
@@ -931,6 +931,7 @@ impl<T: Transport> ListService for Mal<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::score::ten;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -1072,7 +1073,7 @@ mod tests {
         assert_eq!(items.len(), 3, "the entry without a list status is skipped");
         assert_eq!(next.as_deref(), Some("https://api.myanimelist.net/v2/users/@me/animelist?offset=100&limit=100"));
         let a = &items[0];
-        assert_eq!((a.media.id, a.media.title.as_str(), a.status, a.progress, a.score), (1001, "Lanterns of Kirigaoka", Status::Watching, 5, Some(8)));
+        assert_eq!((a.media.id, a.media.title.as_str(), a.status, a.progress, a.score), (1001, "Lanterns of Kirigaoka", Status::Watching, 5, ten(8)));
         assert_eq!(a.media.title_en.as_deref(), Some("Lanterns of Kirigaoka (English)"));
         assert_eq!(a.media.title_ja, None, "a blank title counts as none");
         assert_eq!(a.media.synonyms, vec!["Kirigaoka no Tomoshibi"]);
@@ -1211,7 +1212,7 @@ mod tests {
         let (f, seen) = fake(vec![ok(ENTRY), ok(NOT_ON_LIST)]);
         let (mut c, _) = client(f);
         let r = c.fetch_entry("acc", 1001).unwrap().unwrap();
-        assert_eq!(r.values, Values::new(Status::Watching, 5, Some(8)));
+        assert_eq!(r.values, Values::new(Status::Watching, 5, ten(8)));
         assert_eq!(r.updated_at, 1_519_450_460);
         assert_eq!(c.fetch_entry("acc", 1003).unwrap(), None);
         let seen = seen.lock().unwrap();
@@ -1243,7 +1244,7 @@ mod tests {
         let (f, seen) = fake(vec![ok(started), ok(ended)]);
         let (mut c, _) = client(f);
         let r = c.patch_entry("acc", 1001, &Change { progress: Some(0), rewatching: Some(true), ..Default::default() }).unwrap();
-        assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, Some(8)) });
+        assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, ten(8)) });
         let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None, volumes: None };
         let r = c.patch_entry("acc", 1001, &end).unwrap();
         assert_eq!((r.values.rewatching, r.values.times_rewatched, r.values.progress), (false, 2, 12));
@@ -1319,7 +1320,7 @@ mod tests {
         assert_eq!(d.cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001l.jpg"));
         assert_eq!(d.media().cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001.jpg"), "rows use the small cover");
         let m = d.mine.unwrap();
-        assert_eq!((m.status(), m.progress, m.score, m.rewatching), (Some(Status::Watching), 5, Some(8), false));
+        assert_eq!((m.status(), m.progress, m.score, m.rewatching), (Some(Status::Watching), 5, ten(8), false));
         assert_eq!((m.start_date.as_deref(), m.finish_date), (Some("2025-10-10"), None));
         // Not on the list: no entry.
         let mut v: serde_json::Value = serde_json::from_str(DETAILS).unwrap();

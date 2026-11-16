@@ -207,9 +207,9 @@ fn ep_text(e: &Entry) -> String {
     format!("Ep {} / {}", e.progress, e.episodes.map_or("?".to_string(), |n| n.to_string()))
 }
 
-fn score(e: &Entry) -> El {
+fn score(s: &State, e: &Entry) -> El {
     match e.score {
-        Some(v) => row().gap(3.0).center_y().child(icon(&icons::STAR, 12.0).color(PAL.st_onhold)).child(text(v.to_string()).font(theme::NUM_MED).color(PAL.dim)),
+        Some(v) => crate::scores::poster_mark(s.score_format(), v),
         None => el(),
     }
 }
@@ -333,7 +333,7 @@ fn card_dense(s: &State, e: &Entry, st: Status) -> El {
         .on_press_tx(open(e))
         .child(p)
         .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
-        .child(row().h(16.0).center_y().child(text(ep_text(e)).font(theme::LABEL_NUM).color(PAL.dim)).child(spacer()).child(score(e)))
+        .child(row().h(16.0).center_y().child(text(ep_text(e)).font(theme::LABEL_NUM).color(PAL.dim)).child(spacer()).child(score(s, e)))
 }
 
 /// Large: a card with the poster, two lines of title, a progress bar, "Ep x / y", the score and +1.
@@ -367,7 +367,7 @@ fn card_large(s: &State, e: &Entry, _st: Status) -> El {
                 .gap(10.0)
                 .child(col().h(38.0).child(text(e.title.clone()).font(TextStyle::new(14.0, 600.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
                 .child(look::bar(e.fraction(), status_color(e), 5.0, PAL.border))
-                .child(row().h(26.0).center_y().gap(8.0).child(text(ep_text(e)).font(theme::NUM_MED).color(PAL.dim)).child(score(e)).child(spacer()).child(plus)),
+                .child(row().h(26.0).center_y().gap(8.0).child(text(ep_text(e)).font(theme::NUM_MED).color(PAL.dim)).child(score(s, e)).child(spacer()).child(plus)),
         );
     if selected { el().key(format!("sel/{}", e.id)).radius(theme::R_LG).outline(2.0, 2.0, PAL.accent).child(c) } else { c }
 }

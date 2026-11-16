@@ -1013,7 +1013,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         .children(crate::library::row_button(s, e))
         .child(if plus { plus_button(id) } else { el().size(38.0, 26.0) });
     let score = match e.score {
-        Some(n) => text(n.to_string()).font(theme::NUM_MED).color(PAL.text),
+        Some(n) => crate::scores::mark(s.score_format(), n, theme::NUM_MED, PAL.text),
         None => text("\u{2013}").font(theme::BODY).color(PAL.faint),
     };
     let open = s.editor.filter(|ed| ed.id == id);
@@ -1049,7 +1049,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     });
     let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });
     if let Some(ed) = open {
-        c = c.child(editor(e, &ed));
+        c = c.child(editor(e, &ed, s.score_format()));
     }
     c.child(el().w_full().h(1.0).fill(PAL.border.alpha(0.6)))
 }
@@ -1108,7 +1108,7 @@ pub(crate) fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) 
 
 /// Under an open row: status, progress and score, then Cancel / Save. Nothing is queued until
 /// Save, and then as one change.
-pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
+pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> El {
     let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -1136,18 +1136,7 @@ pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
         .child(step_button("ed/plus", "+", 1));
-    let mut scores = row().gap(4.0).child(
-        cell("ed/score/none".into(), "No score".into(), ed.score.is_none(), |s| s.editor_score(None))
-            .child(text("\u{2013}").font(theme::LABEL).color(PAL.dim)),
-    );
-    for n in 1..=10u8 {
-        let on = ed.score == Some(n);
-        scores = scores.child(
-            cell(format!("ed/score/{n}"), format!("Score {n}"), on, move |s| s.editor_score(Some(n)))
-                .px(0.0)
-                .child(text(n.to_string()).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim })),
-        );
-    }
+    let scores = crate::scores::picker(fmt, ed.score);
     col()
         .key("editor")
         .mx(theme::PAGE_PAD)
@@ -1464,7 +1453,7 @@ fn changes(n: u32) -> String {
 fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
-    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
+    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op_with(op, s.score_format())).font(theme::LABEL_NUM).color(PAL.text));
     if op.edits > 1 && op.state.is_open() {
         line = line.child(text(format!("({} edits merged)", op.edits)).font(theme::LABEL).color(PAL.faint));
     }
@@ -1512,7 +1501,7 @@ pub(crate) fn pill(label: &str, c: Color) -> El {
 }
 
 /// The fields of `op`'s change, as `values` has them: "Progress 7 / 24 · Score 8".
-fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
+fn conflict_values(op: &Op, v: &kotora_core::Values, fmt: kotora_core::ScoreFormat) -> String {
     let total = op.episodes.map_or("?".to_string(), |n| n.to_string());
     let mut parts = Vec::new();
     if op.change.status.is_some() {
@@ -1522,7 +1511,7 @@ fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
         parts.push(format!("Progress {} / {total}", v.progress));
     }
     if op.change.score.is_some() {
-        parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {n}")));
+        parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {}", fmt.words(n))));
     }
     parts.join(" \u{b7} ")
 }
@@ -1545,11 +1534,11 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values), "Take theirs"),
+        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
         None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
     let aside = match &op.remote {
-        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes)),
+        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes, s.score_format())),
         None => "removed on another device".into(),
     };
     col()
@@ -1575,7 +1564,7 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
                 .child(side(
                     "mine",
                     format!("Yours \u{b7} edited here, {}", sync_age(now - op.edited_at)),
-                    conflict_values(op, &op.mine()),
+                    conflict_values(op, &op.mine(), s.score_format()),
                     action(format!("conflict/{id}/keep"), "Keep mine", true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
                     true,
                 ))

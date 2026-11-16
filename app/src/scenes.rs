@@ -1,7 +1,7 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
 //! `--list-scenes` lists them. Every view and state gets one.
 
-use kotora_core::Status;
+use kotora_core::{Score, ScoreFormat, Status};
 use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
 
@@ -280,7 +280,7 @@ pub const SCENES: &[Scene] = &[
     ("list-editor-changed", |s| {
         s.toggle_editor(4);
         s.editor_status(Status::Completed);
-        s.editor_score(Some(9));
+        s.editor_score(kotora_core::score::ten(9));
     }),
     // `+1` pressed on a synced row: the number moves at once and the row waits to sync.
     ("list-plus-one", |s| {
@@ -758,6 +758,62 @@ pub const SCENES: &[Scene] = &[
         crate::library::fake(s);
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    // Scores in each AniList score format (0.2.1): list rows, posters, the row editor (the 100-
+    // point and decimal ones with a fine − / +), the details page and the Score menu.
+    ("list-score-100", |s| scores_in(s, ScoreFormat::Point100)),
+    ("list-score-decimal", |s| scores_in(s, ScoreFormat::Point10Decimal)),
+    ("list-score-stars", |s| scores_in(s, ScoreFormat::Point5)),
+    ("list-score-smileys", |s| scores_in(s, ScoreFormat::Point3)),
+    ("list-grid-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    ("list-large-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+    }),
+    ("list-editor-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        s.toggle_editor(0);
+        s.editor_score_step(1);
+    }),
+    ("list-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        s.toggle_editor(0);
+    }),
+    ("details-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        details(s, 0, true);
+    }),
+    ("details-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        details(s, 0, true);
+        s.toggle_editor(0);
+    }),
+    ("ctx-menu-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
+    }),
+    ("ctx-menu-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
     }),
     // The right-click menu of an entry: on a list row, with each submenu, on a poster (opened
     // with the Menu key, under it) and on a Home card; and the toast with Undo after a move.
@@ -1271,6 +1327,18 @@ fn many(s: &mut State) {
 fn anilist(s: &mut State) {
     s.service = kotora_core::service::ServiceId::AniList;
     s.account = Some(("demo_user".into(), "AniList"));
+}
+
+/// Signed in to AniList with score format `fmt`, the fake scores made finer than 1-10 (73, 88,
+/// 41, …) so each format's rounding shows.
+fn scores_in(s: &mut State, fmt: ScoreFormat) {
+    anilist(s);
+    s.profile = Some(kotora_core::service::Profile { score_format: fmt, ..crate::profile::fake() });
+    const FINE: [u32; 8] = [73, 88, 41, 100, 56, 7, 65, 92];
+    for (i, e) in s.entries.iter_mut().filter(|e| e.score.is_some()).enumerate() {
+        e.score = Score::from_points(FINE[i % FINE.len()]);
+    }
+    s.refresh();
 }
 
 fn setup(s: &mut State, step: Step) {

@@ -23,7 +23,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::service::{ListService, ServiceError};
 use crate::store::{Result, Store, StoreError};
-use crate::{Change, Kind, Media, Remote, Scope, Status, Values};
+use crate::{Change, Kind, Media, Remote, Scope, Score, ScoreFormat, Status, Values};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpState {
@@ -118,6 +118,11 @@ pub fn describe(change: &Change, old: &Values) -> String {
 /// [`describe`] for an entry of a list of `kind`: a manga's change says "chapters", "volumes",
 /// "reread" and its status names ("Status → Reading").
 pub fn describe_in(kind: Kind, change: &Change, old: &Values) -> String {
+    describe_with(kind, ScoreFormat::Point10, change, old)
+}
+
+/// [`describe_in`] with the scores in the user's format ("score 7.3 → 8.0", "score 4 stars").
+pub fn describe_with(kind: Kind, fmt: ScoreFormat, change: &Change, old: &Values) -> String {
     let manga = kind == Kind::Manga;
     let re = if manga { "reread" } else { "rewatch" };
     let mut parts = Vec::new();
@@ -132,8 +137,8 @@ pub fn describe_in(kind: Kind, change: &Change, old: &Values) -> String {
     }
     match change.score {
         Some(Some(n)) => parts.push(match old.score {
-            Some(o) => format!("score {o} \u{2192} {n}"),
-            None => format!("score {n}"),
+            Some(o) => format!("score {} \u{2192} {}", fmt.words(o), fmt.words(n)),
+            None => format!("score {}", fmt.words(n)),
         }),
         Some(None) => parts.push("score removed".into()),
         None => {}
@@ -163,8 +168,13 @@ pub fn times(n: u32) -> String {
 
 /// [`describe`] for a queued change: an add says so ("Add as Watching, progress 12").
 pub fn describe_op(op: &Op) -> String {
+    describe_op_with(op, ScoreFormat::Point10)
+}
+
+/// [`describe_op`] with the scores in the user's format.
+pub fn describe_op_with(op: &Op, fmt: ScoreFormat) -> String {
     if !op.added {
-        return describe_in(op.kind, &op.change, &op.old);
+        return describe_with(op.kind, fmt, &op.change, &op.old);
     }
     let status = op.change.status.unwrap_or(op.old.status);
     let mut text = format!("Add as {}", status.label_in(op.kind));
@@ -175,7 +185,7 @@ pub fn describe_op(op: &Op) -> String {
         text.push_str(&format!(", volume {v}"));
     }
     if let Some(Some(n)) = op.change.score {
-        text.push_str(&format!(", score {n}"));
+        text.push_str(&format!(", score {}", fmt.words(n)));
     }
     text
 }
@@ -192,13 +202,13 @@ pub fn backoff(attempts: u32) -> i64 {
 
 // ------------------------------------------------------------------------------------ encoding
 
-/// The `score` column: NULL unchanged, 0 removes, 1-10.
-fn score_out(s: Option<Option<u8>>) -> Option<u8> {
-    s.map(|s| s.unwrap_or(0))
+/// The `score` column: NULL unchanged, 0 removes, 1-100 points.
+fn score_out(s: Option<Option<Score>>) -> Option<u8> {
+    s.map(Score::points_or_zero)
 }
 
-fn score_in(n: Option<u8>) -> Option<Option<u8>> {
-    n.map(|n| (n > 0).then_some(n.min(10)))
+fn score_in(n: Option<i64>) -> Option<Option<Score>> {
+    n.map(|n| Score::from_sql_points(Some(n)))
 }
 
 fn status_in(s: Option<String>) -> Option<Status> {
@@ -431,7 +441,7 @@ impl Store {
                 id,
                 remote.map(|r| r.values.status.mal_name()),
                 remote.map(|r| r.values.progress),
-                remote.map(|r| r.values.score.unwrap_or(0)),
+                remote.map(|r| Score::points_or_zero(r.values.score)),
                 remote.map(|r| r.updated_at),
                 remote.map(|r| r.values.rewatching),
                 remote.map(|r| r.values.times_rewatched),
@@ -650,7 +660,7 @@ fn enqueue_tx(tx: &Connection, sc: Scope, media_id: u32, change: Change, now: i6
                     score_out(c.score),
                     cur.status.mal_name(),
                     cur.progress,
-                    cur.score.unwrap_or(0),
+                    Score::points_or_zero(cur.score),
                     sending.unwrap_or(cur_updated),
                     now,
                     c.rewatching,

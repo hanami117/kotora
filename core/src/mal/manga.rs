@@ -65,7 +65,7 @@ impl<T: Transport> Client<T> {
             pairs.push(("num_volumes_read", v.to_string()));
         }
         if let Some(sc) = change.score {
-            pairs.push(("score", sc.unwrap_or(0).min(10).to_string()));
+            pairs.push(("score", sc.map_or(0, crate::Score::to_ten).to_string()));
         }
         if let Some(r) = change.rewatching {
             pairs.push(("is_rereading", r.to_string()));
@@ -194,7 +194,7 @@ impl MangaStatus {
         Some(Values {
             status: self.status()?,
             progress: self.num_chapters_read,
-            score: (self.score > 0).then_some(self.score.min(10)),
+            score: crate::Score::from_ten(self.score.into()),
             rewatching: self.is_rereading,
             times_rewatched: self.num_times_reread,
             volumes: self.num_volumes_read,
@@ -409,6 +409,7 @@ pub fn manga_type_label(media_type: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::score::ten;
     use super::super::tests::{client, fake, ok, status, tmp_tokens, token, tok_json};
     use super::*;
     use crate::service::ListService;
@@ -428,7 +429,7 @@ mod tests {
         let items = c.fetch_manga_list("acc").unwrap();
         assert_eq!(items.iter().map(|i| i.media.id).collect::<Vec<_>>(), [2001, 2002, 2003], "no list status: skipped");
         let a = &items[0];
-        assert_eq!((a.media.kind, a.status, a.progress, a.volumes, a.score), (Kind::Manga, Status::Watching, 21, 3, Some(8)));
+        assert_eq!((a.media.kind, a.status, a.progress, a.volumes, a.score), (Kind::Manga, Status::Watching, 21, 3, ten(8)));
         assert_eq!((a.media.episodes, a.media.volumes), (None, None), "0 from MAL: unknown, still publishing");
         assert_eq!(a.media.authors, ["Aoi Hoshimiya"]);
         assert_eq!((a.media.format.as_str(), a.media.air_status.as_str()), ("manga", "currently_publishing"));
@@ -476,7 +477,7 @@ alternative_titles,authors%7Bfirst_name,last_name%7D&limit=100&nsfw=true"
         let (f, seen) = fake(vec![ok(ENTRY), ok(NOT_ON_LIST)]);
         let (mut c, _) = client(f);
         let r = c.fetch_manga_entry("acc", 2001).unwrap().unwrap();
-        assert_eq!(r.values, Values { volumes: 3, ..Values::new(Status::Watching, 21, Some(8)) });
+        assert_eq!(r.values, Values { volumes: 3, ..Values::new(Status::Watching, 21, ten(8)) });
         assert_eq!(c.fetch_manga_entry("acc", 2005).unwrap(), None);
         let seen = seen.lock().unwrap();
         assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "https://api.myanimelist.net/v2/manga/2001?fields=my_list_status%7Bnum_times_reread%7D"));
@@ -537,7 +538,7 @@ alternative_titles,authors%7Bfirst_name,last_name%7D&limit=100&nsfw=true"
         assert!(d.synopsis.starts_with("A made-up story") && !d.synopsis.ends_with(' '));
         assert_eq!(d.cover_url.as_deref(), Some("https://cdn.example.invalid/m2002l.jpg"));
         let mine = d.mine.clone().unwrap();
-        assert_eq!((mine.status(), mine.progress, mine.volumes, mine.score, mine.rewatching, mine.times_rewatched), (Some(Status::Completed), 15, 2, Some(9), true, 1));
+        assert_eq!((mine.status(), mine.progress, mine.volumes, mine.score, mine.rewatching, mine.times_rewatched), (Some(Status::Completed), 15, 2, ten(9), true, 1));
         assert_eq!(mine.finish_date.as_deref(), Some("2023-02"));
         let m = d.media();
         assert_eq!((m.kind, m.volumes, m.authors.clone()), (Kind::Manga, Some(6), vec!["Ren Tsukishiro".to_string(), "Mokuren".to_string()]));

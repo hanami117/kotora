@@ -188,7 +188,9 @@ pub fn season_text(season: Option<&(u16, String)>) -> Option<String> {
 pub struct MyEntry {
     pub status: String,
     pub progress: u32,
-    pub score: Option<u8>,
+    /// On the 100-point scale (saved details from before 0.2.1 are moved there by the
+    /// schema 12 migration).
+    pub score: Option<crate::Score>,
     pub rewatching: bool,
     /// Finished rewatches (older saved details have none: 0).
     #[serde(default)]
@@ -310,6 +312,9 @@ pub struct Profile {
     /// ISO date or date-time ("2019-03-02T10:20:30+00:00").
     pub joined: Option<String>,
     pub stats: Option<AnimeStats>,
+    /// How the user scores (AniList's list setting; MyAnimeList is always 1-10). Read with
+    /// every sign-in and sync.
+    pub score_format: crate::ScoreFormat,
 }
 
 /// The service's own count of the user's anime (MAL `anime_statistics`).

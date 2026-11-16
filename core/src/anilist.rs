@@ -32,7 +32,7 @@ use crate::ratelimit::Limiter;
 use crate::service::{AnimeHit, AnimeStats, Details, ListService, MyEntry, Profile, SearchHit, ServiceError, User};
 use crate::time;
 use crate::tokens::{Token, TokenStore};
-use crate::{Change, Kind, ListItem, Media, Remote, Status, Values};
+use crate::{Change, Kind, ListItem, Media, Remote, Score, ScoreFormat, Status, Values};
 
 const SERVICE: &str = "anilist";
 const AUTHORIZE_URL: &str = "https://anilist.co/api/v2/oauth/authorize";
@@ -474,9 +474,9 @@ struct RawEntry {
     completed_at: FuzzyDate,
 }
 
-/// A 100-point score as Kotora's 1-10 (rounded; 0 is no score).
-fn score10(raw: f32) -> Option<u8> {
-    (raw > 0.0).then(|| ((raw / 10.0).round() as i32).clamp(1, 10) as u8)
+/// A `POINT_100` score as Kotora keeps it (0 is no score).
+fn score100(raw: f32) -> Option<Score> {
+    if raw.is_finite() { Score::from_points(raw.round().max(0.0) as u32) } else { None }
 }
 
 /// AniList's list status as Kotora's status and the rewatch flag.
@@ -506,7 +506,7 @@ pub fn status_name(st: Status) -> &'static str {
 impl RawEntry {
     fn values(&self) -> Option<Values> {
         let (status, rewatching) = status_of(self.status.as_deref()?)?;
-        Some(Values { status, progress: self.progress, score: score10(self.score), rewatching, times_rewatched: self.repeat, volumes: 0 })
+        Some(Values { status, progress: self.progress, score: score100(self.score), rewatching, times_rewatched: self.repeat, volumes: 0 })
     }
 
     fn remote(&self) -> Option<Remote> {
@@ -574,7 +574,14 @@ struct RawViewer {
     name: String,
     avatar: Cover,
     created_at: Option<i64>,
+    media_list_options: Option<RawListOptions>,
     statistics: Option<RawStatistics>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct RawListOptions {
+    score_format: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -608,10 +615,18 @@ pub fn parse_viewer(data: Value) -> Result<(u32, User), ServiceError> {
     }
     let d: Data = read(data, "user answer")?;
     let v = d.viewer.filter(|v| v.id != 0 && !v.name.is_empty()).ok_or_else(|| ServiceError::Other("AniList sent no user".into()))?;
+    let score_format = v.media_list_options.as_ref().and_then(|o| o.score_format.as_deref()).and_then(ScoreFormat::from_anilist).unwrap_or_default();
     let stats = v.statistics.and_then(|s| s.anime).map(|a| {
         let count = |names: &[&str]| a.statuses.iter().filter(|c| names.contains(&c.status.as_str())).map(|c| c.count).sum();
-        // AniList's mean is in the user's score format; the Profile page shows it out of 10.
-        let mean = if a.mean_score > 10.0 { a.mean_score / 10.0 } else { a.mean_score };
+        // The Profile page shows the mean out of 10. Above 10 it is on the 100-point scale;
+        // else it is in the user's score format.
+        let mean = match score_format {
+            _ if a.mean_score > 10.0 => a.mean_score / 10.0,
+            ScoreFormat::Point100 => a.mean_score / 10.0,
+            ScoreFormat::Point10Decimal | ScoreFormat::Point10 => a.mean_score,
+            ScoreFormat::Point5 => a.mean_score * 2.0,
+            ScoreFormat::Point3 => a.mean_score * 10.0 / 3.0,
+        };
         AnimeStats {
             days: if a.minutes_watched.is_finite() && a.minutes_watched > 0.0 { a.minutes_watched / 1440.0 } else { 0.0 },
             episodes: a.episodes_watched,
@@ -629,7 +644,7 @@ pub fn parse_viewer(data: Value) -> Result<(u32, User), ServiceError> {
         format!("{y:04}-{m:02}-{d:02}")
     });
     let picture = v.avatar.large.or(v.avatar.medium).filter(|p| p.starts_with("https://"));
-    Ok((v.id, User { name: v.name, picture, profile: Profile { joined, stats } }))
+    Ok((v.id, User { name: v.name, picture, profile: Profile { joined, stats, score_format } }))
 }
 
 /// The `Media { mediaListEntry }` answer: the user's entry, if on the list.
@@ -874,8 +889,8 @@ pub fn save_variables(media_id: u32, change: &Change, current: Option<&Values>) 
         v.insert("progress".into(), json!(p));
     }
     if let Some(sc) = change.score {
-        // 0 removes the score; AniList shows the rest in the user's own format.
-        v.insert("scoreRaw".into(), json!(u32::from(sc.unwrap_or(0).min(10)) * 10));
+        // The 100-point value, as kept (0 removes the score); AniList shows it in the user's format.
+        v.insert("scoreRaw".into(), json!(Score::points_or_zero(sc)));
     }
     if let Some(n) = change.times_rewatched {
         v.insert("repeat".into(), json!(n));

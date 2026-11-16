@@ -100,10 +100,13 @@ impl State {
         self.ctx_edit(id, change, done);
     }
 
-    pub fn ctx_score(&mut self, id: u32, score: Option<u8>) {
+    /// A score from the menu; one that already shows as the entry's keeps the precise score.
+    pub fn ctx_score(&mut self, id: u32, score: Option<kotora_core::Score>) {
+        let fmt = self.score_format();
         let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
+        let score = fmt.pick(e.score, score);
         let done = match score {
-            Some(n) => format!("Scored {} {n}", e.title),
+            Some(n) => format!("Scored {} {}", e.title, fmt.words(n)),
             None => format!("Removed the score of {}", e.title),
         };
         self.ctx_edit(id, Change { score: Some(score), ..Default::default() }, done);
@@ -262,9 +265,10 @@ fn submenu(s: &State, id: u32, sub: Sub, keys: bool) -> El {
             }
         }
         Sub::Score => {
-            for n in (1..=10u8).rev() {
-                let on = e.is_some_and(|e| e.score == Some(n));
-                m = m.child(item(format!("ctx/score/{n}"), n.to_string(), true, Some(on), move |s, _| s.ctx_score(id, Some(n))));
+            let fmt = s.score_format();
+            for (n, label, choice) in crate::scores::menu_choices(fmt).into_iter().rev() {
+                let on = e.is_some_and(|e| crate::scores::menu_lit(fmt, e.score, choice));
+                m = m.child(item(format!("ctx/score/{n}"), label, true, Some(on), move |s, _| s.ctx_score(id, Some(choice))));
             }
             m = m.child(sep());
             let on = e.is_some_and(|e| e.score.is_none());
@@ -343,6 +347,7 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kotora_core::score::ten;
 
     fn entry(s: &State, id: u32) -> &crate::model::Entry {
         s.entries.iter().find(|e| e.id == id).unwrap()
@@ -364,12 +369,12 @@ mod tests {
         assert_eq!(entry(&s, id).values(), before, "Undo puts it back");
         assert!(s.toast.is_none());
 
-        s.ctx_score(id, Some(9));
-        assert_eq!(entry(&s, id).score, Some(9));
+        s.ctx_score(id, ten(9));
+        assert_eq!(entry(&s, id).score, ten(9));
         s.ctx_score(id, None);
         assert_eq!(entry(&s, id).score, None);
         s.toast_undo();
-        assert_eq!(entry(&s, id).score, Some(9), "Undo of No score");
+        assert_eq!(entry(&s, id).score, ten(9), "Undo of No score");
 
         let p = entry(&s, id).progress;
         s.ctx_plus(id);

@@ -4,6 +4,17 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Changed
+- **Scores in your AniList score format:** the list, the posters, the editor, the details page, the Score menu
+  and `kot` show and set scores the way you score on AniList: 100 points (73), 10 points with a decimal (7.3),
+  10 points, 5 stars or 3 smileys. Kotora reads the format from your AniList settings with each sync.
+  `kot set TITLE --score 7.3` (or `73`, `***`, `:)`) takes it the same way. MyAnimeList stays 1 to 10.
+
+### Fixed
+- **AniList scores keep their precision.** A 73 was saved as 7 and could go back to AniList as 70. Kotora now
+  keeps every score on AniList's 100-point scale, and picking the score that already shows (4 stars for a 73)
+  changes nothing. The saved list is upgraded on first start (a copy, `kotora.db.schema-11.bak`, is kept beside it).
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

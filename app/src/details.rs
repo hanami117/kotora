@@ -480,7 +480,7 @@ fn body_cards(d: &Detail, svc: &str) -> El {
 }
 
 /// The editor's fields in the narrow right column (the list page's editor is one wide line).
-fn compact_editor(e: &Entry, ed: &crate::model::Editor) -> El {
+fn compact_editor(e: &Entry, ed: &crate::model::Editor, fmt: kotora_core::ScoreFormat) -> El {
     let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -501,17 +501,7 @@ fn compact_editor(e: &Entry, ed: &crate::model::Editor) -> El {
         .child(step_button("ed/minus", "\u{2212}", -1))
         .child(row().min_w(76.0).center().child(text(ed.progress.to_string()).font(theme::NUM_MED).color(PAL.text)).child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)))
         .child(step_button("ed/plus", "+", 1));
-    let mut scores = row().flex_wrap().gap(4.0).child(
-        cell("ed/score/none".into(), "No score".into(), ed.score.is_none(), |s| s.editor_score(None)).child(text("\u{2013}").font(theme::LABEL).color(PAL.dim)),
-    );
-    for n in 1..=10u8 {
-        let on = ed.score == Some(n);
-        scores = scores.child(
-            cell(format!("ed/score/{n}"), format!("Score {n}"), on, move |s| s.editor_score(Some(n)))
-                .px(0.0)
-                .child(text(n.to_string()).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim })),
-        );
-    }
+    let scores = crate::scores::picker(fmt, ed.score);
     let label = |l: &str| text(l.to_uppercase()).font(theme::CAPTION).color(PAL.faint);
     col()
         .key("editor")
@@ -583,7 +573,11 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
             );
             let mine = d.info.as_ref().and_then(|i| i.mine.as_ref());
             let date = |v: Option<&String>| text(v.map_or("\u{2013}".into(), |d| date_text(d))).font(theme::LABEL_NUM).color(PAL.text);
-            let mut facts = col().pt(8.0).child(kv("Score", text(e.score.map_or("No score".into(), |n| n.to_string())).font(theme::LABEL_NUM).color(PAL.text)));
+            let score = match e.score {
+                Some(n) => crate::scores::mark(s.score_format(), n, theme::LABEL_NUM, PAL.text),
+                None => text("No score").font(theme::LABEL_NUM).color(PAL.text),
+            };
+            let mut facts = col().pt(8.0).child(kv("Score", score.key("det/my-score")));
             facts = facts.child(kv("Started", date(mine.and_then(|m| m.start_date.as_ref())))).child(kv("Finished", date(mine.and_then(|m| m.finish_date.as_ref()))));
             if e.status == Status::Completed || e.times_rewatched > 0 {
                 let times = match e.times_rewatched {
@@ -594,7 +588,7 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
             }
             c = c.child(facts);
             match s.editor.filter(|ed| ed.id == id) {
-                Some(ed) => c = c.child(compact_editor(e, &ed)),
+                Some(ed) => c = c.child(compact_editor(e, &ed, s.score_format())),
                 None => {
                     let mut actions = row().pt(10.0).gap(8.0).child(button("det/edit", "Edit", false, Some(|s: &mut State| {
                         if let Some(d) = &s.detail {
@@ -793,7 +787,7 @@ pub fn fake_details(id: u32, title: &str, mine: bool) -> Details {
         mine: mine.then(|| kotora_core::service::MyEntry {
             status: "watching".into(),
             progress: 5,
-            score: Some(8),
+            score: kotora_core::score::ten(8),
             rewatching: false,
             times_rewatched: 0,
             start_date: Some("2026-10-04".into()),
