@@ -1169,6 +1169,7 @@ pub fn fake_now() -> Now {
         recognizing: false,
         candidates: vec![(0, "Lanterns of Kirigaoka".into()), (3, "Slow Life on Hoshizora Island".into()), (9, "Kumo to Kaze no Ryokan".into())],
         cover_url: None,
+        alt_titles: Default::default(),
         relation: None,
         dismissed: false,
         acted: false,

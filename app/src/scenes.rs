@@ -269,7 +269,7 @@ pub const SCENES: &[Scene] = &[
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle S2 - 15 (1080p).mkv");
         if let Some(n) = &mut s.now {
             n.found = Found::NotOnList { media_id: 9002, title: "Velvet Orchard Chronicle 2nd Season Part 2".into() };
-            n.relation = Some("episode 15 of Velvet Orchard Chronicle 2nd Season is episode 2 of Velvet Orchard Chronicle 2nd Season Part 2 (anime-relations)".into());
+            n.relation = Some(crate::now::Relation { file_ep: 15, from_id: 9003, from_title: Some("Velvet Orchard Chronicle 2nd Season".into()), ep: 2 });
             if let Some(p) = &mut n.parsed {
                 p.episode = Some(2);
             }
@@ -523,6 +523,21 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::Queue);
     }),
     ("now-playing-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese);
+        s.go(Page::NowPlaying);
+    }),
+    // The "Not on your list" card and its anime-relations line follow the setting too (romaji
+    // where MyAnimeList has no Japanese title: the first anime here).
+    ("now-playing-not-on-list-japanese", |s| {
+        playing_file(s, "[Hoshi] Velvet Orchard Chronicle S2 - 15 (1080p).mkv");
+        if let Some(n) = &mut s.now {
+            n.found = Found::NotOnList { media_id: 9002, title: "Velvet Orchard Chronicle 2nd Season Part 2".into() };
+            n.alt_titles = crate::now::AltTitles { en: Some("Velvet Orchard Chronicle Season 2 Part 2".into()), ja: Some("ベルベット果樹園年代記 第2期 後半".into()) };
+            n.relation = Some(crate::now::Relation { file_ep: 15, from_id: 9003, from_title: Some("Velvet Orchard Chronicle 2nd Season".into()), ep: 2 });
+            if let Some(p) = &mut n.parsed {
+                p.episode = Some(2);
+            }
+        }
         s.set_titles(TitleLang::Japanese);
         s.go(Page::NowPlaying);
     }),
@@ -1094,6 +1109,27 @@ mod tests {
         let rt = render("settings-auto-on", (1360.0, 860.0));
         assert!(rt.find("set/asks-off").is_some());
         assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
+    }
+
+    #[test]
+    fn not_on_list_follows_the_title_language() {
+        let rt = render("now-playing-not-on-list-japanese", (1280.0, 800.0));
+        assert!(rt.find("np-not-on-list").is_some() && rt.find("np-relation").is_some());
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == "now-playing-not-on-list-japanese").unwrap().1)(&mut s);
+        let n = s.now.as_ref().unwrap();
+        assert_eq!(s.not_on_list_title(n).as_deref(), Some("ベルベット果樹園年代記 第2期 後半"));
+        assert_eq!(
+            s.relation_text(n).as_deref(),
+            Some("episode 15 of Velvet Orchard Chronicle 2nd Season is episode 2 of ベルベット果樹園年代記 第2期 後半 (anime-relations)")
+        );
+        assert_eq!(s.ctl_now().unwrap().title, "ベルベット果樹園年代記 第2期 後半", "kot now too");
+        s.set_titles(TitleLang::English);
+        let n = s.now.as_ref().unwrap();
+        assert_eq!(s.not_on_list_title(n).as_deref(), Some("Velvet Orchard Chronicle Season 2 Part 2"));
+        s.set_titles(TitleLang::Romaji);
+        let n = s.now.as_ref().unwrap();
+        assert_eq!(s.not_on_list_title(n).as_deref(), Some("Velvet Orchard Chronicle 2nd Season Part 2"));
     }
 
     #[test]

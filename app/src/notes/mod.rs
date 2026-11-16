@@ -433,6 +433,7 @@ mod tests {
             found: Found::List { media_id: 0, sure: true, why: "test".into() },
             candidates: vec![],
             cover_url: None,
+            alt_titles: Default::default(),
             relation: None,
         }
     }
