@@ -104,7 +104,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     r.map_err(|e| format!("Can't write {}: {e}", path.display()))
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
+pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
@@ -310,7 +310,7 @@ pub fn undone(s: &mut State, r: Result<usize, String>) -> bool {
 // ------------------------------------------------------------------------------------------ view
 
 /// Title and note on the left, the control on the right (as the other settings rows).
-fn line(key: &str, title: &str, note: String, control: El) -> El {
+pub(crate) fn line(key: &str, title: &str, note: String, control: El) -> El {
     row()
         .key(key.to_string())
         .w_full()
@@ -368,7 +368,7 @@ pub fn import_row(s: &State) -> El {
     c
 }
 
-fn count_pill(key: &str, n: usize, word: &str, color: rune::Color) -> El {
+pub(crate) fn count_pill(key: &str, n: usize, word: &str, color: rune::Color) -> El {
     row()
         .key(key.to_string())
         .px(8.0)
@@ -384,7 +384,7 @@ fn count_pill(key: &str, n: usize, word: &str, color: rune::Color) -> El {
 /// The most rows listed per group; the rest is "and N more".
 const SHOWN: usize = 6;
 
-fn group(key: &str, head: String, rows: Vec<String>) -> El {
+pub(crate) fn group(key: &str, head: String, rows: Vec<String>) -> El {
     let mut c = col().key(key.to_string()).gap(3.0).child(text(head.to_uppercase()).font(theme::CAPTION).color(PAL.faint).pb(2.0));
     let n = rows.len();
     for r in rows.into_iter().take(SHOWN) {

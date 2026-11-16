@@ -261,7 +261,7 @@ fn op_row(r: &Row) -> rusqlite::Result<Op> {
     })
 }
 
-fn entry_values(c: &Connection, sc: Scope, media_id: u32) -> Result<Option<(Values, i64)>> {
+pub(crate) fn entry_values(c: &Connection, sc: Scope, media_id: u32) -> Result<Option<(Values, i64)>> {
     Ok(c.query_row(
         "SELECT status, progress, score, updated_at, rewatching, times_rewatched, volumes FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2",
         params![sc.service, media_id, sc.kind.name()],
@@ -288,6 +288,11 @@ fn set_entry(c: &Connection, sc: Scope, media_id: u32, v: &Values, updated_at: O
         params![sc.service, media_id, v.status.mal_name(), v.progress, v.score, updated_at, v.rewatching, v.times_rewatched, v.volumes, sc.kind.name()],
     )?;
     Ok(())
+}
+
+/// One change by id, if it is still in the queue.
+pub(crate) fn find_op(c: &Connection, id: i64) -> Result<Option<Op>> {
+    Ok(c.query_row(&format!("{OP_SELECT} WHERE o.id = ?1"), [id], op_row).optional()?)
 }
 
 fn get_op(c: &Connection, id: i64) -> Result<Op> {
@@ -355,7 +360,9 @@ impl Store {
     pub fn enqueue<'a>(&mut self, scope: impl Into<Scope<'a>>, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
         let sc = scope.into();
         let tx = self.conn.transaction()?;
+        let before = entry_values(&tx, sc, media_id)?.map(|(v, _)| v);
         let id = enqueue_tx(&tx, sc, media_id, change, now)?;
+        crate::mirror::follow(&tx, sc, media_id, before, now)?;
         tx.commit()?;
         Ok(id)
     }
@@ -469,41 +476,26 @@ impl Store {
     }
 
     /// A conflict, "Take theirs": the change goes and the entry takes the service's values (or
-    /// leaves the list, if it was removed there).
-    pub fn take_theirs(&mut self, service: &str, id: i64) -> Result<()> {
+    /// leaves the list, if it was removed there). `now`: the mirror's follow-up change, if any.
+    pub fn take_theirs(&mut self, service: &str, id: i64, now: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         let op = get_op(&tx, id)?;
         let sc = Scope::new(service, op.kind);
-        tx.execute("DELETE FROM pending_op WHERE id = ?1", [id])?;
-        match op.remote {
-            Some(r) => set_entry(&tx, sc, op.media_id, &r.values, Some(r.updated_at))?,
-            None if !has_other_open(&tx, sc, op.media_id, id)? => {
-                tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
-            }
-            None => {}
-        }
-        lay_over_where(&tx, sc, Some(op.media_id))?;
+        let before = entry_values(&tx, sc, op.media_id)?.map(|(v, _)| v);
+        take_theirs_tx(&tx, service, &op)?;
+        crate::mirror::follow(&tx, sc, op.media_id, before, now)?;
         tx.commit()?;
         Ok(())
     }
 
     /// Discard a change (a failed one, or any open one): the entry goes back to where it was.
-    pub fn discard(&mut self, service: &str, id: i64) -> Result<()> {
+    pub fn discard(&mut self, service: &str, id: i64, now: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         let op = get_op(&tx, id)?;
-        if op.state == OpState::Sending {
-            return Err(StoreError("that change is being sent right now".into()));
-        }
         let sc = Scope::new(service, op.kind);
-        tx.execute("DELETE FROM pending_op WHERE id = ?1", [id])?;
-        let alone = !has_other_open(&tx, sc, op.media_id, id)?;
-        if op.added && alone {
-            // It was never on the list: it leaves again.
-            tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
-        } else {
-            set_entry(&tx, sc, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
-        }
-        lay_over_where(&tx, sc, Some(op.media_id))?;
+        let before = entry_values(&tx, sc, op.media_id)?.map(|(v, _)| v);
+        discard_tx(&tx, service, &op)?;
+        crate::mirror::follow(&tx, sc, op.media_id, before, now)?;
         tx.commit()?;
         Ok(())
     }
@@ -516,14 +508,55 @@ impl Store {
     /// Completed also starts at the last volume (when known).
     pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
         let tx = self.conn.transaction()?;
+        let sc = Scope::new(service, media.kind);
+        let before = entry_values(&tx, sc, media.id)?.map(|(v, _)| v);
         let id = add_tx(&tx, service, media, status, progress, now)?;
+        crate::mirror::follow(&tx, sc, media.id, before, now)?;
         tx.commit()?;
         Ok(id)
     }
 }
 
+/// [`Store::take_theirs`] inside the caller's transaction (no mirror follow-up).
+pub(crate) fn take_theirs_tx(tx: &Connection, service: &str, op: &Op) -> Result<()> {
+    let sc = Scope::new(service, op.kind);
+    tx.execute("DELETE FROM pending_op WHERE id = ?1", [op.id])?;
+    match op.remote {
+        Some(r) => set_entry(tx, sc, op.media_id, &r.values, Some(r.updated_at))?,
+        None if !has_other_open(tx, sc, op.media_id, op.id)? => {
+            tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
+        }
+        None => {}
+    }
+    lay_over_where(tx, sc, Some(op.media_id))
+}
+
+/// [`Store::discard`] inside the caller's transaction (no mirror follow-up).
+pub(crate) fn discard_tx(tx: &Connection, service: &str, op: &Op) -> Result<()> {
+    if op.state == OpState::Sending {
+        return Err(StoreError("that change is being sent right now".into()));
+    }
+    let sc = Scope::new(service, op.kind);
+    tx.execute("DELETE FROM pending_op WHERE id = ?1", [op.id])?;
+    let alone = !has_other_open(tx, sc, op.media_id, op.id)?;
+    if op.added && alone {
+        // It was never on the list: it leaves again.
+        tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?3 AND media_id = ?2", params![service, op.media_id, op.kind.name()])?;
+    } else {
+        set_entry(tx, sc, op.media_id, &op.old, alone.then_some(op.base_updated_at).filter(|b| *b >= 0))?;
+    }
+    lay_over_where(tx, sc, Some(op.media_id))
+}
+
+/// The open changes of one entry, newest first.
+pub(crate) fn open_ops(tx: &Connection, sc: Scope, media_id: u32) -> Result<Vec<Op>> {
+    let mut st = tx.prepare(&format!("{OP_SELECT} WHERE o.service = ?1 AND o.kind = ?3 AND o.media_id = ?2 AND o.state != 'done' ORDER BY o.id DESC"))?;
+    let rows = st.query_map(params![sc.service, media_id, sc.kind.name()], op_row)?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// [`Store::add_to_list`] inside the caller's transaction.
-fn add_tx(tx: &Connection, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
+pub(crate) fn add_tx(tx: &Connection, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
     let sc = Scope::new(service, media.kind);
     if entry_values(tx, sc, media.id)?.is_some() {
         return enqueue_tx(tx, sc, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
@@ -587,35 +620,8 @@ impl Store {
     /// import is saved, or nothing). Returns the queued changes' ids, for
     /// [`Store::undo_import`].
     pub fn import(&mut self, service: &str, actions: &[crate::listxml::Action], now: i64) -> Result<Vec<i64>> {
-        use crate::listxml::Action;
         let tx = self.conn.transaction()?;
-        let mut ids = Vec::new();
-        for a in actions {
-            let id = match a {
-                Action::Add { media, values } => {
-                    let first = add_tx(&tx, service, media, values.status, Some(values.progress), now)?;
-                    // The rest of the values merge into the waiting add.
-                    // A rewatch: the add starts a Completed entry at the last episode; the
-                    // rewatch's own episode comes with the rest.
-                    let rest = Change {
-                        progress: values.rewatching.then_some(values.progress),
-                        score: Some(values.score),
-                        rewatching: Some(values.rewatching),
-                        times_rewatched: Some(values.times_rewatched),
-                        ..Change::default()
-                    };
-                    let (cur, _) = entry_values(&tx, Scope::new(service, media.kind), media.id)?.ok_or_else(|| StoreError("the added anime is not on the saved list".into()))?;
-                    let rest = rest.without_same(&cur);
-                    if rest.is_empty() { first } else { enqueue_tx(&tx, Scope::new(service, media.kind), media.id, rest, now)?.or(first) }
-                }
-                Action::Update { media_id, change } => enqueue_tx(&tx, Scope::new(service, Kind::Anime), *media_id, *change, now)?,
-            };
-            if let Some(id) = id
-                && !ids.contains(&id)
-            {
-                ids.push(id);
-            }
-        }
+        let ids = import_tx(&tx, service, actions, now, true)?;
         tx.commit()?;
         Ok(ids)
     }
@@ -623,12 +629,12 @@ impl Store {
     /// Undo an import: its changes that still wait (queued, in conflict or failed) are discarded
     /// and their entries go back; what was sent already stays sent. Returns how many were
     /// discarded.
-    pub fn undo_import(&mut self, service: &str, ids: &[i64]) -> Result<usize> {
+    pub fn undo_import(&mut self, service: &str, ids: &[i64], now: i64) -> Result<usize> {
         let mut n = 0;
         for &id in ids {
             let state: Option<String> = self.conn.query_row("SELECT state FROM pending_op WHERE id = ?1 AND service = ?2", params![id, service], |r| r.get(0)).optional()?;
             if matches!(state.as_deref(), Some("queued" | "conflict" | "failed")) {
-                self.discard(service, id)?;
+                self.discard(service, id, now)?;
                 n += 1;
             }
         }
@@ -636,7 +642,49 @@ impl Store {
     }
 }
 
-fn enqueue_tx(tx: &Connection, sc: Scope, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
+/// [`Store::import`] inside the caller's transaction. `follow`: each change is also queued for
+/// the mirror (an import into the main list); the mirror's own alignment passes false.
+pub(crate) fn import_tx(tx: &Connection, service: &str, actions: &[crate::listxml::Action], now: i64, follow: bool) -> Result<Vec<i64>> {
+    use crate::listxml::Action;
+    let mut ids = Vec::new();
+    for a in actions {
+        let (sc, media_id) = match a {
+            Action::Add { media, .. } => (Scope::new(service, media.kind), media.id),
+            Action::Update { media_id, .. } => (Scope::new(service, Kind::Anime), *media_id),
+        };
+        let before = entry_values(tx, sc, media_id)?.map(|(v, _)| v);
+        let id = match a {
+            Action::Add { media, values } => {
+                let first = add_tx(tx, service, media, values.status, Some(values.progress), now)?;
+                // The rest of the values merge into the waiting add.
+                // A rewatch: the add starts a Completed entry at the last episode; the
+                // rewatch's own episode comes with the rest.
+                let rest = Change {
+                    progress: values.rewatching.then_some(values.progress),
+                    score: Some(values.score),
+                    rewatching: Some(values.rewatching),
+                    times_rewatched: Some(values.times_rewatched),
+                    ..Change::default()
+                };
+                let (cur, _) = entry_values(tx, sc, media.id)?.ok_or_else(|| StoreError("the added anime is not on the saved list".into()))?;
+                let rest = rest.without_same(&cur);
+                if rest.is_empty() { first } else { enqueue_tx(tx, sc, media.id, rest, now)?.or(first) }
+            }
+            Action::Update { media_id, change } => enqueue_tx(tx, sc, *media_id, *change, now)?,
+        };
+        if follow {
+            crate::mirror::follow(tx, sc, media_id, before, now)?;
+        }
+        if let Some(id) = id
+            && !ids.contains(&id)
+        {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+pub(crate) fn enqueue_tx(tx: &Connection, sc: Scope, media_id: u32, change: Change, now: i64) -> Result<Option<i64>> {
     let service = sc.service;
     let k = sc.kind.name();
     let (cur, cur_updated) = entry_values(tx, sc, media_id)?

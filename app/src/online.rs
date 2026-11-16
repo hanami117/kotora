@@ -84,6 +84,7 @@ pub fn start(s: &mut State) {
         }
         if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
     });
+    crate::mirror::load(s);
 }
 
 /// Refresh (the button, and Retry): one sync on a worker.
@@ -118,6 +119,8 @@ fn sync_now(h: &Handle, mut store: Store) {
     let synced = matches!(msg, Msg::Synced { .. });
     send(h, msg);
     if synced {
+        // The mirror reads its list now too (edits made on its website), at its own pace.
+        crate::mirror::kick(h, true);
         // The manga list, only once Manga mode was turned on (off by default: no request), and
         // only on MyAnimeList (AniList is anime only for now). A failure never fails the sync.
         if active == ServiceId::Mal {
@@ -158,9 +161,12 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
         Err(e) => return fail(e),
     };
     let name = service.name();
+    let old = store.load_list(name).unwrap_or_default();
     if let Err(e) = store.replace_list(name, &items, now) {
         return Msg::SyncFailed(Fail::Other(format!("Can't save the list: {e}")));
     }
+    // Edits made on the service's website since the last sync go to the mirror, if it is on.
+    let _ = kotora_core::mirror::after_main_sync(store, name, &old, now);
     // Anime saved with only a title (an add still waiting, from Now Playing): filled in now.
     kotora_core::sync::complete_media(service, store, None, now);
     match store.load_list(name) {
@@ -214,6 +220,7 @@ fn signed_in(h: &Handle, seq: u64, r: Result<(String, Option<String>), String>) 
         match r {
             Ok((user, picture)) => {
                 s.apply(Msg::SignedIn { user, picture });
+                crate::mirror::load(s);
                 // The first list after a sign-in.
                 s.syncing = false;
                 refresh(s);
@@ -381,6 +388,7 @@ pub fn switch_service(s: &mut State, id: ServiceId) {
     }
     cancel_sign_in(s);
     s.sign_in_seq += 1;
+    crate::mirror::unlink(s);
     s.forget_account();
     s.service = id;
     if s.handle.is_none() {

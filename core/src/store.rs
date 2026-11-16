@@ -413,6 +413,8 @@ impl Store {
             "DELETE FROM season WHERE service = ?1",
             "DELETE FROM air_seen WHERE service = ?1",
             "DELETE FROM announced WHERE service = ?1",
+            // Either side of the mirror signed out: the mirror is off.
+            "DELETE FROM kv WHERE key LIKE 'mirror:%' AND EXISTS (SELECT 1 FROM kv l WHERE l.key = 'mirror:link' AND (l.value LIKE ?1 || '>%' OR l.value LIKE '%>' || ?1))",
         ] {
             tx.execute(sql, [service])?;
         }

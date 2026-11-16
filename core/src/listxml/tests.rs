@@ -331,12 +331,12 @@ fn an_import_goes_through_the_queue_and_undo_takes_it_back() {
     assert!(add.added, "one change per entry: the add carries the rewatch");
     // One goes out; undo takes back the two that still wait.
     assert_eq!(queue::step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1001, outcome: Outcome::Sent });
-    assert_eq!(s.undo_import("mal", &ids).unwrap(), 2);
+    assert_eq!(s.undo_import("mal", &ids, 1_000).unwrap(), 2);
     assert!(s.load_item("mal", 1003).unwrap().is_none(), "the add is gone again");
     assert_eq!(s.load_item("mal", 1004).unwrap().unwrap().status, Status::Watching);
     assert_eq!(s.load_item("mal", 1001).unwrap().unwrap().progress, 5, "sent stays sent");
     assert_eq!(s.open_count("mal").unwrap(), 0);
-    assert_eq!(s.undo_import("mal", &ids).unwrap(), 0, "nothing left to undo");
+    assert_eq!(s.undo_import("mal", &ids, 1_000).unwrap(), 0, "nothing left to undo");
 }
 
 #[test]

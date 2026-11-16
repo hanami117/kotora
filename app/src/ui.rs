@@ -237,7 +237,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
             "queue",
             NavMark::Icon(&icons::SYNC),
             "Sync queue",
-            (s.queue > 0).then(|| NavEnd::Badge(s.queue.to_string())),
+            (s.queue + s.mirror.attention() > 0).then(|| NavEnd::Badge((s.queue + s.mirror.attention()).to_string())),
             lit == Page::Queue,
             Page::Queue,
         ))
@@ -1405,7 +1405,7 @@ fn queue_page(s: &State) -> El {
     {
         body = body.child(alert("queue/error", PAL.status(Status::Dropped), e.clone(), None).mb(0.0));
     }
-    if s.ops.is_empty() {
+    if s.ops.is_empty() && !crate::mirror::in_queue(s) {
         return col().key("page/queue").w_full().h_full().child(top).child(body).child(
             col()
                 .key("queue-empty")
@@ -1446,6 +1446,9 @@ fn queue_page(s: &State) -> El {
     }
     if any {
         body = body.child(list);
+    }
+    if crate::mirror::in_queue(s) {
+        body = body.child(crate::mirror::queue_section(s));
     }
     col()
         .key("page/queue")

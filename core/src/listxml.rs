@@ -500,7 +500,7 @@ fn rank(v: &Values) -> Option<u8> {
 /// there is one. Rules (ROADMAP "merge"): the status further along wins (unclear pairs are
 /// asked); the progress further along wins when the status stays; a score fills an empty one,
 /// a score already there is kept; the rewatch count takes the higher.
-fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Change, Option<StatusConflict>, Change) {
+pub(crate) fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Change, Option<StatusConflict>, Change) {
     let same_slot = cur.status == file.status && cur.rewatching == file.rewatching;
     let higher = |mut v: Values| {
         v.times_rewatched = cur.times_rewatched.max(file.times_rewatched);

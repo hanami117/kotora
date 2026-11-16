@@ -15,6 +15,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   choose when the statuses disagree (say Dropped against Completed). Everything goes through the sync queue at
   the service's pace, works offline, and "Undo import" takes back what hasn't been sent. Into AniList, the file's
   MyAnimeList ids are matched to AniList's anime first. Anime only for now; dates and notes are not imported.
+- **Mirror your list to the other service:** signed in to both MyAnimeList and AniList, turn on Settings → Account
+  → "Mirror edits to AniList" (or MyAnimeList). Kotora first compares the two lists by MyAnimeList id and shows
+  what differs: only on one side, different values, the same, and anime it can't match. Then pick once: your main
+  list wins (the other becomes a copy), merge (what is missing is added on each side, the one further along wins,
+  and you choose when statuses disagree), or don't align (only new edits). From then on every change you make in
+  Kotora, and every edit made on the main service's website, also goes to the other list through its own queue at
+  its own pace; a failure on one side never holds up the other. Edits made on the mirror's website are never
+  overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Nothing is ever removed
+  from either list. Anime only; AniList entries without a MyAnimeList id are listed as not mirrored.
 
 ## [0.2.0] - 2026-11-16
 

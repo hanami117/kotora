@@ -30,6 +30,7 @@ mod look;
 mod iina;
 #[cfg(target_os = "macos")]
 mod menu_bar;
+mod mirror;
 mod model;
 mod notes;
 mod now;
