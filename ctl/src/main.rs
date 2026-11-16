@@ -56,14 +56,15 @@ Commands:
   next TITLE            play the next episode of TITLE from your
                         library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
-      [--status STATUS]   MyAnimeList for (it must find one), or its id
-  config client-id ID   save your MyAnimeList Client ID
+      [--status STATUS]   your list service for (it must find one), or its id
+  config client-id ID   save the Client ID of your list service (MyAnimeList
+                        or AniList, as chosen in Kotora)
   show                  show the window
   quit                  quit Kotora
   help                  this text
 
 TITLE is any part of a title, no quotes needed; it must match one entry.
-Changes go to the sync queue first, then to MyAnimeList.
+Changes go to the sync queue first, then to MyAnimeList or AniList.
 
 Options:
   -V, --version   print the version
@@ -341,7 +342,7 @@ fn parse_add(words: &[&str]) -> Result<Request, String> {
         i += 1;
     }
     if query.is_empty() {
-        return Err("add needs a title or a MyAnimeList id".into());
+        return Err("add needs a title or an id".into());
     }
     Ok(Request::Add { query: query.join(" "), status })
 }
@@ -430,7 +431,7 @@ fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
     if items.is_empty() {
         return format!("{}\n", note.unwrap_or("Nothing on your list airs in the next 7 days."));
     }
-    let mut out = String::from("Airing on your list, next 7 days (times estimated from MyAnimeList):\n");
+    let mut out = String::from("Airing on your list, next 7 days (some times are estimates):\n");
     let w = items.iter().map(|i| i.title.chars().count()).max().unwrap_or(0).min(40);
     let mut day = "";
     for i in items {
@@ -447,7 +448,7 @@ fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
 
 fn sync_text(st: &Status) -> String {
     if st.offline {
-        return "Offline: the queue is kept and goes out when MyAnimeList can be reached.".into();
+        return "Offline: the queue is kept and goes out when your list service can be reached.".into();
     }
     match st.queue {
         0 => "Reading your list again.".into(),
@@ -556,7 +557,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "Airing on your list, next 7 days (times estimated from MyAnimeList):\nToday\n  15:00  Mecha Bento Club  ep 11  (in 6 h)\nSaturday\n  15:30  Lanterns          ep 7  (in 1 d 6 h, 1 aired not watched)\n  17:00  Hoshizora         ep 4  (in 1 d 8 h)\n"
+            "Airing on your list, next 7 days (some times are estimates):\nToday\n  15:00  Mecha Bento Club  ep 11  (in 6 h)\nSaturday\n  15:30  Lanterns          ep 7  (in 1 d 6 h, 1 aired not watched)\n  17:00  Hoshizora         ep 4  (in 1 d 8 h)\n"
         );
         assert_eq!(airing_text(&[], None), "Nothing on your list airs in the next 7 days.\n");
         assert_eq!(airing_text(&[], Some("Loading.")), "Loading.\n");
