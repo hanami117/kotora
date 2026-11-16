@@ -85,7 +85,7 @@ impl Section {
             Section::Account => vec![(Some("MyAnimeList"), vec![Row::Mal, Row::ClientId, Row::Token]), (Some("AniList"), vec![Row::AniList])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
-                if cfg!(target_os = "macos") {
+                if kotora_detect::VLC_WEB {
                     players.push(Row::VlcWeb);
                 }
                 vec![
@@ -269,7 +269,7 @@ fn index() -> Vec<Entry> {
             }
         }
         for s in SPECS.iter().filter(|s| s.section == section) {
-            if s.row == Row::VlcWeb && !cfg!(target_os = "macos") {
+            if s.row == Row::VlcWeb && !kotora_detect::VLC_WEB {
                 continue;
             }
             v.push(Entry { row: s.row, section, hay: fold(&format!("{} {} {} {}", section.title(), s.title, s.note, s.words)) });

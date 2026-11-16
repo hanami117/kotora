@@ -337,7 +337,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) -> bool {
 }
 
 fn file_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    kotora_detect::file_name(path).to_string()
 }
 
 impl State {
@@ -844,7 +844,7 @@ impl State {
             Some(s) => (format!("{} \u{b7} {}", s.via, s.line), s.led),
             None => (
                 match sw {
-                    Switch::Vlc if cfg!(target_os = "macos") && !self.prefs.vlc_set_up => "web interface \u{b7} not set up (needs VLC's password)".into(),
+                    Switch::Vlc if kotora_detect::VLC_WEB && !self.prefs.vlc_set_up => "web interface \u{b7} not set up (needs VLC's password)".into(),
                     Switch::Mpv | Switch::Iina => "IPC socket \u{b7} not running".into(),
                     _ => "MPRIS \u{b7} not running".into(),
                 },

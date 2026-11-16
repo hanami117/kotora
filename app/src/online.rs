@@ -234,6 +234,12 @@ pub fn open_url(s: &mut State, url: String) {
     });
 }
 
+#[cfg(windows)]
+fn open_browser(url: &str) -> Result<(), String> {
+    crate::win::open(url)
+}
+
+#[cfg(not(windows))]
 fn open_browser(url: &str) -> Result<(), String> {
     let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     let mut child = std::process::Command::new(program)

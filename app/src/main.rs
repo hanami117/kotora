@@ -8,6 +8,11 @@
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
+// Windows: a windowed program (no console window); `win::attach_output` gives its text a place.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+// Windows: the parts that are stubs for now (start at login, notifications) leave code unused.
+#![cfg_attr(windows, allow(dead_code))]
+
 mod airing;
 mod airnotes;
 mod art;
@@ -45,6 +50,8 @@ mod theme;
 mod tray;
 mod ui;
 mod update;
+#[cfg(windows)]
+mod win;
 mod winsize;
 
 use std::io::Write;
@@ -164,6 +171,8 @@ fn log_first_frame() -> impl FnMut(&rune::FrameEncoded) + 'static {
 
 fn main() {
     START.get_or_init(Instant::now);
+    #[cfg(windows)]
+    win::attach_output();
     if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
         println!("kotora {}", kotora_ctl::version_line());
         return;

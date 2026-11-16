@@ -40,7 +40,7 @@ pub struct Login {
 }
 
 impl Login {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pub fn unavailable(why: &'static str) -> Self {
         Login { unavailable: Some(why), ..Login::default() }
     }
@@ -57,7 +57,12 @@ pub fn read() -> Login {
     {
         imp::read()
     }
-    #[cfg(not(target_os = "macos"))]
+    // Windows: not yet (it will be a Run key in the registry).
+    #[cfg(windows)]
+    {
+        Login::unavailable(WINDOWS_NOT_YET)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         Login { on: entry_path().is_file(), ..Login::default() }
     }
@@ -71,12 +76,20 @@ pub fn set(on: bool, hidden: bool) -> Result<Login, String> {
         let _ = hidden;
         imp::set(on)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let _ = (on, hidden);
+        Err(WINDOWS_NOT_YET.into())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         set_entry(on, hidden)?;
         Ok(read())
     }
 }
+
+#[cfg(windows)]
+const WINDOWS_NOT_YET: &str = "Not available on Windows yet.";
 
 /// Where the Linux autostart entry lives.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -90,7 +103,7 @@ pub fn entry_path() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    kotora_core::paths::home_dir().unwrap_or_default()
 }
 
 /// Writes (on) or removes (off) the Linux autostart entry.

@@ -100,17 +100,32 @@ impl Found {
 fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     // A GUI start on macOS has a short PATH: Homebrew's folders too.
-    let extra = if cfg!(target_os = "macos") { vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")] } else { vec![] };
-    std::env::split_paths(&path).chain(extra).map(|d| d.join(name)).find(|p| is_exec(p))
+    let extra = if cfg!(target_os = "macos") {
+        vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]
+    } else if cfg!(windows) {
+        // Windows installers don't put players on PATH: the usual folders too.
+        let under = |var: &str, rest: &[&str]| std::env::var_os(var).filter(|v| !v.is_empty()).map(|base| rest.iter().fold(PathBuf::from(base), |p, part| p.join(part)));
+        [under("ProgramFiles", &["VideoLAN", "VLC"]), under("ProgramFiles(x86)", &["VideoLAN", "VLC"]), under("ProgramFiles", &["mpv"]), under("LOCALAPPDATA", &["Programs", "mpv"])].into_iter().flatten().collect()
+    } else {
+        vec![]
+    };
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    std::env::split_paths(&path).chain(extra).map(|d| d.join(&file)).find(|p| is_exec(p))
 }
 
+#[cfg(unix)]
 fn is_exec(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+#[cfg(not(unix))]
+fn is_exec(p: &Path) -> bool {
+    p.is_file()
+}
+
 fn app_bundle(name: &str) -> bool {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = kotora_core::paths::home_dir();
     [Some(PathBuf::from("/Applications")), home.map(|h| h.join("Applications"))].into_iter().flatten().any(|d| d.join(format!("{name}.app")).is_dir())
 }
 
@@ -147,8 +162,17 @@ pub fn open(p: Player, file: &str, found: &Found) -> Result<(), String> {
     if rune::is_headless() || cfg!(test) {
         return Ok(());
     }
+    // Windows: the file's default program, through the shell.
+    #[cfg(windows)]
+    if p == Player::System {
+        return crate::win::open(file);
+    }
     let (prog, args) = command(p, file, found, cfg!(target_os = "macos"));
-    let mut child = std::process::Command::new(&prog)
+    let mut cmd = std::process::Command::new(&prog);
+    // Windows: no console window flashes up for a player with a console entry (CREATE_NO_WINDOW).
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+    let mut child = cmd
         .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

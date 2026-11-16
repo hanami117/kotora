@@ -1919,7 +1919,13 @@ fn player_line(s: &State, sw: Switch) -> El {
 }
 
 fn players_status_card(s: &State) -> El {
-    let platform = if cfg!(target_os = "macos") { "macOS" } else { "Linux" };
+    let platform = if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(windows) {
+        "Windows"
+    } else {
+        "Linux"
+    };
     let mut c = card("np-players", "Players").child(text(platform.to_string()).font(theme::CAPTION).color(PAL.faint).pb(4.0));
     for sw in Switch::here() {
         c = c.child(player_line(s, *sw));

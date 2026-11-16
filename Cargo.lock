@@ -1426,6 +1426,8 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "rune",
+ "windows",
+ "windows-sys 0.59.0",
  "zbus 5.19.0",
 ]
 
@@ -1440,6 +1442,7 @@ dependencies = [
  "serde_json",
  "toml",
  "ureq",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1449,6 +1452,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1458,6 +1462,7 @@ dependencies = [
  "libc",
  "serde_json",
  "ureq",
+ "windows-sys 0.59.0",
  "zbus 5.19.0",
 ]
 

@@ -236,13 +236,24 @@ fn save_folders(s: &mut State) {
 /// A typed or picked path, tidied: `~` expanded, no trailing slash.
 fn tidy(raw: &str) -> String {
     let t = raw.trim().trim_matches(|c| c == '"' || c == '\'');
-    let t = match (t.strip_prefix("~/"), std::env::var("HOME")) {
-        (Some(rest), Ok(home)) => format!("{home}/{rest}"),
-        _ if t == "~" => std::env::var("HOME").unwrap_or_default(),
+    let home = kotora_core::paths::home_dir().map(|h| h.to_string_lossy().into_owned());
+    let t = match (t.strip_prefix("~/"), home) {
+        (Some(rest), Some(home)) => format!("{home}{}{rest}", std::path::MAIN_SEPARATOR),
+        (_, home) if t == "~" => home.unwrap_or_default(),
         _ => t.to_string(),
     };
+    if cfg!(windows) {
+        return tidy_windows(&t);
+    }
     let trimmed = t.trim_end_matches('/');
     if trimmed.is_empty() && t.starts_with('/') { "/".into() } else { trimmed.to_string() }
+}
+
+/// Windows: no trailing separator, but a drive's root keeps its own (`D:\`).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn tidy_windows(t: &str) -> String {
+    let trimmed = t.trim_end_matches(['\\', '/']);
+    if trimmed.len() == 2 && trimmed.ends_with(':') && trimmed.len() < t.len() { format!("{trimmed}\\") } else { trimmed.to_string() }
 }
 
 /// Adds a folder. `check`: it must be there now (a folder typed in; a picked one is).
@@ -251,7 +262,11 @@ pub fn add_folder(s: &mut State, raw: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("Type a folder's path, or press Choose\u{2026}".into());
     }
-    if !path.starts_with('/') {
+    if cfg!(windows) {
+        if !Path::new(&path).is_absolute() {
+            return Err("Give the whole path, with its drive (D:\\Anime).".into());
+        }
+    } else if !path.starts_with('/') {
         return Err("Give the whole path, from / (or ~/).".into());
     }
     if let Some(f) = s.library.folders.iter().find(|f| lib::overlaps(&f.path, &path)) {
@@ -320,7 +335,12 @@ fn choose(s: &mut State) {
 #[cfg(target_os = "macos")]
 const PROMPT: &str = "Choose a folder with anime in it";
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn pick_folder() -> Result<Option<String>, String> {
+    crate::win::pick_folder("Choose a folder with anime in it")
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn pick_folder() -> Result<Option<String>, String> {
     let tries: &[(&str, &[&str])] = &[("zenity", &["--file-selection", "--directory", "--title=Choose a folder with anime in it"]), ("kdialog", &["--getexistingdirectory", "--title", "Choose a folder with anime in it"])];
     for (prog, args) in tries {
@@ -671,7 +691,13 @@ pub fn folders_block(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&l.draft, if cfg!(target_os = "macos") { "/Volumes/Disk/Anime" } else { "~/Videos/Anime" }), PAL.faint)
+                .placeholder(field_hint(&l.draft, if cfg!(target_os = "macos") {
+                    "/Volumes/Disk/Anime"
+                } else if cfg!(windows) {
+                    "D:\\Anime"
+                } else {
+                    "~/Videos/Anime"
+                }), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.library.draft)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.library.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
@@ -812,6 +838,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn typed_paths_are_tidied() {
         assert_eq!(tidy("  /m/anime/ "), "/m/anime");
         assert_eq!(tidy("\"/m/my anime\""), "/m/my anime");
@@ -822,17 +849,27 @@ mod tests {
     }
 
     #[test]
+    fn windows_paths_are_tidied() {
+        assert_eq!(tidy_windows("D:\\Anime\\"), "D:\\Anime");
+        assert_eq!(tidy_windows("D:\\Anime"), "D:\\Anime");
+        assert_eq!(tidy_windows("D:/Anime/"), "D:/Anime");
+        assert_eq!(tidy_windows("D:\\"), "D:\\");
+        assert_eq!(tidy_windows("\\\\nas\\anime\\"), "\\\\nas\\anime");
+    }
+
+    #[test]
     fn adding_checks_the_folder() {
         let mut s = State::fake();
         assert!(add_folder(&mut s, "relative/path").is_err());
-        assert!(add_folder(&mut s, "/nonexistent/kotora-anime").unwrap_err().starts_with("No folder at"));
+        let missing = if cfg!(windows) { "C:\\nonexistent\\kotora-anime" } else { "/nonexistent/kotora-anime" };
+        assert!(add_folder(&mut s, missing).unwrap_err().starts_with("No folder at"));
         let d = std::env::temp_dir().join(format!("kot-addlib-{}", std::process::id()));
         std::fs::create_dir_all(d.join("Show")).unwrap();
         let p = d.to_string_lossy().into_owned();
         add_folder(&mut s, &p).unwrap();
         assert_eq!(s.library.folders.len(), 1);
         assert_eq!(add_folder(&mut s, &p).unwrap_err(), "That folder is already in the list.");
-        assert!(add_folder(&mut s, &format!("{p}/Show")).unwrap_err().starts_with("That overlaps"));
+        assert!(add_folder(&mut s, &format!("{p}{}Show", std::path::MAIN_SEPARATOR)).unwrap_err().starts_with("That overlaps"));
         remove_folder(&mut s, &p);
         assert!(s.library.folders.is_empty());
         std::fs::remove_dir_all(&d).unwrap();

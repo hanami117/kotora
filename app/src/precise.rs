@@ -75,8 +75,8 @@ pub struct Offer {
 
 /// `/home/x/.config/mpv/mpv.conf` → `~/.config/mpv/mpv.conf` (shown, never saved).
 pub(crate) fn tilde(path: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(h) if !h.is_empty() && path.starts_with(&h) => format!("~{}", &path[h.len()..]),
+    match kotora_core::paths::home_dir().map(|h| h.to_string_lossy().into_owned()) {
+        Some(h) if !h.is_empty() && path.starts_with(&h) => format!("~{}", &path[h.len()..]),
         _ => path.to_string(),
     }
 }

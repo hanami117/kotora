@@ -31,6 +31,9 @@ pub fn start(handle: Handle) -> Option<Server> {
 pub fn other_copy_running(show: bool) -> bool {
     let Ok(mut client) = kotora_ctl::Client::connect() else { return false };
     if show {
+        // Windows: let the running copy bring its window to the front.
+        #[cfg(windows)]
+        crate::win::allow_focus();
         let _ = client.request(&Request::Show);
     }
     true
