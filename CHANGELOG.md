@@ -4,6 +4,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-16
+
 ### Added
 - **Play next in the tray:** the menu bar (macOS) or tray (Linux) menu lists up to 8 Watching anime whose next
   episode is a file in your library folders ("Title · Ep N", most recently updated first); picking one opens it
