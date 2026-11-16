@@ -51,7 +51,7 @@ optdepends=(
 makedepends=('cargo' 'pkgconf')
 options=('!lto')
 source=("$pkgname-$_rel.tar.gz::https://github.com/hanami117/kotora/releases/download/v$_rel/kotora-$_rel.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('745a6d8b1c37bb5045555f48712c85a6f7b9a127cc71df096150bc100b1d3515')
 
 prepare() {
   cd "$pkgname-$pkgver"
