@@ -173,7 +173,9 @@ impl State {
         let Some(n) = self.now.as_ref() else { return };
         let kotora_core::recognize::Found::NotOnList { media_id, title } = n.found.clone() else { return };
         let episode = n.episode().filter(|ep| *ep > 0);
-        let media = kotora_core::Media { id: media_id, title, ..Default::default() };
+        // What recognition knows; the queue worker fills in the rest (episodes, type) from the
+        // service right after the add.
+        let media = kotora_core::Media { id: media_id, title, title_en: n.alt_titles.en.clone(), title_ja: n.alt_titles.ja.clone(), cover_url: n.cover_url.clone(), ..Default::default() };
         match self.add_media_at(media, Status::Watching, episode) {
             Ok(_) => {
                 self.pick_anime(media_id);

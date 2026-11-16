@@ -575,6 +575,20 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// The anime on `service`'s list whose saved media is about only a title: no format, and no
+    /// cover or no episode count.
+    /// Now Playing's "Add as Watching" knows little more than the title, and a change still
+    /// waiting to be sent isn't in the fetched list, so a sync doesn't fill it in either.
+    pub fn bare_media(&self, service: &str) -> Result<Vec<u32>> {
+        let mut st = self.conn.prepare(
+            "SELECT e.media_id FROM entry e JOIN media m ON m.service = e.service AND m.kind = e.kind AND m.id = e.media_id
+             WHERE e.service = ?1 AND e.kind = 'anime' AND COALESCE(m.format, '') = '' AND (m.cover_url IS NULL OR m.episodes IS NULL)
+             ORDER BY e.media_id",
+        )?;
+        let ids = st.query_map([service], |r| r.get::<_, u32>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
+
     // ---------------------------------------------------------------------------- details
 
     /// The saved information page of an anime (or a manga, in a manga scope), and when it was

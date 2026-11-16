@@ -161,6 +161,8 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     if let Err(e) = store.replace_list(name, &items, now) {
         return Msg::SyncFailed(Fail::Other(format!("Can't save the list: {e}")));
     }
+    // Anime saved with only a title (an add still waiting, from Now Playing): filled in now.
+    kotora_core::sync::complete_media(service, store, None, now);
     match store.load_list(name) {
         Ok(items) => Msg::Synced { items, synced_at: now },
         Err(e) => Msg::SyncFailed(Fail::Other(format!("Can't read the saved list: {e}"))),
@@ -464,6 +466,50 @@ mod tests {
             updated_at: 10,
             volumes: 0,
         }
+    }
+
+    /// The list as Fake, and details for any id (MyAnimeList, the same path as AniList).
+    struct WithDetails(Vec<ListItem>, u32);
+
+    impl ListService for WithDetails {
+        fn name(&self) -> &'static str {
+            "mal"
+        }
+        fn title(&self) -> &'static str {
+            "MyAnimeList"
+        }
+        fn user_name(&mut self) -> Result<String, ServiceError> {
+            Ok("demo_user".into())
+        }
+        fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+            Ok(self.0.clone())
+        }
+        fn get_entry(&mut self, _: u32) -> Result<Option<Remote>, ServiceError> {
+            unreachable!()
+        }
+        fn update_entry(&mut self, _: u32, _: &Change) -> Result<Remote, ServiceError> {
+            unreachable!()
+        }
+        fn details(&mut self, id: u32) -> Result<kotora_core::service::Details, ServiceError> {
+            self.1 += 1;
+            Ok(kotora_core::service::Details { id, title: format!("Show {id}"), episodes: Some(25), format: "tv".into(), cover_url: Some(format!("https://img.example/{id}.jpg")), ..Default::default() })
+        }
+    }
+
+    /// An add from Now Playing (only the title) still waits to be sent: the sync fills in its
+    /// episodes, type and cover, so the list doesn't show "3 / ?" and an initials tile.
+    #[test]
+    fn a_sync_fills_in_an_add_that_knew_only_the_title() {
+        let mut store = Store::open_memory().unwrap();
+        store.add_to_list("mal", &Media { id: 7, title: "Seen playing".into(), ..Default::default() }, Status::Watching, Some(3), 400).unwrap();
+        let mut svc = WithDetails(vec![item(1)], 0);
+        let Msg::Synced { items, .. } = sync_with(&mut svc, &mut store, 500) else { panic!("not synced") };
+        let added = items.iter().find(|i| i.media.id == 7).expect("the waiting add stays on the list");
+        assert_eq!((added.progress, added.media.episodes, added.media.format.as_str()), (3, Some(25), "tv"));
+        assert_eq!(added.media.cover_url.as_deref(), Some("https://img.example/7.jpg"));
+        assert_eq!(svc.1, 1, "one request, for the bare one only");
+        sync_with(&mut svc, &mut store, 600);
+        assert_eq!(svc.1, 1, "nothing left to fill in");
     }
 
     #[test]

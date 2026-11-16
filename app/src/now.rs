@@ -1166,10 +1166,14 @@ mod tests {
         let mut s = fresh();
         let mut v = seen("Velvet Comet - 04.mkv", None, true, true);
         v.found = Found::NotOnList { media_id: 9001, title: "Velvet Comet".into() };
+        v.cover_url = Some("https://img.example/9001.jpg".into());
+        v.alt_titles = AltTitles { en: Some("The Velvet Comet".into()), ja: None };
         s.now_seen(Some(v));
         s.add_playing();
         let e = s.entries.iter().find(|e| e.id == 9001).expect("added");
         assert_eq!((e.status, e.progress, e.waiting), (Status::Watching, 4, Some("Waiting to sync")));
+        // What recognition saw goes with the add (the queue worker asks for the rest).
+        assert_eq!((e.cover_url.as_deref(), e.title_en.as_deref()), (Some("https://img.example/9001.jpg"), Some("The Velvet Comet")));
         let n = s.now.as_ref().unwrap();
         assert_eq!(n.media_id(), Some(9001), "the file counts as this anime now");
         assert!(n.recorded.is_some_and(|r| r.episode == 4 && !r.auto));

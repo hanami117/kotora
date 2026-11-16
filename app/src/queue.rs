@@ -136,7 +136,11 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
     loop {
         // Commands first: edits made while sending merge before the next send.
         let mut touched = Vec::new();
+        let mut added = Vec::new();
         while let Some(cmd) = next.take().or_else(|| rx.try_recv().ok()) {
+            if let Cmd::Add { media, .. } = &cmd {
+                added.push(media.id);
+            }
             match apply(&mut store, cmd, &mut refresh) {
                 Ok(Some(id)) => touched.push(id),
                 Ok(None) => {}
@@ -152,6 +156,16 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         }
         if svc.is_none() {
             svc = service(w);
+        }
+        // An add that knew only the title (Now Playing): its episodes, type and cover now, not
+        // at the next sync.
+        if !added.is_empty()
+            && let Some(service) = svc.as_deref_mut()
+        {
+            let done = kotora_core::sync::complete_media(service, &store, Some(&added), now_unix());
+            if !done.is_empty() {
+                report(h, snapshot(&store, &done, None));
+            }
         }
         let wait = match svc.as_deref_mut() {
             Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(&mut store, service, now_unix(), !w.ask_on_higher.load(Ordering::Relaxed)) {

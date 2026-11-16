@@ -27,6 +27,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - A saved list from a newer Kotora is refused with "Update Kotora to open it", and left as it is.
 
 ### Fixed
+- **An anime added from Now Playing** ("Add as Watching") gets its episode count, type and cover right away.
+  Before, it kept only its title ("3 / ?", a lettered tile, no type) until a later sync, or for good on AniList
+  while the add waited to be sent. Anime already saved that way are filled in at the next sync.
 - **Linux shortcuts:** Ctrl , opens Settings and Ctrl 1 to 5 open Watching, Plan to Watch, Completed, On Hold
   and Dropped. They only worked from the macOS menu bar before.
 - **`kot --version`** shows branch and commit only for builds made in Kotora's own git repository. A build
