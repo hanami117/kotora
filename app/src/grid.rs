@@ -284,12 +284,16 @@ fn hover_layer(s: &State, e: &Entry, plus: bool) -> El {
         .child(row().gap(6.0).center_y().child(edit_on_poster(e.id)).child(spacer()).child(if plus && has_next(s, e) { plus_on_poster(e.id) } else { el() }))
 }
 
-/// The card as a whole opens the details page (its buttons keep their own presses).
+/// The card as a whole opens the details page (its buttons keep their own presses); the
+/// middle button plays the next episode (see `card_dense`/`card_large`: `pointer_buttons`).
 fn open(e: &Entry) -> impl Fn(&mut State, &mut Tx) + 'static {
     let stub = Stub::from_entry(e);
     move |s: &mut State, tx: &mut Tx| {
         tx.instant();
         s.grid.sel = Some(stub.id);
+        if tx.button() == rune::PointerButton::Middle {
+            return s.play_entry(stub.id);
+        }
         s.open_details(stub.clone());
     }
 }
@@ -319,6 +323,7 @@ fn card_dense(s: &State, e: &Entry, st: Status) -> El {
         .gap(6.0)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(open(e))
         .child(p)
         .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
@@ -342,6 +347,7 @@ fn card_large(s: &State, e: &Entry, _st: Status) -> El {
         .border(1.0, PAL.border)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(open(e))
         .child(p)
         .child(

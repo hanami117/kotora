@@ -459,6 +459,8 @@ pub struct State {
     /// The window's size at the last build: a change is a resize, whose reflow lands at once
     /// (`ui::view`).
     pub main_size: std::cell::Cell<[f32; 2]>,
+    /// A short note at the window's bottom (Play from a middle-click or P).
+    pub toast: Option<crate::library::Toast>,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -519,6 +521,7 @@ impl State {
             library: Default::default(),
             grid: Default::default(),
             main_size: Default::default(),
+            toast: None,
         };
         s.queue_changed();
         s.refresh();
