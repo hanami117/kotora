@@ -418,6 +418,8 @@ pub struct State {
     /// The MyAnimeList Client ID field (Welcome and Settings).
     pub client_id: crate::clientid::ClientIdForm,
     pub handle: Option<Handle>,
+    /// Desktop notifications (`notes/`); no backend headless and in tests.
+    pub notes: crate::notes::Notifier,
     /// The tray or menu bar icon (`tray.rs`); `None` headless, in tests and where it failed.
     pub tray: Option<crate::tray::TrayCtl>,
     /// What the last position tick showed (`now::tick`); `None` while nothing ticks.
@@ -473,6 +475,7 @@ impl State {
             airing: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
             handle: None,
+            notes: Default::default(),
             tray: None,
             tick: None,
         };
@@ -1134,6 +1137,7 @@ pub fn fake_now() -> Now {
     Now {
         key: "mpv:/tmp/mpv.sock".into(),
         player: "mpv".into(),
+        switch: Switch::Mpv,
         via: Via::MpvIpc.label(),
         file: file.into(),
         position: Some(968.0),
@@ -1154,6 +1158,7 @@ pub fn fake_now() -> Now {
         picking: false,
         mark: None,
         counted: false,
+        announced: false,
     }
 }
 

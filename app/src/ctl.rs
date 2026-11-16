@@ -99,7 +99,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Airing { items: s.ctl_airing(), note })
         })),
         Request::Confirm => reply(on_ui(handle, true, |s| {
-            let (title, _) = s.record(false)?;
+            let (title, _) = s.confirm_offer()?;
             let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;
             Ok(Reply::Edited { entry: s.entries[i].ctl() })
         })),

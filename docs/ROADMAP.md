@@ -42,6 +42,14 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   start in the background) and `packaging/macos/build.sh` for a minimal ad-hoc-signed
   `target/macos/Kotora.app`. Waiting for the user's live test on both systems. The Linux tray brings
   Rune's `dbus` feature back (about +2 MB on Linux, which was 29.9 MB): measure on Arch and decide.
+- **Notifications and the precise prompt (2026-11-16, user-approved):** built on branch `notifications` (on
+  top of `mac-next`). Settings → Notifications with one switch per event: Episode detected (off), Update
+  offered (Update / Not now buttons, on), Episode recorded (Undo, on). One id per episode, so a new
+  notification replaces the last. Linux: freedesktop actions when the server has them (`app/src/notes/linux.rs`);
+  macOS: `UNUserNotificationCenter` with categories inside Kotora.app, permission asked at the first
+  notification, `osascript` without buttons outside the bundle (`notes/mac.rs`). Now Playing asks once per
+  player to turn on precise detection when the followed mpv or IINA is seen by its open file only
+  (`[notices] mpv_precise` / `iina_precise`). Waiting for the user's live test on both systems.
 
 ## Stage 0: design
 
@@ -300,7 +308,8 @@ Open after Stage 4:
 - Recording an episode of a Plan to watch entry sets Watching (decided here, as MAL's site does; easy to
   drop).
 - The notification has no buttons: Update is in the app or `kot confirm`. On macOS, `osascript` may show
-  it as "Script Editor" until there is an app bundle (v0.3).
+  it as "Script Editor" until there is an app bundle (v0.3). (Buttons since branch `notifications`, where
+  the system has them.)
 - VLC's web password and the mpv socket paths are set in `config.toml`, not in Settings; socket path
   changes need a restart.
 - "Wrong anime…" lists the closest titles only, no search; the corrections UI is v0.3.

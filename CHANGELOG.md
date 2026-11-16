@@ -9,6 +9,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   estimate (`kot`: `--anyway` skips the question). Only the total episode count is a hard limit.
 - **Add as Watching at episode N:** one button on Now Playing's "Not on your list" card adds the anime and
   records the playing episode in one change.
+- **Notifications with buttons:** Settings → Notifications has a switch for each: Episode detected (off by
+  default), Update offered (with Update and Not now) and Episode recorded (with Undo). The buttons act as the
+  banner does. A new notification about an episode replaces the last. Linux: where the notification server
+  shows buttons (KDE, GNOME, …); macOS: in Kotora.app.
+- **Precise detection prompt:** when the player you watch with (mpv, IINA) is seen by its open file only, Now
+  Playing offers once to turn on precise detection, with Turn on and Not now.
 
 ### Changed
 - **Update automatically asks** instead of recording when the episode would skip one (two or more ahead of your

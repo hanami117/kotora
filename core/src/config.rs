@@ -21,6 +21,12 @@
 //!
 //! [notices]                    # one-time offers the user has answered
 //! mpv_precise = true           # "enable precise detection" for mpv was shown
+//! iina_precise = true          # the same for IINA (macOS)
+//!
+//! [notifications]              # desktop notifications, one switch each
+//! detected = false             # a recognised episode starts playing
+//! offer = true                 # "Update to N?", with Update and Not now
+//! recorded = true              # an episode was recorded, with Undo
 //!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
@@ -50,6 +56,25 @@ pub struct Config {
     pub recognition: Recognition,
     pub display: Display,
     pub startup: Startup,
+    pub notifications: Notifications,
+}
+
+/// Settings → Notifications: which events show a desktop notification.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Notifications {
+    /// A recognised episode starts playing ("Title · Ep 6"). Off by default.
+    pub detected: bool,
+    /// "Update to N?", with Update and Not now where the system shows buttons.
+    pub offer: bool,
+    /// An episode was recorded, with Undo.
+    pub recorded: bool,
+}
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Notifications { detected: false, offer: true, recorded: true }
+    }
 }
 
 /// Which title the app (and `kot`, through the app) shows.
@@ -132,6 +157,8 @@ impl Default for Recognition {
 pub struct Notices {
     /// The "enable precise detection" offer for mpv was answered (enabled or dismissed).
     pub mpv_precise: bool,
+    /// The same offer for IINA (macOS), answered.
+    pub iina_precise: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -221,6 +248,7 @@ impl std::fmt::Debug for Config {
             .field("recognition", &self.recognition)
             .field("display", &self.display)
             .field("startup", &self.startup)
+            .field("notifications", &self.notifications)
             .finish()
     }
 }
@@ -243,6 +271,8 @@ struct File {
     display: Display,
     #[serde(default)]
     startup: Startup,
+    #[serde(default)]
+    notifications: Notifications,
 }
 
 #[derive(Deserialize, Default)]
@@ -266,6 +296,7 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
+            notifications: f.notifications,
         })
     }
 
@@ -436,6 +467,7 @@ mod tests {
         assert_eq!((c.vlc.port, c.vlc.password.as_str()), (8080, ""));
         assert!(!c.notices.mpv_precise);
         assert!(Config::parse("[notices]\nmpv_precise = true\n").unwrap().notices.mpv_precise);
+        assert!(Config::parse("[notices]\niina_precise = true\n").unwrap().notices.iina_precise);
         assert!(c.recognition.relations_download);
         assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
         assert!(!c.startup.background, "the login start opens the window by default");
@@ -445,6 +477,14 @@ mod tests {
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
         assert!(!c.players.get("vlc") && c.players.get("mpv"));
         assert_eq!(c.players.mpv_sockets, ["/tmp/a.sock"]);
+    }
+
+    #[test]
+    fn notifications_offer_and_recorded_on_detected_off() {
+        let n = Config::parse("").unwrap().notifications;
+        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true });
+        let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
+        assert_eq!(n, Notifications { detected: true, offer: false, recorded: true });
     }
 
     #[test]

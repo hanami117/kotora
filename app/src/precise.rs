@@ -67,6 +67,10 @@ pub struct Offer {
     /// `mpv.conf` already sets a socket Kotora watches (checked at start and after a write):
     /// mpv only needs a restart, so nothing is offered.
     pub conf_watched: bool,
+    /// `done` is IINA's answer (Turn on in the Now Playing prompt), not mpv's.
+    pub for_iina: bool,
+    /// Turn on for IINA was clicked in the prompt: its answer goes into `done`.
+    pub iina_pending: bool,
 }
 
 /// `/home/x/.config/mpv/mpv.conf` → `~/.config/mpv/mpv.conf` (shown, never saved).
@@ -91,12 +95,88 @@ impl State {
             && !self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led))
     }
 
-    /// The banner shows: the offer (once ever), or its answer until closed.
+    /// The banner shows: the offer (once ever), or its answer until closed. On Now Playing the
+    /// prompt for the followed player ([`State::precise_prompt`]) asks instead.
     pub fn precise_banner(&self) -> bool {
         if self.precise.hidden {
             return false;
         }
-        self.precise.done.is_some() || self.precise.busy || (!self.prefs.precise_answered && self.mpv_process_only())
+        let prompted = self.page == crate::model::Page::NowPlaying && self.precise_prompt().is_some();
+        self.precise.done.is_some() || self.precise.busy || (!self.prefs.precise_answered && self.mpv_process_only() && !prompted)
+    }
+
+    /// Now Playing's prompt: the followed player is seen by its open file only, precise
+    /// detection is one click away for it (mpv; IINA when it reads a config folder's mpv.conf),
+    /// and the prompt wasn't answered for that player.
+    pub fn precise_prompt(&self) -> Option<Switch> {
+        let n = self.now.as_ref()?;
+        if n.via != VIA_PROCESS {
+            return None;
+        }
+        match n.switch {
+            Switch::Mpv if self.prefs.players.mpv && !self.prefs.precise_answered && !self.precise.conf_watched && !self.precise.busy => Some(Switch::Mpv),
+            #[cfg(target_os = "macos")]
+            Switch::Iina
+                if self.prefs.players.iina
+                    && !self.prefs.iina_precise_answered
+                    && !self.iina.busy
+                    && self.iina.done.is_none()
+                    && matches!(self.iina.setup, Some(kotora_detect::iinaconf::Setup::ConfDir { .. })) =>
+            {
+                Some(Switch::Iina)
+            }
+            _ => None,
+        }
+    }
+
+    /// The prompt's Turn on: the same action as Settings → Players. The answer shows in the
+    /// banner on top (what was written, or why not).
+    pub fn precise_prompt_on(&mut self) {
+        match self.precise_prompt() {
+            Some(Switch::Mpv) => self.enable_precise(),
+            #[cfg(target_os = "macos")]
+            Some(Switch::Iina) => {
+                self.remember_iina_precise();
+                self.precise.iina_pending = true;
+                self.enable_iina();
+            }
+            _ => {}
+        }
+    }
+
+    /// The prompt's Not now: remembered for that player, so it never comes back for it
+    /// (Settings → Players keeps Turn on).
+    pub fn precise_prompt_not_now(&mut self) {
+        match self.now.as_ref().map(|n| n.switch) {
+            Some(Switch::Mpv) => self.remember_precise(),
+            Some(Switch::Iina) => self.remember_iina_precise(),
+            _ => {}
+        }
+    }
+
+    /// IINA answered Turn on from the prompt: the answer shows in the banner on top.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn iina_answer(&mut self, r: Precise) {
+        if !self.precise.iina_pending {
+            return;
+        }
+        self.precise.iina_pending = false;
+        self.precise.for_iina = true;
+        self.precise.hidden = false;
+        self.precise.done = Some(r);
+    }
+
+    fn remember_iina_precise(&mut self) {
+        if self.prefs.iina_precise_answered {
+            return;
+        }
+        self.prefs.iina_precise_answered = true;
+        if self.handle.is_none() {
+            return;
+        }
+        std::thread::spawn(|| {
+            let _ = config::write_setting(&paths::config_file(), "notices", "iina_precise", "true");
+        });
     }
 
     /// "Turn on precise detection": write `mpv.conf` (on a short thread), and remember the
@@ -117,6 +197,7 @@ impl State {
 
     pub fn precise_written(&mut self, r: Precise) -> bool {
         self.precise.busy = false;
+        self.precise.for_iina = false;
         if matches!(r, Precise::Wrote { .. } | Precise::AlreadySet { watched: true, .. }) {
             self.precise.conf_watched = true;
         }
@@ -133,6 +214,12 @@ impl State {
     /// Close the answer.
     pub fn close_precise(&mut self) {
         self.precise.hidden = true;
+        if self.precise.for_iina {
+            // IINA's answer was shown once; mpv's offer may still come.
+            self.precise.done = None;
+            self.precise.for_iina = false;
+            self.precise.hidden = false;
+        }
     }
 
     fn remember_precise(&mut self) {
@@ -188,6 +275,7 @@ fn write_mpv_conf() -> Precise {
 
 /// The banner on top of the pages (below the Now Playing banner, never with it).
 pub fn banner(s: &State) -> El {
+    let who = if s.precise.for_iina { "IINA" } else { "mpv" };
     let info = PAL.st_completed;
     let base = row()
         .key("precise")
@@ -206,7 +294,7 @@ pub fn banner(s: &State) -> El {
         Some(Precise::Wrote { file, text: lines }) => base
             .child(icon(&icons::CHECK, 18.0).color(PAL.ok()))
             .child(words(
-                "Precise detection is on from mpv's next start",
+                &format!("Precise detection is on from {who}'s next start"),
                 col()
                     .gap(4.0)
                     .child(text(format!("Added to {}:", tilde(file))).font(theme::LABEL).color(PAL.dim))
@@ -218,9 +306,9 @@ pub fn banner(s: &State) -> El {
             .child(words(
                 "mpv.conf already sets an IPC socket",
                 text(if *watched {
-                    format!("{} has input-ipc-server={}, which Kotora watches. Nothing was changed. Restart mpv to use it.", tilde(file), tilde(socket))
+                    format!("{} has input-ipc-server={}, which Kotora watches. Nothing was changed. Restart {who} to use it.", tilde(file), tilde(socket))
                 } else {
-                    format!("{} has input-ipc-server={}, which Kotora doesn't watch. Nothing was changed. Add that path to [players] mpv_sockets in config.toml, then restart Kotora and mpv.", tilde(file), tilde(socket))
+                    format!("{} has input-ipc-server={}, which Kotora doesn't watch. Nothing was changed. Add that path to [players] mpv_sockets in config.toml, then restart Kotora and {who}.", tilde(file), tilde(socket))
                 })
                     .font(theme::LABEL)
                     .color(PAL.dim)
@@ -249,6 +337,58 @@ pub fn banner(s: &State) -> El {
             })
             .child(ghost("precise/no", "No thanks", State::decline_precise)),
     }
+}
+
+/// "Turn on precise detection for IINA: Kotora counts at 80% instead of after 15 min".
+pub fn prompt_line(s: &State, sw: Switch) -> String {
+    let minutes = s.prefs.players.process_minutes.clamp(1, 180);
+    format!("Turn on precise detection for {}: Kotora counts at {}% instead of after {minutes} min", sw.label(), s.prefs.threshold)
+}
+
+/// Now Playing's prompt for the followed player (on top of the page, under the episode banner):
+/// what precise detection changes, with Turn on and Not now.
+pub fn prompt(s: &State) -> Option<El> {
+    let sw = s.precise_prompt()?;
+    let player = sw.label();
+    let what = match sw {
+        #[cfg(target_os = "macos")]
+        Switch::Iina => match &s.iina.setup {
+            Some(kotora_detect::iinaconf::Setup::ConfDir { file }) => format!("Adds one line to {} (input-ipc-server). It works from IINA's next start.", tilde(&file.display().to_string())),
+            _ => "Adds one line to IINA's mpv.conf (input-ipc-server). It works from IINA's next start.".to_string(),
+        },
+        _ => "Adds one line to your mpv.conf (input-ipc-server). It works from mpv's next start.".to_string(),
+    };
+    let info = PAL.st_completed;
+    Some(
+        row()
+            .key("precise-prompt")
+            .mx(theme::PAGE_PAD)
+            .mt(14.0)
+            .px(14.0)
+            .py(12.0)
+            .gap(14.0)
+            .center_y()
+            .radius(theme::R_LG)
+            .fill(info.alpha(0.10))
+            .border(1.0, info.alpha(0.45))
+            .child(icon(&icons::PLAY, 18.0).color(info))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(4.0)
+                    .child(
+                        text(prompt_line(s, sw))
+                            .key("precise-prompt/text")
+                            .font(theme::BODY_MED)
+                            .color(PAL.text)
+                            .wrap(),
+                    )
+                    .child(text(format!("{player} is seen by its open file only, so Kotora can't tell how far in you are. {what}")).font(theme::LABEL).color(PAL.dim).wrap()),
+            )
+            .child(button("precise-prompt/on", "Turn on", true, Some(State::precise_prompt_on)))
+            .child(button("precise-prompt/not-now", "Not now", false, Some(State::precise_prompt_not_now))),
+    )
 }
 
 /// Settings → Players, under mpv: what precise detection would add, with Turn on.
@@ -344,6 +484,66 @@ mod tests {
         let mut s = process_only();
         s.precise_written(Precise::AlreadySet { file: "/tmp/mpv.conf".into(), socket: "/tmp/other.sock".into(), watched: false });
         assert!(!s.precise.conf_watched);
+    }
+
+    /// The followed player (mpv) seen by its open file only, on Now Playing.
+    fn followed_by_process(sw: Switch) -> State {
+        let mut s = State::fake();
+        s.players = fake_process_players();
+        if let Some(n) = &mut s.now {
+            n.via = VIA_PROCESS;
+            n.switch = sw;
+        }
+        s.page = crate::model::Page::NowPlaying;
+        s
+    }
+
+    #[test]
+    fn the_prompt_asks_for_the_followed_player_until_answered() {
+        let s = followed_by_process(Switch::Mpv);
+        assert_eq!(s.precise_prompt(), Some(Switch::Mpv));
+        assert!(!s.precise_banner(), "the page's prompt instead of the offer on top");
+        assert!(prompt(&s).is_some());
+        // By IPC: nothing to turn on.
+        let mut s = followed_by_process(Switch::Mpv);
+        s.now.as_mut().unwrap().via = VIA_IPC;
+        assert_eq!(s.precise_prompt(), None);
+        // mpv.conf already sets the socket: only a restart is needed.
+        let mut s = followed_by_process(Switch::Mpv);
+        s.precise.conf_watched = true;
+        assert_eq!(s.precise_prompt(), None);
+        // VLC has no precise mode to turn on.
+        assert_eq!(followed_by_process(Switch::Vlc).precise_prompt(), None);
+    }
+
+    #[test]
+    fn not_now_is_remembered_per_player() {
+        let mut s = followed_by_process(Switch::Mpv);
+        s.precise_prompt_not_now();
+        assert!(s.prefs.precise_answered && !s.prefs.iina_precise_answered);
+        assert_eq!(s.precise_prompt(), None);
+        // IINA's is its own answer.
+        let mut s = followed_by_process(Switch::Iina);
+        s.precise_prompt_not_now();
+        assert!(s.prefs.iina_precise_answered && !s.prefs.precise_answered);
+    }
+
+    #[test]
+    fn turn_on_is_settings_turn_on() {
+        let mut s = followed_by_process(Switch::Mpv);
+        s.precise_prompt_on();
+        assert!(s.prefs.precise_answered, "answered, as with Settings' button");
+        s.precise_written(Precise::Wrote { file: "/tmp/mpv/mpv.conf".into(), text: "input-ipc-server=/tmp/mpv.sock\n".into() });
+        assert!(s.precise_banner() && s.precise.conf_watched && s.precise_prompt().is_none());
+    }
+
+    #[test]
+    fn the_prompt_says_threshold_and_minutes() {
+        let mut s = followed_by_process(Switch::Mpv);
+        s.prefs.threshold = 90;
+        s.prefs.players.process_minutes = 20;
+        assert_eq!(prompt_line(&s, Switch::Mpv), "Turn on precise detection for mpv: Kotora counts at 90% instead of after 20 min");
+        assert_eq!(prompt_line(&s, Switch::Iina), "Turn on precise detection for IINA: Kotora counts at 90% instead of after 20 min");
     }
 
     #[test]

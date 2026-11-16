@@ -2,7 +2,8 @@
 //! (DESIGN.md §5.5, step 5). The detection threads are in `detect.rs`; this is the UI-thread side.
 //!
 //! The flow: a file passes the threshold ([`Msg::Reached`](crate::model::Msg)) → the banner asks
-//! "Update to N?" and a desktop notification says the same. Update (or `kot confirm`) queues the
+//! "Update to N?" and a desktop notification says the same (`notes/`, with Update and Not now where
+//! the system shows buttons). Update (or `kot confirm`) queues the
 //! progress through the sync queue, like `+1`. With "Update automatically" on (off by default),
 //! a sure match is queued at once and the banner offers Undo; an unsure one still asks, and so
 //! does one that would skip an episode or that hasn't aired yet by the estimate
@@ -13,12 +14,15 @@ use kotora_core::{Change, Status};
 use kotora_detect::{PlayState, SourceStatus, Switch, Track};
 
 use crate::model::{Entry, Page, State};
+use crate::notes::Kind;
 
 /// The followed player and its file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Now {
     pub key: String,
     pub player: String,
+    /// The Settings switch the player belongs to (mpv, IINA…).
+    pub switch: Switch,
     /// "IPC socket", "MPRIS", "web interface".
     pub via: &'static str,
     /// The file name, or the player's title for a stream.
@@ -56,6 +60,8 @@ pub struct Now {
     /// The playing episode was counted by a change made while it played (by hand, `kot`, a
     /// sync): it is not "watching it again" when that change completed the entry.
     pub counted: bool,
+    /// The "Episode detected" notification went out for this file.
+    pub announced: bool,
 }
 
 /// What of the matched entry decides the offer.
@@ -108,6 +114,10 @@ pub struct Prefs {
     pub vlc_set_up: bool,
     /// The "precise detection" offer for mpv was answered (`[notices] mpv_precise`).
     pub precise_answered: bool,
+    /// The same for IINA (`[notices] iina_precise`).
+    pub iina_precise_answered: bool,
+    /// Settings → Notifications (`[notifications]`).
+    pub notify: kotora_core::config::Notifications,
     /// Settings → Titles (`[display] titles`).
     pub titles: kotora_core::config::TitleLang,
     /// Settings → Startup: Kotora starts at login (the login entry exists; `autostart.rs`).
@@ -119,7 +129,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, titles: Default::default(), login: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), login: false, background: false }
     }
 }
 
@@ -132,6 +142,8 @@ impl Prefs {
             players: c.players.clone(),
             vlc_set_up: !c.vlc.password.is_empty(),
             precise_answered: c.notices.mpv_precise,
+            iina_precise_answered: c.notices.iina_precise,
+            notify: c.notifications.clone(),
             titles: c.display.titles,
             // The login entry itself, read by `detect::start`; false until then.
             login: false,
@@ -174,6 +186,7 @@ impl Now {
         Now {
             key: p.key.clone(),
             player: p.player.clone(),
+            switch: p.switch,
             via: p.via.label(),
             file: p.file().map(file_name).unwrap_or_default(),
             position: p.position,
@@ -194,6 +207,7 @@ impl Now {
             picking: false,
             mark: None,
             counted: false,
+            announced: false,
         }
     }
 
@@ -355,11 +369,12 @@ impl State {
         let new = Now::from_seen(seen);
         match &mut self.now {
             Some(old) if old.key == new.key && old.file == new.file => {
-                let (dismissed, acted, recorded, picking, reached, mark, counted) = (old.dismissed, old.acted, old.recorded, old.picking, old.reached, old.mark, old.counted);
-                *old = Now { dismissed, acted, recorded, picking, reached: reached || new.reached, mark, counted, ..new };
+                let (dismissed, acted, recorded, picking, reached, mark, counted, announced) = (old.dismissed, old.acted, old.recorded, old.picking, old.reached, old.mark, old.counted, old.announced);
+                *old = Now { dismissed, acted, recorded, picking, reached: reached || new.reached, mark, counted, announced, ..new };
             }
             _ => self.now = Some(new),
         }
+        self.announce();
         if !self.recheck_now() {
             self.act(true);
         }
@@ -422,7 +437,7 @@ impl State {
                 if let Some(n) = &mut self.now {
                     n.acted = true;
                 }
-                crate::detect::notify(&format!("Watching {title} again?"), &format!("Start a rewatch at episode {ep}: open Kotora, or run kot confirm."), self.handle.is_some());
+                self.notify(Kind::Rewatch, format!("Watching {title} again?"), format!("Start a rewatch at episode {ep}."));
             }
             return;
         };
@@ -437,15 +452,12 @@ impl State {
         }
         if auto {
             if self.record(true).is_ok() {
-                crate::detect::notify(&format!("Recorded {title} episode {ep}"), "Kotora updated your list. Undo is in the banner.", self.handle.is_some());
+                self.notify_recorded(&title, ep);
             }
         } else {
             let q = if self.now.as_ref().is_some_and(Now::sure) { "Update" } else { "Not sure: update" };
-            let body = match note {
-                Some(n) => format!("{n}. Open Kotora, or run kot confirm."),
-                None => "Open Kotora, or run kot confirm.".into(),
-            };
-            crate::detect::notify(&format!("{q} {title} to episode {ep}?"), &body, self.handle.is_some());
+            let body = note.map(|n| format!("{n}.")).unwrap_or_default();
+            self.notify(Kind::Offer, format!("{q} {title} to episode {ep}?"), body);
         }
     }
 
@@ -516,6 +528,7 @@ impl State {
             ..Default::default()
         };
         let _ = self.edit_playing(r.id, back);
+        self.withdraw_note();
         if let Some(n) = &mut self.now {
             n.recorded = None;
             n.dismissed = true;
@@ -528,10 +541,11 @@ impl State {
             Some(n) if !n.dismissed => {
                 n.dismissed = true;
                 n.picking = false;
-                true
             }
-            _ => false,
+            _ => return false,
         }
+        self.withdraw_note();
+        true
     }
 
     /// "Wrong anime…": the picker on the Now Playing page.

@@ -23,9 +23,16 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # `image`'s own `webp` feature links the encoder too: +0.56 MB stripped against +0.23 MB this way.
 image-webp = "0.2"
 
+# Linux notifications with buttons (`notes/linux.rs`): the zbus 5 that `kotora-detect` (MPRIS) and
+# Rune's AT-SPI already build, same features. No new code.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
+
 # macOS only, on the objc2 0.6 stack Rune already builds (no extra frameworks): the menu bar's
 # About panel and app-menu tidy (menu_bar.rs) and the menu bar icon (tray_mac.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSDictionary", "NSData", "NSGeometry", "NSObject"] }
+# Notifications (`notes/mac.rs`): completion-handler blocks; block2 0.6 is already in the build.
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSDictionary", "NSData", "NSGeometry", "NSObject"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSImage", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView"] }

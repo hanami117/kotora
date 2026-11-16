@@ -581,6 +581,39 @@ pub const SCENES: &[Scene] = &[
         s.prefs.precise_answered = true;
         s.go(Page::NowPlaying);
     }),
+    // Now Playing: mpv seen by its open file only, never asked: the precise detection prompt.
+    ("precise-prompt", |s| {
+        now_by_process(s, kotora_detect::Switch::Mpv);
+    }),
+    // The same past the threshold: the episode banner on top, the prompt under it.
+    ("precise-prompt-with-offer", |s| {
+        now_by_process(s, kotora_detect::Switch::Mpv);
+        if let Some(n) = &mut s.now {
+            n.reached = true;
+        }
+    }),
+    // macOS: IINA followed by its open file, reading a config folder's mpv.conf.
+    #[cfg(target_os = "macos")]
+    ("precise-prompt-iina", |s| {
+        now_by_process(s, kotora_detect::Switch::Iina);
+        s.players = crate::iina::fake_process_players();
+        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir { file: "~/.config/iina/mpv.conf".into() });
+    }),
+    // Settings → Notifications as they come (Episode detected off).
+    ("settings-notifications", |s| {
+        s.go(Page::Settings);
+    }),
+    // All on, and the system shows no buttons (Linux: the server; macOS: outside Kotora.app).
+    ("settings-notifications-no-buttons", |s| {
+        s.prefs.notify.detected = true;
+        s.notes.support = if cfg!(target_os = "macos") { crate::notes::Support::Outside } else { crate::notes::Support::NoButtons };
+        s.go(Page::Settings);
+    }),
+    // macOS: notifications turned off for Kotora in System Settings.
+    ("settings-notifications-denied", |s| {
+        s.notes.support = crate::notes::Support::Denied;
+        s.go(Page::Settings);
+    }),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
         s.go(Page::Settings);
@@ -610,6 +643,20 @@ pub const SCENES: &[Scene] = &[
         );
     }),
 ];
+
+/// Now Playing with the followed player seen by its open file only (no position).
+fn now_by_process(s: &mut State, sw: kotora_detect::Switch) {
+    if let Some(n) = &mut s.now {
+        n.via = crate::precise::VIA_PROCESS;
+        n.switch = sw;
+        n.player = sw.label().into();
+        n.key = format!("process:{}", sw.config_key());
+        n.position = None;
+        n.duration = None;
+    }
+    s.players = crate::precise::fake_process_players();
+    s.go(Page::NowPlaying);
+}
 
 /// macOS: IINA seen by its open file only, on Settings.
 #[cfg(target_os = "macos")]
@@ -1062,6 +1109,32 @@ mod tests {
         assert!(rt.find("set/precise-on").is_some() && rt.find("precise").is_none(), "answered: Settings only");
         let rt = render("now-playing-process", (1280.0, 800.0));
         assert!(rt.find("np-no-position").is_some() && rt.find("np-bar").is_none());
+    }
+
+    #[test]
+    fn the_precise_prompt_on_now_playing() {
+        let rt = render("precise-prompt", (1280.0, 800.0));
+        assert!(rt.find("precise-prompt/on").is_some() && rt.find("precise-prompt/not-now").is_some());
+        assert!(rt.find("precise/on").is_none(), "one offer at a time: the page's prompt");
+        assert!(render("precise-prompt", (960.0, 600.0)).find("precise-prompt/on").is_some());
+        let rt = render("precise-prompt-with-offer", (1280.0, 800.0));
+        assert!(rt.find("banner/update").is_some() && rt.find("precise-prompt/on").is_some());
+        // Answered (or by IPC): no prompt.
+        assert!(render("now-playing-process", (1280.0, 800.0)).find("precise-prompt").is_none());
+        assert!(render("now-playing-page", (1280.0, 800.0)).find("precise-prompt").is_none());
+        #[cfg(target_os = "macos")]
+        assert!(render("precise-prompt-iina", (1280.0, 800.0)).find("precise-prompt/on").is_some());
+    }
+
+    #[test]
+    fn settings_has_the_notification_switches() {
+        let rt = render("settings-notifications", (1280.0, 800.0));
+        for k in ["notifications-card", "set/notify-detected", "set/notify-offer", "set/notify-recorded"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(rt.find("set/notify-support").is_none());
+        assert!(render("settings-notifications-no-buttons", (1280.0, 800.0)).find("set/notify-support").is_some());
+        assert!(render("settings-notifications-denied", (960.0, 600.0)).find("set/notify-support").is_some());
     }
 
     /// A press on a row's title opens the details page; elsewhere on the row, the editor.

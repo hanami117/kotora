@@ -352,6 +352,12 @@ fn main(s: &State, wide: bool, width: f32) -> El {
     } else if s.precise_banner() {
         m = m.child(crate::precise::banner(s));
     }
+    // Now Playing: turn on precise detection for the followed player (once per player).
+    if s.page == Page::NowPlaying
+        && let Some(p) = crate::precise::prompt(s)
+    {
+        m = m.child(p);
+    }
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a));
     }
@@ -1447,10 +1453,10 @@ fn settings(s: &State, wide: bool) -> El {
                     .w_full()
                     .items_start()
                     .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)))
-                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(about_card(s))),
+                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(notifications_card(s)).child(display_card(s)).child(startup_card(s)).child(about_card(s))),
             )
     } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(about_card(s))
+        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(notifications_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
@@ -1741,7 +1747,7 @@ fn banner(s: &State) -> El {
             )
             .child(text("Watching it again?").key("banner/rewatch-ask").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
             .child(action("banner/rewatch".into(), &format!("Start rewatch at episode {ep}"), true, |s, _| {
-                let _ = s.start_rewatch_playing();
+                let _ = s.confirm_offer();
             }).h(32.0).px(12.0))
             .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
                 s.dismiss_now();
@@ -1775,7 +1781,7 @@ fn banner(s: &State) -> El {
     )
     .child(text(format!("Update to {ep} / {total}?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
     .child(button("banner/update", "Update", true, Some(|s: &mut State| {
-        let _ = s.record(false);
+        let _ = s.confirm_offer();
     })))
     .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
         s.dismiss_now();
@@ -1943,7 +1949,7 @@ fn now_card(s: &State, n: &Now) -> El {
         && let Some((_, ep)) = s.offer()
     {
         actions = actions.child(button("np/update", &format!("Update to episode {ep}"), true, Some(|s: &mut State| {
-            let _ = s.record(false);
+            let _ = s.confirm_offer();
         })));
     }
     if n.recorded.is_some() {
@@ -2208,6 +2214,48 @@ fn updates_card(s: &State) -> El {
             "When only the progress differs and yours is higher, Kotora sends yours.".into(),
             switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
         ))
+}
+
+/// Settings → Notifications: one switch per event, and what the system can't do.
+fn notifications_card(s: &State) -> El {
+    use crate::notes::{Kind, Support};
+    let p = &s.prefs.notify;
+    let mut c = card("notifications-card", "Notifications")
+        .child(option(
+            "Episode detected",
+            "When a recognised episode starts playing: \u{201c}Title \u{b7} Ep 6\u{201d}. Off by default.".into(),
+            switch("set/notify-detected".into(), "Episode detected", p.detected, |s, v| s.set_notify(Kind::Detected, v)),
+        ))
+        .child(option(
+            "Update offered",
+            "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner.".into(),
+            switch("set/notify-offer".into(), "Update offered", p.offer, |s, v| s.set_notify(Kind::Offer, v)),
+        ))
+        .child(option(
+            "Episode recorded",
+            "\u{201c}Recorded \u{b7} Ep 6\u{201d} with Undo.".into(),
+            switch("set/notify-recorded".into(), "Episode recorded", p.recorded, |s, v| s.set_notify(Kind::Recorded, v)),
+        ));
+    let line = match s.notes.support {
+        Support::NoButtons => Some("Your notification server shows no buttons: answer in Kotora's banner or with kot confirm."),
+        Support::Outside => Some("Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them."),
+        Support::Denied => Some("Notifications are off for Kotora in System Settings \u{2192} Notifications."),
+        Support::Unknown | Support::Buttons => None,
+    };
+    if let Some(line) = line {
+        c = c.child(
+            row()
+                .key("set/notify-support")
+                .mt(6.0)
+                .px(10.0)
+                .py(8.0)
+                .radius(theme::R_MD)
+                .fill(PAL.warn().alpha(0.08))
+                .border(1.0, PAL.warn().alpha(0.3))
+                .child(text(line.to_string()).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0)),
+        );
+    }
+    c
 }
 
 /// Settings → Display: which title every page (and `kot`) shows.

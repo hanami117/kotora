@@ -1,6 +1,6 @@
 //! Detection glue: starts `kotora_detect` and one recognition thread, and hands their results to
 //! the UI thread with `AppHandle::update_if`. Nothing here runs headless (no handle, no threads,
-//! no config writes, no notifications).
+//! no config writes).
 //!
 //! The recognition thread blocks on its channel. For each new file it parses the name, reads the
 //! saved list and the cache from the database, and (only when nothing on the list matches, the
@@ -76,13 +76,6 @@ pub fn start(s: &mut State) {
     let relations_download = c.recognition.relations_download;
     let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
     s.glue = Some(Glue { tx, detector: Arc::new(detector) });
-}
-
-/// A desktop notification (only in the real app).
-pub fn notify(summary: &str, body: &str, live: bool) {
-    if live && !rune::is_headless() {
-        kotora_detect::notify::send(summary, body);
-    }
 }
 
 /// Remembers the user's pick (or "not an anime") for a title.

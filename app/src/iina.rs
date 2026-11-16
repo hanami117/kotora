@@ -78,6 +78,7 @@ impl State {
 
     pub fn iina_written(&mut self, r: Precise, setup: Option<(Setup, bool)>) -> bool {
         self.iina.busy = false;
+        self.iina_answer(r.clone());
         self.iina.done = Some(r);
         if let Some((setup, watched)) = setup {
             self.iina.setup = Some(setup);

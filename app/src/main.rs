@@ -21,6 +21,7 @@ mod iina;
 #[cfg(target_os = "macos")]
 mod menu_bar;
 mod model;
+mod notes;
 mod now;
 mod online;
 mod precise;
@@ -151,6 +152,8 @@ fn main() {
         let mut s = State::start(online::initial_auth());
         s.client_id.hint = clientid::saved_hint();
         s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
+        // Desktop notifications, with buttons where the system has them (`notes/`).
+        s.notes = notes::Notifier::start(handle.clone());
         s.handle = Some(handle);
         s.window = !hidden;
         // The tray or menu bar icon (UI thread: AppKit needs the main thread on macOS).
