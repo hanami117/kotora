@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+ Made up for Kotora's tests: no real user or list. Laid out like MyAnimeList's own export.
+-->
+<myanimelist>
+
+	<myinfo>
+		<user_id>4242</user_id>
+		<user_name>demo_user</user_name>
+		<user_export_type>1</user_export_type>
+		<user_total_anime>9</user_total_anime>
+		<user_total_watching>1</user_total_watching>
+		<user_total_completed>2</user_total_completed>
+		<user_total_onhold>1</user_total_onhold>
+		<user_total_dropped>1</user_total_dropped>
+		<user_total_plantowatch>1</user_total_plantowatch>
+	</myinfo>
+
+	<anime>
+		<series_animedb_id>1001</series_animedb_id>
+		<series_title><![CDATA[Harbor Lights]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>12</series_episodes>
+		<my_id>0</my_id>
+		<my_watched_episodes>5</my_watched_episodes>
+		<my_start_date>2026-10-02</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_rated></my_rated>
+		<my_score>7</my_score>
+		<my_storage></my_storage>
+		<my_storage_value>0.00</my_storage_value>
+		<my_status>Watching</my_status>
+		<my_comments><![CDATA[]]></my_comments>
+		<my_times_watched>0</my_times_watched>
+		<my_rewatch_value></my_rewatch_value>
+		<my_priority>LOW</my_priority>
+		<my_tags><![CDATA[]]></my_tags>
+		<my_rewatching>0</my_rewatching>
+		<my_rewatching_ep>0</my_rewatching_ep>
+		<my_discuss>1</my_discuss>
+		<my_sns>default</my_sns>
+		<update_on_import>1</update_on_import>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1002</series_animedb_id>
+		<series_title><![CDATA[Paper Moon Express]]></series_title>
+		<series_type>Movie</series_type>
+		<series_episodes>1</series_episodes>
+		<my_watched_episodes>1</my_watched_episodes>
+		<my_start_date>0000-00-00</my_start_date>
+		<my_finish_date>0000-00-00</my_finish_date>
+		<my_score>0</my_score>
+		<my_status>Completed</my_status>
+		<my_times_watched>0</my_times_watched>
+		<my_rewatching>0</my_rewatching>
+		<update_on_import>1</update_on_import>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1003</series_animedb_id>
+		<series_title><![CDATA[Starfall Academy]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>24</series_episodes>
+		<my_watched_episodes>24</my_watched_episodes>
+		<my_start_date>2025-01-05</my_start_date>
+		<my_finish_date>2025-03-30</my_finish_date>
+		<my_score>9</my_score>
+		<my_status>Completed</my_status>
+		<my_times_watched>1</my_times_watched>
+		<my_rewatching>1</my_rewatching>
+		<my_rewatching_ep>6</my_rewatching_ep>
+		<update_on_import>1</update_on_import>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1004</series_animedb_id>
+		<series_title><![CDATA[Quiet Garden]]></series_title>
+		<series_type>ONA</series_type>
+		<series_episodes>13</series_episodes>
+		<my_watched_episodes>4</my_watched_episodes>
+		<my_score>6</my_score>
+		<my_status>On-Hold</my_status>
+		<update_on_import>1</update_on_import>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1005</series_animedb_id>
+		<series_title><![CDATA[Ember Tide]]></series_title>
+		<series_type>TV</series_type>
+		<series_episodes>0</series_episodes>
+		<my_watched_episodes>0</my_watched_episodes>
+		<my_score>0</my_score>
+		<my_status>Plan to Watch</my_status>
+		<update_on_import>0</update_on_import>
+	</anime>
+
+	<anime>
+		<series_animedb_id></series_animedb_id>
+		<series_title><![CDATA[No Id Given]]></series_title>
+		<my_watched_episodes>3</my_watched_episodes>
+		<my_status>Watching</my_status>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1006</series_animedb_id>
+		<series_title><![CDATA[Odd Status]]></series_title>
+		<my_watched_episodes>2</my_watched_episodes>
+		<my_status>Paused for now</my_status>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1007</series_animedb_id>
+		<series_title><![CDATA[Cats & Dogs <Special>]]></series_title>
+		<series_type>Special</series_type>
+		<series_episodes>2</series_episodes>
+		<my_watched_episodes>9</my_watched_episodes>
+		<my_score>11</my_score>
+		<my_status>4</my_status>
+	</anime>
+
+	<anime>
+		<series_animedb_id>1001</series_animedb_id>
+		<series_title><![CDATA[Harbor Lights]]></series_title>
+		<my_watched_episodes>8</my_watched_episodes>
+		<my_status>Watching</my_status>
+	</anime>
+
+</myanimelist>

@@ -14,7 +14,8 @@
 //! - scores: read on the 100-point scale and kept as 1-10 (rounded); written as `scoreRaw` (the
 //!   100-point value), which AniList shows in the user's own score format.
 //! - formats, airing status and source as MAL's lower-case words (`tv`, `currently_airing`, …).
-//! - `idMal` is read (for mirroring later) but not used yet.
+//! - `idMal` is read; an import of a MyAnimeList XML maps its ids to AniList media with
+//!   [`Client::media_by_mal`] (`idMal_in`, 50 a request).
 //!
 //! HTTP goes through [`Transport`], so tests run against recorded made-up JSON. Nothing here logs
 //! a token or the Client ID, and error texts carry only AniList's short error message.
@@ -283,6 +284,14 @@ fn save_query() -> String {
 {{ SaveMediaListEntry(mediaId: $mediaId, status: $status, progress: $progress, scoreRaw: $scoreRaw, repeat: $repeat) {{ {ENTRY} }} }}"
     )
 }
+
+/// AniList media by MyAnimeList ids (an import), 50 to a page.
+fn by_mal_query() -> String {
+    format!("query ($ids: [Int], $page: Int) {{ Page(page: $page, perPage: 50) {{ pageInfo {{ hasNextPage }} media(idMal_in: $ids, type: ANIME) {{ {MEDIA} }} }} }}")
+}
+
+/// The most ids asked in one request.
+pub const MAL_IDS_PER_REQUEST: usize = 50;
 
 const DELETE: &str = "mutation ($id: Int) { DeleteMediaListEntry(id: $id) { deleted } }";
 
@@ -952,6 +961,28 @@ impl<T: Transport> Client<T> {
         if deleted { Ok(()) } else { Err(ServiceError::Other("AniList didn't remove the entry".into())) }
     }
 
+    /// The AniList anime of these MyAnimeList ids, 50 ids a request (an id can match more than
+    /// one AniList media: the first is kept). Ids AniList doesn't know are left out.
+    pub fn media_by_mal(&mut self, access: &str, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        let mut out: Vec<Media> = Vec::new();
+        for chunk in ids.chunks(MAL_IDS_PER_REQUEST) {
+            // A chunk is at most 50 ids, so one page holds it unless ids repeat on AniList.
+            for page in 1..=3 {
+                let (media, more) = page_media(self.query(access, &by_mal_query(), json!({ "ids": chunk, "page": page }))?)?;
+                for m in media.iter().filter(|m| m.id != 0) {
+                    let m = m.media();
+                    if m.id_mal.is_some_and(|id| chunk.contains(&id)) && !out.iter().any(|o| o.id_mal == m.id_mal) {
+                        out.push(m);
+                    }
+                }
+                if !more {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// A title search for the search bar (`limit` up to 25). Under 3 characters nothing is asked.
     pub fn browse(&mut self, access: &str, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         let q: String = query.trim().chars().take(64).collect();
@@ -1077,6 +1108,11 @@ impl<T: Transport> ListService for AniList<T> {
     fn search(&mut self, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         let access = self.access()?;
         self.client.search(&access, query)
+    }
+
+    fn media_by_mal_ids(&mut self, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        let access = self.access()?;
+        self.client.media_by_mal(&access, ids)
     }
 
     fn browse(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {

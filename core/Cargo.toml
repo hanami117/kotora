@@ -20,3 +20,7 @@ anitomy-ng = { version = "1.0.10", default-features = false }
 # The user's UTC offset (`localtime_r`, `tm_gmtoff`) for the airing times: the system's zone
 # data instead of a time zone crate. Already in the tree (ureq, rusqlite).
 libc = "0.2"
+# MyAnimeList XML export and import (`listxml.rs`): MyAnimeList ships its export gzipped. Both
+# are already in the tree (rune's SVG stack); MIT / Apache-2.0.
+flate2 = "1"
+roxmltree = "0.20"

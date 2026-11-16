@@ -4,6 +4,18 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Export your list:** Settings → Account → Export list… writes your anime list as a MyAnimeList XML file (the
+  format MyAnimeList's own export uses, which MyAnimeList, AniList, Kitsu and Taiga import): status, episodes,
+  score, rewatches, and start and finish dates where Kotora has them. Also `kot export FILE`. MyAnimeList lists
+  only: AniList's API terms don't allow exporting list data from AniList, and Kotora says so instead.
+- **Import a list:** Settings → Account → Import list… reads a MyAnimeList XML export (`.xml`, or `.xml.gz` as
+  MyAnimeList ships it) and compares it with your list first: new, different, same, and entries it can't use.
+  Pick "Add new only" or "Add new and update": a higher episode count wins, a score fills an empty one, and you
+  choose when the statuses disagree (say Dropped against Completed). Everything goes through the sync queue at
+  the service's pace, works offline, and "Undo import" takes back what hasn't been sent. Into AniList, the file's
+  MyAnimeList ids are matched to AniList's anime first. Anime only for now; dates and notes are not imported.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

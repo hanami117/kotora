@@ -148,6 +148,11 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 Err(message) => Reply::Error { message, anyway: false },
             }
         }
+        // Off the UI thread: reads the database and writes the file.
+        Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path)) {
+            Ok(message) => Reply::Done { message },
+            Err(message) => Reply::Error { message, anyway: false },
+        },
         Request::Next { title } => reply(on_ui(handle, true, move |s| {
             let i = s.find_for(&title, Want::Next)?;
             let id = s.entries[i].id;

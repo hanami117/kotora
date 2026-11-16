@@ -31,6 +31,10 @@ pub enum Cmd {
     KeepMine(i64),
     TakeTheirs(i64),
     Discard(i64),
+    /// An import's adds and updates (`transfer.rs`), queued in one transaction.
+    Import(Vec<kotora_core::listxml::Action>),
+    /// Takes back an import's changes that still wait.
+    UndoImport(Vec<i64>),
 }
 
 /// The worker's mailbox. `slot` holds the sender while a worker thread runs.
@@ -86,6 +90,36 @@ fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
     Msg::Queue { ops, items, gone, offline }
 }
 
+/// An import or its undo: applied, then the result goes to the import panel. Returns the entries
+/// touched.
+fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
+    use kotora_core::listxml::Action;
+    let service = crate::account::name();
+    match cmd {
+        Cmd::Import(actions) => {
+            let touched: Vec<u32> = actions
+                .iter()
+                .map(|a| match a {
+                    Action::Add { media, .. } => media.id,
+                    Action::Update { media_id, .. } => *media_id,
+                })
+                .collect();
+            let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The import can't be saved: {e}"));
+            let ok = r.is_ok();
+            h.update_if(move |s, _| crate::transfer::imported(s, r));
+            if ok { touched } else { Vec::new() }
+        }
+        Cmd::UndoImport(ids) => {
+            let now = now_unix();
+            let touched: Vec<u32> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| o.media_id).collect();
+            let r = store.undo_import(service, &ids).map_err(|e| format!("The import can't be taken back: {e}"));
+            h.update_if(move |s, _| crate::transfer::undone(s, r));
+            touched
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Applies one command to the store; returns the entry it touched.
 fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>, String> {
     let now = now_unix();
@@ -109,6 +143,8 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
             let m = media(store, id);
             store.discard(crate::account::name(), id).map(|_| m)
         }
+        // Handled by `transfer`.
+        Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
     };
     r.map_err(|e| e.to_string())
 }
@@ -140,6 +176,13 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         while let Some(cmd) = next.take().or_else(|| rx.try_recv().ok()) {
             if let Cmd::Add { media, .. } = &cmd {
                 added.push(media.id);
+            }
+            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_)) {
+                // Read the whole list once the queue is empty: the imported adds get their
+                // covers and episodes from the service.
+                refresh |= matches!(cmd, Cmd::Import(_));
+                touched.extend(transfer(h, &mut store, cmd));
+                continue;
             }
             match apply(&mut store, cmd, &mut refresh) {
                 Ok(Some(id)) => touched.push(id),

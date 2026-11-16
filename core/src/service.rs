@@ -379,6 +379,12 @@ pub trait ListService {
     fn details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
         Err(ServiceError::Other("this service has no details page".into()))
     }
+    /// The service's anime for MyAnimeList ids (an import into a service keyed by its own ids):
+    /// by MyAnimeList id; ids the service doesn't know are left out. Batched; only for ids the
+    /// user's own file holds.
+    fn media_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        Err(ServiceError::Other(format!("{} can't look up MyAnimeList ids", self.title())))
+    }
     /// The whole manga list (only asked once the user turned Manga on: see `Store::manga_enabled`).
     fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
         Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))

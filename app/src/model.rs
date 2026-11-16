@@ -482,6 +482,8 @@ pub struct State {
     pub intro: Option<crate::intro::Intro>,
     /// The Settings page: its section and search (`settings.rs`).
     pub settings: crate::settings::SettingsUi,
+    /// Settings → Account: export and import (`transfer.rs`).
+    pub transfer: crate::transfer::Transfer,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -551,6 +553,7 @@ impl State {
             ctx: None,
             intro: None,
             settings: Default::default(),
+            transfer: Default::default(),
         };
         s.queue_changed();
         s.refresh();
