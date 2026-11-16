@@ -69,6 +69,10 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   strips that slide away; 0.8 s, any click or key skips. Only a cold start with a window (not `--hidden`, a
   test instance, headless or a window shown again); Reduce Motion: a fade. Settings → Appearance → Startup
   animation, `[display] intro`. Scenes `intro-*`. Waiting for the user's judgement live (keep, tune or drop).
+- **Stage 6, release 0.1 (2026-11-16):** prepared on `main`, not published. Everything above is merged into
+  `main`. `packaging/release.sh` makes the source tarball, the DMG, `SHA256SUMS`, `notes.md` and `latest.json`;
+  the tag `v0.1.0` and a draft GitHub release exist. Publishing (the repo public, the release, the AUR, the
+  site's `latest.json`) waits for the user's OK.
 
 ## Stage 0: design
 
@@ -664,16 +668,20 @@ Brought forward from v0.3 at the user's request. Built on the Mac; Linux not com
 - [x] CHANGELOG (0.1.0, date to be set), `THIRD_PARTY_NOTICES.md` (from `cargo metadata`; `cargo deny` is not
   installed here, so run `cargo deny check licenses` once before the tag).
 - [x] AUR `packaging/aur/PKGBUILD` (source package, sha256 `SKIP` until the tag) and `.SRCINFO`.
-- [ ] About page credits (check the text against the README).
-- [ ] `packaging/release.sh` (tarball and its sha256; copy Uzumaki's), then tag `v0.1.0`, fill in the sha256
-  and the CHANGELOG date, regenerate `.SRCINFO`.
-- [ ] Test the AUR package (`makepkg`, `namcap`, `extra-x86_64-build`) and push it to the AUR.
+- [x] About page credits (check the text against the README): Taiga, anitomy, anime-relations, Noto Sans JP.
+- [x] `packaging/release.sh` (from Uzumaki's: tarball, DMG through `packaging/macos/build.sh --dmg`, checksums,
+  notes, `latest.json`), tag `v0.1.0`, the sha256 in the PKGBUILD, the CHANGELOG date, `.SRCINFO` (2026-11-16).
+- [x] `cargo deny check` passes (advisories, bans, licences, sources): rusqlite 0.41 for the bundled SQLite's
+  RUSTSEC-2026-0459; zbus 5's unmaintained helpers are ignored with a reason in `deny.toml` (they come with
+  Rune's accessibility).
+- [ ] Test the AUR package (`makepkg`, `namcap`, `extra-x86_64-build`) and push it to the AUR (makepkg and
+  namcap ran in an `archlinux` container on 2026-11-16; the push waits for the user's OK).
 - [x] Check that `/usr/bin/kot` is free in Arch's file lists (`pacman -Fy; pacman -F usr/bin/kot`): empty on
   Arch (the user, 2026-11-15). No package or AUR name `kot` or `kotora` was found on 2026-11-15.
-- [ ] Merge `stage-5` into `stage-6` (the live Now Playing position fix), then rebuild the screenshots.
+- [x] Merge `stage-5` into `stage-6` (the live Now Playing position fix), then rebuild the screenshots.
 - [ ] Live test by the user on Arch (Wayland and X11) and on the Mac.
 - [ ] Make the repo public (the user's call).
-- AppImage and DMG are not part of v0.1 (v0.3).
+- An AppImage is not part of v0.1. The DMG is (ad-hoc signed, not notarized; Apple silicon).
 
 ## Later (v0.2 and on, order to be agreed)
 

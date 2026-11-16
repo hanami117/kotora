@@ -16,7 +16,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.1.0 is not released yet. Linux is the main target; macOS builds from source.
+**Status:** version 0.1.0, the first release. MyAnimeList only; AniList comes later.
 
 ## Features
 
@@ -44,11 +44,32 @@ play, download or fetch video. For streaming sites, use [MAL-Sync](https://malsy
 
 ### Arch Linux
 
-AUR package `kotora`: coming soon.
+From the AUR, with your AUR helper:
+
+```sh
+yay -S kotora
+```
+
+It builds from the release's source and installs `kotora`, `kot`, the menu entry and the icons. Updates come
+with your AUR helper.
+
+### macOS
+
+Apple silicon, macOS 13 or later. Download `Kotora-0.1.0.dmg` from the
+[release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
+
+Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
+and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/Kotora.app`). To use `kot`,
+link it into your `PATH`:
+
+```sh
+ln -s /Applications/Kotora.app/Contents/MacOS/kot /opt/homebrew/bin/kot
+```
 
 ### From source (Linux)
 
 You need `rust`, `git` and `pkgconf`, and a Vulkan driver (`vulkan-radeon`, `vulkan-intel` or `nvidia-utils`).
+On Debian or Ubuntu also `libdbus-1-dev`, `libxkbcommon-dev` and `libwayland-dev`.
 
 ```sh
 git clone https://github.com/hanami117/kotora
@@ -58,11 +79,12 @@ cd kotora
 
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
-keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere.
+keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
+tarball (`kotora-0.1.0.tar.gz`) works the same way.
 
-### macOS
+### From source (macOS)
 
-Build with `cargo build --release -p kotora -p kotora-ctl`. A DMG comes later.
+With Rust and `librsvg` (`brew install librsvg`): `packaging/macos/build.sh` builds `target/macos/Kotora.app`.
 
 ## First start: your MyAnimeList Client ID
 
