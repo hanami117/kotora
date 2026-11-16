@@ -31,7 +31,7 @@ Derived from the C2 icon: the navy tile (`#2a3a5c` → `#1b2640`) gives the surf
 | token | hex | use |
 |---|---|---|
 | `text` | `#edf0f7` | titles, body |
-| `dim` | `#a4afc6` | secondary text, inactive nav |
+| `dim` | `#b7c0d2` | secondary text, inactive nav |
 | `faint` | `#7d89a4` | hints, column headers, timestamps |
 
 ### Accent
@@ -57,12 +57,14 @@ Close to MyAnimeList's conventions, so users know them at a glance, but tuned fo
 | Watching | `st_watching` | `#4cc38a` (green) |
 | Completed | `st_completed` | `#6ea8ff` (blue) |
 | On hold | `st_onhold` | `#f2c94c` (yellow) |
-| Dropped | `st_dropped` | `#f0646c` (red) |
-| Plan to watch | `st_plan` | `#a78bfa` (lilac) |
+| Dropped | `st_dropped` | `#f4898f` (red) |
+| Plan to watch | `st_plan` | `#b29afb` (lilac) |
 
 Other: `airing` `#4fd1e0` (cyan; airing tag), semantic `ok` = `st_watching`, `warn` = `st_onhold`,
 `err` = `st_dropped`, `info` = `st_completed`. Tinted backgrounds for tags and alerts use the colour at
-0.08–0.16 alpha, with a 0.3 alpha border for alerts.
+0.08–0.16 alpha, with a 0.3 alpha border for alerts. Tags (`PAL.tint`) use two thirds of their
+alpha in dark (0.12 → 0.08): Rune blends alpha in linear light, which brightens a tint on navy, and
+the text on it must stay at 4.5:1 there (see the linear note below).
 
 Status colour is never the only signal: the status name is always written next to it.
 
@@ -71,14 +73,14 @@ Status colour is never the only signal: the status name is always written next t
 | text | on `bg` | on `side` | on `surface` | on `raised` |
 |---|---|---|---|---|
 | `text` | 15.8 | 15.1 | 13.9 | 12.4 |
-| `dim` | 8.2 | 7.8 | 7.2 | 6.4 |
+| `dim` | 9.9 | 9.4 | 8.7 | 7.7 |
 | `faint` | 5.1 | 4.9 | 4.5 | 4.0 |
 | `accent` | 7.3 | 6.9 | 6.4 | 5.7 |
 | `st_watching` | 8.2 | 7.8 | 7.2 | 6.4 |
 | `st_completed` | 7.5 | 7.1 | 6.6 | 5.8 |
 | `st_onhold` | 11.4 | 10.8 | 10.0 | 8.9 |
-| `st_dropped` | 5.8 | 5.5 | 5.1 | 4.5 |
-| `st_plan` | 6.6 | 6.3 | 5.8 | 5.2 |
+| `st_dropped` | 7.6 | 7.2 | 6.7 | 5.9 |
+| `st_plan` | 7.7 | 7.3 | 6.7 | 6.0 |
 | `airing` | 9.9 | 9.4 | 8.7 | 7.7 |
 
 `on_accent` on `accent`: 7.4. Everything passes AA (4.5) except `faint` on `raised` (4.0): don't put
@@ -107,9 +109,12 @@ the tiger orange stays the fill, with `on_accent` text; every colour that is als
 
 Contrast as in the dark table: `text` and `dim` 6.6+ everywhere; `faint`, `accent_hi`, the status
 colours and `airing` 4.5+ on `bg`, `side` and `surface` (4.4+ on `raised`); tags on their own 0.14
-tint and the banner text 4.5+. `app/src/theme.rs` tests both palettes. Rune blends alpha in linear
-light, which makes tints on navy brighter than sRGB math says: measured that way, dark's tag text
-on its tint is 3.5–4.7 (err lowest) and `dim` on the banner 3.9; to retune later.
+tint and the banner text 4.5+. `app/src/theme.rs` tests both palettes, with the blend done in
+linear light as Rune does it. That blend makes tints on navy brighter than sRGB math says, so the
+dark palette was retuned (2026-11-16): tag tints at two thirds of their alpha, and `dim`, `st_dropped`
+and `st_plan` a little lighter. Measured in linear blend, every dark tag text on its tint (on `bg`
+and `surface`) is 4.5+ (was 3.5 for red) and `dim` on the banner is 4.6 (was 3.85). No documented
+exceptions remain for tints or the banner.
 
 View code never asks which theme is on: `PAL.x` reads the palette in force.
 
@@ -233,11 +238,11 @@ pub struct Pal {
 pub static PAL: LazyLock<Pal> = LazyLock::new(|| Pal {
     bg: hx("#0f1626"), side: hx("#121b2e"), surface: hx("#182238"), raised: hx("#1f2b45"),
     field: hx("#141d31"), border: hx("#26324d"), border_strong: hx("#34446a"),
-    text: hx("#edf0f7"), dim: hx("#a4afc6"), faint: hx("#7d89a4"),
+    text: hx("#edf0f7"), dim: hx("#b7c0d2"), faint: hx("#7d89a4"),
     accent: hx("#f28a22"), accent_hi: hx("#ff9d3f"), accent_lo: hx("#e57a18"),
     on_accent: hx("#1d1208"), cream: hx("#fff0dc"),
     st_watching: hx("#4cc38a"), st_completed: hx("#6ea8ff"), st_onhold: hx("#f2c94c"),
-    st_dropped: hx("#f0646c"), st_plan: hx("#a78bfa"), airing: hx("#4fd1e0"),
+    st_dropped: hx("#f4898f"), st_plan: hx("#b29afb"), airing: hx("#4fd1e0"),
 });
 
 // Tints and overlays are alpha on a token:

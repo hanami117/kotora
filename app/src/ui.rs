@@ -885,7 +885,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         sub = sub.child(text(e.note()).font(theme::LABEL).color(PAL.faint));
     }
     if let Some(n) = e.new_episode {
-        sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.accent.alpha(0.14)));
+        sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.tint(PAL.accent, 0.14)));
     }
     // The title opens the details page; the rest of the row opens the editor.
     let name = text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).group_color(PAL.accent_hi).truncate();
@@ -1125,7 +1125,7 @@ pub(crate) fn step_button(key: &str, label: &str, delta: i32) -> El {
 }
 
 pub(crate) fn tag(label: &str, c: Color, dot: bool) -> El {
-    let mut t = row().h(18.0).px(6.0).gap(4.0).center_y().radius(theme::R_XS).fill(c.alpha(0.12));
+    let mut t = row().h(18.0).px(6.0).gap(4.0).center_y().radius(theme::R_XS).fill(PAL.tint(c, 0.12));
     if dot {
         t = t.child(el().size(5.0, 5.0).radius(2.5).fill(c));
     }
@@ -1401,7 +1401,7 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
 }
 
 pub(crate) fn pill(label: &str, c: Color) -> El {
-    row().h(20.0).px(8.0).center_y().radius(10.0).fill(c.alpha(0.10)).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
+    row().h(20.0).px(8.0).center_y().radius(10.0).fill(PAL.tint(c, 0.10)).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
 }
 
 /// The fields of `op`'s change, as `values` has them: "Progress 7 / 24 · Score 8".

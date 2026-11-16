@@ -50,7 +50,7 @@ static DARK: LazyLock<Pal> = LazyLock::new(|| Pal {
     border: hx("#26324d"),
     border_strong: hx("#34446a"),
     text: hx("#edf0f7"),
-    dim: hx("#a4afc6"),
+    dim: hx("#b7c0d2"),
     faint: hx("#7d89a4"),
     accent: hx("#f28a22"),
     accent_hi: hx("#ff9d3f"),
@@ -60,8 +60,8 @@ static DARK: LazyLock<Pal> = LazyLock::new(|| Pal {
     st_watching: hx("#4cc38a"),
     st_completed: hx("#6ea8ff"),
     st_onhold: hx("#f2c94c"),
-    st_dropped: hx("#f0646c"),
-    st_plan: hx("#a78bfa"),
+    st_dropped: hx("#f4898f"),
+    st_plan: hx("#b29afb"),
     airing: hx("#4fd1e0"),
     knob: hx("#edf0f7"),
     light: false,
@@ -153,6 +153,12 @@ impl Pal {
     pub fn err(&self) -> Color {
         self.st_dropped
     }
+    /// A tag's tint: `c` at `a` over the ground. Rune blends in linear light, which makes tints on
+    /// navy brighter than sRGB math says, so dark uses two thirds of the strength to keep the
+    /// text on it at 4.5:1 (light is fine at full strength).
+    pub fn tint(&self, c: Color, a: f32) -> Color {
+        c.alpha(if self.light { a } else { a * 2.0 / 3.0 })
+    }
     pub fn hover(&self) -> Color {
         if self.light { Color::BLACK.alpha(0.04) } else { Color::WHITE.alpha(0.05) }
     }
@@ -215,8 +221,9 @@ mod tests {
         let (x, y) = (lum(a), lum(b));
         (x.max(y) + 0.05) / (x.min(y) + 0.05)
     }
-    /// `fg` at `a` over `bg`, as tints are drawn.
-    fn over(fg: Color, bg: Color, a: f32) -> Color {
+    /// `fg` (with its own alpha) over `bg`, blended the way Rune draws: on the linear values.
+    fn over(fg: Color, bg: Color) -> Color {
+        let a = fg.a;
         Color { r: fg.r * a + bg.r * (1.0 - a), g: fg.g * a + bg.g * (1.0 - a), b: fg.b * a + bg.b * (1.0 - a), a: 1.0 }
     }
 
@@ -250,21 +257,33 @@ mod tests {
             }
             assert!(ratio(p.on_accent, p.accent) >= 7.0, "{name}: on_accent on accent");
             assert!(ratio(p.on_accent, p.accent_lo) >= 4.5, "{name}: on_accent on accent_lo");
-            // Tags and alerts on list rows: the colour as text on its own 0.14 tint over `bg`
-            // (Rune blends in linear light, as `over` does). Light passes AA. The dark palette
-            // predates this check and measures 3.5-4.7 here (err lowest); held where it is until
-            // the dark tags are retuned.
-            let tint_floor = if p.light { 4.5 } else { 3.4 };
-            for (t, tc) in [("accent_hi", p.accent_hi), ("ok", p.ok()), ("warn", p.warn()), ("err", p.err()), ("airing", p.airing), ("info", p.st_completed)] {
-                let tint = over(if t == "accent_hi" { p.accent } else { tc }, p.bg, 0.14);
-                assert!(ratio(tc, tint) >= tint_floor, "{name}: {t} on its tint is {:.2}", ratio(tc, tint));
+            // Tags and pills: the colour as text on its own tint (`Pal::tint`, at the alphas the
+            // views use: 0.12 tags, 0.10 pills, 0.14 the orange "Ep n out" tag) over `bg` and
+            // `surface`. `over` blends the linear `Color`s, which is how Rune draws them. Both
+            // palettes must reach AA; no exceptions.
+            let tags = [
+                ("accent_hi", p.accent_hi, p.accent, 0.14),
+                ("ok", p.ok(), p.ok(), 0.12),
+                ("warn", p.warn(), p.warn(), 0.12),
+                ("err", p.err(), p.err(), 0.12),
+                ("airing", p.airing, p.airing, 0.12),
+                ("info", p.st_completed, p.st_completed, 0.12),
+                ("plan", p.st_plan, p.st_plan, 0.12),
+                ("ok pill", p.ok(), p.ok(), 0.10),
+                ("err pill", p.err(), p.err(), 0.10),
+            ];
+            for (g, gc) in [("bg", p.bg), ("surface", p.surface)] {
+                for (t, tc, tint, a) in tags {
+                    let r = ratio(tc, over(p.tint(tint, a), gc));
+                    assert!(r >= 4.5, "{name}: {t} on its tint over {g} is {r:.2}");
+                }
             }
-            // The Now Playing banner: the question on the orange-washed background.
-            let banner = over(p.accent, p.bg, 0.18);
+            // The Now Playing banner: the question on the orange-washed background (the
+            // gradient's strongest stop, 0.18).
+            let banner = over(p.accent.alpha(0.18), p.bg);
             assert!(ratio(p.cream, banner) >= 4.5, "{name}: the banner question");
             assert!(ratio(p.text, banner) >= 4.5, "{name}: text on the banner");
-            // Dark `dim` on the banner is 3.85 today (same note as the tints).
-            assert!(ratio(p.dim, banner) >= if p.light { 4.5 } else { 3.8 }, "{name}: dim on the banner");
+            assert!(ratio(p.dim, banner) >= 4.5, "{name}: dim on the banner is {:.2}", ratio(p.dim, banner));
             // Surfaces step the same way: text darkest-to-lightest is reversed, not mixed up.
             assert_eq!(lum(p.text) > lum(p.bg), !p.light, "{name}: text and ground in the right order");
         }
