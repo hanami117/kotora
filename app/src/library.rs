@@ -672,6 +672,7 @@ pub fn folders_block(s: &State) -> El {
                 .color(PAL.text)
                 .placeholder(field_hint(&l.draft, if cfg!(target_os = "macos") { "/Volumes/Disk/Anime" } else { "~/Videos/Anime" }), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.library.draft)
+                .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.library.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
                     tx.blur();

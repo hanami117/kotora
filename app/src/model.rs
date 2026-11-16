@@ -989,6 +989,18 @@ impl State {
 
     /// Settings → Appearance: the next frame paints in the new palette (`ui::view`), and
     /// `config.toml` keeps it.
+    /// Settings → General → Keyboard: Ctrl (⌘) or Alt with 1 to 5 for the list pages. The
+    /// macOS Go menu shows the new keys.
+    pub fn set_page_keys(&mut self, keys: kotora_core::config::PageKeys) {
+        if self.prefs.page_keys == keys {
+            return;
+        }
+        self.prefs.page_keys = keys;
+        #[cfg(target_os = "macos")]
+        crate::menu_bar::set_page_keys(self.handle.as_ref(), keys);
+        crate::detect::save_setting(self, "keys", "pages", kotora_core::config::quote(keys.key()));
+    }
+
     pub fn set_theme(&mut self, theme: kotora_core::config::Theme) {
         if self.prefs.theme == theme {
             return;

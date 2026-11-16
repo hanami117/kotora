@@ -17,6 +17,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   details, Airing and `kot` work the same with either service.
 - **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
   no longer throw off "not aired yet" and the Airing timetable.
+- **Alt 1 to 5 for the list pages:** Settings → General → Keyboard → List page shortcuts picks Ctrl (⌘ on macOS)
+  or Alt (Option) for the keys that open Watching, Plan to watch, Completed, On hold and Dropped (`[keys] pages`
+  in config.toml). They work while you type in a search box too. Ctrl , Ctrl K and Ctrl F stay as they are.
 
 ### Changed
 - **`kot config client-id ID`** saves your own client ID for the service in use (MyAnimeList or AniList), and

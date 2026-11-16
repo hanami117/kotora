@@ -45,6 +45,9 @@
 //! intro = true                 # the startup animation when Kotora opens with its window
 //! settings_section = "general" # the Settings section opened last (written by the app)
 //!
+//! [keys]
+//! pages = "ctrl"               # with 1 to 5, opens the list pages: "ctrl" ("cmd" on macOS) or "alt"
+//!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
 //!
@@ -81,6 +84,7 @@ pub struct Config {
     pub notifications: Notifications,
     pub library: Library,
     pub app: AppSection,
+    pub keys: Keys,
 }
 
 /// Kotora itself (`[app]`). Not `[updates]`, which is about the list.
@@ -203,6 +207,68 @@ impl Theme {
             Theme::Dark => false,
         }
     }
+}
+
+/// `[keys] pages`: the modifier that, with 1 to 5, opens Watching, Plan to watch, Completed,
+/// On hold and Dropped. The other shortcuts (Ctrl , Ctrl K, Ctrl F; ⌘ on macOS) don't change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+pub enum PageKeys {
+    /// Ctrl on Linux, ⌘ on macOS. The file says "ctrl" or "cmd"; either reads as this.
+    #[default]
+    #[serde(rename = "ctrl", alias = "cmd")]
+    Primary,
+    /// Alt (Option on macOS).
+    #[serde(rename = "alt", alias = "option")]
+    Alt,
+}
+
+impl PageKeys {
+    pub const ALL: [PageKeys; 2] = [PageKeys::Primary, PageKeys::Alt];
+
+    /// The `config.toml` value.
+    pub fn key(self) -> &'static str {
+        match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "cmd",
+            PageKeys::Primary => "ctrl",
+            PageKeys::Alt => "alt",
+        }
+    }
+
+    /// The modifier as Settings and the hints name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "\u{2318} Cmd",
+            PageKeys::Primary => "Ctrl",
+            PageKeys::Alt if cfg!(target_os = "macos") => "\u{2325} Option",
+            PageKeys::Alt => "Alt",
+        }
+    }
+
+    /// The chord with `digit`, in Rune's chord syntax ("mod+1", "alt+1").
+    pub fn chord(self, digit: char) -> String {
+        match self {
+            PageKeys::Primary => format!("mod+{digit}"),
+            PageKeys::Alt => format!("alt+{digit}"),
+        }
+    }
+
+    /// A short hint for the chord with `digit`: "Ctrl 1", "Alt 1", "\u{2318} 1", "\u{2325} 1".
+    pub fn hint(self, digit: char) -> String {
+        let m = match self {
+            PageKeys::Primary if cfg!(target_os = "macos") => "\u{2318}",
+            PageKeys::Primary => "Ctrl",
+            PageKeys::Alt if cfg!(target_os = "macos") => "\u{2325}",
+            PageKeys::Alt => "Alt",
+        };
+        format!("{m} {digit}")
+    }
+}
+
+/// `[keys]`: keyboard shortcuts that can change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    pub pages: PageKeys,
 }
 
 /// Display settings.
@@ -451,6 +517,7 @@ impl std::fmt::Debug for Config {
             .field("notifications", &self.notifications)
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
+            .field("keys", &self.keys)
             .finish()
     }
 }
@@ -485,6 +552,8 @@ struct File {
     library: Library,
     #[serde(default)]
     app: AppSection,
+    #[serde(default)]
+    keys: Keys,
 }
 
 #[derive(Deserialize, Default)]
@@ -519,6 +588,7 @@ impl Config {
             notifications: f.notifications,
             library: f.library,
             app: f.app,
+            keys: f.keys,
         })
     }
 
@@ -744,6 +814,25 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_keys_are_ctrl_by_default_and_alt_on_request() {
+        assert_eq!(Config::parse("").unwrap().keys.pages, PageKeys::Primary);
+        assert_eq!(Config::parse("[keys]\npages = \"alt\"\n").unwrap().keys.pages, PageKeys::Alt);
+        assert_eq!(Config::parse("[keys]\npages = \"ctrl\"\n").unwrap().keys.pages, PageKeys::Primary);
+        assert_eq!(Config::parse("[keys]\npages = \"cmd\"\n").unwrap().keys.pages, PageKeys::Primary, "the macOS name reads too");
+        assert!(Config::parse("[keys]\npages = \"hyper\"\n").is_err(), "an unknown value is refused");
+        for k in PageKeys::ALL {
+            let t = set_line("[display]\ntheme = \"dark\"\n", "keys", "pages", &quote(k.key()));
+            let c = Config::parse(&t).unwrap();
+            assert_eq!(c.keys.pages, k);
+            assert_eq!(c.display.theme, Theme::Dark, "the other sections stay");
+        }
+        assert_eq!(PageKeys::Alt.chord('3'), "alt+3");
+        assert_eq!(PageKeys::Primary.chord('1'), "mod+1");
+        assert_eq!(PageKeys::Alt.hint('2'), if cfg!(target_os = "macos") { "\u{2325} 2" } else { "Alt 2" });
+        assert_eq!(PageKeys::Primary.hint('5'), if cfg!(target_os = "macos") { "\u{2318} 5" } else { "Ctrl 5" });
+    }
 
     #[test]
     fn library_folders_round_trip() {

@@ -72,16 +72,35 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     now || airing || toast || intro || settings
 }
 
-/// The list pages Ctrl 1 to 5 open, in order.
-const LIST_PAGES: [kotora_core::Status; 5] = {
+/// The list pages Ctrl 1 to 5 (or Alt, Settings → General → Keyboard) open, in order.
+pub(crate) const LIST_PAGES: [kotora_core::Status; 5] = {
     use kotora_core::Status::*;
     [Watching, PlanToWatch, Completed, OnHold, Dropped]
 };
 
+/// The list page `k` opens with the chosen modifier (`[keys] pages`) and 1 to 5, if it is one.
+/// The exact modifier: Ctrl+Shift+1 or Ctrl+Alt+1 (AltGr) is not it.
+pub(crate) fn page_key(s: &State, k: &rune::KeyEvent, tx: &Tx) -> Option<kotora_core::Status> {
+    if !matches!(k.key, rune::Key::Text(_) | rune::Key::Command(_)) || !(k.mods.cmd || k.mods.ctrl || k.mods.alt) {
+        return None;
+    }
+    ('1'..='5').zip(LIST_PAGES).find_map(|(d, st)| rune::Chord::parse(&s.prefs.page_keys.chord(d)).is_ok_and(|c| c.matches_tx(k, tx)).then_some(st))
+}
+
+/// For a text field's `on_input_key`: the page keys go to their page instead of typing (Alt+1
+/// would type "1" on Linux, Option+1 "¡" on macOS). Plain digits still type.
+pub(crate) fn field_page_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    let Some(st) = page_key(s, k, tx) else { return false };
+    tx.blur();
+    go_to(s, Page::List(st), tx);
+    true
+}
+
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
 /// pages; on a list page Ctrl F jumps to its filter box. Escape closes the inline editor, a
 /// menu, the details page or the search page. Ctrl , (Cmd , on macOS) opens Settings and Ctrl 1 to 5
-/// open Watching, Plan to Watch, Completed, On Hold and Dropped, as the Go menu does on macOS.
+/// (Alt 1 to 5 if Settings says so: `page_key`) open Watching, Plan to Watch, Completed, On Hold
+/// and Dropped, as the Go menu does on macOS.
 pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     // Any key skips the startup intro, and does nothing else.
     if s.intro.is_some() {
@@ -98,7 +117,7 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         go_to(s, Page::Settings, tx);
         return true;
     }
-    if let Some(status) = ['1', '2', '3', '4', '5'].into_iter().zip(LIST_PAGES).find_map(|(c, st)| k.is_command(c).then_some(st)) {
+    if let Some(status) = page_key(s, k, tx) {
         go_to(s, Page::List(status), tx);
         return true;
     }
@@ -584,6 +603,7 @@ fn search_box(s: &State) -> El {
                 .color(PAL.text)
                 .placeholder(field_hint(&s.query, "Filter your list"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.query)
+                .on_input_key(field_page_key)
                 .on_input_change(|s: &mut State, tx: &mut Tx| {
                     tx.instant();
                     s.search_changed();
@@ -818,6 +838,9 @@ fn search_view(s: &State, wide: bool) -> El {
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+                    if field_page_key(s, k, tx) {
+                        return true;
+                    }
                     if k.key != rune::Key::Escape || s.online.menu.is_some() {
                         return false;
                     }
@@ -2358,6 +2381,62 @@ mod tests {
             assert_eq!(s.page, Page::List(st), "chord {c}");
         }
         assert!(!super::on_key(&mut s, &chord('6'), &mut tx));
+    }
+
+    fn alt(c: char) -> rune::KeyEvent {
+        rune::KeyEvent { key: rune::Key::Text(c.to_string()), mods: rune::Mods { alt: true, ..Default::default() } }
+    }
+
+    #[test]
+    fn alt_digits_open_the_list_pages_when_chosen() {
+        use crate::model::Page;
+        use kotora_core::Status::*;
+        use kotora_core::config::PageKeys;
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        s.go(Page::Settings);
+        assert!(!super::on_key(&mut s, &alt('2'), &mut tx), "Alt is not the page key by default");
+        assert_eq!(s.page, Page::Settings);
+        s.prefs.page_keys = PageKeys::Alt;
+        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([Watching, PlanToWatch, Completed, OnHold, Dropped]) {
+            s.go(Page::Settings);
+            assert!(super::on_key(&mut s, &alt(c), &mut tx), "alt {c}");
+            assert_eq!(s.page, Page::List(st), "alt {c}");
+            s.go(Page::Settings);
+            assert!(!super::on_key(&mut s, &chord(c), &mut tx), "ctrl {c} is no longer it");
+            assert_eq!(s.page, Page::Settings);
+        }
+        assert!(!super::on_key(&mut s, &alt('6'), &mut tx));
+        // Shift, or Ctrl+Alt (AltGr on Linux), is another chord.
+        let shifted = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: rune::Mods { alt: true, shift: true, ..Default::default() } };
+        let altgr = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: rune::Mods { alt: true, ctrl: true, cmd: !cfg!(target_os = "macos"), ..Default::default() } };
+        for k in [shifted, altgr] {
+            assert_eq!(super::page_key(&s, &k, &tx), None, "{k:?}");
+        }
+        assert!(super::on_key(&mut s, &chord(','), &mut tx), "Ctrl , stays");
+        assert_eq!(s.page, Page::Settings);
+    }
+
+    #[test]
+    fn a_field_takes_only_the_page_keys() {
+        use crate::model::Page;
+        use kotora_core::config::PageKeys;
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        s.go(Page::Settings);
+        let plain = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: Default::default() };
+        for keys in PageKeys::ALL {
+            s.prefs.page_keys = keys;
+            assert!(!super::field_page_key(&mut s, &plain, &mut tx), "a plain digit types ({keys:?})");
+        }
+        s.prefs.page_keys = PageKeys::Alt;
+        assert!(super::field_page_key(&mut s, &alt('3'), &mut tx));
+        assert_eq!(s.page, Page::List(kotora_core::Status::Completed));
+        s.prefs.page_keys = PageKeys::Primary;
+        s.go(Page::Settings);
+        assert!(!super::field_page_key(&mut s, &alt('3'), &mut tx), "Alt 3 is the field's when Ctrl is chosen");
+        assert!(super::field_page_key(&mut s, &chord('4'), &mut tx));
+        assert_eq!(s.page, Page::List(kotora_core::Status::OnHold));
     }
 
     #[test]

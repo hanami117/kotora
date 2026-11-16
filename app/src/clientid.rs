@@ -167,6 +167,7 @@ pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
                 .color(PAL.text)
                 .placeholder(field_hint(&f.draft, "Paste the Client ID here"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.client_id.draft)
+                .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.client_id.error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
                     tx.blur();
@@ -280,6 +281,7 @@ pub(crate) fn token_field(s: &State, key: &str) -> El {
                 .color(PAL.text)
                 .placeholder(field_hint(&f.token, "Paste the token from AniList\u{2019}s page"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.client_id.token)
+                .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.client_id.token_error = None)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
                     tx.blur();

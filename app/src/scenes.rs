@@ -691,6 +691,11 @@ pub const SCENES: &[Scene] = &[
     ("settings-page", |s| s.go(Page::Settings)),
     // Settings, one scene per section (fake library folders for Library).
     ("settings-general", |s| crate::settings::open(s, Section::General)),
+    // Settings → General → Keyboard with Alt picked for the list pages.
+    ("settings-keys-alt", |s| {
+        s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
+        crate::settings::open(s, Section::General)
+    }),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
     ("settings-account", |s| crate::settings::open(s, Section::Account)),
     // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
@@ -1743,6 +1748,41 @@ mod tests {
         rt.update(|s, _| s.set_theme(Theme::Light));
         rt.frame(1.0 / 60.0);
         assert!(crate::theme::is_light(), "Light picked");
+    }
+
+    /// `[keys] pages = "alt"`: Alt+2 in the focused list filter goes to Plan to watch and types
+    /// nothing; a plain 2 still types; Ctrl+2 no longer goes anywhere. The Settings row shows it.
+    #[test]
+    fn alt_digits_go_to_the_list_pages_even_from_a_field() {
+        use kotora_core::Status;
+        let rt = render("settings-keys-alt", (1280.0, 800.0));
+        for key in ["set/row/page-keys", "set/page-keys/ctrl", "set/page-keys/alt"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        let mut s = State::fake();
+        s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
+        s.go(Page::List(Status::Watching));
+        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        rt.on_key = Some(crate::ui::on_key);
+        rt.frame(1.0 / 60.0);
+        click(&mut rt, "search-input");
+        assert_eq!(focused(&rt), ["search-input"]);
+        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods::default() });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.query.text, "2", "a plain digit types");
+        assert_eq!(rt.state.page, Page::List(Status::Watching));
+        let ctrl = if cfg!(target_os = "macos") { rune::Mods { cmd: true, logo: true, ..Default::default() } } else { rune::Mods { cmd: true, ctrl: true, ..Default::default() } };
+        rt.key(rune::KeyEvent { key: rune::Key::Command('3'), mods: ctrl });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::Watching), "Ctrl 3 is not the page key now");
+        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::PlanToWatch), "Alt 2 from the field");
+        assert_eq!(rt.state.query.text, "2", "Alt 2 typed nothing");
+        // Nothing focused: Alt 5 through on_key.
+        rt.key(rune::KeyEvent { key: rune::Key::Text("5".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.page, Page::List(Status::Dropped));
     }
 
     /// Settings → Titles: one choice lit, and every page follows it.

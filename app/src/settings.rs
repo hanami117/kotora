@@ -81,7 +81,7 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
             Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList]), (Some("Sign-in"), vec![Row::ClientId, Row::Token])],
             Section::Detection => {
@@ -112,6 +112,8 @@ pub enum Row {
     StartHidden,
     CheckUpdates,
     CheckNow,
+    /// The modifier with 1 to 5 for the list pages.
+    PageKeys,
     Theme,
     Titles,
     Intro,
@@ -148,6 +150,7 @@ impl Row {
             Row::StartHidden => "start-hidden",
             Row::CheckUpdates => "check-updates",
             Row::CheckNow => "check-now",
+            Row::PageKeys => "page-keys",
             Row::Theme => "theme",
             Row::Titles => "titles",
             Row::Intro => "intro",
@@ -197,6 +200,7 @@ const SPECS: &[Spec] = &[
     spec(Row::StartHidden, Section::General, "Start in the background", "At login, show only the tray icon, no window.", "background hidden minimised minimized tray menu bar silent quiet no window autostart startup login"),
     spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
     spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
+    spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
@@ -421,6 +425,13 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> Option<bool> {
     Some(step(s, by))
 }
 
+/// What the list page keys do, with the chosen modifier, and that the others stay.
+fn page_keys_note(keys: config::PageKeys) -> String {
+    let (first, last) = (keys.hint('1'), keys.hint('5'));
+    let fixed = if cfg!(target_os = "macos") { "\u{2318} , for Settings, \u{2318} K and \u{2318} F" } else { "Ctrl , for Settings, Ctrl K and Ctrl F" };
+    format!("{first} to {last} open Watching, Plan to watch, Completed, On hold and Dropped, also while you type in a search box. {fixed} stay as they are.")
+}
+
 // -------------------------------------------------------------------------------------- view
 
 /// Below this main-area width the sections are a row of tabs on top.
@@ -475,6 +486,9 @@ fn search_box(s: &State, narrow: bool) -> El {
         .on_submit(jump_first)
         // The field would only drop the focus on Escape.
         .on_input_key(|s: &mut State, ev: &KeyEvent, tx: &mut Tx| {
+            if crate::ui::field_page_key(s, ev, tx) {
+                return true;
+            }
             if ev.key != Key::Escape {
                 return false;
             }
@@ -774,6 +788,11 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
+        Row::PageKeys => line(
+            "List page shortcuts",
+            page_keys_note(p.page_keys),
+            choice("set/page-keys", &config::PageKeys::ALL, p.page_keys, config::PageKeys::label, config::PageKeys::key, State::set_page_keys),
+        ),
         Row::Theme => line(
             "Theme",
             "System follows your desktop\u{2019}s light or dark setting, and changes with it.",
@@ -1095,6 +1114,10 @@ mod tests {
             ("precise", Row::Player(Switch::Mpv)),
             ("vlc", Row::Player(Switch::Vlc)),
             ("english", Row::Titles),
+            ("keyboard", Row::PageKeys),
+            ("shortcuts", Row::PageKeys),
+            ("alt", Row::PageKeys),
+            ("hotkey", Row::PageKeys),
             ("sign out", Row::Mal),
             ("client id", Row::ClientId),
             ("anilist", Row::AniList),

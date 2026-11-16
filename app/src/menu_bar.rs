@@ -9,7 +9,8 @@
 //!
 //! Every item with a key is `keys_first`: the press goes through Rune first (a text field, then
 //! `ui::on_key`), as without the menu, and the item runs only if nothing took the key. ⌘K and ⌘F
-//! are `ui::on_key`'s own keys; ⌘, and ⌘1–⌘5 only exist here.
+//! are `ui::on_key`'s own keys; ⌘, and ⌘1–⌘5 are both. ⌘1–⌘5 are ⌥1–⌥5 when Settings → General →
+//! Keyboard says Option (`[keys] pages`): `install` reads it, `set_page_keys` swaps the items.
 //!
 //! Same pattern as Uzumaki's `ui/menu_bar.rs` and `menu_bar_mac.rs`, smaller: Kotora's items
 //! never change, so they are set once at start (`App::menu_item`) instead of synced each frame.
@@ -17,6 +18,7 @@
 use std::cell::Cell;
 
 use kotora_core::Status;
+use kotora_core::config::PageKeys;
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::{NSDictionary, NSString};
@@ -81,19 +83,55 @@ fn shortcut(chord: &str) -> Option<Shortcut> {
     Shortcut::parse_on(chord, KeyPlatform::Mac).ok()
 }
 
-/// Adds the items to the app (before `run`).
+/// The item's chord, with the list-page keys the user chose: "mod+1" to "mod+5" are
+/// "alt+1" to "alt+5" with Option.
+fn chord_for(e: &Entry, keys: PageKeys) -> Option<String> {
+    let c = e.chord?;
+    match c.strip_prefix("mod+").and_then(|d| d.parse::<u8>().ok()).filter(|d| (1..=5).contains(d)) {
+        Some(d) => Some(keys.chord(char::from(b'0' + d))),
+        None => Some(c.to_string()),
+    }
+}
+
+/// Every item, with `keys` for the list pages.
+fn items(keys: PageKeys) -> Vec<MenuItem<State>> {
+    ENTRIES
+        .iter()
+        .map(|e| {
+            let mut m = if e.title == "-" { MenuItem::separator() } else { MenuItem::new(e.title, e.action).id(e.id).keys_first() };
+            if let Some(menu) = e.menu {
+                m = m.menu(menu);
+            }
+            if let Some(sc) = chord_for(e, keys).as_deref().and_then(shortcut) {
+                m = m.key_equivalent(sc);
+            }
+            m
+        })
+        .collect()
+}
+
+/// Adds the items to the app (before `run`), with the list-page keys from `config.toml`
+/// (the default headless).
 pub fn install(mut app: App<State>) -> App<State> {
-    for e in ENTRIES {
-        let mut m = if e.title == "-" { MenuItem::separator() } else { MenuItem::new(e.title, e.action).id(e.id).keys_first() };
-        if let Some(menu) = e.menu {
-            m = m.menu(menu);
-        }
-        if let Some(sc) = e.chord.and_then(shortcut) {
-            m = m.key_equivalent(sc);
-        }
+    let keys = if rune::is_headless() {
+        PageKeys::default()
+    } else {
+        kotora_core::config::Config::load(&kotora_core::paths::config_file()).map(|c| c.keys.pages).unwrap_or_default()
+    };
+    for m in items(keys) {
         app = app.menu_item(m);
     }
     app
+}
+
+/// Settings changed the list-page keys: the Go menu shows (and takes) the new ones.
+pub fn set_page_keys(h: Option<&rune::AppHandle<State>>, keys: PageKeys) {
+    let Some(h) = h else { return };
+    if let Err(e) = h.set_menu(items(keys)) {
+        eprintln!("kotora: can't update the menu bar: {e:?}");
+    }
+    // Rune puts the items back; the app menu gets tidied again.
+    TIDY_DONE.set(false);
 }
 
 thread_local! {
@@ -207,6 +245,17 @@ mod tests {
         }
         let settings = ENTRIES.iter().find(|e| e.id == "app.settings").unwrap();
         assert_eq!(shortcut(settings.chord.unwrap()).unwrap(), "cmd+comma".parse::<Shortcut>().unwrap());
+    }
+
+    #[test]
+    fn the_page_items_follow_the_chosen_keys() {
+        let chords = |keys| ENTRIES.iter().filter_map(|e| chord_for(e, keys)).collect::<Vec<_>>();
+        assert_eq!(chords(PageKeys::Primary), ["mod+comma", "mod+k", "mod+f", "mod+1", "mod+2", "mod+3", "mod+4", "mod+5"]);
+        assert_eq!(chords(PageKeys::Alt), ["mod+comma", "mod+k", "mod+f", "alt+1", "alt+2", "alt+3", "alt+4", "alt+5"]);
+        for c in chords(PageKeys::Alt) {
+            assert!(shortcut(&c).is_some(), "{c} parses");
+        }
+        assert_eq!(items(PageKeys::Alt).len(), ENTRIES.len());
     }
 
     #[test]

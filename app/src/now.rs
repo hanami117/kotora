@@ -155,12 +155,14 @@ pub struct Prefs {
     pub background: bool,
     /// Settings → About Kotora → Check for updates (`[app] check_updates`).
     pub check_updates: bool,
+    /// Settings → General → Keyboard: the modifier with 1 to 5 for the list pages (`[keys] pages`).
+    pub page_keys: kotora_core::config::PageKeys,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
     }
 }
 
@@ -184,6 +186,7 @@ impl Prefs {
             login_busy: false,
             background: c.startup.background,
             check_updates: c.app.check_updates,
+            page_keys: c.keys.pages,
         }
     }
 }
