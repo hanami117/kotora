@@ -10,6 +10,12 @@
 //!
 //! Headless runs never download: the app has no handle there. The `list-covers` scene asks for
 //! made-up covers instead (`Covers::fake`).
+//!
+//! Blurred backdrops (the sidebar card, Now Playing, the details banner, Home) come from the same
+//! file: [`Covers::blurred`] queues one job that squashes the whole cover into [`BLUR_W`] x
+//! [`BLUR_H`] pixels, blurs and saturates it once on the worker, and keeps that tiny image like any
+//! cover. The GPU only stretches it; nothing blurs per frame. It is the same for both themes: the
+//! view lays the palette's scrim over it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -28,8 +34,12 @@ const WORKERS: usize = 4;
 /// more each way): 32 MB keeps them all, so scrolling the grid never drops a cover it still draws.
 const MEMORY_BUDGET: usize = 32 << 20;
 
-/// A cover in memory: the media id and its size in pixels.
-type Key = (u32, u32, u32);
+/// A cover in memory: the media id, its size in pixels, and whether it is the blurred backdrop.
+type Key = (u32, u32, u32, bool);
+
+/// The blurred backdrop's pixels: the whole cover squashed to 2:1. Wider areas crop its middle.
+pub const BLUR_W: u32 = 96;
+pub const BLUR_H: u32 = 48;
 
 struct Job {
     key: Key,
@@ -111,9 +121,19 @@ impl Covers {
     /// Rune's decoder; the tile drawn under it shows until then). Otherwise queues it once and
     /// returns None. Cheap: callable from the view.
     pub fn get(&self, id: u32, url: Option<&str>, w: f32, h: f32) -> Option<Image> {
-        let url = url.filter(|u| !u.is_empty())?;
         let scale = self.scale.get();
-        let key = (id, (w * scale).ceil() as u32, (h * scale).ceil() as u32);
+        self.get_key((id, (w * scale).ceil() as u32, (h * scale).ceil() as u32, false), url)
+    }
+
+    /// The blurred backdrop of media `id` ([`BLUR_W`] x [`BLUR_H`] pixels whatever the scale),
+    /// as [`Covers::get`]: from memory, else queued once.
+    pub fn blurred(&self, id: u32, url: Option<&str>) -> Option<Image> {
+        self.get_key((id, BLUR_W, BLUR_H, true), url)
+    }
+
+    fn get_key(&self, key: Key, url: Option<&str>) -> Option<Image> {
+        let url = url.filter(|u| !u.is_empty())?;
+        let id = key.0;
         let mut inner = self.inner.borrow_mut();
         inner.tick += 1;
         let tick = inner.tick;
@@ -123,7 +143,8 @@ impl Covers {
         }
         let cache = self.cache.as_ref()?;
         if self.fake {
-            let img = cache.rgba(key.1, key.2, fake_pixels(id, key.1, key.2));
+            let px = if key.3 { blur(&fake_pixels(id, 64, 96), 64, 96) } else { fake_pixels(id, key.1, key.2) };
+            let img = cache.rgba(key.1, key.2, px);
             // Headless snaps are taken at once: wait for the tiny decode, as for the logo.
             let _ = img.wait();
             put(&mut inner, key, img.clone());
@@ -226,7 +247,9 @@ fn spawn_worker(queue: Arc<Mutex<Queue>>, handle: Handle, online: bool, prune: b
                     }
                 };
                 let (key, w, h) = (job.key, job.key.1, job.key.2);
-                match covers::fetch(&agent, &dir, &job.url, online).and_then(|b| decode(&b, w, h)) {
+                let blurred = key.3;
+                let got = covers::fetch(&agent, &dir, &job.url, online).and_then(|b| if blurred { decode_blurred(&b) } else { decode(&b, w, h) });
+                match got {
                     Ok(rgba) => handle.update_if(move |s: &mut State, _| s.covers.loaded(key, w, h, rgba)),
                     Err(_) => handle.update_if(move |s: &mut State, _| {
                         s.covers.failed(key);
@@ -246,6 +269,75 @@ fn spawn_worker(queue: Arc<Mutex<Queue>>, handle: Handle, online: bool, prune: b
 fn decode(bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>, String> {
     let img = if is_webp(bytes) { decode_webp(bytes)? } else { image::load_from_memory(bytes).map_err(|e| e.to_string())? };
     Ok(img.resize_to_fill(w, h, image::imageops::FilterType::Triangle).to_rgba8().into_raw())
+}
+
+/// Decodes a cover into its blurred backdrop: the whole cover squashed to [`BLUR_W`] x
+/// [`BLUR_H`], then [`blur`]. Runs once per cover on a worker thread.
+fn decode_blurred(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = if is_webp(bytes) { decode_webp(bytes)? } else { image::load_from_memory(bytes).map_err(|e| e.to_string())? };
+    // A small cover first (box filter: cheap, and the blur hides it).
+    let small = img.resize_exact(64, 96, image::imageops::FilterType::Triangle).to_rgba8().into_raw();
+    Ok(blur(&small, 64, 96))
+}
+
+/// A 64 x 96 RGBA cover squashed to [`BLUR_W`] x [`BLUR_H`], blurred (three box passes, close
+/// to a Gaussian), its colours lifted a little (a blur greys them) and its lightness kept in a
+/// middle band, so the palette's scrim over it gives text the same contrast on any cover.
+fn blur(src: &[u8], sw: u32, sh: u32) -> Vec<u8> {
+    let (w, h) = (BLUR_W as usize, BLUR_H as usize);
+    let (sw, sh) = (sw as usize, sh as usize);
+    // Area average into the target grid (the squash).
+    let mut buf = vec![[0.0f32; 3]; w * h];
+    for (oy, line) in buf.chunks_mut(w).enumerate() {
+        let (y0, y1) = (oy * sh / h, ((oy + 1) * sh / h).max(oy * sh / h + 1));
+        for (ox, px) in line.iter_mut().enumerate() {
+            let (x0, x1) = (ox * sw / w, ((ox + 1) * sw / w).max(ox * sw / w + 1));
+            let mut acc = [0.0f32; 3];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = (y * sw + x) * 4;
+                    for c in 0..3 {
+                        acc[c] += f32::from(src[i + c]);
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as f32;
+            *px = [acc[0] / n, acc[1] / n, acc[2] / n];
+        }
+    }
+    for _ in 0..3 {
+        buf = box_pass(&buf, w, h, 5, true);
+        buf = box_pass(&buf, w, h, 5, false);
+    }
+    let mut out = Vec::with_capacity(w * h * 4);
+    for p in buf {
+        let l = 0.3 * p[0] + 0.55 * p[1] + 0.15 * p[2];
+        // Lightness into 60..190 of 255; chroma lifted by half.
+        let target = 60.0 + l * (130.0 / 255.0);
+        for c in p {
+            out.push((target + (c - l) * 1.5).clamp(0.0, 255.0) as u8);
+        }
+        out.push(255);
+    }
+    out
+}
+
+/// One box-blur pass of radius `r` along x (`horizontal`) or y, edges clamped.
+fn box_pass(src: &[[f32; 3]], w: usize, h: usize, r: isize, horizontal: bool) -> Vec<[f32; 3]> {
+    let n = (2 * r + 1) as f32;
+    let mut out = vec![[0.0f32; 3]; src.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let mut a = [0.0f32; 3];
+            for k in -r..=r {
+                let (sx, sy) = if horizontal { ((x as isize + k).clamp(0, w as isize - 1) as usize, y) } else { (x, (y as isize + k).clamp(0, h as isize - 1) as usize) };
+                let p = src[sy * w + sx];
+                a = [a[0] + p[0], a[1] + p[1], a[2] + p[2]];
+            }
+            out[y * w + x] = [a[0] / n, a[1] / n, a[2] / n];
+        }
+    }
+    out
 }
 
 /// A RIFF container holding WebP (MAL serves some covers as `.webp`).
@@ -343,6 +435,35 @@ mod tests {
         c.get(3, url, 34.0, 48.0);
         c.forget(u32::MAX);
         assert_eq!(c.usage(), (1, 34 * 48 * 4 * 4 / 3), "only the forgotten one goes");
+    }
+
+    /// The backdrop is one small image per cover, the same at any scale, smooth and mid-light.
+    #[test]
+    fn blurred_backdrop_is_small_smooth_and_kept_once() {
+        let mut c = Covers::default();
+        c.attach(ImageCache::new(Arc::new(|| {})));
+        c.fake();
+        c.set_scale(2.0);
+        let url = Some("https://cdn.example.invalid/x.jpg");
+        let img = c.blurred(7, url).unwrap();
+        assert_eq!(img.size(), Some([BLUR_W, BLUR_H]));
+        c.set_scale(1.0);
+        c.blurred(7, url);
+        assert_eq!(c.usage().0, 1, "one backdrop whatever the scale");
+        c.get(7, url, 34.0, 48.0);
+        assert_eq!(c.usage().0, 2, "the cover and its backdrop are apart");
+        // A hard black and white edge comes out as a gentle ramp in the middle band.
+        let mut src = vec![0u8; 64 * 96 * 4];
+        for (i, px) in src.chunks_mut(4).enumerate() {
+            let v = if i % 64 < 32 { 0 } else { 255 };
+            px.copy_from_slice(&[v, v, v, 255]);
+        }
+        let out = blur(&src, 64, 96);
+        assert_eq!(out.len(), (BLUR_W * BLUR_H * 4) as usize);
+        let row: Vec<u8> = out.chunks(4).take(BLUR_W as usize).map(|p| p[0]).collect();
+        assert!(row.iter().all(|v| (60..=190).contains(v)), "{row:?}");
+        assert!(row.windows(2).all(|w| w[0].abs_diff(w[1]) <= 12), "no hard edge left: {row:?}");
+        assert!(decode_blurred(b"not an image").is_err());
     }
 
     #[test]

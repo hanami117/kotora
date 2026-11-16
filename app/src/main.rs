@@ -17,6 +17,7 @@ mod detect;
 mod details;
 mod icons;
 mod library;
+mod look;
 #[cfg(target_os = "macos")]
 mod iina;
 #[cfg(target_os = "macos")]

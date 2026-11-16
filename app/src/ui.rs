@@ -36,7 +36,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(PAL.bg)
-        .child(sidebar(s, chrome_top))
+        .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide, cx.layout_size("main").map_or(1056.0, |[w, _]| w)))
 }
@@ -108,7 +108,8 @@ pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
 }
 
 /// `chrome_top`: the traffic-light band's height (macOS), or 0 where the system draws the frame.
-fn sidebar(s: &State, chrome_top: f32) -> El {
+/// `height`: the window's, for the playing card's size.
+fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     let side = col().key("sidebar").w(theme::SIDEBAR_W).h_full().fill(PAL.side).px(10.0).pb(12.0);
     let side = if chrome_top > 0.0 {
         // The band drags the window like a title bar; the brand sits just under it.
@@ -121,14 +122,17 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         side = side.child(account(s, name, service));
     }
     let lit = s.lit_page();
+    // The pages scroll on their own when the window is too short for them; the playing card
+    // and the sync line stay at the bottom.
+    let mut nav = col().w_full();
     if s.has_list() {
         let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
-        side = side.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
+        nav = nav.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
     }
-    side = side.child(nav_heading("My list"));
+    nav = nav.child(nav_heading("My list"));
     for st in Status::ALL {
         let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
-        side = side.child(nav_item(
+        nav = nav.child(nav_item(
             st.slug(),
             NavMark::Dot(PAL.status(st)),
             st.label(),
@@ -137,8 +141,8 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             Page::List(st),
         ));
     }
-    side = side.child(nav_heading("Kotora").mt(12.0));
-    side = side
+    nav = nav.child(nav_heading("Kotora").mt(12.0));
+    nav = nav
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
         .child(nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing))
         .child(nav_item(
@@ -149,42 +153,10 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             lit == Page::Queue,
             Page::Queue,
         ))
-        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings))
-        .child(spacer());
+        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
+    side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
     if let Some(now) = &s.now {
-        let (_, title) = now_title(s, now);
-        let mut bits = Vec::new();
-        if let Some(ep) = now.episode() {
-            bits.push(format!("Ep {ep}"));
-        }
-        bits.push(now.player.clone());
-        if let Some(f) = now.fraction() {
-            bits.push(format!("{:.0}%", f * 100.0));
-        }
-        if !now.playing {
-            bits.push("paused".into());
-        }
-        side = side.child(
-            row()
-                .key("np-mini")
-                .padding(8.0)
-                .gap(8.0)
-                .center_y()
-                .radius(theme::R_MD)
-                .fill(PAL.surface)
-                .border(1.0, PAL.border)
-                .hover(PAL.hover())
-                .on_press(|s: &mut State| s.go(Page::NowPlaying))
-                .child(now_cover(s, now, 26.0, 38.0, 9.0))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(title).font(rune::TextStyle::new(12.0, 500.0)).color(PAL.text).truncate())
-                        .child(text(bits.join(" \u{b7} ")).font(theme::SMALL).color(PAL.faint).truncate()),
-                ),
-        );
+        side = side.child(now_mini(s, now, height >= 760.0));
     }
     let (dot, line) = if s.syncing {
         (PAL.faint, "Syncing…".to_string())
@@ -209,6 +181,66 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             .child(el().size(6.0, 6.0).radius(3.0).fill(dot))
             .child(text(line).font(theme::SMALL).color(PAL.faint)),
     )
+}
+
+/// The sidebar's now-playing card: the poster with the text beside it (player, two lines of
+/// title, episode, how far in), the cover's blurred tint behind. Opens Now Playing. Short
+/// windows (`tall` false) get a lower card: a smaller poster and one line of title.
+fn now_mini(s: &State, now: &Now, tall: bool) -> El {
+    use crate::look;
+    let (id, title) = now_title(s, now);
+    let url = now_cover_url(s, now);
+    let entry = now.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let episode = match (now.episode(), entry.and_then(|e| e.episodes)) {
+        (Some(ep), Some(total)) => format!("Episode {ep} of {total}"),
+        (Some(ep), None) => format!("Episode {ep}"),
+        _ => String::new(),
+    };
+    let player = if now.playing { now.player.clone() } else { format!("{} \u{b7} paused", now.player) };
+    let tail = match now.fraction() {
+        Some(f) => row()
+            .key("np-mini/progress")
+            .gap(6.0)
+            .center_y()
+            .child(col().grow(1.0).child(look::bar(f, PAL.accent, 4.0, PAL.text.alpha(0.16))))
+            .child(text(format!("{:.0}%", f * 100.0)).font(theme::LABEL_NUM).color(PAL.dim)),
+        None => text(if now.reached { "Counts as watched" } else { "Open in the player" }).font(theme::SMALL).color(PAL.dim),
+    };
+    el().key("np-mini")
+        .role("button")
+        .label(format!("Now playing: {title}"))
+        .w_full()
+        .h(if tall { 124.0 } else { 76.0 })
+        .radius(theme::R_LG)
+        .clip_rounded(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.go(Page::NowPlaying);
+        })
+        .child(look::backdrop(s, id, url, look::card_scrim()))
+        .child(
+            row()
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .padding(if tall { 10.0 } else { 8.0 })
+                .gap(10.0)
+                .child(if tall { look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM) } else { look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS) }.shadow(4.0, 10.0, Color::BLACK.alpha(0.35)))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(3.0)
+                        .child(row().gap(6.0).center_y().child(look::live_dot(now.playing, 6.0)).child(text(player.to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()))
+                        .child(text(title).font(TextStyle::new(13.0, 600.0)).color(PAL.text).wrap().max_lines(if tall { 2 } else { 1 }))
+                        .child(if tall { text(episode).font(theme::SMALL).color(PAL.dim).truncate() } else { el() })
+                        .child(spacer())
+                        .child(tail),
+                ),
+        )
 }
 
 /// "just now", "2 min ago", "3 h ago", "2 days ago".
@@ -1010,7 +1042,7 @@ pub(crate) fn tag_tinted(label: &str, fg: Color, bg: Color) -> El {
 }
 
 /// Cover pairs from the mockup; an id picks one (design-spec §3: covers while loading or missing).
-const TILES: [(&str, &str); 10] = [
+pub(crate) const TILES: [(&str, &str); 10] = [
     ("#e0794a", "#5b2a6e"),
     ("#3b7dd8", "#1b2b5c"),
     ("#d9b44a", "#7a3b1e"),
