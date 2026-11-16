@@ -6,6 +6,7 @@
 //! search, seasons), the Airing timetable (`airing.rs`), the update check (`update.rs`). Nothing here touches a UI or starts a thread of its own.
 
 pub mod airing;
+pub mod anilist;
 pub mod airnotes;
 pub mod config;
 pub mod covers;

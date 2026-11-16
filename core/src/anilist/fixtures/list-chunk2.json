@@ -1,0 +1,12 @@
+{"data":{"MediaListCollection":{"hasNextChunk":false,"lists":[
+ {"entries":[
+  {"id":9003,"mediaId":170003,"status":"PLANNING","progress":0,"repeat":0,"score":0,"updatedAt":1762000000,
+   "media":{"id":170003,"idMal":null,"title":{"romaji":"Hoshizora Tram","english":"Starlit Tram","native":null},"synonyms":[],"format":"MOVIE","episodes":1,"status":"NOT_YET_RELEASED","season":null,"seasonYear":null,"startDate":{"year":2027,"month":null,"day":null},"endDate":{},"averageScore":null,"popularity":95,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/anime/cover/small/bx170003.jpg"},"nextAiringEpisode":null}},
+  {"id":9004,"mediaId":170004,"status":"PAUSED","progress":2,"repeat":0,"score":42,"updatedAt":1761000000,
+   "media":{"id":170004,"title":{"romaji":"Paper Moon Diner"},"format":"ONA","episodes":null,"status":"HIATUS","coverImage":{}}},
+  {"id":9005,"mediaId":170005,"status":"DROPPED","progress":1,"repeat":0,"score":6,"updatedAt":1760000000,
+   "media":{"id":170005,"title":{"romaji":"Tin Garden"},"format":"OVA","episodes":2,"status":"CANCELLED","coverImage":{}}},
+  {"id":9006,"mediaId":170006,"status":"COMPLETED","progress":12,"repeat":2,"score":100,"updatedAt":1759000000,
+   "media":{"id":170006,"title":{"romaji":"Kumo no Ue"},"format":"TV","episodes":12,"status":"FINISHED","coverImage":{}}}
+ ]}
+]}}}

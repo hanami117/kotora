@@ -21,6 +21,11 @@ impl Limiter {
         Limiter::new(20, Duration::from_secs(1))
     }
 
+    /// AniList's budget: it allows 90 a minute, 30 when degraded; Kotora stays under both.
+    pub fn anilist() -> Self {
+        Limiter::new(25, Duration::from_secs(1))
+    }
+
     /// How long to wait from `now` before sending. Records the request as sent at that time,
     /// so call it once per request and then sleep that long.
     pub fn acquire(&mut self, now: Instant) -> Duration {
