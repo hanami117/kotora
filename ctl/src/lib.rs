@@ -13,13 +13,24 @@
 //! doesn't know is answered with "bad request".
 
 use std::io::{self, BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(windows)]
+mod pipe;
+
+/// One connection: a Unix stream socket, or a named pipe on Windows.
+#[cfg(unix)]
+type Stream = UnixStream;
+#[cfg(windows)]
+type Stream = std::fs::File;
 
 /// The build number: a whole number that goes up with every package built from the same version.
 /// Its one source is the `BUILD` file at the top of the repo; the packaging scripts read it too.
@@ -90,16 +101,20 @@ pub fn dev_suffix() -> String {
 
 // --------------------------------------------------------------------------------------- paths
 
-/// `$KOTORA_CTL_SOCKET`, else `<runtime dir>/kotora.sock` (see [`runtime_dir`]).
+/// `$KOTORA_CTL_SOCKET`, else `<runtime dir>/kotora.sock` (see [`runtime_dir`]). On Windows it is
+/// a named pipe: `\\.\pipe\io.github.hanami117.kotora-<user SID>`.
 pub fn socket_path() -> PathBuf {
     if let Some(p) = std::env::var_os("KOTORA_CTL_SOCKET").filter(|v| !v.is_empty()) {
         return PathBuf::from(p);
     }
+    #[cfg(windows)]
+    return pipe::default_path();
+    #[cfg(unix)]
     runtime_dir().join("kotora.sock")
 }
 
 /// Linux: `$XDG_RUNTIME_DIR`, else `/tmp/kotora-<uid>`.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|v| !v.is_empty())
@@ -129,6 +144,7 @@ fn darwin_user_temp_dir() -> Option<PathBuf> {
     Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf)))
 }
 
+#[cfg(unix)]
 fn uid() -> u32 {
     // SAFETY: getuid has no preconditions and can't fail.
     unsafe { libc::getuid() }
@@ -357,8 +373,8 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A connection to the running app.
 pub struct Client {
-    writer: UnixStream,
-    reader: BufReader<UnixStream>,
+    writer: Stream,
+    reader: BufReader<Stream>,
 }
 
 impl Client {
@@ -368,8 +384,15 @@ impl Client {
     }
 
     pub fn connect_to(path: &Path) -> io::Result<Self> {
-        let stream = UnixStream::connect(path)?;
-        stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
+        #[cfg(unix)]
+        let stream = {
+            let stream = UnixStream::connect(path)?;
+            stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
+            stream
+        };
+        // A blocking pipe handle has no read timeout; a hung app holds `kot` until Ctrl+C.
+        #[cfg(windows)]
+        let stream = pipe::connect(path)?;
         let reader = BufReader::new(stream.try_clone()?);
         Ok(Self { writer: stream, reader })
     }
@@ -393,6 +416,8 @@ impl Client {
 /// process).
 pub struct Server {
     path: PathBuf,
+    #[cfg(windows)]
+    pipe: pipe::Listener,
 }
 
 impl Server {
@@ -403,7 +428,10 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.path);
+        #[cfg(windows)]
+        self.pipe.stop();
     }
 }
 
@@ -411,6 +439,7 @@ impl Drop for Server {
 /// thread (it may block). A stale socket file from a crashed run is replaced; one that still
 /// answers means another app owns it (`AddrInUse`). The accept thread sleeps in `accept`: no
 /// timers, no polling.
+#[cfg(unix)]
 pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'static) -> io::Result<Server> {
     if let Some(dir) = path.parent()
         && !dir.exists()
@@ -437,7 +466,15 @@ pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'st
     Ok(Server { path: path.to_path_buf() })
 }
 
-fn connection(stream: UnixStream, handler: &(dyn Fn(Request) -> Reply + Send + Sync)) {
+/// Windows: listens on the named pipe for `path` (see `pipe.rs`). The pipe's first instance is
+/// exclusive, so a second app gets `AddrInUse`; there is no stale file to clean up.
+#[cfg(windows)]
+pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'static) -> io::Result<Server> {
+    let pipe = pipe::listen(path, Arc::new(handler))?;
+    Ok(Server { path: path.to_path_buf(), pipe })
+}
+
+fn connection(stream: Stream, handler: &(dyn Fn(Request) -> Reply + Send + Sync)) {
     let Ok(mut writer) = stream.try_clone() else { return };
     for line in BufReader::new(stream).lines() {
         let Ok(line) = line else { return };

@@ -1,5 +1,11 @@
 use super::*;
 
+#[cfg(windows)]
+fn temp_socket(name: &str) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\kotora-ctl-test-{}-{name}", std::process::id()))
+}
+
+#[cfg(unix)]
 fn temp_socket(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kotora-ctl-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -102,6 +108,7 @@ fn serve_answers_in_order_and_cleans_up() {
         _ => Reply::Error { message: "nope".into(), anyway: false },
     })
     .unwrap();
+    #[cfg(unix)]
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     let mut c = Client::connect_to(&path).unwrap();
     assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
@@ -109,6 +116,7 @@ fn serve_answers_in_order_and_cleans_up() {
     // A second app on the same path is refused while the first answers: single instance.
     assert_eq!(serve(&path, |_| Reply::Error { message: String::new(), anyway: false }).err().map(|e| e.kind()), Some(io::ErrorKind::AddrInUse));
     drop(server);
+    #[cfg(unix)]
     assert!(!path.exists());
     assert!(Client::connect_to(&path).is_err(), "nobody answers after the app ends");
 }
@@ -116,13 +124,17 @@ fn serve_answers_in_order_and_cleans_up() {
 #[test]
 fn stale_socket_is_replaced_and_bad_lines_get_an_error() {
     let path = temp_socket("stale");
+    #[cfg(unix)]
     {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let _dead = UnixListener::bind(&path).unwrap(); // bound, then dropped: nobody answers
+        assert!(path.exists());
     }
-    assert!(path.exists());
     let _server = serve(&path, |_| Reply::Status(Status::default())).unwrap();
+    #[cfg(unix)]
     let mut s = UnixStream::connect(&path).unwrap();
+    #[cfg(windows)]
+    let mut s = pipe::connect(&path).unwrap();
     s.write_all(b"not json\n").unwrap();
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).unwrap();
@@ -136,7 +148,10 @@ fn the_socket_path_follows_the_override() {
     let p = socket_path();
     match std::env::var_os("KOTORA_CTL_SOCKET").filter(|v| !v.is_empty()) {
         Some(v) => assert_eq!(p, PathBuf::from(v)),
+        #[cfg(unix)]
         None => assert_eq!(p, runtime_dir().join("kotora.sock")),
+        #[cfg(windows)]
+        None => assert!(p.to_string_lossy().starts_with(r"\\.\pipe\io.github.hanami117.kotora-S-1-"), "{}", p.display()),
     }
 }
 
@@ -225,4 +240,33 @@ fn an_old_app_refuses_new_requests_plainly() {
     assert!(serde_json::from_str::<OldRequest>(&line).is_err());
     assert!(matches!(serde_json::from_str::<OldRequest>(r#"{"cmd":"quit"}"#), Ok(OldRequest::Quit)));
     let _ = (OldRequest::Status, OldRequest::Show);
+}
+
+/// A `KOTORA_CTL_SOCKET` written like a file path still names a pipe on Windows.
+#[test]
+#[cfg(windows)]
+fn any_path_becomes_a_pipe_name() {
+    assert_eq!(pipe::pipe_name(Path::new(r"\\.\pipe\x")), r"\\.\pipe\x");
+    assert_eq!(pipe::pipe_name(Path::new(r"C:\Temp\kot.sock")), r"\\.\pipe\C--Temp-kot.sock");
+}
+
+/// Several clients at once, each with its own pipe instance.
+#[test]
+fn clients_in_parallel_all_get_answers() {
+    let path = temp_socket("parallel");
+    let _server = serve(&path, |_| Reply::Status(sample())).unwrap();
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut c = Client::connect_to(&path).unwrap();
+                for _ in 0..20 {
+                    assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
 }
