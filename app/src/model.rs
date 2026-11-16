@@ -25,6 +25,8 @@ pub type Handle = AppHandle<State>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// Shelves: continue watching, airing this week, plan to watch (`home.rs`).
+    Home,
     List(Status),
     NowPlaying,
     Queue,
@@ -430,6 +432,8 @@ pub struct State {
     pub airnotes: crate::airnotes::AirNotes,
     /// The update check and its banner (`update.rs`).
     pub update: crate::update::Updates,
+    /// The list's grid views: the keyboard selection (`grid.rs`).
+    pub grid: crate::grid::Grid,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -487,6 +491,7 @@ impl State {
             library: Default::default(),
             airnotes: Default::default(),
             update: Default::default(),
+            grid: Default::default(),
         };
         s.queue_changed();
         s.refresh();

@@ -13,12 +13,12 @@ use kotora_core::service::{AnimeHit, Details, ListService};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
 use kotora_core::{ListItem, Status, paths};
-use rune::{El, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
+use rune::{Color, El, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
 
 use crate::icons;
 use crate::model::{Entry, Page, State, kind_label};
 use crate::theme::{self, PAL};
-use crate::ui::{action, button, card, cell, cover, ghost, kv, plus_button, step_button, tag, tag_tinted};
+use crate::ui::{action, button, card, cell, ghost, kv, plus_button, step_button, tag, tag_tinted};
 
 /// Saved information younger than this is shown without asking MyAnimeList again.
 pub const FRESH_SECS: i64 = 3 * 86_400;
@@ -271,8 +271,9 @@ fn source_label(s: &str) -> String {
 
 // -------------------------------------------------------------------------------------- view
 
-fn link_button(key: &str, label: &str, url: String) -> El {
-    row()
+/// `glass`: on the banner, see-through over the cover's tint.
+fn link_button(key: &str, label: &str, url: String, glass: bool) -> El {
+    let r = row()
         .key(key.to_string())
         .role("link")
         .label(label.to_string())
@@ -281,19 +282,17 @@ fn link_button(key: &str, label: &str, url: String) -> El {
         .px(12.0)
         .gap(8.0)
         .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.raised)
-        .border(1.0, PAL.border_strong)
         .hover(PAL.hover())
         .press(PAL.press())
         .cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut State| crate::online::open_url(s, url.clone()))
         .child(text(label.to_string()).font(theme::LABEL_BTN).color(PAL.text))
-        .child(icon(&icons::EXTERNAL, 14.0).color(PAL.dim))
+        .child(icon(&icons::EXTERNAL, 14.0).color(PAL.dim));
+    if glass { r.radius(15.0).fill(PAL.bg.alpha(0.6)).border(1.0, crate::look::glass_border()) } else { r.radius(theme::R_SM).fill(PAL.raised).border(1.0, PAL.border_strong) }
 }
 
-fn back_button() -> El {
-    row()
+fn back_button(glass: bool) -> El {
+    let r = row()
         .key("det/back")
         .role("button")
         .label("Back")
@@ -303,8 +302,6 @@ fn back_button() -> El {
         .pr(12.0)
         .gap(4.0)
         .center_y()
-        .radius(theme::R_SM)
-        .border(1.0, PAL.border_strong)
         .hover(PAL.hover())
         .press(PAL.press())
         .on_press_tx(|s: &mut State, tx: &mut Tx| {
@@ -312,7 +309,8 @@ fn back_button() -> El {
             s.details_back();
         })
         .child(icon(&BACK_ICON, 16.0).color(PAL.dim))
-        .child(text("Back").font(theme::LABEL_BTN).color(PAL.text))
+        .child(text("Back").font(theme::LABEL_BTN).color(PAL.text));
+    if glass { r.radius(15.0).fill(PAL.bg.alpha(0.6)).border(1.0, crate::look::glass_border()) } else { r.radius(theme::R_SM).border(1.0, PAL.border_strong) }
 }
 
 pub static BACK_ICON: rune::Icon = rune::Icon {
@@ -321,82 +319,106 @@ pub static BACK_ICON: rune::Icon = rune::Icon {
     body: r#"<path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 
-/// A big number with its caption ("8.12" / "MAL score").
-fn stat(key: &str, big: String, small: &str) -> El {
-    col()
+/// A number chip on the banner ("#212 ranked"); the score one has a star.
+fn stat(key: &str, big: String, small: &str, star: bool) -> El {
+    let mut c = row()
         .key(key.to_string())
-        .gap(2.0)
-        .px(14.0)
-        .py(8.0)
-        .radius(theme::R_MD)
-        .fill(PAL.field)
-        .border(1.0, PAL.border)
-        .child(text(big).font(TextStyle::new(18.0, 600.0).features("'tnum' 1")).color(PAL.text))
-        .child(text(small.to_string()).font(theme::LABEL).color(PAL.faint))
-}
-
-fn big_cover(s: &State, d: &Detail) -> El {
-    let (w, h) = (200.0, 284.0);
-    let url = d.info.as_ref().and_then(|i| i.cover_url.clone()).or_else(|| d.stub.cover_url.clone());
-    let tile = cover(d.id(), &d.stub.title, w, h, 40.0).radius(theme::R_LG);
-    match s.covers.get(d.id(), url.as_deref(), w, h) {
-        Some(img) => tile.child(el().key("det-cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_LG).pixels(img.pixels())),
-        None => tile,
+        .h(30.0)
+        .px(10.0)
+        .gap(6.0)
+        .center_y()
+        .radius(15.0)
+        .fill(PAL.bg.alpha(0.55))
+        .border(1.0, crate::look::glass_border());
+    if star {
+        c = c.fill(PAL.st_onhold.alpha(0.16)).border(1.0, PAL.st_onhold.alpha(0.4)).child(icon(&icons::STAR, 14.0).color(PAL.st_onhold));
     }
+    c.child(text(big).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.text)).child(text(small.to_string()).font(theme::LABEL).color(PAL.dim))
 }
 
-/// Left: what MyAnimeList says about the anime.
-fn info_column(s: &State, d: &Detail) -> El {
-    let info = d.info.as_ref();
+/// The cover's URL: the information's, else the row's it was opened from.
+fn cover_url(d: &Detail) -> Option<&str> {
+    d.info.as_ref().and_then(|i| i.cover_url.as_deref()).or(d.stub.cover_url.as_deref())
+}
+
+/// The title shown (Settings → Titles).
+fn shown_title<'a>(s: &State, d: &'a Detail) -> &'a str {
     let lang = s.prefs.titles;
-    let title = info.map_or(d.stub.title.as_str(), |i| lang.pick(&i.title, i.title_en.as_deref(), i.title_ja.as_deref()));
-    let mut head = col().grow(1.0).min_w(0.0).gap(6.0).child(text(title.to_string()).key("det-title").font(TextStyle::new(24.0, 600.0)).color(PAL.text).wrap());
-    if let Some(i) = info {
-        // The other titles under the one shown: main (romaji), English, Japanese.
+    d.info.as_ref().map_or(d.stub.title.as_str(), |i| lang.pick(&i.title, i.title_en.as_deref(), i.title_ja.as_deref()))
+}
+
+fn big_cover(s: &State, d: &Detail, w: f32, h: f32) -> El {
+    crate::look::poster(s, d.id(), &d.stub.title, cover_url(d), w, h, theme::R_LG)
+        .key("det-cover")
+        .border(1.0, crate::look::glass_border())
+        .shadow(12.0, 32.0, Color::BLACK.alpha(if PAL.light { 0.22 } else { 0.55 }))
+}
+
+/// The other titles under the one shown (main, English, Japanese) and the synonyms.
+fn other_titles(s: &State, d: &Detail) -> El {
+    let title = shown_title(s, d);
+    let mut c = col().gap(3.0);
+    if let Some(i) = &d.info {
+        let mut line = row().flex_wrap().gap(10.0);
         for t in [Some(&i.title), i.title_en.as_ref(), i.title_ja.as_ref()].into_iter().flatten().filter(|t| t.as_str() != title) {
-            head = head.child(text(t.clone()).font(theme::BODY).color(PAL.dim).wrap());
+            line = line.child(text(t.clone()).font(TextStyle::new(14.0, 500.0)).color(PAL.dim).wrap());
         }
+        c = c.child(line);
         if !i.synonyms.is_empty() {
-            head = head.child(text(format!("Also: {}", i.synonyms.join(", "))).font(theme::LABEL).color(PAL.faint).wrap());
+            c = c.child(text(format!("Also: {}", i.synonyms.join(", "))).font(theme::LABEL).color(PAL.dim).wrap());
         }
     }
-    // Tags: type, episodes, airing, season.
+    c
+}
+
+/// Type, episodes, airing, season.
+fn tags(d: &Detail) -> El {
+    let info = d.info.as_ref();
     let format = info.map_or(d.stub.format.as_str(), |i| i.format.as_str());
     let episodes = info.and_then(|i| i.episodes).or(d.stub.episodes);
-    let mut tags = row().key("det-tags").flex_wrap().gap(6.0).pt(4.0);
+    let chip = PAL.bg.alpha(0.6);
+    let mut tags = row().key("det-tags").flex_wrap().gap(6.0);
     if !kind_label(format).is_empty() {
-        tags = tags.child(tag_tinted(kind_label(format), PAL.text, PAL.raised));
+        tags = tags.child(tag_tinted(kind_label(format), PAL.text, chip));
     }
-    tags = tags.child(tag_tinted(&episodes.map_or("? episodes".into(), |n| if n == 1 { "1 episode".into() } else { format!("{n} episodes") }), PAL.dim, PAL.raised));
+    tags = tags.child(tag_tinted(&episodes.map_or("? episodes".into(), |n| if n == 1 { "1 episode".into() } else { format!("{n} episodes") }), PAL.text, chip));
     if let Some(i) = info {
         match i.air_status.as_str() {
-            "currently_airing" => tags = tags.child(tag("Airing", PAL.airing, true)),
-            a if !air_label(a).is_empty() => tags = tags.child(tag_tinted(air_label(a), PAL.dim, PAL.raised)),
+            "currently_airing" => tags = tags.child(tag("Airing", PAL.airing, true).fill(chip)),
+            a if !air_label(a).is_empty() => tags = tags.child(tag_tinted(air_label(a), PAL.text, chip)),
             _ => {}
         }
         if let Some(se) = i.season_text() {
-            tags = tags.child(tag_tinted(&se, PAL.dim, PAL.raised));
+            tags = tags.child(tag_tinted(&se, PAL.text, chip));
         }
     }
-    head = head.child(tags);
-    if let Some(i) = info {
-        let mut stats = row().key("det-stats").flex_wrap().gap(8.0).pt(8.0);
-        stats = stats.child(stat("det/score", i.mean.map_or("\u{2013}".into(), |m| format!("{m:.2}")), "MAL score"));
-        if let Some(r) = i.rank {
-            stats = stats.child(stat("det/rank", format!("#{}", thousands(r)), "Ranked"));
-        }
-        if let Some(p) = i.popularity {
-            stats = stats.child(stat("det/popularity", format!("#{}", thousands(p)), "Popularity"));
-        }
-        if let Some(m) = i.members {
-            stats = stats.child(stat("det/members", thousands(m), "Members"));
-        }
-        head = head.child(stats);
+    tags
+}
+
+/// Score, rank, popularity, members (once the information is there).
+fn stats(d: &Detail) -> El {
+    let Some(i) = &d.info else { return el() };
+    let mut stats = row().key("det-stats").flex_wrap().gap(8.0);
+    stats = stats.child(stat("det/score", i.mean.map_or("\u{2013}".into(), |m| format!("{m:.2}")), "MAL", true));
+    if let Some(r) = i.rank {
+        stats = stats.child(stat("det/rank", format!("#{}", thousands(r)), "ranked", false));
     }
-    let top = row().key("det-main").gap(20.0).items_start().child(big_cover(s, d)).child(head);
-    let mut c = col().gap(16.0).child(top);
-    match (info, &d.error) {
+    if let Some(p) = i.popularity {
+        stats = stats.child(stat("det/popularity", format!("#{}", thousands(p)), "popular", false));
+    }
+    if let Some(m) = i.members {
+        stats = stats.child(stat("det/members", thousands(m), "members", false));
+    }
+    stats
+}
+
+/// Below the header: Synopsis and Information, or the error, or the skeleton while loading.
+fn body_cards(d: &Detail) -> El {
+    let mut c = col().gap(16.0);
+    match (&d.info, &d.error) {
         (Some(i), _) => {
+            let synopsis = if i.synopsis.is_empty() { "No synopsis yet.".to_string() } else { i.synopsis.clone() };
+            c = c.child(card("det-synopsis", "Synopsis").child(text(synopsis).font(theme::BODY).color(PAL.dim).wrap().pt(4.0)));
             let mut facts = col().key("det-facts").pt(4.0);
             let aired = match (i.start_date.as_deref(), i.end_date.as_deref()) {
                 (Some(a), Some(b)) => format!("{} to {}", date_text(a), date_text(b)),
@@ -423,8 +445,6 @@ fn info_column(s: &State, d: &Detail) -> El {
                 facts = facts.child(fact("Length", format!("{m} min per episode")));
             }
             c = c.child(card("det-facts-card", "Information").child(facts));
-            let synopsis = if i.synopsis.is_empty() { "No synopsis yet.".to_string() } else { i.synopsis.clone() };
-            c = c.child(card("det-synopsis", "Synopsis").child(text(synopsis).font(theme::BODY).color(PAL.dim).wrap().pt(4.0)));
         }
         (None, Some(e)) => {
             c = c.child(
@@ -515,10 +535,14 @@ fn compact_editor(e: &Entry, ed: &crate::model::Editor) -> El {
         )
 }
 
-/// Right: the user's entry (or Add to list) and the link to MyAnimeList.
-fn mine_column(s: &State, d: &Detail) -> El {
+/// The user's entry (or Add to list), then the files on disk. `glass`: the panel on the narrow
+/// banner card, see-through over the cover's tint.
+fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
     let id = d.id();
     let mut c = card("det-mine", "Your list");
+    if glass {
+        c = c.fill(PAL.bg.alpha(0.55)).border(1.0, crate::look::glass_border());
+    }
     match s.entries.iter().find(|e| e.id == id) {
         Some(e) => {
             let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
@@ -543,7 +567,7 @@ fn mine_column(s: &State, d: &Detail) -> El {
                             .h(4.0)
                             .radius(2.0)
                             .clip_rounded(2.0)
-                            .fill(PAL.border)
+                            .fill(PAL.text.alpha(0.14))
                             .child(el().grow(e.fraction()).h_full().radius(2.0).fill(PAL.status(e.status)))
                             .child(el().grow(1.0 - e.fraction())),
                     )
@@ -603,47 +627,116 @@ fn mine_column(s: &State, d: &Detail) -> El {
             c = c.child(more).child(text("It goes to the sync queue first, then to MyAnimeList.").font(theme::LABEL).color(PAL.faint).wrap().pt(10.0));
         }
     }
+    if glass {
+        return c;
+    }
     col().gap(16.0).child(c).children(crate::library::details_block(s, id))
 }
 
-/// The details page.
+/// The details page. Wide windows: a full-bleed banner of the cover's tint, the cover over its
+/// lower edge, the title on it and the user's entry on the right. Narrow ones (below
+/// `theme::NARROW_W`): an inset banner card holding all of it, the entry as a glass panel.
 pub fn page(s: &State, wide: bool) -> El {
     let Some(d) = &s.detail else {
-        return col().key("page/details").w_full().h_full().child(row().key("top").px(theme::PAGE_PAD).pt(18.0).child(back_button()));
+        return col().key("page/details").w_full().h_full().child(row().key("top").px(theme::PAGE_PAD).pt(18.0).child(back_button(false)));
     };
-    let mut top = row()
+    let mut page = col().key("page/details").w_full().h_full();
+    if let Some(e) = &s.error {
+        page = page.child(crate::ui::alert("det/alert", PAL.status(Status::Dropped), e.clone(), None));
+    }
+    let scroll = col().key(format!("details-scroll/{}", d.id())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0);
+    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(d)).child(scroll.child(header_narrow(s, d))) }
+}
+
+fn updating(d: &Detail) -> El {
+    if d.loading && d.info.is_some() { text("Updating\u{2026}").font(theme::LABEL).color(PAL.dim) } else { el() }
+}
+
+fn mal_url(d: &Detail) -> String {
+    format!("https://myanimelist.net/anime/{}", d.id())
+}
+
+/// A: the banner, then two columns (cover, title and the information; the entry on the right).
+fn header_wide(s: &State, d: &Detail) -> El {
+    const BANNER_H: f32 = 236.0;
+    const LIFT: f32 = 150.0;
+    let scrim = if PAL.light { crate::look::Scrim { top: 0.35, mid: 0.55, bottom: 1.0 } } else { crate::look::Scrim { top: 0.2, mid: 0.45, bottom: 1.0 } };
+    let banner = el()
+        .key("det-banner")
+        .w_full()
+        .h(BANNER_H)
+        .child(crate::look::backdrop(s, d.id(), cover_url(d), scrim))
+        .child(
+            row()
+                .key("top")
+                .pin(Some(theme::PAGE_PAD), Some(18.0), Some(theme::PAGE_PAD), None)
+                .gap(12.0)
+                .center_y()
+                .child(back_button(true))
+                .child(spacer())
+                .child(updating(d))
+                .child(link_button("det/open-mal", "MyAnimeList", mal_url(d), true)),
+        );
+    let title = text(shown_title(s, d).to_string()).key("det-title").font(crate::look::HERO_TITLE).color(PAL.text).wrap().max_lines(3);
+    let head = row()
+        .key("det-main")
+        .gap(24.0)
+        .items_start()
+        .mt(-LIFT)
+        .child(big_cover(s, d, 176.0, 264.0))
+        .child(col().grow(1.0).min_w(0.0).pt(48.0).gap(6.0).child(title).child(other_titles(s, d)).child(stats(d).mt(18.0)).child(tags(d).mt(6.0)));
+    let left = col().grow(1.0).min_w(0.0).gap(20.0).child(head).child(body_cards(d));
+    let right = mine_column(s, d, false).w(320.0).mt(-LIFT + 56.0);
+    col().w_full().child(banner).child(
+        row().px(theme::PAGE_PAD + 4.0).gap(24.0).pb(theme::PAGE_PAD).max_w(1240.0).items_start().child(left).child(right),
+    )
+}
+
+/// The narrow page's top bar: Back, the page's name, the link to MyAnimeList.
+fn top_bar(d: &Detail) -> El {
+    row()
         .key("top")
         .gap(12.0)
         .center_y()
         .px(theme::PAGE_PAD)
         .pt(18.0)
         .pb(14.0)
-        .child(back_button())
+        .child(back_button(false))
         .child(text("Anime information").font(theme::SECTION).color(PAL.dim))
-        .child(spacer());
-    if d.loading && d.info.is_some() {
-        top = top.child(text("Updating\u{2026}").font(theme::LABEL).color(PAL.faint));
-    }
-    top = top.child(link_button("det/open-mal", "Open on MyAnimeList", format!("https://myanimelist.net/anime/{}", d.id())));
-    let left = info_column(s, d);
-    let right = mine_column(s, d);
-    let body = if wide {
-        row().gap(16.0).w_full().items_start().child(left.grow(1.0).min_w(0.0)).child(right.w(340.0))
-    } else {
-        col().gap(16.0).w_full().child(left).child(right)
-    };
-    let mut page = col().key("page/details").w_full().h_full().child(top);
-    if let Some(e) = &s.error {
-        page = page.child(crate::ui::alert("det/alert", PAL.status(Status::Dropped), e.clone(), None));
-    }
-    page.child(
-        col()
-            .key(format!("details-scroll/{}", d.id()))
-            .scroll(ScrollSpec { stick_bottom: false })
-            .grow(1.0)
-            .min_h(0.0)
-            .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1180.0).child(body)),
-    )
+        .child(spacer())
+        .child(updating(d))
+        .child(link_button("det/open-mal", "Open on MyAnimeList", mal_url(d), false))
+}
+
+/// B: one banner card (cover, tags, titles, numbers and the glass entry panel), then the rest.
+fn header_narrow(s: &State, d: &Detail) -> El {
+    let scrim = if PAL.light { crate::look::Scrim::even(0.62) } else { crate::look::Scrim::even(0.5) };
+    let title = text(shown_title(s, d).to_string()).key("det-title").font(TextStyle::new(24.0, 600.0).tracking(-0.2)).color(PAL.text).wrap().max_lines(3);
+    let banner = el()
+        .key("det-banner")
+        .w_full()
+        .radius(16.0)
+        .clip_rounded(16.0)
+        .border(1.0, PAL.border)
+        .child(crate::look::backdrop(s, d.id(), cover_url(d), scrim))
+        .child(
+            row()
+                .key("det-main")
+                .w_full()
+                .padding(20.0)
+                .gap(20.0)
+                .items_start()
+                .child(big_cover(s, d, 132.0, 198.0))
+                .child(col().grow(1.0).min_w(0.0).gap(6.0).child(tags(d).pb(4.0)).child(title).child(other_titles(s, d)).child(stats(d).mt(12.0)))
+                .child(mine_column(s, d, true).w(250.0)),
+        );
+    col()
+        .px(theme::PAGE_PAD)
+        .gap(16.0)
+        .pb(theme::PAGE_PAD)
+        .child(banner)
+        .children(crate::library::details_block(s, d.id()))
+        .child(body_cards(d).max_w(760.0))
 }
 
 /// The title of a list row or the Now Playing card as a link to the details page.

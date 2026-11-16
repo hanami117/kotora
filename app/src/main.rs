@@ -17,8 +17,11 @@ mod clientid;
 mod ctl;
 mod detect;
 mod details;
+mod grid;
+mod home;
 mod icons;
 mod library;
+mod look;
 #[cfg(target_os = "macos")]
 mod iina;
 #[cfg(target_os = "macos")]

@@ -28,3 +28,13 @@ line_icon!(CALENDAR, "calendar", r#"<rect x="4" y="5.5" width="16" height="14.5"
 line_icon!(ARROW, "arrow", r#"<path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#);
 line_icon!(DOWNLOAD, "download", r#"<path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#);
 line_icon!(CLOSE, "close", r#"<path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
+line_icon!(VIEW_LIST, "view-list", r#"<path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="4.75" cy="6.5" r="1.1" fill="currentColor"/><circle cx="4.75" cy="12" r="1.1" fill="currentColor"/><circle cx="4.75" cy="17.5" r="1.1" fill="currentColor"/>"#);
+line_icon!(VIEW_GRID, "view-grid", r#"<rect x="3.5" y="4" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9.75" y="4" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="4" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3.5" y="13.5" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9.75" y="13.5" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="13.5" width="4.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/>"#);
+line_icon!(VIEW_LARGE, "view-large", r#"<rect x="4" y="3.5" width="7" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="3.5" width="7" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 15.5h7M13 15.5h7" fill="none" stroke="currentColor" stroke-width="1.6"/>"#);
+line_icon!(PENCIL, "pencil", r#"<path d="M4.5 19.5h4l10-10-4-4-10 10z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12.5 7.5l4 4" fill="none" stroke="currentColor" stroke-width="1.6"/>"#);
+line_icon!(HOME, "home", r#"<path d="M4 11l8-6.5 8 6.5M6 9.5V19.5h4.5v-5h3v5H18V9.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>"#);
+pub static STAR: Icon = Icon {
+    name: "kot-star",
+    view: 24.0,
+    body: r#"<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z" fill="currentColor"/>"#,
+};

@@ -36,9 +36,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(PAL.bg)
-        .child(sidebar(s, chrome_top))
+        .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
-        .child(main(s, wide, cx.layout_size("main").map_or(1056.0, |[w, _]| w)))
+        .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
@@ -91,7 +91,7 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.close_search();
         return true;
     }
-    false
+    s.grid_key(k, tx)
 }
 
 // ------------------------------------------------------------------------------------ sidebar
@@ -108,7 +108,8 @@ pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
 }
 
 /// `chrome_top`: the traffic-light band's height (macOS), or 0 where the system draws the frame.
-fn sidebar(s: &State, chrome_top: f32) -> El {
+/// `height`: the window's, for the playing card's size.
+fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     let side = col().key("sidebar").w(theme::SIDEBAR_W).h_full().fill(PAL.side).px(10.0).pb(12.0);
     let side = if chrome_top > 0.0 {
         // The band drags the window like a title bar; the brand sits just under it.
@@ -121,14 +122,20 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
         side = side.child(account(s, name, service));
     }
     let lit = s.lit_page();
+    // The pages scroll on their own when the window is too short for them; the playing card
+    // and the sync line stay at the bottom.
+    let mut nav = col().w_full();
+    if s.has_list() {
+        nav = nav.child(nav_item("home", NavMark::Icon(&icons::HOME), "Home", None, lit == Page::Home, Page::Home));
+    }
     if s.has_list() {
         let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
-        side = side.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
+        nav = nav.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
     }
-    side = side.child(nav_heading("My list"));
+    nav = nav.child(nav_heading("My list"));
     for st in Status::ALL {
         let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
-        side = side.child(nav_item(
+        nav = nav.child(nav_item(
             st.slug(),
             NavMark::Dot(PAL.status(st)),
             st.label(),
@@ -137,8 +144,8 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             Page::List(st),
         ));
     }
-    side = side.child(nav_heading("Kotora").mt(12.0));
-    side = side
+    nav = nav.child(nav_heading("Kotora").mt(12.0));
+    nav = nav
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
         .child(nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing))
         .child(nav_item(
@@ -149,42 +156,10 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             lit == Page::Queue,
             Page::Queue,
         ))
-        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings))
-        .child(spacer());
+        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
+    side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
     if let Some(now) = &s.now {
-        let (_, title) = now_title(s, now);
-        let mut bits = Vec::new();
-        if let Some(ep) = now.episode() {
-            bits.push(format!("Ep {ep}"));
-        }
-        bits.push(now.player.clone());
-        if let Some(f) = now.fraction() {
-            bits.push(format!("{:.0}%", f * 100.0));
-        }
-        if !now.playing {
-            bits.push("paused".into());
-        }
-        side = side.child(
-            row()
-                .key("np-mini")
-                .padding(8.0)
-                .gap(8.0)
-                .center_y()
-                .radius(theme::R_MD)
-                .fill(PAL.surface)
-                .border(1.0, PAL.border)
-                .hover(PAL.hover())
-                .on_press(|s: &mut State| s.go(Page::NowPlaying))
-                .child(now_cover(s, now, 26.0, 38.0, 9.0))
-                .child(
-                    col()
-                        .grow(1.0)
-                        .min_w(0.0)
-                        .gap(2.0)
-                        .child(text(title).font(rune::TextStyle::new(12.0, 500.0)).color(PAL.text).truncate())
-                        .child(text(bits.join(" \u{b7} ")).font(theme::SMALL).color(PAL.faint).truncate()),
-                ),
-        );
+        side = side.child(now_mini(s, now, height >= 760.0));
     }
     let (dot, line) = if s.syncing {
         (PAL.faint, "Syncing…".to_string())
@@ -209,6 +184,66 @@ fn sidebar(s: &State, chrome_top: f32) -> El {
             .child(el().size(6.0, 6.0).radius(3.0).fill(dot))
             .child(text(line).font(theme::SMALL).color(PAL.faint)),
     )
+}
+
+/// The sidebar's now-playing card: the poster with the text beside it (player, two lines of
+/// title, episode, how far in), the cover's blurred tint behind. Opens Now Playing. Short
+/// windows (`tall` false) get a lower card: a smaller poster and one line of title.
+fn now_mini(s: &State, now: &Now, tall: bool) -> El {
+    use crate::look;
+    let (id, title) = now_title(s, now);
+    let url = now_cover_url(s, now);
+    let entry = now.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let episode = match (now.episode(), entry.and_then(|e| e.episodes)) {
+        (Some(ep), Some(total)) => format!("Episode {ep} of {total}"),
+        (Some(ep), None) => format!("Episode {ep}"),
+        _ => String::new(),
+    };
+    let player = if now.playing { now.player.clone() } else { format!("{} \u{b7} paused", now.player) };
+    let tail = match now.fraction() {
+        Some(f) => row()
+            .key("np-mini/progress")
+            .gap(6.0)
+            .center_y()
+            .child(col().grow(1.0).child(look::bar(f, PAL.accent, 4.0, PAL.text.alpha(0.16))))
+            .child(text(format!("{:.0}%", f * 100.0)).font(theme::LABEL_NUM).color(PAL.dim)),
+        None => text(if now.reached { "Counts as watched" } else { "Open in the player" }).font(theme::SMALL).color(PAL.dim),
+    };
+    el().key("np-mini")
+        .role("button")
+        .label(format!("Now playing: {title}"))
+        .w_full()
+        .h(if tall { 124.0 } else { 76.0 })
+        .radius(theme::R_LG)
+        .clip_rounded(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.go(Page::NowPlaying);
+        })
+        .child(look::backdrop(s, id, url, look::card_scrim()))
+        .child(
+            row()
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .padding(if tall { 10.0 } else { 8.0 })
+                .gap(10.0)
+                .child(if tall { look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM) } else { look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS) }.shadow(4.0, 10.0, Color::BLACK.alpha(0.35)))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(3.0)
+                        .child(row().gap(6.0).center_y().child(look::live_dot(now.playing, 6.0)).child(text(player.to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()))
+                        .child(text(title).font(TextStyle::new(13.0, 600.0)).color(PAL.text).wrap().max_lines(if tall { 2 } else { 1 }))
+                        .child(if tall { text(episode).font(theme::SMALL).color(PAL.dim).truncate() } else { el() })
+                        .child(spacer())
+                        .child(tail),
+                ),
+        )
 }
 
 /// "just now", "2 min ago", "3 h ago", "2 days ago".
@@ -334,14 +369,17 @@ pub(crate) fn kbd(label: &str) -> El {
 // --------------------------------------------------------------------------------------- main
 
 /// `width`: the main area's, from the last layout (the Airing grid's cards per row).
-fn main(s: &State, wide: bool, width: f32) -> El {
+fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
+    let width = size[0];
     let page = match s.page {
         Page::Setup => crate::setup::page(s),
         // First run: no Client ID, so the wizard is the only thing a list page can show.
         Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s),
         Page::List(_) if !s.has_list() => welcome(s),
-        Page::List(st) => list_page(s, st, wide),
-        Page::NowPlaying => now_page(s, wide),
+        Page::List(st) => list_page(s, st, wide, width),
+        Page::Home if !s.has_list() => welcome(s),
+        Page::Home => crate::home::page(s),
+        Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
         Page::Details => crate::details::page(s, wide),
@@ -520,7 +558,7 @@ fn refresh_button(syncing: bool) -> El {
         .child(icon(&icons::SYNC, 16.0).color(if syncing { PAL.faint } else { PAL.dim }))
 }
 
-fn list_page(s: &State, st: Status, wide: bool) -> El {
+fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     if crate::search::shows(s) && !s.loading {
         return search_page(s, st, wide);
     }
@@ -533,6 +571,10 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
         head = top_extra(s, st.label(), count, format!("+ {rewatches} rewatching"));
     }
     let count = count + rewatches;
+    // The view switch ends the top bar; a narrow window has no room there, so it ends the chips.
+    if !s.loading && wide {
+        head = head.child(crate::grid::switcher(s, st, true));
+    }
     let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(head);
     if let Some(a) = status_alert(s) {
         page = page.child(a);
@@ -543,9 +585,12 @@ fn list_page(s: &State, st: Status, wide: bool) -> El {
     if count == 0 {
         return page.child(empty(st));
     }
-    page = page.child(chips(s, st));
+    page = page.child(if wide { chips(s, st) } else { chips(s, st).child(spacer()).child(crate::grid::switcher(s, st, false).mt(-3.0)) });
     if s.rows.is_empty() {
         return page.child(no_match(s));
+    }
+    if s.view_of(st) != kotora_core::config::ListView::List {
+        return page.child(crate::grid::cards(s, st, width));
     }
     let n = s.rows.len();
     page.child(header(wide, s.sort)).child(
@@ -1014,7 +1059,7 @@ pub(crate) fn tag_tinted(label: &str, fg: Color, bg: Color) -> El {
 }
 
 /// Cover pairs from the mockup; an id picks one (design-spec §3: covers while loading or missing).
-const TILES: [(&str, &str); 10] = [
+pub(crate) const TILES: [(&str, &str); 10] = [
     ("#e0794a", "#5b2a6e"),
     ("#3b7dd8", "#1b2b5c"),
     ("#d9b44a", "#7a3b1e"),
@@ -1868,10 +1913,13 @@ fn match_text(s: &State, n: &Now) -> (String, Color) {
     }
 }
 
-fn now_card(s: &State, n: &Now) -> El {
-    let (_, title) = now_title(s, n);
+/// Now Playing's hero: a full-width band with the cover's blurred tint, the poster, what plays,
+/// how far in and the actions. `size`: the main area's width and height.
+fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
+    use crate::look;
+    let (id, title) = now_title(s, n);
+    let url = now_cover_url(s, n);
     let entry = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
-    let verb = if n.playing { "Playing" } else { "Paused" };
     let mut sub = Vec::new();
     match (n.episode(), entry.and_then(|e| e.episodes)) {
         (Some(ep), Some(total)) => sub.push(format!("Episode {ep} of {total}")),
@@ -1896,61 +1944,109 @@ fn now_card(s: &State, n: &Now) -> El {
         .key("np-bar")
         .w_full()
         .gap(2.0)
-        .child(
-            row()
-                .w_full()
-                .h(6.0)
-                .clip_rounded(3.0)
-                .fill(PAL.border)
-                .child(el().grow(frac).h_full().radius(3.0).fill(PAL.accent))
-                .child(el().grow(1.0 - frac)),
-        )
+        .child(look::bar(frac, PAL.accent, 6.0, PAL.text.alpha(0.16)))
         .child(row().w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
     // The process source has no position: say so instead of an empty bar.
     let no_position = n.position.is_none() && n.via == crate::precise::VIA_PROCESS;
-    let verb = if no_position { "Open" } else { verb };
+    let verb = if no_position {
+        "Open"
+    } else if n.playing {
+        "Playing"
+    } else {
+        "Paused"
+    };
+    let (wide, tall) = (size[0] >= 900.0, size[1] >= 700.0);
+    let (pw, ph) = if wide && tall { (180.0, 270.0) } else if wide { (150.0, 225.0) } else { (124.0, 186.0) };
+    let title_font = if wide { look::HERO_TITLE } else { TextStyle::new(24.0, 600.0).tracking(-0.2) };
+    let title_el = text(title.clone()).key("np-title").font(title_font).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2);
     let mut info = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase()).font(theme::CAPTION).color(PAL.faint))
+        .max_w(640.0)
+        .gap(6.0)
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(look::live_dot(n.playing && !no_position, 8.0))
+                .child(text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()),
+        )
         .child(match now_stub(s, n) {
-            Some(stub) => crate::details::title_link(text(title).font(theme::TITLE).color(PAL.text).group_color(PAL.accent_hi).wrap(), stub).mt(4.0).mb(2.0),
-            None => text(title).font(theme::TITLE).color(PAL.text).wrap().mt(4.0).mb(2.0),
+            Some(stub) => crate::details::title_link(title_el, stub),
+            None => title_el,
         })
-        .child(text(sub.join(" \u{b7} ")).font(theme::BODY).color(PAL.dim))
+        .child(text(sub.join(" \u{b7} ")).font(TextStyle::new(16.0, 500.0)).color(PAL.dim))
         .child(if no_position {
             col()
                 .key("np-no-position")
-                .mt(16.0)
+                .mt(12.0)
                 .gap(4.0)
                 .child(text(if n.reached { "Counts as watched" } else { "No position from the player" }).font(theme::LABEL_NUM).color(PAL.text))
                 .child(
                     text("Kotora sees the file the player has open, not how far in you are: the episode counts once it has been open long enough.")
                         .font(theme::LABEL)
-                        .color(PAL.faint)
+                        .color(PAL.dim)
                         .wrap(),
                 )
         } else {
             col()
+                .mt(12.0)
                 .child(
                     row()
-                        .mt(16.0)
                         .mb(6.0)
-                        .child(text(times).font(theme::LABEL_NUM).color(PAL.text))
+                        .child(text(times).font(theme::NUM_MED).color(PAL.text))
                         .child(spacer())
-                        .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.faint)),
+                        .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.dim)),
                 )
                 .child(bar)
-        })
+        });
+    let mut actions = row().gap(8.0).mt(12.0).center_y();
+    if n.recorded.is_none()
+        && let Some((_, ep)) = s.offer()
+    {
+        actions = actions.child(button("np/update", &format!("Update to episode {ep}"), true, Some(|s: &mut State| {
+            let _ = s.confirm_offer();
+        })));
+    }
+    if n.recorded.is_some() {
+        actions = actions.child(button("np/undo", "Undo", false, Some(State::undo_record)));
+    }
+    if !matches!(n.found, Found::Ignored) {
+        actions = actions.child(ghost("np/wrong", "Wrong anime\u{2026}", State::wrong_anime));
+    }
+    info = info.child(actions);
+    let scrim = if PAL.light { look::Scrim { top: 0.5, mid: 0.62, bottom: 1.0 } } else { look::Scrim { top: 0.4, mid: 0.6, bottom: 1.0 } };
+    let band_h = ph + if tall { 84.0 } else { 56.0 };
+    el().key("np-card")
+        .w_full()
+        .min_h(band_h)
+        .child(look::backdrop(s, id, url, scrim))
         .child(
             row()
-                .mt(14.0)
-                .gap(8.0)
-                .center_y()
-                .child(icon(&icons::FILE, 14.0).color(PAL.faint))
-                .child(text(n.file.clone()).key("np-file").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.faint).truncate().min_w(0.0)),
-        );
-    let mut facts = col().mt(14.0);
+                .w_full()
+                .min_h(band_h)
+                .px(theme::PAGE_PAD + if wide { 8.0 } else { 0.0 })
+                .pt(if tall { 36.0 } else { 24.0 })
+                .pb(if tall { 28.0 } else { 18.0 })
+                .gap(if wide { 32.0 } else { 20.0 })
+                .items_end()
+                .child(look::poster(s, id, &title, url, pw, ph, theme::R_LG).border(1.0, look::glass_border()).shadow(14.0, 36.0, Color::BLACK.alpha(if PAL.light { 0.25 } else { 0.55 })))
+                .child(info),
+        )
+}
+
+/// What Kotora made of the file: the file name, what the parser read, the match and the
+/// user's progress (under the hero).
+fn now_facts(s: &State, n: &Now) -> El {
+    let entry = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let mut facts = card("np-recog", "Recognised from").child(
+        row()
+            .gap(8.0)
+            .pb(6.0)
+            .center_y()
+            .child(icon(&icons::FILE, 14.0).color(PAL.faint))
+            .child(text(n.file.clone()).key("np-file").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate().min_w(0.0)),
+    );
     if let Some(p) = &n.parsed {
         facts = facts.child(kv("Parsed title", text(p.title.clone()).font(theme::BODY).color(PAL.text).wrap()));
         facts = facts.child(kv("Episode", text(p.episode.map_or("–".into(), |e| e.to_string())).font(theme::LABEL_NUM).color(PAL.text)));
@@ -1972,32 +2068,7 @@ fn now_card(s: &State, n: &Now) -> El {
         };
         facts = facts.child(kv("Your progress", text(after).font(theme::LABEL_NUM).color(PAL.text)));
     }
-    info = info.child(facts);
-    let mut actions = row().gap(8.0).mt(14.0);
-    if n.recorded.is_none()
-        && let Some((_, ep)) = s.offer()
-    {
-        actions = actions.child(button("np/update", &format!("Update to episode {ep}"), true, Some(|s: &mut State| {
-            let _ = s.confirm_offer();
-        })));
-    }
-    if n.recorded.is_some() {
-        actions = actions.child(button("np/undo", "Undo", false, Some(State::undo_record)));
-    }
-    if !matches!(n.found, Found::Ignored) {
-        actions = actions.child(ghost("np/wrong", "Wrong anime\u{2026}", State::wrong_anime));
-    }
-    info = info.child(actions);
-    row()
-        .key("np-card")
-        .gap(18.0)
-        .padding(16.0)
-        .items_start()
-        .radius(theme::R_LG)
-        .fill(PAL.surface)
-        .border(1.0, PAL.border)
-        .child(now_cover(s, n, 120.0, 170.0, 28.0))
-        .child(info)
+    facts
 }
 
 /// "Not sure: is this X episode N?" with Yes / Pick another.
@@ -2128,11 +2199,7 @@ fn now_empty() -> El {
         .child(text("Streaming sites in the browser: use MAL-Sync.").font(theme::LABEL).color(PAL.faint).wrap())
 }
 
-fn now_page(s: &State, wide: bool) -> El {
-    let main = match &s.now {
-        Some(n) => now_card(s, n),
-        None => now_empty(),
-    };
+fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
     let mut side = col().gap(16.0);
     if s.now.is_none() {
         side = side.children(crate::library::up_next_card(s));
@@ -2148,17 +2215,35 @@ fn now_page(s: &State, wide: bool) -> El {
         }
     }
     side = side.child(players_status_card(s));
-    let body = if wide {
-        row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
-    } else {
-        col().gap(16.0).w_full().child(main).child(side)
+    let Some(n) = &s.now else {
+        let body = if wide {
+            row().gap(16.0).w_full().items_start().child(now_empty().grow(1.0).min_w(0.0)).child(side.w(340.0))
+        } else {
+            col().gap(16.0).w_full().child(now_empty()).child(side)
+        };
+        return col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
+            col()
+                .key("now-scroll")
+                .scroll(ScrollSpec { stick_bottom: false })
+                .grow(1.0)
+                .min_h(0.0)
+                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
+        );
     };
-    col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
+    // Something plays: the hero band on top (no title bar: the band says it), the cards below.
+    let facts = now_facts(s, n);
+    let body = if wide {
+        row().gap(16.0).w_full().items_start().child(facts.grow(1.0).min_w(0.0)).child(side.w(340.0))
+    } else {
+        col().gap(16.0).w_full().child(facts).child(side)
+    };
+    col().key("page/now").w_full().h_full().child(
         col()
             .key("now-scroll")
             .scroll(ScrollSpec { stick_bottom: false })
             .grow(1.0)
             .min_h(0.0)
+            .child(now_card(s, n, size))
             .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
     )
 }

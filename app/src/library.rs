@@ -378,7 +378,7 @@ pub fn play_next(s: &mut State, id: u32) -> Result<String, String> {
     Ok(note)
 }
 
-fn press_play(s: &mut State, id: u32) {
+pub(crate) fn press_play(s: &mut State, id: u32) {
     if let Err(m) = play_next(s, id) {
         s.error = Some(m);
     }
