@@ -81,7 +81,8 @@ running && die "Kotora is running from $PREFIX. Quit it first (kot quit), then r
 
 # --- Build --------------------------------------------------------------------------------------
 say "Building Kotora (release; the first build takes several minutes)"
-cargo build --release --locked -p kotora -p kotora-ctl
+# The update check then says "git pull, then ./install.sh" instead of offering a download.
+KOTORA_CHANNEL=install-sh cargo build --release --locked -p kotora -p kotora-ctl
 target="${CARGO_TARGET_DIR:-target}/release/kotora"
 [[ -x $target ]] || die "build finished but $target is missing"
 [[ -x ${target%kotora}kot ]] || die "build finished but ${target%kotora}kot is missing"

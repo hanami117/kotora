@@ -428,6 +428,8 @@ pub struct State {
     pub library: crate::library::Library,
     /// Started airing and New episode notifications (`airnotes.rs`).
     pub airnotes: crate::airnotes::AirNotes,
+    /// The update check and its banner (`update.rs`).
+    pub update: crate::update::Updates,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -484,6 +486,7 @@ impl State {
             tick: None,
             library: Default::default(),
             airnotes: Default::default(),
+            update: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -1179,6 +1182,7 @@ pub fn fake_now() -> Now {
         recognizing: false,
         candidates: vec![(0, "Lanterns of Kirigaoka".into()), (3, "Slow Life on Hoshizora Island".into()), (9, "Kumo to Kaze no Ryokan".into())],
         cover_url: None,
+        alt_titles: Default::default(),
         relation: None,
         dismissed: false,
         acted: false,

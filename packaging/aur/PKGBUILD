@@ -61,6 +61,8 @@ build() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
+  # The update check says "update with your AUR helper" and offers no download.
+  export KOTORA_CHANNEL=aur
   cargo build --frozen --release -p kotora -p kotora-ctl
 }
 

@@ -39,6 +39,9 @@
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
+//!
+//! [app]
+//! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -61,6 +64,22 @@ pub struct Config {
     pub startup: Startup,
     pub notifications: Notifications,
     pub library: Library,
+    pub app: AppSection,
+}
+
+/// Kotora itself (`[app]`). Not `[updates]`, which is about the list.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct AppSection {
+    /// Settings → About Kotora → Check for updates: once a day, ask whether a newer version is
+    /// out (`update.rs`). On by default; off, nothing is sent.
+    pub check_updates: bool,
+}
+
+impl Default for AppSection {
+    fn default() -> Self {
+        AppSection { check_updates: true }
+    }
 }
 
 /// Settings → Notifications: which events show a desktop notification.
@@ -327,6 +346,7 @@ impl std::fmt::Debug for Config {
             .field("startup", &self.startup)
             .field("notifications", &self.notifications)
             .field("library_folders", &self.library.folders.len())
+            .field("app", &self.app)
             .finish()
     }
 }
@@ -353,6 +373,8 @@ struct File {
     notifications: Notifications,
     #[serde(default)]
     library: Library,
+    #[serde(default)]
+    app: AppSection,
 }
 
 #[derive(Deserialize, Default)]
@@ -378,6 +400,7 @@ impl Config {
             startup: f.startup,
             notifications: f.notifications,
             library: f.library,
+            app: f.app,
         })
     }
 
@@ -565,6 +588,10 @@ mod tests {
         assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
         assert!(!c.startup.background, "the login start opens the window by default");
         assert!(Config::parse("[startup]\nbackground = true\n").unwrap().startup.background);
+        assert!(c.app.check_updates, "the update check is on by default (the site says so)");
+        let off = set_line("[updates]\nauto = true\n", "app", "check_updates", "false");
+        let off = Config::parse(&off).unwrap();
+        assert!(!off.app.check_updates && off.updates.auto, "[app] is not the list's [updates]");
         let c = Config::parse("[updates]\nauto = true\nthreshold = 10\n[players]\nvlc = false\nmpv_sockets = [\"/tmp/a.sock\"]\n").unwrap();
         assert!(c.updates.auto);
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");

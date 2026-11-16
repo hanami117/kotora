@@ -45,8 +45,10 @@ pub struct Now {
     pub candidates: Vec<(u32, String)>,
     /// The cover of a match that isn't on the list (a list entry has its own).
     pub cover_url: Option<String>,
+    /// The English and Japanese titles of a match that isn't on the list (Settings → Titles).
+    pub alt_titles: AltTitles,
     /// Why a match that isn't on the list is another anime than the file's (anime-relations).
-    pub relation: Option<String>,
+    pub relation: Option<Relation>,
     /// "Not now".
     pub dismissed: bool,
     /// The banner acted already (notified, or recorded automatically).
@@ -99,8 +101,27 @@ pub struct Seen {
     pub candidates: Vec<(u32, String)>,
     /// The cover of an anime found on MyAnimeList but not on the list (saved details).
     pub cover_url: Option<String>,
-    /// anime-relations moved the file to an anime that isn't on the list: why, in words.
-    pub relation: Option<String>,
+    /// The English and Japanese titles of a match that isn't on the list.
+    pub alt_titles: AltTitles,
+    /// anime-relations moved the file to an anime that isn't on the list: why.
+    pub relation: Option<Relation>,
+}
+
+/// An anime's English and Japanese titles, when MyAnimeList has them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AltTitles {
+    pub en: Option<String>,
+    pub ja: Option<String>,
+}
+
+/// anime-relations moved the file's episode `file_ep` of anime `from_id` (its main title, when
+/// known) to episode `ep` of the match, which isn't on the list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Relation {
+    pub file_ep: u32,
+    pub from_id: u32,
+    pub from_title: Option<String>,
+    pub ep: u32,
 }
 
 /// Settings → Updates and Players, as `config.toml` has them.
@@ -128,12 +149,14 @@ pub struct Prefs {
     pub login_busy: bool,
     /// Settings → Startup: the login start shows only the tray icon (`[startup] background`).
     pub background: bool,
+    /// Settings → About Kotora → Check for updates (`[app] check_updates`).
+    pub check_updates: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: Default::default(), login_busy: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true }
     }
 }
 
@@ -154,6 +177,7 @@ impl Prefs {
             login: Default::default(),
             login_busy: false,
             background: c.startup.background,
+            check_updates: c.app.check_updates,
         }
     }
 }
@@ -206,6 +230,7 @@ impl Now {
             recognizing: false,
             candidates: seen.candidates,
             cover_url: seen.cover_url,
+            alt_titles: seen.alt_titles,
             relation: seen.relation,
             dismissed: false,
             acted: false,
@@ -599,18 +624,40 @@ impl State {
         true
     }
 
+    /// The title of a match that isn't on the list, in the chosen language (romaji when
+    /// MyAnimeList has none in it).
+    pub fn not_on_list_title(&self, n: &Now) -> Option<String> {
+        let Found::NotOnList { title, .. } = &n.found else { return None };
+        Some(self.prefs.titles.pick(title, n.alt_titles.en.as_deref(), n.alt_titles.ja.as_deref()).to_string())
+    }
+
+    /// Why anime-relations moved the file to a match that isn't on the list, with both titles
+    /// as the rest of the app shows them: "episode 15 of X is episode 2 of Y (anime-relations)".
+    pub fn relation_text(&self, n: &Now) -> Option<String> {
+        let r = n.relation.as_ref()?;
+        let to = self.not_on_list_title(n)?;
+        let from = self
+            .entries
+            .iter()
+            .find(|e| e.id == r.from_id)
+            .map(|e| e.title.clone())
+            .or_else(|| r.from_title.clone())
+            .unwrap_or_else(|| "the file's anime".into());
+        Some(format!("episode {} of {from} is episode {} of {to} (anime-relations)", r.file_ep, r.ep))
+    }
+
     /// What plays, as `kot now` prints it.
     pub fn ctl_now(&self) -> Option<kotora_ctl::NowInfo> {
         let n = self.now.as_ref()?;
         let title = match (n.media_id().and_then(|id| self.entries.iter().find(|e| e.id == id)), &n.found) {
             (Some(e), _) => e.title.clone(),
-            (None, Found::NotOnList { title, .. }) => title.clone(),
+            (None, Found::NotOnList { .. }) => self.not_on_list_title(n).unwrap_or_default(),
             _ => n.parsed.as_ref().map(|p| p.title.clone()).unwrap_or_else(|| n.file.clone()),
         };
         let matched = match &n.found {
             Found::List { sure: true, why, .. } => format!("In your list, sure: {why}"),
             Found::List { why, .. } => format!("In your list, not sure: {why}"),
-            Found::NotOnList { .. } => match &n.relation {
+            Found::NotOnList { .. } => match self.relation_text(n) {
                 Some(why) => format!("Not on your list: {why}"),
                 None => "Not on your list (found on MyAnimeList)".into(),
             },
@@ -825,6 +872,7 @@ mod tests {
             },
             candidates: vec![],
             cover_url: None,
+            alt_titles: Default::default(),
             relation: None,
         }
     }

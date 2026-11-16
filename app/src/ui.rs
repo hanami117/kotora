@@ -366,6 +366,10 @@ fn main(s: &State, wide: bool, width: f32) -> El {
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a));
     }
+    // A newer Kotora is out (`update.rs`): quiet, under the rest.
+    if let Some(u) = crate::update::banner(s) {
+        m = m.child(u);
+    }
     m.child(col().grow(1.0).min_h(0.0).w_full().child(page))
 }
 
@@ -1600,6 +1604,7 @@ fn about_card(s: &State) -> El {
                     ),
             ),
     )
+    .child(crate::update::settings_rows(s))
 }
 
 /// The `sm` button (26 high) of the settings rows.
@@ -1618,7 +1623,7 @@ pub(crate) fn now_title(s: &State, n: &Now) -> (u32, String) {
         return (id, e.title.clone());
     }
     match &n.found {
-        Found::NotOnList { media_id, title } => (*media_id, title.clone()),
+        Found::NotOnList { media_id, .. } => (*media_id, s.not_on_list_title(n).unwrap_or_default()),
         _ => {
             let t = n.parsed.as_ref().map(|p| p.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| n.file.clone());
             (t.bytes().map(u32::from).sum(), t)
@@ -1839,7 +1844,7 @@ fn match_text(s: &State, n: &Now) -> (String, Color) {
             let st = s.entries.iter().find(|e| e.id == *media_id).map_or("", |e| e.status.label());
             if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
         }
-        Found::NotOnList { title, .. } => (format!("Not on your list: {title} (found on MyAnimeList)"), PAL.dim),
+        Found::NotOnList { .. } => (format!("Not on your list: {} (found on MyAnimeList)", s.not_on_list_title(n).unwrap_or_default()), PAL.dim),
         Found::Ignored => ("You marked this file as not an anime".into(), PAL.faint),
         Found::Nothing if n.recognizing => ("Looking\u{2026}".into(), PAL.faint),
         Found::Nothing => ("Not found on your list".into(), PAL.faint),
@@ -2049,7 +2054,7 @@ fn picker_card(n: &Now) -> El {
 fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
     match &n.found {
         Found::List { media_id, .. } => s.entries.iter().find(|e| e.id == *media_id).map(crate::details::Stub::from_entry),
-        Found::NotOnList { media_id, title } => Some(crate::details::Stub::bare(*media_id, title)),
+        Found::NotOnList { media_id, .. } => Some(crate::details::Stub::bare(*media_id, &s.not_on_list_title(n).unwrap_or_default())),
         _ => None,
     }
 }
@@ -2120,8 +2125,9 @@ fn now_page(s: &State, wide: bool) -> El {
             side = side.child(picker_card(n));
         } else if matches!(n.found, Found::List { sure: false, .. }) && n.recorded.is_none() {
             side = side.child(unsure_card(s, n));
-        } else if let Found::NotOnList { media_id, title } = &n.found {
-            side = side.child(not_on_list_card(*media_id, title, n.relation.as_deref(), n.episode().filter(|ep| *ep > 0)));
+        } else if let Found::NotOnList { media_id, .. } = &n.found {
+            let title = s.not_on_list_title(n).unwrap_or_default();
+            side = side.child(not_on_list_card(*media_id, &title, s.relation_text(n).as_deref(), n.episode().filter(|ep| *ep > 0)));
         }
     }
     side = side.child(players_status_card(s));

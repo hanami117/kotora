@@ -36,6 +36,7 @@ mod setup;
 mod theme;
 mod tray;
 mod ui;
+mod update;
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -256,6 +257,8 @@ fn main() {
                 }
             });
         }
+        // The daily update check (after the settings are read; `update.rs`).
+        s.start_updates();
         s
     });
     app.run();

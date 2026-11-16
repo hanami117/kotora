@@ -25,7 +25,7 @@ use kotora_core::tokens::TokenStore;
 use kotora_detect::{Detector, Report, Settings, Switch};
 
 use crate::model::{Handle, Msg, State};
-use crate::now::{Prefs, Seen};
+use crate::now::{AltTitles, Prefs, Relation, Seen};
 
 const SERVICE: &str = "mal";
 
@@ -112,10 +112,12 @@ struct Current {
     found: Found,
     candidates: Vec<(u32, String)>,
     cover_url: Option<String>,
+    /// The English and Japanese titles of a match that isn't on the list (its saved details).
+    alt_titles: AltTitles,
     /// The episode in the file's name, before anime-relations moved it.
     file_episode: Option<u32>,
     /// anime-relations moved the file to an anime that isn't on the list: why.
-    relation: Option<String>,
+    relation: Option<Relation>,
 }
 
 /// The rules: read at the first file (the newer of the downloaded and the built-in copy), and a
@@ -152,7 +154,7 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                     current = Some(recognise(&mut store, &file, r));
                 }
                 let Some(c) = &current else { continue };
-                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), relation: c.relation.clone() }))));
+                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), alt_titles: c.alt_titles.clone(), relation: c.relation.clone() }))));
             }
             In::Report(Report::Reached { key, file }) => send(h, Msg::Reached { key, file }),
             In::Report(Report::Sources(v)) => send(h, Msg::Players(v)),
@@ -201,6 +203,7 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
         found: Found::Nothing,
         candidates: Vec::new(),
         cover_url: None,
+        alt_titles: AltTitles::default(),
         relation: None,
     };
     let Some(mut parsed) = recognize::parse(file) else { return nothing(None) };
@@ -223,18 +226,19 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
     let before = found.clone();
     let found = recognize::redirect(found, &mut parsed, &items, rel);
     let relation = relation_reason(&before, &found, file_episode, parsed.episode, &items);
-    let cover_url = match &found {
-        Found::NotOnList { media_id, .. } => not_on_list_cover(st, *media_id),
-        _ => None,
+    let (cover_url, alt_titles) = match &found {
+        Found::NotOnList { media_id, .. } => not_on_list_details(st, *media_id),
+        _ => (None, AltTitles::default()),
     };
-    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, file_episode, relation }
+    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, alt_titles, file_episode, relation }
 }
 
 /// Why the file is an anime that isn't on the list, when anime-relations moved it there (a list
-/// match carries its reason in `why` already): "episode 15 of Re:Zero 2nd Season is episode 2 of
-/// Re:Zero 2nd Season Part 2 (anime-relations)".
-fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Option<u32>, items: &[kotora_core::ListItem]) -> Option<String> {
-    let Found::NotOnList { media_id: to, title: to_title } = after else { return None };
+/// match carries its reason in `why` already). The words are put together when shown
+/// (`State::relation_text`), in the chosen title language: "episode 15 of Re:Zero 2nd Season is
+/// episode 2 of Re:Zero 2nd Season Part 2 (anime-relations)".
+fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Option<u32>, items: &[kotora_core::ListItem]) -> Option<Relation> {
+    let Found::NotOnList { media_id: to, .. } = after else { return None };
     let (from, from_title) = match before {
         Found::List { media_id, .. } => (*media_id, items.iter().find(|it| it.media.id == *media_id).map(|it| it.media.title.clone())),
         Found::NotOnList { media_id, title } => (*media_id, Some(title.clone())),
@@ -244,19 +248,22 @@ fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Opti
     if from == *to && file_ep == ep {
         return None;
     }
-    let from_title = from_title.unwrap_or_else(|| "the file's anime".into());
-    Some(format!("episode {file_ep} of {from_title} is episode {ep} of {to_title} (anime-relations)"))
+    Some(Relation { file_ep, from_id: from, from_title, ep })
 }
 
-/// The cover of an anime that isn't on the list: from its saved details, else one details
-/// fetch (signed in and online), saved like the details page's, so the next file asks nothing.
-fn not_on_list_cover(st: &Store, id: u32) -> Option<String> {
-    if let Some((d, _)) = st.details(SERVICE, id).ok().flatten() {
-        return d.cover_url;
-    }
-    let d = crate::online::mal_service()?.details(id).ok()?;
-    let _ = st.save_details(SERVICE, &d, now_unix());
-    d.cover_url
+/// The cover and the other titles of an anime that isn't on the list: from its saved details,
+/// else one details fetch (signed in and online), saved like the details page's, so the next
+/// file asks nothing.
+fn not_on_list_details(st: &Store, id: u32) -> (Option<String>, AltTitles) {
+    let d = match st.details(SERVICE, id).ok().flatten() {
+        Some((d, _)) => d,
+        None => {
+            let Some(d) = crate::online::mal_service().and_then(|mut m| m.details(id).ok()) else { return (None, AltTitles::default()) };
+            let _ = st.save_details(SERVICE, &d, now_unix());
+            d
+        }
+    };
+    (d.cover_url, AltTitles { en: d.title_en, ja: d.title_ja })
 }
 
 /// The one MAL search (signed in and online only). The answer is cached either way.
@@ -304,7 +311,7 @@ mod tests {
         let list = Found::List { media_id: 31240, sure: true, why: "same title in your list".into() };
         let off = Found::NotOnList { media_id: 42203, title: "Re:Zero 2nd Season Part 2".into() };
         let why = relation_reason(&list, &off, Some(15), Some(2), &[]).unwrap();
-        assert_eq!(why, "episode 15 of the file's anime is episode 2 of Re:Zero 2nd Season Part 2 (anime-relations)");
+        assert_eq!(why, Relation { file_ep: 15, from_id: 31240, from_title: None, ep: 2 });
         // Found by a search and not moved: no reason line.
         assert_eq!(relation_reason(&off, &off, Some(2), Some(2), &[]), None);
         assert_eq!(relation_reason(&list, &list, Some(15), Some(2), &[]), None, "a list match says it in `why`");
