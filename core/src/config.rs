@@ -8,7 +8,7 @@
 //! client_id = "…"
 //!
 //! [anilist]
-//! client_id = "12345"          # the AniList API client's id (a number)
+//! client_id = "12345"          # your own AniList API client's id (a number); optional: Kotora has its own
 //!
 //! [updates]
 //! auto = false                 # record confident matches without asking (off by default)
@@ -543,6 +543,18 @@ impl Config {
         }
     }
 
+    /// The Client ID Kotora signs in with: the environment variable (development), else the
+    /// one in `config.toml` ("Use my own client ID"), else the one built into Kotora.
+    pub fn effective_client_id(&self, service: crate::service::ServiceId) -> Option<String> {
+        let env = std::env::var(service.client_id_env()).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        env.or_else(|| self.client_id(service).map(str::to_string)).or_else(|| service.built_in_client_id().map(str::to_string))
+    }
+
+    /// Whether Kotora has a Client ID to sign in with, saved or built in.
+    pub fn has_client_id(&self, service: crate::service::ServiceId) -> bool {
+        self.effective_client_id(service).is_some()
+    }
+
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
     pub fn load(path: &Path) -> Result<Config, String> {
         match std::fs::read_to_string(path) {
@@ -913,6 +925,22 @@ mod tests {
         assert_eq!(Config::default().service_id(), ServiceId::Mal, "0.1 users are on MyAnimeList");
         assert_eq!(Config::parse("[account]\nservice = \"kitsu\"\n").unwrap().service_id(), ServiceId::Mal);
         assert!(!format!("{c:?}").contains("12345"));
+    }
+
+    #[test]
+    fn the_client_id_falls_back_to_the_built_in_one() {
+        use crate::service::{ANILIST_CLIENT_ID, ServiceId};
+        // No environment variable is set for this one in tests.
+        let empty = Config::default();
+        assert_eq!(empty.effective_client_id(ServiceId::AniList).as_deref(), Some(ANILIST_CLIENT_ID));
+        assert!(empty.has_client_id(ServiceId::AniList));
+        assert_eq!(empty.effective_client_id(ServiceId::Mal), None, "no official MyAnimeList id yet");
+        let own = Config { anilist_client_id: Some("777".into()), mal_client_id: Some("m".into()), ..Config::default() };
+        assert_eq!(own.effective_client_id(ServiceId::AniList).as_deref(), Some("777"), "the user's own wins");
+        assert_eq!(own.effective_client_id(ServiceId::Mal).as_deref(), Some("m"));
+        assert!(ANILIST_CLIENT_ID.parse::<u32>().is_ok_and(|n| n > 0));
+        // The saved ID alone still says whether the user brought their own.
+        assert_eq!(empty.client_id(ServiceId::AniList), None);
     }
 
     #[test]

@@ -14,6 +14,15 @@ pub enum ServiceId {
     AniList,
 }
 
+/// Kotora's own AniList API client (anilist.co/settings/developer, redirect URL
+/// `http://127.0.0.1:47321/callback`). A client id is public by design (implicit grant: there is
+/// no secret), so it ships in the source and AniList sign-in is one click.
+pub const ANILIST_CLIENT_ID: &str = "57227";
+/// Kotora's own MyAnimeList client id, once one is registered. `None` until then: MyAnimeList
+/// users register their own (the wizard's steps). Set this one const to switch MAL to the
+/// one-click sign-in too.
+pub const MAL_CLIENT_ID: Option<&str> = None;
+
 impl ServiceId {
     pub const ALL: [ServiceId; 2] = [ServiceId::Mal, ServiceId::AniList];
 
@@ -27,6 +36,22 @@ impl ServiceId {
 
     pub fn from_name(s: &str) -> Option<ServiceId> {
         ServiceId::ALL.into_iter().find(|v| v.name() == s.trim().to_ascii_lowercase())
+    }
+
+    /// The client id built into Kotora for this service, if there is one.
+    pub fn built_in_client_id(self) -> Option<&'static str> {
+        match self {
+            ServiceId::Mal => MAL_CLIENT_ID,
+            ServiceId::AniList => Some(ANILIST_CLIENT_ID),
+        }
+    }
+
+    /// The environment variable that overrides the client id (for development).
+    pub fn client_id_env(self) -> &'static str {
+        match self {
+            ServiceId::Mal => "KOTORA_MAL_CLIENT_ID",
+            ServiceId::AniList => "KOTORA_ANILIST_CLIENT_ID",
+        }
     }
 
     /// "MyAnimeList", "AniList".
