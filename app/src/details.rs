@@ -361,11 +361,11 @@ fn other_titles(s: &State, d: &Detail) -> El {
     if let Some(i) = &d.info {
         let mut line = row().flex_wrap().gap(10.0);
         for t in [Some(&i.title), i.title_en.as_ref(), i.title_ja.as_ref()].into_iter().flatten().filter(|t| t.as_str() != title) {
-            line = line.child(text(t.clone()).font(TextStyle::new(14.0, 500.0)).color(PAL.dim).wrap());
+            line = line.child(text(t.clone()).font(TextStyle::new(14.0, 500.0)).color(PAL.dim).wrap().selectable(true));
         }
         c = c.child(line);
         if !i.synonyms.is_empty() {
-            c = c.child(text(format!("Also: {}", i.synonyms.join(", "))).font(theme::LABEL).color(PAL.dim).wrap());
+            c = c.child(text(format!("Also: {}", i.synonyms.join(", "))).font(theme::LABEL).color(PAL.dim).wrap().selectable(true));
         }
     }
     c
@@ -418,7 +418,7 @@ fn body_cards(d: &Detail) -> El {
     match (&d.info, &d.error) {
         (Some(i), _) => {
             let synopsis = if i.synopsis.is_empty() { "No synopsis yet.".to_string() } else { i.synopsis.clone() };
-            c = c.child(card("det-synopsis", "Synopsis").child(text(synopsis).font(theme::BODY).color(PAL.dim).wrap().pt(4.0)));
+            c = c.child(card("det-synopsis", "Synopsis").child(text(synopsis).key("det-synopsis-text").font(theme::BODY).color(PAL.dim).wrap().selectable(true).pt(4.0)));
             let mut facts = col().key("det-facts").pt(4.0);
             let aired = match (i.start_date.as_deref(), i.end_date.as_deref()) {
                 (Some(a), Some(b)) => format!("{} to {}", date_text(a), date_text(b)),
@@ -677,14 +677,14 @@ fn header_wide(s: &State, d: &Detail) -> El {
                 .child(updating(d))
                 .child(link_button("det/open-mal", "MyAnimeList", mal_url(d), true)),
         );
-    let title = text(shown_title(s, d).to_string()).key("det-title").font(crate::look::HERO_TITLE).color(PAL.text).wrap().max_lines(3);
+    let title = text(shown_title(s, d).to_string()).key("det-title").font(crate::look::HERO_TITLE).color(PAL.text).wrap().max_lines(3).selectable(true);
     let head = row()
         .key("det-main")
         .gap(24.0)
         .items_start()
         .mt(-LIFT)
         .child(big_cover(s, d, 176.0, 264.0))
-        .child(col().grow(1.0).min_w(0.0).pt(48.0).gap(6.0).child(title).child(other_titles(s, d)).child(stats(d).mt(18.0)).child(tags(d).mt(6.0)));
+        .child(col().grow(1.0).min_w(0.0).pt(48.0).gap(6.0).selection_group(true).child(title).child(other_titles(s, d)).child(stats(d).mt(18.0)).child(tags(d).mt(6.0)));
     let left = col().grow(1.0).min_w(0.0).gap(20.0).child(head).child(body_cards(d));
     let right = mine_column(s, d, false).w(320.0).mt(-LIFT + 56.0);
     col().w_full().child(banner).child(
@@ -711,7 +711,7 @@ fn top_bar(d: &Detail) -> El {
 /// B: one banner card (cover, tags, titles, numbers and the glass entry panel), then the rest.
 fn header_narrow(s: &State, d: &Detail) -> El {
     let scrim = if PAL.light { crate::look::Scrim::even(0.62) } else { crate::look::Scrim::even(0.5) };
-    let title = text(shown_title(s, d).to_string()).key("det-title").font(TextStyle::new(24.0, 600.0).tracking(-0.2)).color(PAL.text).wrap().max_lines(3);
+    let title = text(shown_title(s, d).to_string()).key("det-title").font(TextStyle::new(24.0, 600.0).tracking(-0.2)).color(PAL.text).wrap().max_lines(3).selectable(true);
     let banner = el()
         .key("det-banner")
         .w_full()
@@ -727,7 +727,7 @@ fn header_narrow(s: &State, d: &Detail) -> El {
                 .gap(20.0)
                 .items_start()
                 .child(big_cover(s, d, 132.0, 198.0))
-                .child(col().grow(1.0).min_w(0.0).gap(6.0).child(tags(d).pb(4.0)).child(title).child(other_titles(s, d)).child(stats(d).mt(12.0)))
+                .child(col().grow(1.0).min_w(0.0).gap(6.0).selection_group(true).child(tags(d).pb(4.0)).child(title).child(other_titles(s, d)).child(stats(d).mt(12.0)))
                 .child(mine_column(s, d, true).w(250.0)),
         );
     col()
