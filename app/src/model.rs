@@ -1294,6 +1294,7 @@ pub fn remote_text(r: &Remote, episodes: Option<u32>) -> String {
 fn fake_ops() -> Vec<Op> {
     let op = |id: i64, media_id: u32, change: Change, old: Values, state: OpState, ago: i64| Op {
         id,
+        kind: kotora_core::Kind::Anime,
         media_id,
         title: WATCHING[media_id as usize].title.into(),
         episodes: Some(WATCHING[media_id as usize].episodes),

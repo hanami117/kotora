@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::airing::{Broadcast, SEASON_MAX_AGE, SEASONS_KEPT, Season, SeasonAnime};
 use crate::service::Details;
-use crate::{ListItem, Media, Status};
+use crate::{Kind, ListItem, Media, Scope, Status};
 
 /// Each entry is one migration; the schema version is the number of entries applied.
 pub(crate) const MIGRATIONS: &[&str] = &[
@@ -164,7 +164,101 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     // so the Airing page can show any season from it; before, the previous season kept only its
     // shows still airing. The old copies are partial: forget them (they are only a cache).
     "DELETE FROM season;",
+    // 10: manga (0.2). The list's kind is part of every key that holds a MAL id, because anime
+    // and manga ids overlap: `media`, `entry`, `details`, `recognition` (service + kind + id) and
+    // `pending_op.kind`. SQLite can't change a primary key, so those four tables are rebuilt: the
+    // old one is renamed, the new one created, the rows copied over as `anime`, the old one
+    // dropped. `entry` and `media` go together (the foreign key). New fields: `media.volumes`
+    // (the count), `media.authors` (JSON names), `entry.volumes` (read), and in `pending_op`
+    // `volumes` / `old_volumes` / `r_volumes` like the other fields. The whole step runs in one
+    // transaction with the version bump, and `Store::open` keeps a copy of the file first.
+    // `air_seen`, `announced`, `season` stay anime-only.
+    "ALTER TABLE entry RENAME TO entry_v9;
+     ALTER TABLE media RENAME TO media_v9;
+     CREATE TABLE media (
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'anime',
+        id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        title_en TEXT,
+        title_ja TEXT,
+        synonyms TEXT NOT NULL DEFAULT '[]',
+        episodes INTEGER,
+        format TEXT NOT NULL DEFAULT '',
+        air_status TEXT NOT NULL DEFAULT '',
+        cover_url TEXT,
+        fetched_at INTEGER NOT NULL,
+        start_date TEXT,
+        broadcast TEXT,
+        volumes INTEGER,
+        authors TEXT NOT NULL DEFAULT '[]',
+        PRIMARY KEY (service, kind, id)
+     );
+     INSERT INTO media (service, kind, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
+        start_date, broadcast)
+       SELECT service, 'anime', id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
+        start_date, broadcast FROM media_v9;
+     CREATE TABLE entry (
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'anime',
+        media_id INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        progress INTEGER NOT NULL,
+        score INTEGER,
+        rewatching INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        times_rewatched INTEGER NOT NULL DEFAULT 0,
+        volumes INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (service, kind, media_id),
+        FOREIGN KEY (service, kind, media_id) REFERENCES media (service, kind, id)
+     );
+     INSERT INTO entry (service, kind, media_id, status, progress, score, rewatching, updated_at, times_rewatched)
+       SELECT service, 'anime', media_id, status, progress, score, rewatching, updated_at, times_rewatched FROM entry_v9;
+     DROP TABLE entry_v9;
+     DROP TABLE media_v9;
+     ALTER TABLE details RENAME TO details_v9;
+     CREATE TABLE details (
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'anime',
+        media_id INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (service, kind, media_id)
+     );
+     INSERT INTO details (service, kind, media_id, body, fetched_at) SELECT service, 'anime', media_id, body, fetched_at FROM details_v9;
+     DROP TABLE details_v9;
+     ALTER TABLE recognition RENAME TO recognition_v9;
+     CREATE TABLE recognition (
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'anime',
+        key TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        used_at INTEGER NOT NULL,
+        PRIMARY KEY (service, kind, key)
+     );
+     INSERT INTO recognition (service, kind, key, media_id, source, title, used_at)
+       SELECT service, 'anime', key, media_id, source, title, used_at FROM recognition_v9;
+     DROP TABLE recognition_v9;
+     ALTER TABLE pending_op ADD COLUMN kind TEXT NOT NULL DEFAULT 'anime';
+     ALTER TABLE pending_op ADD COLUMN volumes INTEGER;
+     ALTER TABLE pending_op ADD COLUMN old_volumes INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE pending_op ADD COLUMN r_volumes INTEGER;
+     CREATE INDEX pending_op_entry ON pending_op (service, kind, media_id);",
 ];
+
+/// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside
+/// before it is upgraded.
+pub const SCHEMA_0_1: usize = 9;
+
+/// The copy `Store::open` keeps of a database file before upgrading it from schema `version`:
+/// `kotora.db.schema-9.bak` beside `kotora.db`.
+pub fn backup_path(path: &Path, version: usize) -> std::path::PathBuf {
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(format!(".schema-{version}.bak"));
+    path.with_file_name(name)
+}
 
 /// Details of titles not on the list kept at most (the newest).
 pub const DETAILS_KEEP: i64 = 100;
@@ -202,7 +296,26 @@ impl Store {
         // Another thread of ours may write while the UI loads: wait a little instead of failing.
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+        Store::back_up_before_upgrade(&conn, path)?;
         Store::init(conn)
+    }
+
+    /// Before an existing database is upgraded, a whole copy goes beside it
+    /// ([`backup_path`]); without one nothing is migrated. A copy already there (from an earlier
+    /// try) is kept as it is: it is the older one. `VACUUM INTO` reads a consistent snapshot,
+    /// WAL included.
+    fn back_up_before_upgrade(conn: &Connection, path: &Path) -> Result<()> {
+        let version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize;
+        if version == 0 || version >= MIGRATIONS.len() {
+            return Ok(());
+        }
+        let copy = backup_path(path, version);
+        if copy.exists() {
+            return Ok(());
+        }
+        let target = copy.to_str().ok_or_else(|| StoreError(format!("can't name a backup of {}", path.display())))?;
+        conn.execute("VACUUM INTO ?1", [target]).map_err(|e| StoreError(format!("can't keep a copy of the database before upgrading it ({e}); nothing was changed")))?;
+        Ok(())
     }
 
     pub fn open_memory() -> Result<Store> {
@@ -275,7 +388,7 @@ impl Store {
     pub fn recognition(&self, service: &str, key: &str) -> Result<Option<(u32, String, String)>> {
         Ok(self
             .conn
-            .query_row("SELECT media_id, source, title FROM recognition WHERE service = ?1 AND key = ?2", params![service, key], |r| {
+            .query_row("SELECT media_id, source, title FROM recognition WHERE service = ?1 AND kind = 'anime' AND key = ?2", params![service, key], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
             .optional()?)
@@ -284,8 +397,8 @@ impl Store {
     /// Saves an answer (and drops search answers older than 30 days).
     pub fn set_recognition(&self, service: &str, key: &str, media_id: u32, source: &str, title: &str, now: i64) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO recognition (service, key, media_id, source, title, used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (service, key) DO UPDATE SET media_id = ?3, source = ?4, title = ?5, used_at = ?6",
+            "INSERT INTO recognition (service, kind, key, media_id, source, title, used_at) VALUES (?1, 'anime', ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (service, kind, key) DO UPDATE SET media_id = ?3, source = ?4, title = ?5, used_at = ?6",
             params![service, key, media_id, source, title, now],
         )?;
         self.conn.execute("DELETE FROM recognition WHERE source = 'search' AND used_at < ?1", [now - 30 * 86_400])?;
@@ -293,31 +406,35 @@ impl Store {
     }
 
     pub fn forget_recognition(&self, service: &str, key: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM recognition WHERE service = ?1 AND key = ?2", params![service, key])?;
+        self.conn.execute("DELETE FROM recognition WHERE service = ?1 AND kind = 'anime' AND key = ?2", params![service, key])?;
         Ok(())
     }
 
     // ------------------------------------------------------------------------------- list
 
-    /// Replaces the saved list of `service` with the fetched one, in one transaction. Entries and
-    /// media that are no longer on the list go away (no hoarding). Records the sync time.
-    /// Changes still in the queue are laid over the fetched entries: they win until sent.
-    pub fn replace_list(&mut self, service: &str, items: &[ListItem], now: i64) -> Result<()> {
+    /// Replaces the saved list of `scope` (a service name: its anime list) with the fetched one,
+    /// in one transaction. Entries and media that are no longer on the list go away (no
+    /// hoarding); the other kind's list is not touched. Records the sync time. Changes still in
+    /// the queue are laid over the fetched entries: they win until sent.
+    pub fn replace_list<'a>(&mut self, scope: impl Into<Scope<'a>>, items: &[ListItem], now: i64) -> Result<()> {
+        let Scope { service, kind } = scope.into();
+        let k = kind.name();
         let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM entry WHERE service = ?1", [service])?;
+        tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?2", [service, k])?;
         {
             let mut media = tx.prepare(
                 "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
-                   start_date, broadcast)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                 ON CONFLICT (service, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
+                   start_date, broadcast, kind, volumes, authors)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                 ON CONFLICT (service, kind, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
                    title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
                    format = excluded.format, air_status = excluded.air_status, cover_url = excluded.cover_url,
-                   fetched_at = excluded.fetched_at, start_date = excluded.start_date, broadcast = excluded.broadcast",
+                   fetched_at = excluded.fetched_at, start_date = excluded.start_date, broadcast = excluded.broadcast,
+                   volumes = excluded.volumes, authors = excluded.authors",
             )?;
             let mut entry = tx.prepare(
-                "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, times_rewatched, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT OR REPLACE INTO entry (service, media_id, status, progress, score, rewatching, times_rewatched, updated_at, kind, volumes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for it in items {
                 let m = &it.media;
@@ -334,44 +451,65 @@ impl Store {
                     m.cover_url,
                     now,
                     m.start_date,
-                    m.broadcast.map(crate::airing::Broadcast::to_text)
+                    m.broadcast.map(crate::airing::Broadcast::to_text),
+                    k,
+                    m.volumes,
+                    serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into())
                 ])?;
-                entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at])?;
+                entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at, k, it.volumes])?;
             }
         }
-        crate::queue::lay_over(&tx, service)?;
+        crate::queue::lay_over(&tx, Scope::new(service, kind))?;
         // Keep the media of a change that still waits (its title shows in the queue).
         tx.execute(
-            "DELETE FROM media WHERE service = ?1 AND id NOT IN (SELECT media_id FROM entry WHERE service = ?1)
-               AND id NOT IN (SELECT media_id FROM pending_op WHERE service = ?1 AND state != 'done')",
-            [service],
+            "DELETE FROM media WHERE service = ?1 AND kind = ?2 AND id NOT IN (SELECT media_id FROM entry WHERE service = ?1 AND kind = ?2)
+               AND id NOT IN (SELECT media_id FROM pending_op WHERE service = ?1 AND kind = ?2 AND state != 'done')",
+            [service, k],
         )?;
-        tx.execute("INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value", params![format!("{service}:synced_at"), now.to_string()])?;
+        tx.execute("INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value", params![synced_key(service, kind), now.to_string()])?;
         tx.commit()?;
         Ok(())
     }
 
-    /// The saved list, newest update first.
-    pub fn load_list(&self, service: &str) -> Result<Vec<ListItem>> {
-        let mut st = self.conn.prepare(&format!("{ITEM_SELECT} WHERE e.service = ?1 ORDER BY e.updated_at DESC, m.id"))?;
-        let rows = st.query_map([service], item_row)?;
+    /// The saved list of `scope` (a service name: its anime list), newest update first.
+    pub fn load_list<'a>(&self, scope: impl Into<Scope<'a>>) -> Result<Vec<ListItem>> {
+        let Scope { service, kind } = scope.into();
+        let mut st = self.conn.prepare(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.kind = ?2 ORDER BY e.updated_at DESC, m.id"))?;
+        let rows = st.query_map([service, kind.name()], item_row)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// One saved entry.
-    pub fn load_item(&self, service: &str, media_id: u32) -> Result<Option<ListItem>> {
-        Ok(self.conn.query_row(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.media_id = ?2"), params![service, media_id], item_row).optional()?)
+    pub fn load_item<'a>(&self, scope: impl Into<Scope<'a>>, media_id: u32) -> Result<Option<ListItem>> {
+        let Scope { service, kind } = scope.into();
+        Ok(self
+            .conn
+            .query_row(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.kind = ?2 AND e.media_id = ?3"), params![service, kind.name(), media_id], item_row)
+            .optional()?)
+    }
+
+    /// Whether Manga mode was turned on (opened once). Off by default: then a sync never asks
+    /// for the manga list, so people with no manga pay no extra requests. A setting of this
+    /// install, not of the account: sign out keeps it.
+    pub fn manga_enabled(&self) -> Result<bool> {
+        Ok(self.kv_get(MANGA_ENABLED)?.as_deref() == Some("1"))
+    }
+
+    pub fn set_manga_enabled(&self, on: bool) -> Result<()> {
+        self.kv_set(MANGA_ENABLED, if on { "1" } else { "0" })
     }
 
 
-    /// Updates the saved media row of an anime on the list (titles, count, cover) from fresher
-    /// data, e.g. its details page. Nothing happens for an anime not on the list.
+    /// Updates the saved media row of an anime (or a manga: `m.kind`) on the list (titles,
+    /// counts, cover) from fresher data, e.g. its details page. Nothing happens for one not on
+    /// the list.
     pub fn refresh_media(&self, service: &str, m: &Media, now: i64) -> Result<bool> {
         let n = self.conn.execute(
             "UPDATE media SET title = ?3, title_en = ?4, title_ja = ?5, synonyms = ?6, episodes = ?7, format = ?8,
                air_status = ?9, cover_url = COALESCE(?10, cover_url), fetched_at = ?11,
-               start_date = COALESCE(?12, start_date), broadcast = COALESCE(?13, broadcast)
-             WHERE service = ?1 AND id = ?2 AND id IN (SELECT media_id FROM entry WHERE service = ?1)",
+               start_date = COALESCE(?12, start_date), broadcast = COALESCE(?13, broadcast),
+               volumes = ?15, authors = CASE WHEN ?16 = '[]' THEN authors ELSE ?16 END
+             WHERE service = ?1 AND kind = ?14 AND id = ?2 AND id IN (SELECT media_id FROM entry WHERE service = ?1 AND kind = ?14)",
             params![
                 service,
                 m.id,
@@ -385,7 +523,10 @@ impl Store {
                 m.cover_url,
                 now,
                 m.start_date,
-                m.broadcast.map(crate::airing::Broadcast::to_text)
+                m.broadcast.map(crate::airing::Broadcast::to_text),
+                m.kind.name(),
+                m.volumes,
+                serde_json::to_string(&m.authors).unwrap_or_else(|_| "[]".into())
             ],
         )?;
         Ok(n > 0)
@@ -393,30 +534,37 @@ impl Store {
 
     // ---------------------------------------------------------------------------- details
 
-    /// The saved information page of an anime, and when it was fetched.
-    pub fn details(&self, service: &str, media_id: u32) -> Result<Option<(Details, i64)>> {
+    /// The saved information page of an anime (or a manga, in a manga scope), and when it was
+    /// fetched.
+    pub fn details<'a>(&self, scope: impl Into<Scope<'a>>, media_id: u32) -> Result<Option<(Details, i64)>> {
+        let Scope { service, kind } = scope.into();
         let row: Option<(String, i64)> = self
             .conn
-            .query_row("SELECT body, fetched_at FROM details WHERE service = ?1 AND media_id = ?2", params![service, media_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT body, fetched_at FROM details WHERE service = ?1 AND kind = ?2 AND media_id = ?3",
+                params![service, kind.name(), media_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?;
         Ok(row.and_then(|(body, at)| serde_json::from_str(&body).ok().map(|d| (d, at))))
     }
 
-    /// Saves an information page, then forgets old ones of titles not on the list: older than
-    /// a week, or past the newest [`DETAILS_KEEP`].
+    /// Saves an information page (its kind is `d.kind`), then forgets old ones of titles not on
+    /// the list: older than a week, or past the newest [`DETAILS_KEEP`] (both kinds together).
     pub fn save_details(&self, service: &str, d: &Details, now: i64) -> Result<()> {
         let body = serde_json::to_string(d).map_err(|e| StoreError(e.to_string()))?;
         self.conn.execute(
-            "INSERT INTO details (service, media_id, body, fetched_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (service, media_id) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at",
-            params![service, d.id, body, now],
+            "INSERT INTO details (service, kind, media_id, body, fetched_at) VALUES (?1, ?5, ?2, ?3, ?4)
+             ON CONFLICT (service, kind, media_id) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at",
+            params![service, d.id, body, now, d.kind.name()],
         )?;
-        const OFF_LIST: &str = "service = ?1 AND media_id NOT IN (SELECT media_id FROM entry WHERE service = ?1)";
+        const OFF_LIST: &str =
+            "service = ?1 AND NOT EXISTS (SELECT 1 FROM entry e WHERE e.service = details.service AND e.kind = details.kind AND e.media_id = details.media_id)";
         self.conn.execute(&format!("DELETE FROM details WHERE {OFF_LIST} AND fetched_at < ?2"), params![service, now - DETAILS_MAX_AGE])?;
         self.conn.execute(
             &format!(
-                "DELETE FROM details WHERE {OFF_LIST} AND media_id NOT IN
-                   (SELECT media_id FROM details WHERE {OFF_LIST} ORDER BY fetched_at DESC, media_id LIMIT ?2)"
+                "DELETE FROM details WHERE {OFF_LIST} AND rowid NOT IN
+                   (SELECT rowid FROM details WHERE {OFF_LIST} ORDER BY fetched_at DESC, media_id LIMIT ?2)"
             ),
             params![service, DETAILS_KEEP],
         )?;
@@ -499,15 +647,29 @@ impl Store {
         self.kv_set(&format!("{service}:profile"), &serde_json::to_string(p).unwrap_or_default())
     }
 
-    /// Unix seconds of the last full sync of `service`.
-    pub fn synced_at(&self, service: &str) -> Result<Option<i64>> {
-        Ok(self.kv_get(&format!("{service}:synced_at"))?.and_then(|v| v.parse().ok()))
+    /// Unix seconds of the last full sync of `scope` (a service name: its anime list).
+    pub fn synced_at<'a>(&self, scope: impl Into<Scope<'a>>) -> Result<Option<i64>> {
+        let Scope { service, kind } = scope.into();
+        Ok(self.kv_get(&synced_key(service, kind))?.and_then(|v| v.parse().ok()))
+    }
+}
+
+/// The `kv` key of Manga mode (see [`Store::manga_enabled`]). Not under a service prefix, so
+/// sign out keeps it.
+const MANGA_ENABLED: &str = "manga:enabled";
+
+/// `mal:synced_at` (anime, as before manga), `mal:manga:synced_at`.
+fn synced_key(service: &str, kind: Kind) -> String {
+    match kind {
+        Kind::Anime => format!("{service}:synced_at"),
+        Kind::Manga => format!("{service}:manga:synced_at"),
     }
 }
 
 const ITEM_SELECT: &str = "SELECT m.id, m.title, m.title_en, m.title_ja, m.synonyms, m.episodes, m.format, m.air_status, m.cover_url,
-        e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched, m.start_date, m.broadcast
- FROM entry e JOIN media m ON m.service = e.service AND m.id = e.media_id";
+        e.status, e.progress, e.score, e.rewatching, e.updated_at, e.times_rewatched, m.start_date, m.broadcast,
+        m.kind, m.volumes, m.authors, e.volumes
+ FROM entry e JOIN media m ON m.service = e.service AND m.kind = e.kind AND m.id = e.media_id";
 
 fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
     let synonyms: String = r.get(4)?;
@@ -525,9 +687,9 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
             cover_url: r.get(8)?,
             start_date: r.get(15)?,
             broadcast: r.get::<_, Option<String>>(16)?.as_deref().and_then(Broadcast::from_text),
-            authors: Vec::new(),
-            kind: Default::default(),
-            volumes: None,
+            kind: Kind::from_name(&r.get::<_, String>(17)?),
+            volumes: r.get(18)?,
+            authors: serde_json::from_str(&r.get::<_, String>(19)?).unwrap_or_default(),
         },
         status: Status::from_mal(&status).unwrap_or(Status::PlanToWatch),
         progress: r.get(10)?,
@@ -535,7 +697,7 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
         rewatching: r.get(12)?,
         times_rewatched: r.get(14)?,
         updated_at: r.get(13)?,
-        volumes: 0,
+        volumes: r.get(20)?,
     })
 }
 
@@ -600,6 +762,233 @@ pub(crate) mod tests {
         let q = s.queue("mal", 10).unwrap();
         assert_eq!((q[0].change.score, q[0].change.rewatching, q[0].old.times_rewatched), (Some(Some(9)), None, 0));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The 0.1.1 fixture (`tests/fixtures/kotora-0.1.1.db`, made-up rows) in a fresh scratch
+    /// folder; the folder goes when the guard drops.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn with_0_1_1(name: &str) -> (Scratch, std::path::PathBuf) {
+            let dir = std::env::temp_dir().join(format!("kotora-mig-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("kotora.db");
+            std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kotora-0.1.1.db"), &path).unwrap();
+            (Scratch(dir), path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Every table's and index's SQL, by name (whitespace folded).
+    fn schema_of(c: &Connection) -> Vec<(String, String)> {
+        let mut st = c.prepare("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").unwrap();
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).unwrap().map(|r| r.unwrap()).map(|(n, s)| (n, s.split_whitespace().collect::<Vec<_>>().join(" "))).collect()
+    }
+
+    fn counts(c: &Connection) -> Vec<i64> {
+        ["account", "media", "entry", "pending_op", "recognition", "details", "kv", "season", "library_file", "air_seen", "announced"]
+            .iter()
+            .map(|t| c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap())
+            .collect()
+    }
+
+    /// The fixture really is a 0.1.1 database: schema 9, and the same tables and indexes as the
+    /// first nine migrations make (the ones 0.1.1 shipped; they never change).
+    #[test]
+    fn the_fixture_has_the_0_1_1_schema() {
+        let (_g, path) = Scratch::with_0_1_1("schema");
+        let fixture = Connection::open(&path).unwrap();
+        assert_eq!(fixture.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0)).unwrap() as usize, SCHEMA_0_1);
+        let fresh = Connection::open_in_memory().unwrap();
+        for m in &MIGRATIONS[..SCHEMA_0_1] {
+            fresh.execute_batch(m).unwrap();
+        }
+        assert_eq!(schema_of(&fixture), schema_of(&fresh));
+        assert_eq!(counts(&fixture), [1, 4, 4, 4, 3, 2, 4, 1, 1, 1, 1]);
+    }
+
+    /// The manga migration on a 0.1.1 database: a copy of the file is kept first, every row
+    /// stays and becomes `anime`, the queue (waiting, conflict, add, sent) keeps working, and an
+    /// anime and a manga with the same MAL id live side by side afterwards. Opening again
+    /// changes nothing.
+    #[test]
+    fn the_0_1_1_database_upgrades() {
+        let (_g, path) = Scratch::with_0_1_1("upgrade");
+        let before = counts(&Connection::open(&path).unwrap());
+        let mut s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
+        // The backup: the untouched 0.1.1 database.
+        let bak = backup_path(&path, SCHEMA_0_1);
+        assert_eq!(bak.file_name().unwrap(), "kotora.db.schema-9.bak");
+        {
+            let b = Connection::open(&bak).unwrap();
+            assert_eq!(b.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0)).unwrap() as usize, SCHEMA_0_1);
+            assert_eq!(counts(&b), before);
+            let fixture = Connection::open(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kotora-0.1.1.db")).unwrap();
+            assert_eq!(schema_of(&b), schema_of(&fixture), "the copy is the old schema");
+        }
+        // Every row kept, all anime.
+        assert_eq!(counts(&s.conn), before);
+        let fk: Option<String> = s.conn.query_row("PRAGMA foreign_key_check", [], |r| r.get(0)).optional().unwrap();
+        assert_eq!(fk, None, "no broken foreign key");
+        for t in ["media", "entry", "pending_op", "recognition", "details"] {
+            let other: i64 = s.conn.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE kind != 'anime'"), [], |r| r.get(0)).unwrap();
+            assert_eq!(other, 0, "{t}");
+        }
+        let list = s.load_list("mal").unwrap();
+        assert_eq!(list.len(), 4);
+        assert!(list.iter().all(|i| i.media.kind == Kind::Anime && i.volumes == 0 && i.media.volumes.is_none()));
+        let lanterns = s.load_item("mal", 1001).unwrap().unwrap();
+        assert_eq!((lanterns.progress, lanterns.score, lanterns.media.start_date.as_deref()), (5, Some(8), Some("2026-10-03")));
+        assert_eq!(lanterns.media.broadcast, Broadcast::from_text("saturday 23:30"));
+        let harbor = s.load_item("mal", 1002).unwrap().unwrap();
+        assert_eq!((harbor.rewatching, harbor.times_rewatched), (true, 2));
+        assert_eq!(s.synced_at("mal").unwrap(), Some(1_790_000_000));
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("demo_user"));
+        assert_eq!(s.recognition("mal", "lanterns of kirigaoka#1").unwrap(), Some((1001, "user".into(), "Lanterns of Kirigaoka".into())));
+        let (d, _) = s.details("mal", 1001).unwrap().unwrap();
+        assert_eq!((d.kind, d.mine.unwrap().progress), (Kind::Anime, 5));
+        assert!(s.details("mal", 3005).unwrap().is_some());
+        assert!(!s.manga_enabled().unwrap(), "Manga mode starts off");
+        // The queue: same changes, same states, the conflict's service values kept.
+        let q = s.queue("mal", 1_790_000_700).unwrap();
+        assert_eq!(q.iter().map(|o| (o.id, o.state, o.kind)).collect::<Vec<_>>(), [
+            (1, crate::queue::OpState::Queued, Kind::Anime),
+            (2, crate::queue::OpState::Conflict, Kind::Anime),
+            (3, crate::queue::OpState::Queued, Kind::Anime),
+            (4, crate::queue::OpState::Done, Kind::Anime)
+        ]);
+        assert_eq!(q[0].change.progress, Some(6));
+        let r = q[1].remote.unwrap();
+        assert_eq!((r.values.score, r.values.times_rewatched, r.values.volumes, r.updated_at), (Some(7), 2, 0, 1_790_000_650));
+        assert!(q[2].added);
+        assert_eq!(s.open_count("mal").unwrap(), 3);
+        // A sync still lays the waiting changes over the fetched list (the add included).
+        let fetched: Vec<ListItem> = list.iter().filter(|i| i.media.id != 1004).cloned().collect();
+        s.replace_list("mal", &fetched, 1_790_001_000).unwrap();
+        assert_eq!(s.load_item("mal", 1001).unwrap().unwrap().progress, 6, "the waiting edit wins until sent");
+        assert!(s.load_item("mal", 1004).unwrap().is_some(), "the waiting add stays on the list");
+        // Edits still queue and merge.
+        s.enqueue("mal", 1001, crate::Change { progress: Some(7), ..Default::default() }, 1_790_001_100).unwrap();
+        assert_eq!(s.queue("mal", 1_790_001_100).unwrap()[0].change.progress, Some(7));
+        // MAL id 2001 is an anime here; a manga 2001 now fits beside it.
+        let mut manga = tests::item(2001, "Paper Lanterns", Status::Watching, 21, 50);
+        manga.media.kind = Kind::Manga;
+        manga.volumes = 3;
+        s.replace_list(("mal", Kind::Manga), &[manga], 1_790_002_000).unwrap();
+        assert_eq!(s.load_item("mal", 2001).unwrap().unwrap().media.title, "Same Id As A Manga");
+        assert_eq!(s.load_item(("mal", Kind::Manga), 2001).unwrap().unwrap().volumes, 3);
+        assert_eq!(s.load_list("mal").unwrap().len(), 4, "the manga sync left the anime list alone");
+        drop(s);
+        // Opening again: nothing runs, the copy is not touched.
+        let bak_before = std::fs::read(&bak).unwrap();
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
+        assert_eq!(std::fs::read(&bak).unwrap(), bak_before);
+        assert_eq!(s.load_list("mal").unwrap().len(), 4);
+        assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1);
+    }
+
+    /// A migration that fails changes nothing: the version and every row stay, and the next
+    /// start tries again (and keeps the first copy).
+    #[test]
+    fn a_failed_upgrade_changes_nothing_and_runs_again() {
+        let (_g, path) = Scratch::with_0_1_1("failed");
+        {
+            // Something in the way of the rebuild (a table with the name it renames to).
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE media_v9 (x INTEGER);").unwrap();
+        }
+        let before = counts(&Connection::open(&path).unwrap());
+        assert!(Store::open(&path).is_err());
+        {
+            let c = Connection::open(&path).unwrap();
+            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0)).unwrap() as usize, SCHEMA_0_1);
+            assert_eq!(counts(&c), before);
+            let kind: i64 = c.query_row("SELECT COUNT(*) FROM pragma_table_info('media') WHERE name = 'kind'", [], |r| r.get(0)).unwrap();
+            assert_eq!(kind, 0, "the half-done rebuild was rolled back");
+            c.execute_batch("DROP TABLE media_v9;").unwrap();
+        }
+        let bak = backup_path(&path, SCHEMA_0_1);
+        assert!(bak.exists(), "the copy was made before the try");
+        let first = std::fs::read(&bak).unwrap();
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
+        assert_eq!(s.load_list("mal").unwrap().len(), 4);
+        assert_eq!(std::fs::read(&bak).unwrap(), first, "the first copy is kept");
+    }
+
+    /// A new database (and one already current) gets no copy.
+    #[test]
+    fn a_new_database_needs_no_copy() {
+        let dir = std::env::temp_dir().join(format!("kotora-nobak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("kotora.db");
+        Store::open(&path).unwrap();
+        Store::open(&path).unwrap();
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.contains(".bak")).collect();
+        assert!(files.is_empty(), "{files:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn manga(id: u32, title: &str, chapters: u32, volumes: u32, updated_at: i64) -> ListItem {
+        let mut it = item(id, title, Status::Watching, chapters, updated_at);
+        it.media.kind = Kind::Manga;
+        it.media.format = "manga".into();
+        it.media.air_status = "currently_publishing".into();
+        it.media.episodes = None;
+        it.media.volumes = Some(14);
+        it.media.authors = vec!["Aoi Hoshimiya".into()];
+        it.volumes = volumes;
+        it
+    }
+
+    #[test]
+    fn anime_and_manga_lists_are_kept_apart() {
+        let mut s = Store::open_memory().unwrap();
+        s.replace_list("mal", &[item(7, "Anime Seven", Status::Watching, 3, 10)], 100).unwrap();
+        s.replace_list(("mal", Kind::Manga), &[manga(7, "Manga Seven", 21, 3, 20), manga(8, "Manga Eight", 2, 0, 30)], 200).unwrap();
+        assert_eq!(s.load_list("mal").unwrap().iter().map(|i| i.media.title.as_str()).collect::<Vec<_>>(), ["Anime Seven"]);
+        let m = s.load_list(("mal", Kind::Manga)).unwrap();
+        assert_eq!(m.iter().map(|i| i.media.id).collect::<Vec<_>>(), [8, 7], "newest first");
+        assert_eq!(m[1], manga(7, "Manga Seven", 21, 3, 20), "every manga field round-trips");
+        assert_eq!((s.synced_at("mal").unwrap(), s.synced_at(("mal", Kind::Manga)).unwrap()), (Some(100), Some(200)));
+        // A manga sync drops only manga gone from the list, and their media.
+        s.replace_list(("mal", Kind::Manga), &[manga(8, "Manga Eight", 3, 0, 40)], 300).unwrap();
+        assert!(s.load_item(("mal", Kind::Manga), 7).unwrap().is_none());
+        assert!(s.load_item("mal", 7).unwrap().is_some(), "the anime with the same id stays");
+        let media: i64 = s.conn.query_row("SELECT COUNT(*) FROM media", [], |r| r.get(0)).unwrap();
+        assert_eq!(media, 2);
+        // Fresher data for a manga touches the manga row only.
+        let mut fresh = manga(8, "Manga Eight (new)", 3, 0, 40).media;
+        fresh.volumes = Some(15);
+        assert!(s.refresh_media("mal", &fresh, 400).unwrap());
+        assert_eq!(s.load_item(("mal", Kind::Manga), 8).unwrap().unwrap().media.volumes, Some(15));
+        let mut anime8 = fresh.clone();
+        anime8.kind = Kind::Anime;
+        assert!(!s.refresh_media("mal", &anime8, 400).unwrap(), "no anime 8 on the list");
+        // Details of the same id, one per kind.
+        let mut dm = details(7);
+        dm.kind = Kind::Manga;
+        dm.title = "Manga Seven".into();
+        s.save_details("mal", &details(7), 500).unwrap();
+        s.save_details("mal", &dm, 500).unwrap();
+        assert_eq!(s.details("mal", 7).unwrap().unwrap().0.title, "Show 7");
+        assert_eq!(s.details(("mal", Kind::Manga), 7).unwrap().unwrap().0.title, "Manga Seven");
+        // Sign out forgets both lists; Manga mode is a setting of this install and stays.
+        s.set_manga_enabled(true).unwrap();
+        s.clear_service("mal").unwrap();
+        assert!(s.load_list(("mal", Kind::Manga)).unwrap().is_empty() && s.load_list("mal").unwrap().is_empty());
+        assert_eq!(s.synced_at(("mal", Kind::Manga)).unwrap(), None);
+        assert!(s.manga_enabled().unwrap());
+        s.set_manga_enabled(false).unwrap();
+        assert!(!s.manga_enabled().unwrap());
     }
 
     #[test]

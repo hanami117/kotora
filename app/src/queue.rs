@@ -158,13 +158,16 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         }
         let wait = match svc.as_mut() {
             Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(&mut store, service, now_unix(), !w.ask_on_higher.load(Ordering::Relaxed)) {
-                Ok(Step::Handled { media_id, outcome }) => {
+                Ok(Step::Handled { kind, media_id, outcome }) => {
                     let offline = match outcome {
                         Outcome::Retry(_) => Some(true),
                         Outcome::Sent | Outcome::AlreadyThere => Some(false),
                         _ => None,
                     };
-                    report(h, snapshot(&store, &[media_id], offline));
+                    // The list page shows anime only until Manga mode has a UI: a manga
+                    // change refreshes the queue and the badge, no anime row.
+                    let ids: &[u32] = if kind == kotora_core::Kind::Anime { &[media_id] } else { &[] };
+                    report(h, snapshot(&store, ids, offline));
                     continue;
                 }
                 Ok(Step::Wait(secs)) => Some(Duration::from_secs(secs.clamp(1, queue::MAX_BACKOFF) as u64)),
