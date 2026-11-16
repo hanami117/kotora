@@ -345,6 +345,7 @@ struct File {
     startup: Startup,
     #[serde(default)]
     notifications: Notifications,
+    #[serde(default)]
     library: Library,
 }
 
