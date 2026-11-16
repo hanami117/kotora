@@ -13,6 +13,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   older Kotora that doesn't know it makes `kot` print the status lines instead.
 - **`kot status --short`** prints the status as one line.
 - **`kot schedule`** is another name for `kot airing`.
+- **AniList:** sign in with AniList instead of MyAnimeList (anime lists). Pick it on the first screen or in
+  Settings → Account ("Use AniList"); Kotora keeps one service at a time, and each keeps its own saved list,
+  sign-in and waiting changes, so switching back loses nothing. Sign-in goes through AniList's page in your
+  browser with your own AniList API client (no client secret), or a token pasted from AniList's page. Rewatches
+  are AniList's "Repeating"; scores go to AniList in your own score format. Detection, the sync queue, search,
+  details, Airing and `kot` work the same with either service.
+- **Exact airing times on AniList:** the next episode's time comes from AniList's schedule, so breaks and delays
+  no longer throw off "not aired yet" and the Airing timetable.
 
 ### Fixed
 - **`kot` picks the right anime when a title matches several:** a title that is exactly what you typed (any
