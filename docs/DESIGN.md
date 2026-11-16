@@ -367,7 +367,7 @@ start_time }`, JST), not the time of each episode. Kotora estimates them itself:
 | artwork cache | `app/src/art.rs` (LRU by bytes, disk cache, downscale to display size, never evict covers on screen) |
 | macOS bits | `app/src/logfile.rs` (stderr to ~/Library/Logs), `app/src/nowplaying.rs` objc2 setup, `menu_bar_mac.rs` |
 | tray | `app/src/tray_linux.rs`, `tray_mac.rs` (later) |
-| update notice | `app/src/update.rs` (`latest.json`, once a day, channel per package) (later) |
+| update notice | `core/src/update.rs` (the check) + `app/src/update.rs` (banner, Settings) (`latest.json`, once a day, channel per package) |
 | install and packages | `install.sh` (user install to `~/.local`, desktop file, icons, `--uninstall`), `packaging/appimage/{container.sh,build.sh,deps-ubuntu.sh}` (Ubuntu 22.04 container, glibc 2.35), `packaging/aur*/PKGBUILD`, `packaging/macos/build.sh` (bundle, ad-hoc sign, DMG), `packaging/release.sh` (prepares, never publishes), `packaging/homebrew/` |
 | checks | `scripts/linux-check/` (Docker build/test/clippy/snap), `deny.toml` (licence allowlist: add MPL-2.0 for anitomy), `.github/workflows/` |
 
@@ -525,7 +525,7 @@ bugs we find in Taiga or its data upstream when they are relevant.
   in Settings and in the docs ("your token is stored in a file readable only by you") and offers
   sign-out, which deletes it. The data dir is mode 0700 and the socket 0600. The VLC web password
   (macOS) in `config.toml` has the same caveat; the file is 0600.
-- No telemetry. An update check (later) is opt-out and anonymous, as in Uzumaki.
+- No telemetry. The update check is opt-out and anonymous, as in Uzumaki: once a day a GET of `updates.kotora.moe/latest.json` with version, OS, CPU and install channel (README "Privacy"); off in Settings → About Kotora → Check for updates.
 - **anime-relations download:** the same rules. A copy is built in. At the first recognised file of a
   run, when the last try is a week old (a day after a failed one), one anonymous `GET` of the raw file on
   GitHub (`User-Agent: Kotora/<version>`, `If-None-Match` with the saved ETag; no account, no cookies),

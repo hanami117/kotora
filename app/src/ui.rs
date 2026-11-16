@@ -366,6 +366,10 @@ fn main(s: &State, wide: bool, width: f32) -> El {
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a));
     }
+    // A newer Kotora is out (`update.rs`): quiet, under the rest.
+    if let Some(u) = crate::update::banner(s) {
+        m = m.child(u);
+    }
     m.child(col().grow(1.0).min_h(0.0).w_full().child(page))
 }
 
@@ -1600,6 +1604,7 @@ fn about_card(s: &State) -> El {
                     ),
             ),
     )
+    .child(crate::update::settings_rows(s))
 }
 
 /// The `sm` button (26 high) of the settings rows.

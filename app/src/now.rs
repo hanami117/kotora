@@ -147,12 +147,14 @@ pub struct Prefs {
     pub login: bool,
     /// Settings → Startup: the login start shows only the tray icon (`[startup] background`).
     pub background: bool,
+    /// Settings → About Kotora → Check for updates (`[app] check_updates`).
+    pub check_updates: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: false, background: false, check_updates: true }
     }
 }
 
@@ -172,6 +174,7 @@ impl Prefs {
             // The login entry itself, read by `detect::start`; false until then.
             login: false,
             background: c.startup.background,
+            check_updates: c.app.check_updates,
         }
     }
 }

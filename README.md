@@ -78,11 +78,21 @@ You can also run `kot config client-id ID`.
 
 ## Privacy
 
+- **No telemetry, no analytics, no account of ours.** Apart from your list service, the update check below is
+  the only thing Kotora sends anywhere on its own.
 - Your list lives on MyAnimeList. Kotora keeps a local copy to work offline, and covers in a cache you can delete.
-- Kotora talks only to MyAnimeList. No account of ours, no analytics, no telemetry.
+- **Update check:** once a day, a plain GET of `https://updates.kotora.moe/latest.json` with the User-Agent
+  `Kotora/<version>` and four values: the Kotora version, the OS (Linux or macOS), the processor type
+  (x86_64 or arm64) and how it was installed (AUR, install.sh, Homebrew, DMG, …), plus a flag on the first
+  check of a week and of a month. No id, no account, no list, file or anime names. The server adds one to a
+  counter for that day and that combination; those daily counts are all it keeps: no IP address, no install
+  or device id, no cookies. If that server can't be reached, Kotora asks `https://kotora.moe/latest.json`
+  instead, which counts nothing. Kotora never downloads an update by itself: it shows a banner, and you
+  choose. Turn it off in Settings → About Kotora → **Check for updates**; then nothing is sent.
 - The sign-in token is stored in a file only you can read (`~/.local/share/kotora/tokens.json`), never in
   the database or logs. Kotora needs no client secret.
-- Files: settings in `~/.config/kotora`, list and token in `~/.local/share/kotora`, covers in `~/.cache/kotora`.
+- Files: settings in `~/.config/kotora`, list and token in `~/.local/share/kotora`, covers in `~/.cache/kotora`,
+  the update check's last answer and skipped version in `~/.local/state/kotora/update.json`.
 
 ## The `kot` command
 

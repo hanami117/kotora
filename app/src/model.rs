@@ -426,6 +426,8 @@ pub struct State {
     pub tick: Option<(bool, u64)>,
     /// Library folders and "Play next episode" (`library.rs`).
     pub library: crate::library::Library,
+    /// The update check and its banner (`update.rs`).
+    pub update: crate::update::Updates,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -481,6 +483,7 @@ impl State {
             tray: None,
             tick: None,
             library: Default::default(),
+            update: Default::default(),
         };
         s.queue_changed();
         s.refresh();

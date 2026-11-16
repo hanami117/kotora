@@ -34,6 +34,7 @@ mod setup;
 mod theme;
 mod tray;
 mod ui;
+mod update;
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -214,6 +215,8 @@ fn main() {
         // Players: sources and recognition on their own threads, event driven.
         detect::start(&mut s);
         library::start(&mut s);
+        // The daily update check (after the settings are read; `update.rs`).
+        s.start_updates();
         s
     });
     app.run();

@@ -512,6 +512,28 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::NowPlaying);
     }),
     // Settings → Titles: English or Japanese where the anime has one, romaji where not.
+    // A newer Kotora is out (`update.rs`): the banner as each kind of install sees it.
+    ("update-available", |s| update_scene(s, kotora_core::update::Install::Direct, None)),
+    ("update-available-aur", |s| update_scene(s, kotora_core::update::Install::Aur, None)),
+    ("update-available-homebrew", |s| update_scene(s, kotora_core::update::Install::Homebrew, None)),
+    ("update-available-install-sh", |s| update_scene(s, kotora_core::update::Install::Script, None)),
+    ("update-required", |s| update_scene(s, kotora_core::update::Install::Direct, Some("99.0.0"))),
+    ("update-required-aur", |s| update_scene(s, kotora_core::update::Install::Aur, Some("99.0.0"))),
+    // With the Now Playing banner above it.
+    ("update-with-offer", |s| {
+        update_scene(s, kotora_core::update::Install::Direct, None);
+        s.now = Some(crate::model::fake_now());
+        reached(s);
+    }),
+    // Settings → About Kotora: the switch and Check now, after a manual check.
+    ("settings-updates", |s| {
+        s.update.check = kotora_core::update::CheckStatus { running: false, last_check: Some(s.clock() as u64 - 3600), result: Some(kotora_core::update::UP_TO_DATE.into()) };
+        s.go(Page::Settings);
+    }),
+    ("settings-updates-off", |s| {
+        s.prefs.check_updates = false;
+        s.go(Page::Settings);
+    }),
     ("settings-titles-japanese", |s| {
         s.set_titles(TitleLang::Japanese);
         s.go(Page::Settings);
@@ -849,6 +871,26 @@ fn signed_out(s: &mut State, auth: Auth) {
     s.now = None;
 }
 
+/// A check that found Kotora 99.0.0 (above any real version), as `install` would show it; with
+/// `minimum`, this version is below `minimum_supported`.
+fn update_scene(s: &mut State, install: kotora_core::update::Install, minimum: Option<&str>) {
+    let latest = kotora_core::update::Latest {
+        version: "99.0.0".into(),
+        date: "2026-12-01".into(),
+        notes_url: "https://github.com/hanami117/kotora/releases/tag/v99.0.0".into(),
+        minimum_supported: minimum.map(Into::into),
+        downloads: kotora_core::update::Downloads {
+            macos_dmg: "https://github.com/hanami117/kotora/releases/download/v99.0.0/Kotora-99.0.0.dmg".into(),
+            linux_tarball: "https://github.com/hanami117/kotora/releases/download/v99.0.0/kotora-99.0.0.tar.gz".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    s.fake_update(latest, install);
+    // Alone on top (the fake state has an offer; `update-with-offer` keeps it).
+    s.now = None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::SCENES;
@@ -1109,6 +1151,35 @@ mod tests {
         let rt = render("settings-auto-on", (1360.0, 860.0));
         assert!(rt.find("set/asks-off").is_some());
         assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
+    }
+
+    #[test]
+    fn the_update_banner_fits_each_install() {
+        let has = |rt: &Runtime<State>, keys: &[&str]| keys.iter().map(|k| rt.find(k).is_some()).collect::<Vec<_>>();
+        let keys = ["update-notice", "update-notes", "update-download", "update-skip", "update-dismiss"];
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("update-available", size);
+            assert_eq!(has(&rt, &keys), [true; 5], "{size:?}");
+            // Package and install.sh copies: no Download, but say how.
+            for name in ["update-available-aur", "update-available-homebrew", "update-available-install-sh"] {
+                let rt = render(name, size);
+                assert_eq!(has(&rt, &keys), [true, true, false, true, true], "{name}");
+            }
+            // Below minimum_supported: no Skip and no ✕.
+            assert_eq!(has(&render("update-required", size), &keys), [true, true, true, false, false]);
+            assert_eq!(has(&render("update-required-aur", size), &keys), [true, true, false, false, false]);
+            let rt = render("update-with-offer", size);
+            assert!(rt.find("banner").is_some() && rt.find("update-notice").is_some());
+        }
+        assert!(render("list-watching", (1280.0, 800.0)).find("update-notice").is_none(), "nothing without a check");
+    }
+
+    #[test]
+    fn settings_has_the_update_switch() {
+        for scene in ["settings-page", "settings-updates", "settings-updates-off"] {
+            let rt = render(scene, (1360.0, 860.0));
+            assert!(rt.find("set/check-updates").is_some() && rt.find("set/check-now").is_some(), "{scene}");
+        }
     }
 
     #[test]
