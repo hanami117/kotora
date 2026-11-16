@@ -2,7 +2,7 @@
 //! `--list-scenes` lists them. Every view and state gets one (CLAUDE.md).
 
 use kotora_core::Status;
-use kotora_core::config::TitleLang;
+use kotora_core::config::{Theme, TitleLang};
 
 use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
@@ -502,6 +502,15 @@ pub const SCENES: &[Scene] = &[
         s.set_titles(TitleLang::English);
         search(s, "kirigaoka", true);
     }),
+    // Settings → Appearance with Light picked (light whatever the desktop says).
+    ("settings-theme-light", |s| {
+        s.set_theme(Theme::Light);
+        s.go(Page::Settings);
+    }),
+    ("settings-theme-dark", |s| {
+        s.set_theme(Theme::Dark);
+        s.go(Page::Settings);
+    }),
     // "Update automatically" on, threshold 90 %, keep-higher off.
     ("settings-auto-on", |s| {
         s.prefs.auto = true;
@@ -797,7 +806,7 @@ fn signed_out(s: &mut State, auth: Auth) {
 mod tests {
     use super::SCENES;
     use crate::model::Sort;
-    use kotora_core::config::TitleLang;
+    use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
     use rune::{Env, Runtime};
 
@@ -921,6 +930,29 @@ mod tests {
         assert!(rt.find("airing/error").is_some() && rt.find("airing/week").is_some(), "the saved season stays under the error");
         assert!(render("airing-signed-out", (1280.0, 800.0)).find("welcome").is_some());
         assert!(render("airing-details", (1280.0, 800.0)).find("det-title").is_some());
+    }
+
+    /// Settings → Appearance: System follows the desktop live, Light and Dark ignore it.
+    #[test]
+    fn theme_follows_the_setting_and_the_desktop() {
+        let rt = render("settings-theme-light", (1280.0, 800.0));
+        for key in ["set/theme/system", "set/theme/light", "set/theme/dark"] {
+            assert!(rt.find(key).is_some(), "{key}");
+        }
+        assert!(crate::theme::is_light(), "Light on a dark desktop");
+        render("settings-theme-dark", (1280.0, 800.0));
+        assert!(!crate::theme::is_light(), "Dark");
+        // System (the default): the desktop turns light, then dark again, while running.
+        let mut rt = Runtime::new(State::fake(), crate::ui::view, (1280.0, 800.0), Env { system_dark: false, scale: 1.0 });
+        rt.frame(1.0 / 60.0);
+        assert!(crate::theme::is_light(), "a light desktop");
+        rt.set_system_dark(true);
+        rt.frame(1.0 / 60.0);
+        assert!(!crate::theme::is_light(), "the desktop went dark");
+        // Picking Light in Settings repaints at once, without a restart.
+        rt.update(|s, _| s.set_theme(Theme::Light));
+        rt.frame(1.0 / 60.0);
+        assert!(crate::theme::is_light(), "Light picked");
     }
 
     /// Settings → Titles: one choice lit, and every page follows it.

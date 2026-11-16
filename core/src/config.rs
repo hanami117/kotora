@@ -33,6 +33,7 @@
 //!
 //! [display]
 //! titles = "romaji"            # or "english", "japanese"; romaji when a title is missing
+//! theme = "system"             # or "light", "dark"; system follows the desktop (dark when unknown)
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
@@ -120,11 +121,54 @@ impl TitleLang {
     }
 }
 
+/// Settings → Appearance: light, dark, or whatever the desktop prefers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    /// Follows the desktop (macOS appearance, the XDG portal's `color-scheme` on Linux); dark
+    /// when the desktop says nothing.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub const ALL: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
+
+    /// The `config.toml` value.
+    pub fn key(self) -> &'static str {
+        match self {
+            Theme::System => "system",
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Theme::System => "System",
+            Theme::Light => "Light",
+            Theme::Dark => "Dark",
+        }
+    }
+
+    /// Whether the light palette is in force, given the desktop's preference (`system_dark`).
+    pub fn is_light(self, system_dark: bool) -> bool {
+        match self {
+            Theme::System => !system_dark,
+            Theme::Light => true,
+            Theme::Dark => false,
+        }
+    }
+}
+
 /// Display settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct Display {
     pub titles: TitleLang,
+    pub theme: Theme,
 }
 
 /// Settings → Startup. Whether Kotora starts at login is the login entry itself
@@ -485,6 +529,21 @@ mod tests {
         assert_eq!(n, Notifications { detected: false, offer: true, recorded: true });
         let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
         assert_eq!(n, Notifications { detected: true, offer: false, recorded: true });
+    }
+
+    #[test]
+    fn theme_setting_reads_writes_and_resolves() {
+        assert_eq!(Config::parse("").unwrap().display.theme, Theme::System, "System by default");
+        for t in Theme::ALL {
+            let toml = set_line("[display]\ntitles = \"english\"\n", "display", "theme", &quote(t.key()));
+            let c = Config::parse(&toml).unwrap();
+            assert_eq!(c.display.theme, t);
+            assert_eq!(c.display.titles, TitleLang::English, "the other display line stays");
+        }
+        assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
+        assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");
+        assert!(Theme::Light.is_light(true) && Theme::Light.is_light(false));
+        assert!(!Theme::Dark.is_light(true) && !Theme::Dark.is_light(false));
     }
 
     #[test]

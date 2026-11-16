@@ -326,7 +326,9 @@ User-edited settings live in `config.toml` (TOML, as Uzumaki's `uzu` config). Th
   or Japanese; a missing one falls back to romaji. Display only: matching uses every title.
 - **Design language:** Uzumaki's dark, minimal look with Inter, but Kotora has its own identity: a tiger
   icon that cites Taiga's, and its own accent colour (tiger orange is the starting idea). **Icon:
-  placeholder for now; the icon work is a separate task.** Light theme later.
+  placeholder for now; the icon work is a separate task.** Light theme (2026-11-16): Settings →
+  Appearance → Theme = System (default), Light or Dark; System follows macOS and the XDG portal
+  `color-scheme` live, dark when unknown. Palette in design-spec §1 "Light".
 
 ### 5.8 Airing: the timetable estimate (2026-11-15)
 

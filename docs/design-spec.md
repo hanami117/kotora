@@ -84,6 +84,35 @@ Status colour is never the only signal: the status name is always written next t
 `on_accent` on `accent`: 7.4. Everything passes AA (4.5) except `faint` on `raised` (4.0): don't put
 `faint` text on `raised`; use `dim` there.
 
+### Light (2026-11-16)
+
+Same roles, Settings → Appearance (`[display] theme = "system" | "light" | "dark"`). System follows
+the desktop through Rune (`cx.system_dark()`: macOS appearance; on Linux the XDG portal's
+`color-scheme`, dark when there is none). Headless: `--theme light`. Navy-tinted paper and ink;
+the tiger orange stays the fill, with `on_accent` text; every colour that is also text is darkened.
+
+| token | hex | | token | hex |
+|---|---|---|---|---|
+| `bg` | `#f6f7fb` | | `text` | `#131a2b` |
+| `side` | `#eceff6` | | `dim` | `#454f68` |
+| `surface` | `#ffffff` | | `faint` | `#5f6982` |
+| `raised` | `#e4e8f1` | | `accent` / `_lo` | `#f28a22` / `#e57a18` |
+| `field` | `#ffffff` | | `accent_hi` | `#a64a00` |
+| `border` | `#dbe0ea` | | `on_accent` | `#1d1208` |
+| `border_strong` | `#b9c1d3` | | `cream` | `#7a3a00` (brown: the banner question) |
+| `knob` | `#ffffff` (dark: `#edf0f7`) | | `airing` | `#0a6d7a` |
+| `st_watching` | `#13704a` | | `st_completed` | `#2559c4` |
+| `st_onhold` | `#8a5d00` | | `st_dropped` | `#c02a35` |
+| `st_plan` | `#6b45d1` | | hover / press | black at 0.04 / 0.08 |
+
+Contrast as in the dark table: `text` and `dim` 6.6+ everywhere; `faint`, `accent_hi`, the status
+colours and `airing` 4.5+ on `bg`, `side` and `surface` (4.4+ on `raised`); tags on their own 0.14
+tint and the banner text 4.5+. `app/src/theme.rs` tests both palettes. Rune blends alpha in linear
+light, which makes tints on navy brighter than sRGB math says: measured that way, dark's tag text
+on its tint is 3.5–4.7 (err lowest) and `dim` on the banner 3.9; to retune later.
+
+View code never asks which theme is on: `PAL.x` reads the palette in force.
+
 ## 2. Typography
 
 **Inter, the copy that Rune bundles.** Rune always embeds Inter 4.1 (400, 500, 600) and does not scan

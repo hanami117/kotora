@@ -651,7 +651,7 @@ to v0.3.
   - Jellyfin, Plex and Kodi sources
   - offline mapping data (anime-offline-database, downloaded at runtime)
   - Kitsu and Shikimori
-  - light theme
+  - (light theme done 2026-11-16 on branch `light-theme`: Settings → Appearance, follows the system)
   - update notice
   - torrent feeds: opt-in, no default sources
   - streaming sites: MAL-Sync is recommended; no extension of our own for now

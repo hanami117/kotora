@@ -80,6 +80,55 @@ fn on_reopen(s: &mut State, has_visible_windows: bool, _tx: &mut Tx) -> bool {
     s.reopen(has_visible_windows)
 }
 
+#[cfg(target_os = "macos")]
+thread_local! {
+    /// The native window, kept (on the UI thread) to repaint its background on a theme change.
+    static WINDOW: std::cell::RefCell<Option<rune::WindowHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+/// macOS: the window shows; its native background takes the palette's (as in Uzumaki), so a
+/// resize never flashes the other theme's colour at the edges.
+#[cfg(target_os = "macos")]
+fn on_window(handle: &rune::WindowHandle) {
+    WINDOW.with(|w| *w.borrow_mut() = Some(handle.clone()));
+    paint_window_bg(handle);
+}
+
+/// Called by `theme::apply` on the UI thread when the palette flipped between dark and light.
+#[cfg(target_os = "macos")]
+pub(crate) fn sync_window_bg() {
+    WINDOW.with(|w| {
+        if let Some(h) = w.borrow().as_ref() {
+            paint_window_bg(h);
+        }
+    });
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sync_window_bg() {}
+
+#[cfg(target_os = "macos")]
+fn paint_window_bg(handle: &rune::WindowHandle) {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use rune::raw_window_handle::RawWindowHandle;
+
+    // Rune colours are linear; NSColor takes sRGB-encoded components (Rune tags its layer sRGB).
+    let bg = theme::PAL.bg;
+    let [r, g, b] = [bg.r, bg.g, bg.b].map(|c| f64::from(rune::color::srgb_encode(c)));
+    let _ = handle.with_raw_handle(|h| {
+        let RawWindowHandle::AppKit(h) = h.as_raw() else { return };
+        // SAFETY: on the UI (main) thread, with the view alive for the callback.
+        unsafe {
+            let view = h.ns_view.as_ptr().cast::<AnyObject>();
+            let window: Option<Retained<AnyObject>> = msg_send![view, window];
+            let Some(window) = window else { return };
+            let color: Retained<AnyObject> = msg_send![class!(NSColor), colorWithSRGBRed: r, green: g, blue: b, alpha: 1.0f64];
+            let _: () = msg_send![&*window, setBackgroundColor: &*color];
+        }
+    });
+}
+
 /// `KOTORA_FRAME_LOG=FILE`: appends how long the first frame took after start (the lightness
 /// budget, docs/ROADMAP.md). Off unless set.
 fn log_first_frame() -> impl FnMut(&rune::FrameEncoded) + 'static {
@@ -139,7 +188,7 @@ fn main() {
     let app = if hidden { app.windowless() } else { app };
     let app = app.keep_running().on_close(on_close);
     #[cfg(target_os = "macos")]
-    let app = app.on_reopen(on_reopen);
+    let app = app.on_reopen(on_reopen).on_window(on_window);
     let handle = app.handle();
     // macOS: a background start is a menu bar app until the window shows (no Dock icon).
     #[cfg(target_os = "macos")]

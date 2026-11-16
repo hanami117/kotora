@@ -895,6 +895,16 @@ impl State {
         crate::detect::save_setting(self, "display", "titles", kotora_core::config::quote(lang.key()));
     }
 
+    /// Settings → Appearance: the next frame paints in the new palette (`ui::view`), and
+    /// `config.toml` keeps it.
+    pub fn set_theme(&mut self, theme: kotora_core::config::Theme) {
+        if self.prefs.theme == theme {
+            return;
+        }
+        self.prefs.theme = theme;
+        crate::detect::save_setting(self, "display", "theme", kotora_core::config::quote(theme.key()));
+    }
+
     /// The title a queued change shows: the entry's, in the chosen language, else the saved one.
     pub fn op_title<'a>(&'a self, op: &'a Op) -> &'a str {
         self.entries.iter().find(|e| e.id == op.media_id).map_or(op.title.as_str(), |e| e.title.as_str())

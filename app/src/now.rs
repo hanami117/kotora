@@ -120,6 +120,8 @@ pub struct Prefs {
     pub notify: kotora_core::config::Notifications,
     /// Settings → Titles (`[display] titles`).
     pub titles: kotora_core::config::TitleLang,
+    /// Settings → Appearance (`[display] theme`).
+    pub theme: kotora_core::config::Theme,
     /// Settings → Startup: Kotora starts at login (the login entry exists; `autostart.rs`).
     pub login: bool,
     /// Settings → Startup: the login start shows only the tray icon (`[startup] background`).
@@ -129,7 +131,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), login: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: false, background: false }
     }
 }
 
@@ -145,6 +147,7 @@ impl Prefs {
             iina_precise_answered: c.notices.iina_precise,
             notify: c.notifications.clone(),
             titles: c.display.titles,
+            theme: c.display.theme,
             // The login entry itself, read by `detect::start`; false until then.
             login: false,
             background: c.startup.background,

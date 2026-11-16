@@ -19,6 +19,10 @@ use crate::queue::Cmd;
 use crate::theme::{self, PAL};
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    // The palette first: Settings → Appearance, or the desktop's preference, which Rune follows
+    // live (macOS appearance; the XDG portal's color-scheme on Linux; dark when unknown; `--theme`
+    // headless).
+    theme::apply(s.prefs.theme.is_light(cx.system_dark()));
     #[cfg(target_os = "macos")]
     crate::menu_bar::sync();
     // The type column hides below 1100 pt (design-spec §3).
@@ -247,7 +251,8 @@ fn account(s: &State, name: &str, service: &str) -> El {
         .radius(12.0)
         .linear_gradient(160.0 * PI / 180.0, [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))])
         .center()
-        .child(text(initial).font(rune::TextStyle::new(10.0, 600.0)).color(PAL.text));
+        // The fill is MAL's blue in both themes, so the letter stays light.
+        .child(text(initial).font(rune::TextStyle::new(10.0, 600.0)).color(hex("#edf0f7")));
     if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), 24.0, 24.0) {
         face = face.child(el().key("avatar-img").absolute(0.0, 0.0).size(24.0, 24.0).radius(12.0).pixels(img.pixels()));
     }
@@ -1496,7 +1501,8 @@ fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: Stri
                 .radius(theme::R_MD)
                 .fill(badge_fill)
                 .center()
-                .child(text(badge.to_string()).font(TextStyle::new(11.0, 600.0)).color(fg)),
+                // Brand fills are dark in both themes: the letters stay light.
+                .child(text(badge.to_string()).font(TextStyle::new(11.0, 600.0)).color(hex(if on { "#edf0f7" } else { "#a4afc6" }))),
         )
         .child(
             col()
@@ -2134,7 +2140,7 @@ fn now_page(s: &State, wide: bool) -> El {
 
 /// The 36 × 20 switch (design-spec §4): off `border_strong`, on `accent`.
 pub(crate) fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
-    let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.text });
+    let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.knob });
     let track = row()
         .key(key)
         .role("switch")
@@ -2258,8 +2264,15 @@ fn notifications_card(s: &State) -> El {
     c
 }
 
-/// Settings → Display: which title every page (and `kot`) shows.
+/// Settings → Appearance: the theme, and which title every page (and `kot`) shows.
 fn display_card(s: &State) -> El {
+    let mut themes = row().key("set/theme").gap(6.0);
+    for t in kotora_core::config::Theme::ALL {
+        themes = themes.child(
+            cell(format!("set/theme/{}", t.key()), format!("Theme {}", t.label()), s.prefs.theme == t, move |s: &mut State| s.set_theme(t))
+                .child(text(t.label()).font(theme::LABEL).color(PAL.text)),
+        );
+    }
     let mut choice = row().key("set/titles").gap(6.0);
     for lang in kotora_core::config::TitleLang::ALL {
         choice = choice.child(
@@ -2267,11 +2280,17 @@ fn display_card(s: &State) -> El {
                 .child(text(lang.label()).font(theme::LABEL).color(PAL.text)),
         );
     }
-    card("display-card", "Display").child(option(
-        "Titles",
-        "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
-        choice,
-    ))
+    card("display-card", "Appearance")
+        .child(option(
+            "Theme",
+            "System follows your desktop\u{2019}s light or dark setting, and changes with it.".into(),
+            themes,
+        ))
+        .child(option(
+            "Titles",
+            "The list, Now Playing, search, details, the queue and kot. A title MyAnimeList doesn't have in that language shows in romaji.".into(),
+            choice,
+        ))
 }
 
 /// Settings → Startup: start at login, and whether that start shows the window.
