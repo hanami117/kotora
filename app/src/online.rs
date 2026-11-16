@@ -91,6 +91,9 @@ fn sync_now(h: &Handle, mut store: Store) {
     let synced = matches!(msg, Msg::Synced { .. });
     send(h, msg);
     if synced {
+        // The manga list, only once Manga mode was turned on (off by default: no request).
+        // Nothing shows it yet (stage 4); a failure here never fails the anime sync.
+        let _ = kotora_core::sync::sync_manga(&mut service, &mut store, now_unix());
         for m in refresh_user(&mut service, &store, now_unix()) {
             send(h, m);
         }

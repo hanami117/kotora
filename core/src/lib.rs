@@ -20,6 +20,7 @@ pub mod ratelimit;
 pub mod recognize;
 pub mod service;
 pub mod store;
+pub mod sync;
 pub mod time;
 pub mod tokens;
 pub mod update;
