@@ -2,6 +2,12 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Now Playing: when the playing file matches no anime, the "Offer at N%" label and the threshold tick are
+  hidden (no update is ever offered), and the button says "Pick anime…" instead of "Wrong anime…".
+
 ## [0.1.0] - 2026-11-16
 
 First release. MyAnimeList only. Linux (built from source or the AUR) and macOS (Apple silicon, a DMG).

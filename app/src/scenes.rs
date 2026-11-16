@@ -394,6 +394,15 @@ pub const SCENES: &[Scene] = &[
         }
         s.go(Page::NowPlaying);
     }),
+    // A file that matches nothing, with a position: no "Offer at" label, no tick, "Pick anime…".
+    ("now-playing-unmatched", |s| {
+        playing_file(s, "Kotora-promo.mp4");
+        if let Some(n) = &mut s.now {
+            n.found = Found::Nothing;
+            n.candidates.clear();
+        }
+        s.go(Page::NowPlaying);
+    }),
     // No player plays anything.
     ("now-playing-empty", |s| {
         s.now = None;
@@ -1786,6 +1795,13 @@ mod tests {
         }
         let rt = render("now-playing-unknown", (1280.0, 800.0));
         assert!(rt.find("np/update").is_none() && rt.find("np-card").is_some());
+        // No match: no tick, no "Offer at", and the picker button says "Pick anime…".
+        let rt = render("now-playing-unmatched", (1280.0, 800.0));
+        assert!(rt.find("np-bar").is_some() && rt.find("np-tick").is_none() && rt.find("np-offer-at").is_none());
+        assert!(rt.find("np/wrong").is_some());
+        // With a match both stay.
+        let rt = render("now-playing-page", (1280.0, 800.0));
+        assert!(rt.find("np-tick").is_some() && rt.find("np-offer-at").is_some() && rt.find("np/wrong").is_some());
         let rt = render("now-playing-empty", (1280.0, 800.0));
         assert!(rt.find("np-empty").is_some() && rt.find("np-mini").is_none() && rt.find("np-players").is_some());
     }

@@ -1972,12 +1972,12 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
     let frac = n.fraction().unwrap_or(0.0);
     // The bar, then the threshold's tick in cream just under it.
     let t = f32::from(threshold) / 100.0;
-    let bar = col()
-        .key("np-bar")
-        .w_full()
-        .gap(2.0)
-        .child(look::bar(frac, PAL.accent, 6.0, PAL.text.alpha(0.16)))
-        .child(row().w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
+    // With no match nothing will ever be offered: no tick and no "Offer at" label.
+    let unmatched = matches!(n.found, Found::Nothing);
+    let mut bar = col().key("np-bar").w_full().gap(2.0).child(look::bar(frac, PAL.accent, 6.0, PAL.text.alpha(0.16)));
+    if !unmatched {
+        bar = bar.child(row().key("np-tick").w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
+    }
     // The process source has no position: say so instead of an empty bar.
     let no_position = n.position.is_none() && n.via == crate::precise::VIA_PROCESS;
     let verb = if no_position {
@@ -2023,13 +2023,16 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
         } else {
             col()
                 .mt(12.0)
-                .child(
-                    row()
-                        .mb(6.0)
-                        .child(text(times).font(theme::NUM_MED).color(PAL.text))
-                        .child(spacer())
-                        .child(text(if n.reached { "Counts as watched".to_string() } else { format!("Offer at {threshold}%") }).font(theme::LABEL).color(PAL.dim)),
-                )
+                .child({
+                    let head = row().mb(6.0).child(text(times).font(theme::NUM_MED).color(PAL.text)).child(spacer());
+                    if n.reached {
+                        head.child(text("Counts as watched").key("np-offer-at").font(theme::LABEL).color(PAL.dim))
+                    } else if unmatched {
+                        head
+                    } else {
+                        head.child(text(format!("Offer at {threshold}%")).key("np-offer-at").font(theme::LABEL).color(PAL.dim))
+                    }
+                })
                 .child(bar)
         });
     let mut actions = row().gap(8.0).mt(12.0).center_y();
@@ -2044,7 +2047,7 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
         actions = actions.child(button("np/undo", "Undo", false, Some(State::undo_record)));
     }
     if !matches!(n.found, Found::Ignored) {
-        actions = actions.child(ghost("np/wrong", "Wrong anime\u{2026}", State::wrong_anime));
+        actions = actions.child(ghost("np/wrong", if unmatched { "Pick anime\u{2026}" } else { "Wrong anime\u{2026}" }, State::wrong_anime));
     }
     info = info.child(actions);
     let scrim = if PAL.light { look::Scrim { top: 0.5, mid: 0.62, bottom: 1.0 } } else { look::Scrim { top: 0.4, mid: 0.6, bottom: 1.0 } };
