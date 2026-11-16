@@ -740,6 +740,31 @@ pub const SCENES: &[Scene] = &[
     ("ctx-undo", |s| {
         s.ctx_move(2, Status::Completed);
     }),
+    // A long title: the toast wraps inside its width and keeps the Undo button whole.
+    ("ctx-undo-long", |s| {
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == 2) {
+            e.title = "That Time I Got Reincarnated as a Very Long Title in Another World: The Complete Director's Cut".into();
+        }
+        s.ctx_move(2, Status::Completed);
+    }),
+    ("ctx-undo-long-light", |s| {
+        s.set_theme(Theme::Light);
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == 2) {
+            e.title = "That Time I Got Reincarnated as a Very Long Title in Another World: The Complete Director's Cut".into();
+        }
+        s.ctx_move(2, Status::Completed);
+    }),
+    ("ctx-undo-light", |s| {
+        s.set_theme(Theme::Light);
+        s.ctx_move(2, Status::Completed);
+    }),
+    // One long word: nowhere to wrap, so the toast must stay inside the window.
+    ("ctx-undo-word", |s| {
+        if let Some(e) = s.entries.iter_mut().find(|e| e.id == 2) {
+            e.title = "Supercalifragilisticexpialidocious_Supercalifragilisticexpialidocious_Supercalifragilistic".into();
+        }
+        s.ctx_move(2, Status::Completed);
+    }),
     // The toast after a middle-click: playing, and the next file missing.
     ("toast-play", |s| {
         crate::library::fake(s);
@@ -1345,6 +1370,24 @@ mod tests {
             }
         }
         assert!(render("list", (1280.0, 800.0)).find("ctx-menu").is_none());
+    }
+
+    /// The toast with Undo stays whole inside the window, for a short title, a long one and a
+    /// word too long to wrap, at the big and the small window size, dark and light.
+    #[test]
+    fn the_undo_toast_keeps_its_button_inside_the_toast_and_the_window() {
+        for name in ["ctx-undo", "ctx-undo-light", "ctx-undo-long", "ctx-undo-long-light", "ctx-undo-word"] {
+            for size in [(1360.0, 900.0), (960.0, 600.0)] {
+                let rt = render(name, size);
+                let ([tx, ty, tw, th], _) = rt.presented("toast").unwrap_or_else(|| panic!("{name}: toast"));
+                let ([bx, by, bw, bh], _) = rt.presented("toast/undo").unwrap_or_else(|| panic!("{name}: undo"));
+                let tag = format!("{name} {size:?}");
+                assert!(bw >= 40.0 && bh >= 24.0, "{tag}: the button keeps its size ({bw}x{bh})");
+                assert!(bx >= tx && by >= ty && bx + bw <= tx + tw && by + bh <= ty + th, "{tag}: Undo inside the toast");
+                assert!(tx >= 0.0 && ty >= 0.0 && tx + tw <= size.0 - 16.0 && ty + th <= size.1 - 16.0, "{tag}: the toast keeps a margin inside the window");
+                assert!(tw <= 460.0 + 0.5, "{tag}: width {tw}");
+            }
+        }
     }
 
     /// Middle-click and P play the next episode, as ▶ Play does; the toast says what happened.

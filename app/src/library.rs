@@ -448,7 +448,9 @@ pub fn toast(t: &Toast) -> El {
         .border(1.0, PAL.border_strong)
         .shadow(8.0, 24.0, rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
         .child(el().size(8.0, 8.0).radius(4.0).fill(c))
-        .child(text(t.text.clone()).font(theme::BODY).color(PAL.text).wrap().min_w(0.0))
+        // The text gives way to the button: it wraps (3 lines at most), and a word too long for the
+        // toast is cut at the toast's edge instead of running under Undo.
+        .child(row().shrink().min_w(0.0).clip_rounded(0.0).child(text(t.text.clone()).font(theme::BODY).color(PAL.text).wrap().max_lines(3).shrink().min_w(0.0)))
         .children(t.undo.is_some().then(|| crate::ui::button("toast/undo", "Undo", false, Some(State::toast_undo)).h(26.0).px(10.0)))
 }
 
