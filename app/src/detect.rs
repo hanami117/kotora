@@ -128,7 +128,7 @@ struct Current {
 /// The rules: read at the first file (the newer of the downloaded and the built-in copy), and a
 /// download started then when one is due.
 fn rules<'a>(rel: &'a mut Option<Relations>, tx: &Sender<In>, download: bool) -> &'a Relations {
-    rel.get_or_insert_with(|| {
+    let r = rel.get_or_insert_with(|| {
         let dir = paths::cache_dir();
         if download && !paths::offline_forced() && relations::due(&dir, now_unix().max(0) as u64) {
             let tx = tx.clone();
@@ -139,7 +139,10 @@ fn rules<'a>(rel: &'a mut Option<Relations>, tx: &Sender<In>, download: bool) ->
             });
         }
         relations::load(&paths::cache_dir())
-    })
+    });
+    // The ids of the active service.
+    r.anilist = crate::account::active() == kotora_core::service::ServiceId::AniList;
+    r
 }
 
 fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {

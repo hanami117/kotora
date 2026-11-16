@@ -253,3 +253,15 @@ fn an_older_or_broken_download_loses_to_the_built_in_copy() {
     assert_eq!(load(&dir).last_modified, Relations::bundled().last_modified);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn with_anilist_active_the_rules_use_anilist_ids() {
+    // Made-up ids: MAL 9101 -> 9102, AniList 170101 -> 170102; MAL 170101 is another anime.
+    let mut r = rel("- 9101|?|170101:13-24 -> 9102|?|170102:1-12\n- 170101|?|?:1 -> 170109|?|?:5\n");
+    assert_eq!(r.redirect(9101, 14).map(|x| (x.to, x.episode)), Some((9102, 2)));
+    assert_eq!(r.redirect(170101, 1).map(|x| x.to), Some(170109), "MyAnimeList's own rule");
+    r.anilist = true;
+    assert_eq!(r.redirect(170101, 14).map(|x| (x.to, x.episode)), Some((170102, 2)));
+    assert_eq!(r.redirect(170101, 1), None, "a MyAnimeList id that happens to match is not used");
+    assert_eq!(r.redirect(9101, 14), None);
+}
