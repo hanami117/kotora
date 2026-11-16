@@ -14,12 +14,12 @@
 # update notice points to the package manager and its update check reports the channel "homebrew"
 # (core/src/update.rs).
 cask "kotora" do
-  version "0.1.3"
-  sha256 "df6a51a83d6803530c1277b17c521b76173348cdc15ac14326efcbb8fb2d12cd"
+  version "0.2.0"
+  sha256 "8059520efc204a87263128877a90090424208b4cc48a46b037b300182620449b"
 
   url "https://github.com/hanami117/kotora/releases/download/v#{version}/Kotora-#{version}.dmg"
   name "Kotora"
-  desc "Anime tracker that notices the episode you play and updates MyAnimeList"
+  desc "Anime tracker that notices the episode you play and updates MyAnimeList and AniList"
   homepage "https://kotora.moe/"
 
   livecheck do
