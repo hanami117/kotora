@@ -311,6 +311,16 @@ pub fn undone(s: &mut State, r: Result<usize, String>) -> bool {
 
 /// Title and note on the left, the control on the right (as the other settings rows).
 pub(crate) fn line(key: &str, title: &str, note: String, control: El) -> El {
+    line_tagged(key, title, None, note, control)
+}
+
+/// [`line`] with a tag beside the title (the mirror's "Beta").
+pub(crate) fn line_tagged(key: &str, title: &str, tag: Option<El>, note: String, control: El) -> El {
+    let head = text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap();
+    let head = match tag {
+        Some(t) => row().gap(8.0).center_y().child(head.min_w(0.0)).child(t),
+        None => head,
+    };
     row()
         .key(key.to_string())
         .w_full()
@@ -322,7 +332,7 @@ pub(crate) fn line(key: &str, title: &str, note: String, control: El) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(3.0)
-                .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap())
+                .child(head)
                 .child(text(note).font(theme::LABEL).color(PAL.dim).wrap()),
         )
         .child(control)

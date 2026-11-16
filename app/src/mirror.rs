@@ -31,7 +31,7 @@ use rune::{El, col, el, row, text};
 
 use crate::model::{Handle, State};
 use crate::theme::{self, PAL};
-use crate::transfer::{count_pill, group, line, plural};
+use crate::transfer::{count_pill, group, line_tagged, plural};
 use crate::ui::{action, cell, small_button, switch_if};
 
 /// The mirror as the window shows it.
@@ -550,7 +550,9 @@ pub fn settings_row(s: &State) -> El {
     };
     let title = format!("Mirror edits to {to}");
     let on = m.link.is_some() || m.preview.is_some();
-    let mut c = col().key("set/mirror").w_full().child(line("set/mirror-line", &title, note, switch_if("set/mirror-switch".into(), &title, on, can || m.link.is_some(), set)));
+    // In beta for 0.2.1 (Thomas's decision): it writes to two accounts.
+    let beta = crate::ui::tag("Beta", PAL.accent, false).key("set/mirror-beta");
+    let mut c = col().key("set/mirror").w_full().child(line_tagged("set/mirror-line", &title, Some(beta), note, switch_if("set/mirror-switch".into(), &title, on, can || m.link.is_some(), set)));
     if let Some(n) = &m.note {
         c = c.child(text(n.clone()).key("set/mirror-note").font(theme::LABEL).color(PAL.text).wrap().pb(12.0));
     }

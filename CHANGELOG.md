@@ -25,7 +25,7 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Scores are compared on
   MyAnimeList's 1 to 10 scale, so a MyAnimeList 7 and an AniList 73 count as the same and neither is rounded.
   Turning the mirror on never removes anything. Anime only; AniList entries without a MyAnimeList id are listed
-  as not mirrored.
+  as not mirrored. The mirror is marked Beta in Settings for now.
 - **Remove from list:** in an entry's right-click menu, on its details page and as `kot remove TITLE` (or its
   id). Kotora asks first, then the anime leaves your list at once and the removal waits in the sync queue like
   any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
