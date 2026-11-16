@@ -2144,21 +2144,29 @@ fn now_page(s: &State, wide: bool) -> El {
 
 /// The 36 × 20 switch (design-spec §4): off `border_strong`, on `accent`.
 pub(crate) fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
+    switch_if(key, label, on, true, set)
+}
+
+/// A switch that can be disabled: dimmed, not focusable, and it ignores presses.
+pub(crate) fn switch_if(key: String, label: &str, on: bool, enabled: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
     let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.knob });
     let track = row()
         .key(key)
         .role("switch")
         .label(label.to_string())
-        .focusable(true)
+        .focusable(enabled)
         .w(36.0)
         .h(20.0)
         .px(2.0)
         .center_y()
         .radius(10.0)
-        .fill(if on { PAL.accent } else { PAL.border_strong })
-        .cursor(rune::Cursor::Pointer)
-        .on_press(move |s: &mut State| set(s, !on));
-    if on { track.justify_end() } else { track }.child(knob)
+        .fill(if on { PAL.accent } else { PAL.border_strong });
+    let track = if on { track.justify_end() } else { track }.child(knob);
+    if enabled {
+        track.cursor(rune::Cursor::Pointer).on_press(move |s: &mut State| set(s, !on))
+    } else {
+        track.opacity(0.4).cursor(rune::Cursor::NotAllowed)
+    }
 }
 
 /// A settings line: title and help on the left, the control on the right.
@@ -2300,13 +2308,24 @@ fn display_card(s: &State) -> El {
 /// Settings → Startup: start at login, and whether that start shows the window.
 fn startup_card(s: &State) -> El {
     let p = &s.prefs;
+    let l = &p.login;
     let tray = if cfg!(target_os = "macos") { "menu bar" } else { "tray" };
+    let note = match (l.unavailable, l.needs_approval) {
+        (Some(why), _) => why.to_string(),
+        (None, true) => "Waiting for your OK in System Settings, General, Login Items.".to_string(),
+        _ if cfg!(target_os = "macos") => {
+            "Opens Kotora when you log in to your Mac, so it keeps detecting episodes. It is listed in System Settings, General, Login Items.".to_string()
+        }
+        _ => "Kotora keeps detecting episodes from the moment you log in.".to_string(),
+    };
+    let sw = switch_if("set/login".into(), "Start Kotora when I log in", l.on, l.available() && !p.login_busy, State::set_login);
+    let control = if l.needs_approval {
+        row().gap(12.0).center_y().child(small_button("set/login-items", "Open Login Items", false, Some(State::open_login_items))).child(sw)
+    } else {
+        sw
+    };
     card("startup-card", "Startup")
-        .child(option(
-            "Start Kotora when I log in",
-            "Kotora keeps detecting episodes from the moment you log in.".into(),
-            switch("set/login".into(), "Start Kotora when I log in", p.login, State::set_login),
-        ))
+        .child(option("Start Kotora when I log in", note, control))
         .child(option(
             "Start in the background",
             format!("At login, show only the {tray} icon, no window. Closing the window always keeps Kotora in the {tray}."),

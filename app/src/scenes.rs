@@ -552,8 +552,18 @@ pub const SCENES: &[Scene] = &[
     }),
     // Settings → Startup with both switches on.
     ("settings-startup-on", |s| {
-        s.prefs.login = true;
+        s.prefs.login = crate::autostart::Login { on: true, ..Default::default() };
         s.prefs.background = true;
+        s.go(Page::Settings);
+    }),
+    // Settings → Startup in a copy that can't be a login item (macOS, run from a build folder).
+    ("settings-startup-unavailable", |s| {
+        s.prefs.login = crate::autostart::Login::unavailable("Only in the app (Kotora.app). This copy runs from a build folder.");
+        s.go(Page::Settings);
+    }),
+    // Settings → Startup with the login item waiting for the user's OK in System Settings.
+    ("settings-startup-approval", |s| {
+        s.prefs.login = crate::autostart::Login { on: true, needs_approval: true, ..Default::default() };
         s.go(Page::Settings);
     }),
     // Two players switched off, one with a problem.
@@ -1105,6 +1115,19 @@ mod tests {
         }
         // Narrow: one column, still there.
         assert!(render("settings-startup-on", (960.0, 700.0)).find("set/login").is_some());
+    }
+
+    #[test]
+    fn the_login_switch_says_why_it_is_off_and_asks_for_approval() {
+        // A copy that can't be a login item: the switch stays off, whatever is pressed.
+        let mut rt = render("settings-startup-unavailable", (1360.0, 860.0));
+        assert!(rt.find("set/login").is_some() && rt.find("set/login-items").is_none());
+        rt.update(|s, _| s.set_login(true));
+        assert!(!rt.state.prefs.login.on, "can't be turned on here");
+        // Waiting for approval: the switch is on and a button opens System Settings.
+        let rt = render("settings-startup-approval", (1360.0, 860.0));
+        assert!(rt.state.prefs.login.on);
+        assert!(rt.find("set/login-items").is_some());
     }
 
     #[test]

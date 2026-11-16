@@ -576,6 +576,9 @@ impl State {
     }
 
     pub fn go(&mut self, page: Page) {
+        if page == Page::Settings && self.page != page {
+            self.refresh_login();
+        }
         if self.page != page {
             self.page = page;
             self.filter = Filter::All;

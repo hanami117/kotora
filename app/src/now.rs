@@ -122,8 +122,10 @@ pub struct Prefs {
     pub titles: kotora_core::config::TitleLang,
     /// Settings → Appearance (`[display] theme`).
     pub theme: kotora_core::config::Theme,
-    /// Settings → Startup: Kotora starts at login (the login entry exists; `autostart.rs`).
-    pub login: bool,
+    /// Settings → Startup: what the system says about the login start (`autostart.rs`).
+    pub login: crate::autostart::Login,
+    /// The login entry is being changed on a worker thread.
+    pub login_busy: bool,
     /// Settings → Startup: the login start shows only the tray icon (`[startup] background`).
     pub background: bool,
 }
@@ -131,7 +133,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: false, background: false }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), login: Default::default(), login_busy: false, background: false }
     }
 }
 
@@ -148,8 +150,9 @@ impl Prefs {
             notify: c.notifications.clone(),
             titles: c.display.titles,
             theme: c.display.theme,
-            // The login entry itself, read by `detect::start`; false until then.
-            login: false,
+            // The system's login entry, read by `detect::start`; off until then.
+            login: Default::default(),
+            login_busy: false,
             background: c.startup.background,
         }
     }
@@ -650,38 +653,92 @@ impl State {
         crate::detect::save_setting(self, "updates", "keep_higher_progress", on.to_string());
     }
 
-    /// "Start Kotora when I log in": writes or removes the login entry.
+    /// "Start Kotora when I log in": registers or removes the system's login entry.
     pub fn set_login(&mut self, on: bool) {
-        self.prefs.login = on;
-        self.write_login_entry();
+        if self.prefs.login.on != on && self.prefs.login.available() && !self.prefs.login_busy {
+            self.apply_login(on);
+        }
     }
 
-    /// "Start in the background": `--hidden` in the login entry, kept in `config.toml` so it
-    /// stays when the login switch goes off and on.
+    /// "Start in the background", kept in `config.toml` so it stays when the login switch goes off
+    /// and on. Linux writes `--hidden` into the autostart entry; macOS reads it at launch.
     pub fn set_background(&mut self, on: bool) {
         self.prefs.background = on;
         crate::detect::save_setting(self, "startup", "background", on.to_string());
-        if self.prefs.login {
-            self.write_login_entry();
+        if self.prefs.login.on && cfg!(target_os = "linux") && !self.prefs.login_busy {
+            self.apply_login(true);
         }
     }
 
-    /// On a worker thread (a small file, but never in a handler). Live runs only.
-    fn write_login_entry(&mut self) {
-        let Some(h) = self.handle.clone() else { return };
-        if rune::is_headless() {
+    /// Changes the system's entry on a worker thread (the switch moves at once and the system's
+    /// answer corrects it). Headless runs only move the switch.
+    fn apply_login(&mut self, on: bool) {
+        self.prefs.login.on = on;
+        self.prefs.login.needs_approval = false;
+        let Some(h) = self.handle.clone().filter(|_| !rune::is_headless()) else { return };
+        let hidden = self.prefs.background;
+        self.prefs.login_busy = true;
+        let _ = std::thread::Builder::new().name("kotora-autostart".into()).spawn(move || {
+            let result = crate::autostart::set(on, hidden);
+            h.update_if(move |s: &mut State, _| s.login_applied(result));
+        });
+    }
+
+    fn login_applied(&mut self, result: Result<crate::autostart::Login, String>) -> bool {
+        self.prefs.login_busy = false;
+        match result {
+            Ok(login) => {
+                self.prefs.login = login;
+                true
+            }
+            Err(e) => {
+                eprintln!("kotora: start at login: {e}");
+                self.prefs.login = crate::autostart::read();
+                self.apply(crate::model::Msg::QueueError(format!("Can't change the login start: {e}")))
+            }
+        }
+    }
+
+    /// Reads the system's login entry again (Settings opened: the user may have changed it in
+    /// System Settings → Login Items). On a worker thread; not headless.
+    pub fn refresh_login(&mut self) {
+        let Some(h) = self.handle.clone().filter(|_| !rune::is_headless()) else { return };
+        if self.prefs.login_busy {
             return;
         }
-        let (on, hidden) = (self.prefs.login, self.prefs.background);
         let _ = std::thread::Builder::new().name("kotora-autostart".into()).spawn(move || {
-            if let Err(e) = crate::autostart::set(on, hidden) {
-                let login = crate::autostart::enabled();
-                h.update_if(move |s: &mut State, _| {
+            let login = crate::autostart::read();
+            h.update_if(move |s: &mut State, _| {
+                let changed = !s.prefs.login_busy && s.prefs.login != login;
+                if changed {
                     s.prefs.login = login;
-                    s.apply(crate::model::Msg::QueueError(format!("Can't change the login start: {e}")))
-                });
-            }
+                }
+                changed
+            });
         });
+    }
+
+    /// "Open Login Items" beside a login item waiting for approval (macOS). Not headless.
+    pub fn open_login_items(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.handle.is_some() && !rune::is_headless() {
+            crate::autostart::open_login_items();
+        }
+    }
+
+    /// macOS, a windowless start with both start-at-login switches on (`main`): at login Kotora
+    /// stays in the background with only the menu bar icon (the Dock icon goes too, as closing
+    /// the window does; `tray::show_window` brings it back); any other launch opens the window.
+    #[cfg(target_os = "macos")]
+    pub fn login_launch(&mut self, at_login: bool) {
+        let Some(h) = self.handle.clone() else { return };
+        if at_login {
+            if self.tray.is_some() {
+                h.set_dock_icon(false);
+            }
+        } else {
+            crate::tray::show_window(&h);
+        }
     }
 
     pub fn set_process_scan(&mut self, on: bool) {

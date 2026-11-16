@@ -187,7 +187,19 @@ fn main() {
         eprintln!("kotora: already running{}", if hidden { "" } else { "; showed its window" });
         return;
     }
-    let app = if hidden { app.windowless() } else { app };
+    // macOS start at login in the background: a login item gets no `--hidden`, so with both
+    // switches on (Settings → Startup) Kotora starts windowless and `autostart::watch_launch`
+    // opens the window at once unless macOS says this launch is the login one (as Uzumaki does).
+    // Linux writes `--hidden` into the autostart entry instead.
+    #[cfg(target_os = "macos")]
+    let login_check = !hidden
+        && !test_instance
+        && kotora_core::config::Config::load(&kotora_core::paths::config_file()).unwrap_or_default().startup.background
+        && autostart::read().on;
+    #[cfg(not(target_os = "macos"))]
+    let login_check = false;
+    let windowless = hidden || login_check;
+    let app = if windowless { app.windowless() } else { app };
     let app = app.keep_running().on_close(on_close);
     #[cfg(target_os = "macos")]
     let app = app.on_reopen(on_reopen).on_window(on_window);
@@ -199,6 +211,14 @@ fn main() {
     }
     // `kot` talks to this socket; it goes away with `_ctl` when the app ends.
     let _ctl = ctl::start(handle.clone());
+    #[cfg(target_os = "macos")]
+    if login_check {
+        let h = handle.clone();
+        autostart::watch_launch(move |at_login| {
+            eprintln!("kotora: {}", if at_login { "started at login, in the background" } else { "not a login start: opening the window" });
+            h.update(move |s: &mut State, _| s.login_launch(at_login));
+        });
+    }
     let app = app.init(move || {
         let mut s = State::start(online::initial_auth());
         s.client_id.hint = clientid::saved_hint();
@@ -206,7 +226,7 @@ fn main() {
         // Desktop notifications, with buttons where the system has them (`notes/`).
         s.notes = notes::Notifier::start(handle.clone());
         s.handle = Some(handle);
-        s.window = !hidden;
+        s.window = !windowless;
         // The tray or menu bar icon (UI thread: AppKit needs the main thread on macOS).
         s.start_tray();
         // The saved list first, then a sync when signed in (workers, off the UI thread).
@@ -214,6 +234,20 @@ fn main() {
         // Players: sources and recognition on their own threads, event driven.
         detect::start(&mut s);
         library::start(&mut s);
+        // macOS: the old LaunchAgent moves over to the login item, once (a worker thread; never
+        // in a test instance, which has its own scratch setup).
+        #[cfg(target_os = "macos")]
+        if !test_instance && let Some(h) = &s.handle {
+            let h = h.clone();
+            let _ = std::thread::Builder::new().name("kotora-login-migrate".into()).spawn(move || {
+                if let Some(login) = autostart::migrate_old_entry() {
+                    h.update_if(move |s: &mut State, _| {
+                        s.prefs.login = login;
+                        true
+                    });
+                }
+            });
+        }
         s
     });
     app.run();

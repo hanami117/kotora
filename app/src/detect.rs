@@ -62,7 +62,7 @@ pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
-    s.prefs.login = crate::autostart::enabled();
+    s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     crate::precise::check_conf(h.clone());
     #[cfg(target_os = "macos")]
