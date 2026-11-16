@@ -40,3 +40,12 @@ pub static STAR: Icon = Icon {
     view: 24.0,
     body: r#"<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z" fill="currentColor"/>"#,
 };
+
+// Settings sections.
+line_icon!(GEAR, "gear", r#"<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.8v2.7M12 18.5v2.7M2.8 12h2.7M18.5 12h2.7M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M5.5 18.5l1.9-1.9M16.6 7.4l1.9-1.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
+line_icon!(CONTRAST, "contrast", r#"<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>"#);
+line_icon!(USER, "user", r#"<circle cx="12" cy="8.5" r="3.7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
+line_icon!(EYE, "eye", r#"<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/>"#);
+line_icon!(FOLDER, "folder", r#"<path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4.4l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>"#);
+line_icon!(BELL, "bell", r#"<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
+line_icon!(INFO, "info", r#"<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5.5M12 7.8v.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);

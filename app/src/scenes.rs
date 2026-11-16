@@ -9,6 +9,7 @@ use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
 
 use crate::model::{Auth, Filter, Page, Sort, State};
+use crate::settings::Section;
 use crate::setup::Step;
 
 /// A scene: its name and the change it makes to the fake first state.
@@ -663,16 +664,44 @@ pub const SCENES: &[Scene] = &[
         s.airing_details(9301);
     }),
     ("settings-page", |s| s.go(Page::Settings)),
+    // Settings, one scene per section (fake library folders for Library).
+    ("settings-general", |s| crate::settings::open(s, Section::General)),
+    ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
+    ("settings-account", |s| crate::settings::open(s, Section::Account)),
+    ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
+    ("settings-library", |s| {
+        crate::library::fake(s);
+        crate::settings::open(s, Section::Library);
+    }),
+    ("settings-about", |s| crate::settings::open(s, Section::About)),
+    // The search: results from several sections, then none.
+    ("settings-search", |s| {
+        crate::settings::open(s, Section::General);
+        crate::settings::set_query(s, "start");
+    }),
+    ("settings-search-dark", |s| {
+        crate::settings::open(s, Section::General);
+        crate::settings::set_query(s, "dark");
+    }),
+    ("settings-search-none", |s| {
+        crate::settings::open(s, Section::General);
+        crate::settings::set_query(s, "teleport");
+    }),
+    // A search jump: Appearance, with Theme tinted.
+    ("settings-search-jump", |s| {
+        crate::settings::open(s, Section::Appearance);
+        s.settings.flash = Some(crate::settings::Row::Theme);
+    }),
     // Library folders (`library.rs`): one folder online, one on an unplugged drive; Open with.
     ("library-settings", |s| {
         crate::library::fake(s);
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Library);
     }),
     ("library-settings-error", |s| {
         crate::library::fake(s);
         s.library.draft = rune::TextEdit::new("/Volumes/Media/Anime/Lanterns");
         s.library.error = Some("That overlaps /Volumes/Media/Anime, already in the list.".into());
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Library);
     }),
     // ▶ on the Watching rows whose next episode is in the folders.
     ("library-list", crate::library::fake),
@@ -758,15 +787,15 @@ pub const SCENES: &[Scene] = &[
     // Settings → About Kotora: the switch and Check now, after a manual check.
     ("settings-updates", |s| {
         s.update.check = kotora_core::update::CheckStatus { running: false, last_check: Some(s.clock() as u64 - 3600), result: Some(kotora_core::update::UP_TO_DATE.into()) };
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::General);
     }),
     ("settings-updates-off", |s| {
         s.prefs.check_updates = false;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::General);
     }),
     ("settings-titles-japanese", |s| {
         s.set_titles(TitleLang::Japanese);
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Appearance);
     }),
     ("list-titles-english", |s| s.set_titles(TitleLang::English)),
     ("list-titles-japanese", |s| s.set_titles(TitleLang::Japanese)),
@@ -840,34 +869,34 @@ pub const SCENES: &[Scene] = &[
     }),
     ("settings-theme-light", |s| {
         s.set_theme(Theme::Light);
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Appearance);
     }),
     ("settings-theme-dark", |s| {
         s.set_theme(Theme::Dark);
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Appearance);
     }),
     // "Update automatically" on, threshold 90 %, keep-higher off.
     ("settings-auto-on", |s| {
         s.prefs.auto = true;
         s.prefs.threshold = 90;
         s.prefs.keep_higher = false;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Detection);
     }),
     // Settings → Startup with both switches on.
     ("settings-startup-on", |s| {
         s.prefs.login = crate::autostart::Login { on: true, ..Default::default() };
         s.prefs.background = true;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::General);
     }),
     // Settings → Startup in a copy that can't be a login item (macOS, run from a build folder).
     ("settings-startup-unavailable", |s| {
         s.prefs.login = crate::autostart::Login::unavailable("Only in the app (Kotora.app). This copy runs from a build folder.");
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::General);
     }),
     // Settings → Startup with the login item waiting for the user's OK in System Settings.
     ("settings-startup-approval", |s| {
         s.prefs.login = crate::autostart::Login { on: true, needs_approval: true, ..Default::default() };
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::General);
     }),
     // Two players switched off, one with a problem.
     ("settings-players-off", |s| {
@@ -881,20 +910,20 @@ pub const SCENES: &[Scene] = &[
             led: kotora_detect::Led::Problem,
         }];
         s.now = None;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Detection);
     }),
     // Settings → Accounts: Change pressed on the Client ID, with a wrong paste.
     ("settings-client-id-change", |s| {
         s.client_id.editing = true;
         s.client_id.draft.replace_text("abc123");
         s.save_client_id();
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Account);
     }),
     // No Client ID yet: Settings offers to set one.
     ("settings-no-client-id", |s| {
         signed_out(s, Auth::NoClientId);
         s.client_id.hint = None;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Account);
     }),
     // mpv seen by its open file only: the one-time offer to turn on precise detection.
     ("precise-offer", |s| {
@@ -922,7 +951,7 @@ pub const SCENES: &[Scene] = &[
     ("settings-players-process", |s| {
         process_only(s);
         s.prefs.precise_answered = true;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Detection);
     }),
     // Now Playing for a file seen by the process source: no position, counted by time open.
     ("now-playing-process", |s| {
@@ -955,22 +984,22 @@ pub const SCENES: &[Scene] = &[
     }),
     // Settings → Notifications as they come (Episode detected off).
     ("settings-notifications", |s| {
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Notifications);
     }),
     // All on, and the system shows no buttons (Linux: the server; macOS: outside Kotora.app).
     ("settings-notifications-no-buttons", |s| {
         s.prefs.notify.detected = true;
         s.notes.support = if cfg!(target_os = "macos") { crate::notes::Support::Outside } else { crate::notes::Support::NoButtons };
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Notifications);
     }),
     // macOS: notifications turned off for Kotora in System Settings.
     ("settings-notifications-denied", |s| {
         s.notes.support = crate::notes::Support::Denied;
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Notifications);
     }),
     ("settings-signed-out", |s| {
         signed_out(s, Auth::SignedOut);
-        s.go(Page::Settings);
+        crate::settings::open(s, Section::Account);
     }),
     // macOS: IINA seen by its open file only, its settings not read: the steps in IINA.
     #[cfg(target_os = "macos")]
@@ -1018,7 +1047,7 @@ fn iina_by_process(s: &mut State) {
     s.now = None;
     s.players = crate::iina::fake_process_players();
     s.prefs.precise_answered = true;
-    s.go(Page::Settings);
+    crate::settings::open(s, Section::Detection);
 }
 
 /// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
@@ -1526,7 +1555,7 @@ mod tests {
         assert!(render("setup-again", (1280.0, 800.0)).find("setup/close").is_some());
         let rt = render("client-id-saved", (1280.0, 800.0));
         assert!(rt.find("cid-saved").is_some() && rt.find("page/setup").is_none());
-        let rt = render("settings-page", (1280.0, 800.0));
+        let rt = render("settings-account", (1280.0, 800.0));
         assert!(rt.find("set/cid-masked").is_some() && rt.find("set/cid-change").is_some() && rt.find("set/cid/input").is_none());
         assert!(rt.find("set/setup-again").is_some());
         let rt = render("settings-client-id-change", (1280.0, 800.0));
@@ -1616,7 +1645,7 @@ mod tests {
     #[test]
     fn titles_follow_the_setting() {
         let rt = render("settings-titles-japanese", (1280.0, 800.0));
-        assert!(rt.find("display-card").is_some() && rt.find("set/titles/japanese").is_some() && rt.find("set/titles/romaji").is_some());
+        assert!(rt.find("set/row/titles").is_some() && rt.find("set/titles/japanese").is_some() && rt.find("set/titles/romaji").is_some());
         let mut s = State::fake();
         let title = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().title.clone();
         s.set_titles(TitleLang::English);
@@ -1632,12 +1661,17 @@ mod tests {
         assert_eq!(s.entries[s.rows[0]].title, "Clockwork Bakery Wars", "the title sort follows the shown titles");
     }
 
-    /// Settings: the Accounts and About cards, side by side when wide, stacked when narrow.
+    /// Settings → Account and About, wide (section list) and narrow (tabs).
     #[test]
     fn settings_has_accounts_and_about() {
         for size in [(1360.0, 860.0), (960.0, 600.0)] {
-            let rt = render("settings-page", size);
-            for key in ["account-card", "acct/mal", "acct/anilist", "token-note", "sign-out", "about-card", "link/source"] {
+            let rt = render("settings-account", size);
+            for key in ["set/page/account", "acct/mal", "acct/anilist", "token-note", "sign-out", "set/cid"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(rt.find("about-card").is_none(), "one section at a time");
+            let rt = render("settings-about", size);
+            for key in ["about-card", "set/licences", "link/source", "link/site"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
@@ -1711,13 +1745,13 @@ mod tests {
     #[test]
     fn settings_has_updates_and_players() {
         for size in [(1360.0, 860.0), (960.0, 600.0)] {
-            let rt = render("settings-page", size);
-            for key in ["updates-card", "set/auto", "set/threshold", "set/keep-higher", "set/asks-on", "players-card", "set/switch/mpv", "set/process-scan", "set/process-minutes/plus"] {
+            let rt = render("settings-detection", size);
+            for key in ["set/page/detection", "set/auto", "set/threshold", "set/keep-higher", "set/switch/mpv", "set/process-scan", "set/process-minutes/plus"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
         let rt = render("settings-auto-on", (1360.0, 860.0));
-        assert!(rt.find("set/asks-off").is_some());
+        assert!(rt.find("set/auto").is_some() && rt.state.prefs.auto);
         assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
     }
 
@@ -1744,7 +1778,7 @@ mod tests {
 
     #[test]
     fn settings_has_the_update_switch() {
-        for scene in ["settings-page", "settings-updates", "settings-updates-off"] {
+        for scene in ["settings-page", "settings-general", "settings-updates", "settings-updates-off"] {
             let rt = render(scene, (1360.0, 860.0));
             assert!(rt.find("set/check-updates").is_some() && rt.find("set/check-now").is_some(), "{scene}");
         }
@@ -1775,7 +1809,7 @@ mod tests {
     fn settings_has_the_startup_switches() {
         for scene in ["settings-page", "settings-startup-on"] {
             let rt = render(scene, (1360.0, 860.0));
-            assert!(rt.find("startup-card").is_some(), "{scene}");
+            assert!(rt.find("set/page/general").is_some(), "{scene}");
             assert!(rt.find("set/login").is_some() && rt.find("set/background").is_some(), "{scene}");
         }
         // Narrow: one column, still there.
@@ -1878,10 +1912,28 @@ mod tests {
         assert!(render("precise-prompt-iina", (1280.0, 800.0)).find("precise-prompt/on").is_some());
     }
 
+    /// Settings: the section list when wide, tabs when narrow; the search's results and none.
+    #[test]
+    fn settings_sections_tabs_and_search() {
+        let rt = render("settings-general", (1360.0, 900.0));
+        assert!(rt.find("set/sections").is_some() && rt.find("set/section/detection").is_some() && rt.find("set/search").is_some());
+        let rt = render("settings-general", (960.0, 600.0));
+        assert!(rt.find("set/section/about").is_some(), "the tabs");
+        for size in [(1360.0, 900.0), (960.0, 600.0)] {
+            let rt = render("settings-search", size);
+            assert!(rt.find("set/results").is_some() && rt.find("set/row/start-at-login").is_some() && rt.find("set/result-head/general").is_some(), "{size:?}");
+            assert!(rt.find("set/page/general").is_none(), "the results take the section's place");
+            let rt = render("settings-search-none", size);
+            assert!(rt.find("set/no-results").is_some(), "{size:?}");
+        }
+        let rt = render("settings-library", (1360.0, 900.0));
+        assert!(rt.find("set/library/add").is_some() && rt.find("set/open-with").is_some());
+    }
+
     #[test]
     fn settings_has_the_notification_switches() {
         let rt = render("settings-notifications", (1280.0, 800.0));
-        for k in ["notifications-card", "set/notify-detected", "set/notify-offer", "set/notify-recorded", "set/notify-started", "set/notify-episode"] {
+        for k in ["set/page/notifications", "set/notify-detected", "set/notify-offer", "set/notify-recorded", "set/notify-started", "set/notify-episode"] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         assert!(rt.find("set/notify-support").is_none());

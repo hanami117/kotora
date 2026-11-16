@@ -472,6 +472,8 @@ pub struct State {
     pub ctx: Option<crate::ctxmenu::Ctx>,
     /// The startup intro while it plays (`intro.rs`; only on a cold start with a window).
     pub intro: Option<crate::intro::Intro>,
+    /// The Settings page: its section and search (`settings.rs`).
+    pub settings: crate::settings::SettingsUi,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -538,6 +540,7 @@ impl State {
             toast: None,
             ctx: None,
             intro: None,
+            settings: Default::default(),
         };
         s.queue_changed();
         s.refresh();

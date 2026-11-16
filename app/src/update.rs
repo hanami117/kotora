@@ -14,7 +14,7 @@ use rune::{El, col, el, icon, row, text};
 use crate::icons;
 use crate::model::State;
 use crate::theme::{self, PAL};
-use crate::ui::{action, mix, option, small_button, switch};
+use crate::ui::{action, mix, small_button};
 
 /// This copy's version and build, as the check compares them.
 fn current() -> (&'static str, u32) {
@@ -268,8 +268,8 @@ pub fn banner(s: &State) -> Option<El> {
     )
 }
 
-/// Settings → About Kotora: the switch (labelled as kotora.moe says) and Check now.
-pub fn settings_rows(s: &State) -> El {
+/// Settings → General → Check now: when the last check ran and what it found.
+pub fn status_note(s: &State) -> String {
     let u = &s.update.check;
     let mut note = update::last_checked(u.last_check, s.clock().max(0) as u64);
     if let Some(n) = s.update.notice.as_ref().filter(|n| n.required) {
@@ -279,22 +279,20 @@ pub fn settings_rows(s: &State) -> El {
     } else {
         note.push('.');
     }
-    let button = if u.running {
+    note
+}
+
+/// Settings → General → Check now: the button (disabled while a check runs).
+pub fn check_button(s: &State) -> El {
+    if s.update.check.running {
         small_button("set/check-now", "Checking\u{2026}", false, None)
     } else {
         small_button("set/check-now", "Check now", false, Some(State::check_updates_now))
-    };
-    col()
-        .key("set/updates")
-        .mt(8.0)
-        .child(el().w_full().h(1.0).fill(PAL.border))
-        .child(option(
-            "Check for updates",
-            "Once a day, asks kotora.moe whether a new version is out, and says so. It sends only the Kotora version, the system, the processor type and how Kotora was installed. Nothing is downloaded.".into(),
-            switch("set/check-updates".into(), "Check for updates", s.prefs.check_updates, State::set_check_updates),
-        ))
-        .child(option("Updates", note, button).key("set/update-status"))
+    }
 }
+
+/// Settings → General → Check for updates (labelled as kotora.moe says).
+pub const CHECK_NOTE: &str = "Once a day, asks kotora.moe whether a new version is out, and says so. It sends only the Kotora version, the system, the processor type and how Kotora was installed. Nothing is downloaded.";
 
 #[cfg(test)]
 mod tests {
