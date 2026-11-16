@@ -177,18 +177,19 @@ pub fn listen(path: &Path, handler: Arc<dyn Fn(Request) -> Reply + Send + Sync>)
 pub fn connect(path: &Path) -> io::Result<File> {
     let name = pipe_name(path);
     let wname = wide(&name);
-    let mut tries = 0;
+    // About 3 seconds in all: the app always keeps a spare instance, but it makes the next one only
+    // after it accepts a client, so a burst of clients can wait a moment. Longer means it is going away.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         // SECURITY_IDENTIFICATION: the server may see who we are, and can't act as us.
         match std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(SECURITY_IDENTIFICATION).open(&name) {
             Ok(f) => return Ok(f),
             // Every instance is busy for a moment: wait for a free one.
-            // (About a second in all: the app always keeps a spare instance, so longer means
-            // it is going away.)
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && tries < 4 => {
-                tries += 1;
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && std::time::Instant::now() < until => {
                 // SAFETY: `wname` is NUL-terminated.
                 unsafe { WaitNamedPipeW(wname.as_ptr(), 250) };
+                // WaitNamedPipe can return at once when no instance is listening yet.
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
             Err(e) => return Err(e),
         }
