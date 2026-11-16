@@ -252,15 +252,18 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     // mirroring later). MyAnimeList rows leave both empty.
     "ALTER TABLE media ADD COLUMN next_airing TEXT;
      ALTER TABLE media ADD COLUMN id_mal INTEGER;",
-    // 12: scores on the 100-point scale (0.2.1, `score.rs`), so an AniList 73 stays 73 instead of
+    // 12 (0.2.1): scores on the 100-point scale (`score.rs`), so an AniList 73 stays 73 instead of
     // a rounded 7. Every score column held 1-10 (0 or NULL: none): times 10. Saved details pages
-    // (`details.body`, JSON) keep the user's entry with its score too.
+    // (`details.body`, JSON) keep the user's entry with its score too. `pending_op.removed`: the
+    // change takes the entry off the list ("Remove from list"); `old_*` hold the entry as it was,
+    // for Discard (Undo) and the conflict card.
     "UPDATE entry SET score = score * 10 WHERE score > 0;
      UPDATE pending_op SET score = score * 10 WHERE score > 0;
      UPDATE pending_op SET old_score = old_score * 10 WHERE old_score > 0;
      UPDATE pending_op SET r_score = r_score * 10 WHERE r_score > 0;
      UPDATE details SET body = json_set(body, '$.mine.score', json_extract(body, '$.mine.score') * 10)
-       WHERE json_valid(body) AND json_extract(body, '$.mine.score') > 0;",
+       WHERE json_valid(body) AND json_extract(body, '$.mine.score') > 0;
+     ALTER TABLE pending_op ADD COLUMN removed INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside

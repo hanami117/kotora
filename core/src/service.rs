@@ -368,7 +368,8 @@ pub trait ListService {
     fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError>;
     /// Sends one change and returns the entry as the service saved it.
     fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError>;
-    /// Removes one anime from the list. Nothing in the app asks for it yet.
+    /// Removes one anime from the list ("Remove from list", through the queue). Not on the list
+    /// there: nothing to do, `Ok`.
     fn delete_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
         Err(ServiceError::Other(format!("{} can't remove entries in Kotora yet", self.title())))
     }
@@ -425,6 +426,14 @@ pub trait ListService {
             Kind::Manga => self.update_manga_entry(media_id, change),
         }
     }
+    /// Removes one entry of a list of `kind` (anime only for now: Kotora has no manga UI).
+    fn delete_entry_of(&mut self, kind: Kind, media_id: u32) -> Result<(), ServiceError> {
+        match kind {
+            Kind::Anime => self.delete_entry(media_id),
+            Kind::Manga => Err(ServiceError::Other(format!("{} manga entries can't be removed in Kotora yet", self.title()))),
+        }
+    }
+
     /// The search bar's search in `kind`.
     fn browse_of(&mut self, kind: Kind, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         match kind {

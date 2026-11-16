@@ -420,6 +420,8 @@ pub struct State {
     pub editor: Option<Editor>,
     /// "Mark anyway?" for an episode that hasn't aired yet (`+1`, the editor).
     pub ask: Option<Ask>,
+    /// "Remove … from your list?" waits for an answer (`remove.rs`).
+    pub confirm_remove: Option<u32>,
     /// The queue's worker thread (`queue.rs`); runs only while there is work.
     pub worker: Arc<Worker>,
     pub offline: bool,
@@ -520,6 +522,7 @@ impl State {
             ops: fake_ops(),
             editor: None,
             ask: None,
+            confirm_remove: None,
             worker: Arc::default(),
             offline: false,
             synced_at: Some(FAKE_NOW - 120),
@@ -1359,6 +1362,7 @@ fn fake_ops() -> Vec<Op> {
         sent_at: (state == OpState::Done).then_some(FAKE_NOW - ago),
         remote: None,
         added: false,
+        removed: false,
     };
     let w = |progress, score| Values::new(Status::Watching, progress, score);
     let progress = |p| Change { progress: Some(p), ..Default::default() };

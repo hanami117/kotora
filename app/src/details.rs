@@ -609,6 +609,7 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
                             }
                         }));
                     }
+                    actions = actions.child(spacer()).child(ghost("det/remove", "Remove from list\u{2026}", move |s| s.ask_remove(id)));
                     c = c.child(actions)
                 }
             }

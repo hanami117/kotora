@@ -4,6 +4,13 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Remove from list:** in an entry's right-click menu, on its details page and as `kot remove TITLE` (or its
+  id). Kotora asks first, then the anime leaves your list at once and the removal waits in the sync queue like
+  any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
+  it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
+  instead of deleting it: Remove anyway, or Keep it.
+
 ### Changed
 - **Scores in your AniList score format:** the list, the posters, the editor, the details page, the Score menu
   and `kot` show and set scores the way you score on AniList: 100 points (73), 10 points with a decimal (7.3),

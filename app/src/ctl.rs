@@ -73,6 +73,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             let change = Change { status, progress, score: score_of(s, score, score_text.as_deref())?, ..Default::default() };
             set(s, &title, change, anyway)
         })),
+        Request::Remove { title, yes } => reply(on_ui(handle, true, move |s| remove(s, &title, yes))),
         Request::Rewatch { title } => reply(on_ui(handle, true, move |s| {
             // A MyAnimeList id, or a part of the title.
             let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
@@ -176,6 +177,26 @@ fn plus_one(s: &mut State, title: &str, anyway: bool) -> Result<Reply, String> {
 }
 
 /// `kot set`: as `kot +1`, an episode not aired yet is held. Past the count is refused.
+/// `kot remove`: held with the question unless `yes`; then off the list, the removal queued
+/// (the app's toast offers Undo too).
+fn remove(s: &mut State, title: &str, yes: bool) -> Result<Reply, String> {
+    if !s.has_list() {
+        return Err("Not signed in.".into());
+    }
+    let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
+        Some(i) => i,
+        None => s.find(title)?,
+    };
+    let id = s.entries[i].id;
+    if !yes {
+        let message = s.remove_question(id).unwrap_or_default();
+        return Ok(Reply::Error { message, anyway: true });
+    }
+    let name = s.entries[i].title.clone();
+    s.remove_entry(id)?;
+    Ok(Reply::Done { message: format!("Removed {name} from your list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the anime.") })
+}
+
 /// `kot set --score`: the text in the user's own score format (a new `kot`), else 1-10 (an older
 /// one, 0 removes).
 fn score_of(s: &State, ten: Option<u8>, text: Option<&str>) -> Result<Option<Option<kotora_core::Score>>, String> {
@@ -289,6 +310,22 @@ mod tests {
         let mut s = State::fake();
         crate::model::airing_entry(&mut s, 0, 8);
         assert!(matches!(plus_one(&mut s, "Kirigaoka", false), Ok(Reply::Edited { .. })));
+    }
+
+    /// `kot remove` asks first (held with the question), then takes it off the list.
+    #[test]
+    fn kot_remove_asks_then_removes() {
+        let mut s = State::fake();
+        let id = s.entries[1].id;
+        let title = s.entries[1].title.clone();
+        match remove(&mut s, &title, false) {
+            Ok(Reply::Error { message, anyway: true }) => assert!(message.starts_with(&format!("Remove {title} from your list?")), "{message}"),
+            other => panic!("not held: {other:?}"),
+        }
+        assert!(s.entries.iter().any(|e| e.id == id));
+        assert!(matches!(remove(&mut s, &id.to_string(), true), Ok(Reply::Done { .. })), "by id");
+        assert!(!s.entries.iter().any(|e| e.id == id));
+        assert!(remove(&mut s, &title, true).is_err(), "no longer on the list");
     }
 
     /// `kot set --score` reads the score in the user's format and keeps a precise score that

@@ -41,7 +41,7 @@ fn wire_format_is_readable() {
 fn requests_and_replies_round_trip() {
     let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0), score_text: None, anyway: true };
     let set_text = Request::Set { title: "Lanterns".into(), progress: None, status: None, score: None, score_text: Some("7.5".into()), anyway: false };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, set_text, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }] {
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, set_text, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }, Request::Remove { title: "Neon".into(), yes: false }, Request::Remove { title: "9001".into(), yes: true }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -203,6 +203,7 @@ fn stage_3_wire_format() {
         r#"{"cmd":"set","title":"Neon","progress":3}"#
     );
     assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);
+    assert_eq!(serde_json::to_string(&Request::Remove { title: "Neon".into(), yes: false }).unwrap(), r#"{"cmd":"remove","title":"Neon"}"#);
     assert_eq!(serde_json::to_string(&Request::Sync).unwrap(), r#"{"cmd":"sync"}"#);
     let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, score_text: None, waiting: None, rewatching: false, times_rewatched: 0 };
     let text = serde_json::to_string(&Reply::Edited { entry: e.clone() }).unwrap();

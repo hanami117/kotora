@@ -134,6 +134,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.ask = None;
         return true;
     }
+    if k.key == rune::Key::Escape && s.confirm_remove.is_some() {
+        s.confirm_remove = None;
+        return true;
+    }
     if k.key == rune::Key::Escape && s.editor.is_some() {
         s.editor = None;
         return true;
@@ -507,6 +511,9 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     }
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a, s.service));
+    }
+    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, id)) {
+        m = m.child(bar);
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
     if let Some(u) = crate::update::banner(s) {
@@ -1465,6 +1472,12 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
         _ => {}
     }
     let end = match op.state {
+        // A removal that hasn't left: Undo puts the entry back (Discard).
+        OpState::Queued | OpState::Failed if op.removed => row()
+            .gap(6.0)
+            .center_y()
+            .children((op.state == OpState::Queued).then(|| pill(op.state.label(), PAL.warn())))
+            .child(action(format!("q/{id}/undo"), "Undo", false, move |s, _| s.queue_cmd(Cmd::Discard(id)))),
         OpState::Failed => row()
             .gap(6.0)
             .child(action(format!("q/{id}/edit"), "Edit", false, move |s, tx| {
@@ -1534,6 +1547,7 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
+        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), remote_text(r, op.episodes, s.score_format()), "Keep it"),
         Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
         None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
@@ -1557,20 +1571,20 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
                 .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
                 .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
         )
-        .child(text(format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title())).font(theme::LABEL).color(PAL.dim))
+        .child(text(if op.removed { format!("{} changed after you removed it. Kotora did not delete it. Pick one.", s.service.title()) } else { format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title()) }).font(theme::LABEL).color(PAL.dim))
         .child(
             row()
                 .gap(12.0)
                 .child(side(
                     "mine",
-                    format!("Yours \u{b7} edited here, {}", sync_age(now - op.edited_at)),
-                    conflict_values(op, &op.mine(), s.score_format()),
-                    action(format!("conflict/{id}/keep"), "Keep mine", true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
+                    format!("Yours \u{b7} {} here, {}", if op.removed { "removed" } else { "edited" }, sync_age(now - op.edited_at)),
+                    if op.removed { "Remove from list".to_string() } else { conflict_values(op, &op.mine(), s.score_format()) },
+                    action(format!("conflict/{id}/keep"), if op.removed { "Remove anyway" } else { "Keep mine" }, true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
                     true,
                 ))
                 .child(side("theirs", theirs_head, theirs, action(format!("conflict/{id}/take"), take, false, move |s, _| s.queue_cmd(Cmd::TakeTheirs(id))), false)),
         )
-        .child(text("When only the progress differs and yours is higher, Kotora sends yours by itself.").font(theme::LABEL).color(PAL.faint))
+        .children((!op.removed).then(|| text("When only the progress differs and yours is higher, Kotora sends yours by itself.").font(theme::LABEL).color(PAL.faint)))
 }
 
 // ------------------------------------------------------------------- alerts, sign-in, settings

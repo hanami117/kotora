@@ -111,6 +111,8 @@ enum CallError {
     /// 401 on an API call; on the token endpoint the refresh or code was refused.
     Unauthorized,
     RateLimited,
+    /// 404: what was asked for isn't there.
+    NotFound,
     Other(String),
 }
 
@@ -120,6 +122,7 @@ impl From<CallError> for ServiceError {
             CallError::Offline(m) => ServiceError::Offline(m),
             CallError::Unauthorized => ServiceError::SignInAgain,
             CallError::RateLimited => ServiceError::RateLimited,
+            CallError::NotFound => ServiceError::Other("MyAnimeList answered HTTP 404".into()),
             CallError::Other(m) => ServiceError::Other(m),
         }
     }
@@ -167,6 +170,7 @@ impl<T: Transport> Client<T> {
                 401 => return Err(CallError::Unauthorized),
                 s @ 500..=599 => return Err(CallError::Offline(format!("MyAnimeList is having trouble (HTTP {s})"))),
                 403 => return Err(CallError::Other("MyAnimeList refused the request (HTTP 403); it may have blocked us for a while".into())),
+                404 => return Err(CallError::NotFound),
                 s => return Err(CallError::Other(format!("MyAnimeList answered HTTP {s}{}", api_message(&resp.body)))),
             }
         }
@@ -249,6 +253,16 @@ impl<T: Transport> Client<T> {
         let r = self.call(&req)?;
         let ls: ListStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
         ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
+    }
+
+    /// Removes one anime from the list (`DELETE /anime/{id}/my_list_status`). MAL answers 404
+    /// when it isn't on the list: that is done too.
+    pub fn delete_entry(&mut self, access: &str, id: u32) -> Result<(), ServiceError> {
+        let req = Request { method: "DELETE", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: None, json: None };
+        match self.call(&req) {
+            Ok(_) | Err(CallError::NotFound) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// A title search, `GET /anime?q=` (5 results). MAL wants at least 3 characters; the query is
@@ -890,6 +904,10 @@ impl<T: Transport> ListService for Mal<T> {
         self.authed(|c, a| c.patch_entry(a, media_id, change))
     }
 
+    fn delete_entry(&mut self, media_id: u32) -> Result<(), ServiceError> {
+        self.authed(|c, a| c.delete_entry(a, media_id))
+    }
+
     fn search(&mut self, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         self.authed(|c, a| c.search_anime(a, query))
     }
@@ -1234,6 +1252,21 @@ mod tests {
         assert_eq!(seen[1].3.as_deref(), Some("status=completed&score=0"));
         assert_eq!(seen[1].2.as_deref(), Some("acc"));
         assert!(c.patch_entry("acc", 1, &Change::default()).is_err(), "an empty change is never sent");
+    }
+
+    /// Remove from list: `DELETE my_list_status`; not on the list (404) is done too, a server
+    /// error waits for a retry.
+    #[test]
+    fn delete_removes_the_entry_and_a_404_is_done() {
+        let status = |n: u16| Ok(Response { status: n, retry_after: None, body: String::new() });
+        let (f, seen) = fake(vec![ok("[]"), status(404), status(503), status(400)]);
+        let (mut c, _) = client(f);
+        assert_eq!(c.delete_entry("acc", 1001), Ok(()));
+        assert_eq!(c.delete_entry("acc", 1001), Ok(()), "already gone");
+        assert!(matches!(c.delete_entry("acc", 1001), Err(ServiceError::Offline(_))));
+        assert!(matches!(c.delete_entry("acc", 1001), Err(ServiceError::Other(_))));
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str(), seen[0].2.as_deref(), seen[0].3.as_deref()), ("DELETE", "https://api.myanimelist.net/v2/anime/1001/my_list_status", Some("acc"), None));
     }
 
     /// A rewatch goes as MAL's form fields, and its answer is read back.

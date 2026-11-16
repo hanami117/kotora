@@ -462,6 +462,26 @@ pub const SCENES: &[Scene] = &[
         }
         s.go(Page::Queue);
     }),
+    // Remove from list (0.2.1): the question (list and details page), the toast with Undo, the
+    // removal waiting in the queue, and its conflict when the entry changed on the service.
+    ("list-remove-confirm", |s| s.ask_remove(2)),
+    ("details-remove-confirm", |s| {
+        details(s, 0, true);
+        s.ask_remove(0);
+    }),
+    ("list-removed", |s| {
+        let _ = s.remove_entry(2);
+    }),
+    ("queue-removal", |s| {
+        queue_covers(s);
+        removal(s, OpState::Queued);
+        s.go(Page::Queue);
+    }),
+    ("queue-removal-conflict", |s| {
+        queue_covers(s);
+        removal(s, OpState::Conflict);
+        s.go(Page::Queue);
+    }),
     // One change on its way, nothing else open.
     ("queue-sending", |s| {
         s.ops.retain(|o| o.id == 2 || o.state == OpState::Done);
@@ -1338,6 +1358,33 @@ fn scores_in(s: &mut State, fmt: ScoreFormat) {
     for (i, e) in s.entries.iter_mut().filter(|e| e.score.is_some()).enumerate() {
         e.score = Score::from_points(FINE[i % FINE.len()]);
     }
+    s.refresh();
+}
+
+/// A removal of the second fake entry in the queue, the entry gone from the list. A conflict has
+/// the service's newer entry beside it.
+fn removal(s: &mut State, state: OpState) {
+    let Some(i) = s.entries.iter().position(|e| e.id == 2) else { return };
+    let e = s.entries.remove(i);
+    let Some(mut op) = s.ops.first().cloned() else { return };
+    op.id = 90;
+    op.media_id = e.id;
+    op.title = e.title.clone();
+    op.episodes = e.episodes;
+    op.change = kotora_core::Change::default();
+    op.old = e.values();
+    op.removed = true;
+    op.added = false;
+    op.edits = 1;
+    op.state = state;
+    op.error = None;
+    op.remote = (state == OpState::Conflict).then(|| kotora_core::Remote {
+        values: kotora_core::Values { progress: e.progress + 2, ..e.values() },
+        updated_at: s.clock() - 600,
+    });
+    s.ops.retain(|o| o.media_id != e.id);
+    s.ops.insert(0, op);
+    s.queue = s.ops.iter().filter(|o| o.state.is_open()).count() as u32;
     s.refresh();
 }
 

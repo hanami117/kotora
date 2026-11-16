@@ -208,6 +208,14 @@ pub enum Request {
     /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
     /// with what comes next, the queue and the last sync. Replies `Dash`.
     Dash,
+    /// Takes an entry off the list (a part of its title, or its id on the service): it goes to
+    /// the sync queue as a removal. Without `yes` it is held: `Error` with `anyway` and the
+    /// question. Replies `Done`.
+    Remove {
+        title: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        yes: bool,
+    },
 }
 
 // ------------------------------------------------------------------------------------- replies

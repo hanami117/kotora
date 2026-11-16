@@ -13,6 +13,7 @@
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
 //! kot add QUERY|ID [--status S]
+//! kot remove TITLE|ID [--yes]  take it off the list (asks first)
 //! kot next TITLE  play the next episode from the library folders
 //! kot config client-id ID
 //! kot show       shows the window
@@ -57,6 +58,8 @@ Commands:
   rewatch TITLE|ID      watch a completed anime again from episode 1
   next TITLE            play the next episode of TITLE from your
                         library folders (Settings \u{2192} Library)
+  remove TITLE|ID       take an anime off your list (asks first; --yes
+      [--yes]             doesn't). Undo it in Kotora's sync queue
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id
   config client-id ID   use your own Client ID for your list service
@@ -97,6 +100,13 @@ fn main() -> ExitCode {
             }
         },
         ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
+        ["remove", rest @ ..] => match parse_remove(rest) {
+            Ok(r) => r,
+            Err(m) => {
+                eprintln!("kot: {m} (try kot help)");
+                return ExitCode::from(2);
+            }
+        },
         ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
@@ -131,12 +141,14 @@ fn main() -> ExitCode {
         }
     };
     let mut reply = ask(&req);
-    // Held: the episode hasn't aired yet by the estimate. Ask on a terminal, else say how.
+    // Held: the episode hasn't aired yet by the estimate, or a removal asks first. Ask on a
+    // terminal, else say how.
     if let Ok(Reply::Error { message, anyway: true }) = &reply {
         eprintln!("kot: {message}");
-        if !confirm("Mark anyway? [y/N] ") {
+        let removing = matches!(req, Request::Remove { .. });
+        if !confirm(if removing { "Remove it? [y/N] " } else { "Mark anyway? [y/N] " }) {
             if !interactive() {
-                eprintln!("kot: run it again with --anyway to mark it.");
+                eprintln!("{}", if removing { "kot: run it again with --yes to remove it." } else { "kot: run it again with --anyway to mark it." });
             }
             return ExitCode::FAILURE;
         }
@@ -261,8 +273,19 @@ fn with_anyway(req: Request) -> Request {
     match req {
         Request::PlusOne { title, .. } => Request::PlusOne { title, anyway: true },
         Request::Set { title, progress, status, score, score_text, .. } => Request::Set { title, progress, status, score, score_text, anyway: true },
+        Request::Remove { title, .. } => Request::Remove { title, yes: true },
         other => other,
     }
+}
+
+/// `remove TITLE…|ID [--yes]`.
+fn parse_remove(words: &[&str]) -> Result<Request, String> {
+    let yes = words.iter().any(|w| matches!(*w, "--yes" | "-y"));
+    let title: Vec<&str> = words.iter().copied().filter(|w| !matches!(*w, "--yes" | "-y")).collect();
+    if title.is_empty() {
+        return Err("remove needs a title or an id".into());
+    }
+    Ok(Request::Remove { title: title.join(" "), yes })
 }
 
 /// `+1 TITLE… [--anyway]`.
@@ -512,6 +535,15 @@ mod tests {
         // A held request is sent again as it was, plus "anyway".
         let set = Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, score_text: None, anyway: false };
         assert_eq!(with_anyway(set), Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, score_text: None, anyway: true });
+    }
+
+    #[test]
+    fn remove_reads_the_title_and_yes() {
+        assert_eq!(parse_remove(&["Neon", "Ronin"]), Ok(Request::Remove { title: "Neon Ronin".into(), yes: false }));
+        assert_eq!(parse_remove(&["--yes", "9001"]), Ok(Request::Remove { title: "9001".into(), yes: true }));
+        assert!(parse_remove(&["-y"]).is_err());
+        // Held for the question: sent again with yes.
+        assert_eq!(with_anyway(Request::Remove { title: "Neon".into(), yes: false }), Request::Remove { title: "Neon".into(), yes: true });
     }
 
     #[test]
