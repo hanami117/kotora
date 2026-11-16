@@ -31,11 +31,19 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // sidebar keeps a band clear for them. None in full screen; Linux draws its own frame.
     s.covers.set_scale(cx.env().scale);
     let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 { theme::TITLEBAR_BAND } else { 0.0 };
-    row()
+    // A window resize (the window's size changed since the last build) reflows the pages:
+    // posters change rows, columns and the sidebar card change size. That lands at once, as in
+    // Finder: no fading rows, no cards sliding up. Changes the user makes (filter, sort, view)
+    // keep their own transitions.
+    let size = cx.layout_size("root").unwrap_or([0.0, 0.0]);
+    let resized = s.main_size.replace(size) != size;
+    let root = row()
         .key("root")
         .w_full()
         .h_full()
-        .fill(PAL.bg)
+        .fill(PAL.bg);
+    let root = if resized { root.instant_changes() } else { root };
+    root
         .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))

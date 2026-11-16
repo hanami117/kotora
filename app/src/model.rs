@@ -456,6 +456,9 @@ pub struct State {
     pub library: crate::library::Library,
     /// The list's grid views: the keyboard selection (`grid.rs`).
     pub grid: crate::grid::Grid,
+    /// The window's size at the last build: a change is a resize, whose reflow lands at once
+    /// (`ui::view`).
+    pub main_size: std::cell::Cell<[f32; 2]>,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -515,6 +518,7 @@ impl State {
             tick: None,
             library: Default::default(),
             grid: Default::default(),
+            main_size: Default::default(),
         };
         s.queue_changed();
         s.refresh();

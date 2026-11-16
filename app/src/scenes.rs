@@ -990,6 +990,36 @@ mod tests {
         rt
     }
 
+    /// A window resize reflows the grids at once: cards that change rows are in their new place
+    /// and fully drawn on the frame after it, with nothing left to move (no fading rows, no
+    /// cards sliding in). Narrowing 1280 to 900 pt in steps, as a live drag does.
+    #[test]
+    fn a_resize_lands_at_once() {
+        for name in ["list-grid-covers", "list-large-covers", "list-covers", "home-covers"] {
+            let mut rt = render(name, (1280.0, 800.0));
+            for w in (900..=1240).rev().step_by(20) {
+                rt.set_viewport((w as f32, 800.0), 1.0);
+                rt.frame(1.0 / 120.0);
+            }
+            rt.frame(1.0 / 60.0);
+            // A card that changed rows leaves no fading copy behind.
+            let ghosts: Vec<String> = rt.elements().into_iter().filter(|e| e.exiting).filter_map(|e| e.key).filter(|k| k.starts_with("card/") || k.starts_with("cont/") || k.starts_with("cards/")).collect();
+            assert!(ghosts.is_empty(), "{name}: fading copies {ghosts:?}");
+            rt.frame(1.0 / 60.0);
+            let keys: Vec<String> = (0..12).map(|i| format!("card/{i}")).chain((0..12).map(|i| format!("cont/{i}"))).chain(["np-mini".to_string(), "rows".to_string()]).collect();
+            let now: Vec<_> = keys.iter().map(|k| rt.presented(k)).collect();
+            for _ in 0..40 {
+                rt.frame(1.0 / 60.0);
+            }
+            for (k, before) in keys.iter().zip(now) {
+                let Some((r, o)) = before else { continue };
+                let (r2, o2) = rt.presented(k).unwrap();
+                assert!(o >= 0.999 && o2 >= 0.999, "{name}: {k} half drawn ({o}, then {o2}) after the resize");
+                assert!(r.iter().zip(r2).all(|(a, b)| (a - b).abs() < 0.5), "{name}: {k} still moving: {r:?} -> {r2:?}");
+            }
+        }
+    }
+
     /// Every scene lays out with the sidebar and its page, at the default and the minimum size.
     #[test]
     fn every_scene_renders() {
