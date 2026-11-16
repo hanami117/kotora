@@ -26,6 +26,6 @@ pkgbase = kotora
 	optdepends = mpc-qt: a supported player
 	options = !lto
 	source = kotora-0.1.0.tar.gz::https://github.com/hanami117/kotora/releases/download/v0.1.0/kotora-0.1.0.tar.gz
-	sha256sums = 745a6d8b1c37bb5045555f48712c85a6f7b9a127cc71df096150bc100b1d3515
+	sha256sums = 04d4b2eaa161be541d182df297ea8efdaaa70cdde23565ddbb32863d3d09b969
 
 pkgname = kotora
