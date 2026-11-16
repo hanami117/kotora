@@ -57,6 +57,8 @@ Commands:
                         library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id
+  export FILE           write your anime list as a MyAnimeList XML file
+                        (MyAnimeList lists only)
   config client-id ID   use your own Client ID for your list service
                         (MyAnimeList or AniList, as chosen in Kotora; optional)
   show                  show the window
@@ -69,6 +71,15 @@ Changes go to the sync queue first, then to MyAnimeList or AniList.
 Options:
   -V, --version   print the version
 ";
+
+/// `file` as an absolute path: the app runs elsewhere, so a relative path means here.
+fn absolute(file: &str) -> String {
+    let p = std::path::Path::new(file);
+    if p.is_absolute() {
+        return file.to_string();
+    }
+    std::env::current_dir().map(|d| d.join(p).to_string_lossy().into_owned()).unwrap_or_else(|_| file.to_string())
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -96,6 +107,11 @@ fn main() -> ExitCode {
         },
         ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
         ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
+        ["export", file] => Request::Export { path: absolute(file) },
+        ["export", ..] => {
+            eprintln!("kot: use kot export FILE (try kot help)");
+            return ExitCode::from(2);
+        }
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
             eprintln!("kot: use kot config client-id ID (try kot help)");

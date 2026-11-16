@@ -201,6 +201,10 @@ pub enum Request {
     /// Opens the next episode's file (progress + 1) from the library folders in the player of
     /// Settings → Library. Replies `Done`, or `Error` with why not.
     Next { title: String },
+    /// Writes the saved anime list as a MyAnimeList XML file at `path` (absolute; `kot` makes a
+    /// relative path absolute). MyAnimeList lists only: AniList's terms don't allow exporting.
+    /// Replies `Done`.
+    Export { path: String },
     /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
     /// with what comes next, the queue and the last sync. Replies `Dash`.
     Dash,

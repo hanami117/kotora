@@ -43,6 +43,7 @@ mod search;
 mod settings;
 mod setup;
 mod theme;
+mod transfer;
 mod tray;
 mod ui;
 mod update;

@@ -716,6 +716,65 @@ pub const SCENES: &[Scene] = &[
         s.client_id.editing = true;
         crate::settings::open(s, Section::Account)
     }),
+    // Settings → Account → Your list (`transfer.rs`). The search brings the rows to the top.
+    ("settings-transfer", |s| {
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-export-done", |s| {
+        s.transfer.export_note = Some(Ok("Exported 14 anime to animelist-2027-01-15.xml.".into()));
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    // AniList: no export (its API terms), import still works.
+    ("settings-export-anilist", |s| {
+        anilist(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-import-preview", |s| {
+        crate::transfer::fake_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    // A status conflict settled for the file's status.
+    ("settings-import-preview-picked", |s| {
+        crate::transfer::fake_preview(s);
+        if let Some(p) = &mut s.transfer.preview
+            && let Some(id) = p.plan.conflicts().next().and_then(|r| r.target)
+        {
+            p.use_file.insert(id);
+        }
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-preview-anilist", |s| {
+        anilist(s);
+        crate::transfer::fake_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-busy", |s| {
+        anilist(s);
+        s.transfer.busy = Some("Looking up 40 MyAnimeList ids on AniList\u{2026}".into());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-error", |s| {
+        s.transfer.error = Some("This is not a MyAnimeList list export (no <myanimelist>).".into());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-done", |s| {
+        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: None });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-undone", |s| {
+        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: Some(15) });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
     ("settings-library", |s| {
         crate::library::fake(s);
@@ -1424,6 +1483,47 @@ mod tests {
         assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
         let rt = render("settings-account-anilist-own-id", (1280.0, 800.0));
         assert!(rt.find("set/cid/input").is_some());
+    }
+
+    #[test]
+    fn export_and_import_scenes() {
+        // MyAnimeList: both rows work.
+        let rt = render("settings-transfer", (1280.0, 800.0));
+        assert!(rt.find("set/export-button").is_some() && rt.find("set/import-button").is_some());
+        assert!(rt.find("set/import-preview").is_none());
+        // The preview: counts, the lists, a conflict to pick and the three buttons.
+        let rt = render("settings-import-preview", (1280.0, 1600.0));
+        for k in ["set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update", "set/import-cancel"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        let mut s = State::fake();
+        crate::transfer::fake_preview(&mut s);
+        let p = s.transfer.preview.as_ref().unwrap();
+        let c = p.plan.counts();
+        assert_eq!((c.new, c.unknown), (4, 2), "four new ids, no id and an unknown status");
+        assert!(c.conflicts > 1 && c.different > 0 && c.same > 0);
+        assert_eq!(c.new + c.different + c.same + c.unknown, 40 + 6, "40 of the fake list, six more");
+        assert!(render("settings-import-preview", (1280.0, 1600.0)).find("set/import-conflicts-all").is_some());
+        assert_eq!(p.plan.manga, 1);
+        // AniList: the id it doesn't know is left out, the one it maps is new.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        crate::transfer::fake_preview(&mut s);
+        let c = s.transfer.preview.as_ref().unwrap().plan.counts();
+        assert_eq!((c.new, c.unknown), (1, 5));
+        assert!(render("settings-import-preview-anilist", (1280.0, 1600.0)).find("set/import-list-unknown").is_some());
+        // While matching, after an error, after the import, after Undo.
+        assert!(render("settings-import-busy", (1280.0, 800.0)).find("set/import-preview").is_none());
+        assert!(render("settings-import-error", (1280.0, 800.0)).find("set/import-error").is_some());
+        let rt = render("settings-import-done", (1280.0, 800.0));
+        assert!(rt.find("set/import-undo").is_some() && rt.find("set/import-queue").is_some());
+        let rt = render("settings-import-undone", (1280.0, 800.0));
+        assert!(rt.find("set/import-done").is_some() && rt.find("set/import-undo").is_none());
+        // AniList: Export is off and says why; Import is on.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        assert!(crate::transfer::refusal(&s).is_some_and(|w| w.contains("terms")));
+        assert!(render("settings-export-anilist", (1280.0, 800.0)).find("set/import-button").is_some());
     }
 
     #[test]
