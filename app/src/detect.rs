@@ -40,6 +40,8 @@ pub struct Glue {
 }
 
 impl Glue {
+    /// For IINA (macOS), which adds its socket to the running detection.
+    #[cfg(target_os = "macos")]
     pub fn detector(&self) -> Arc<Detector> {
         self.detector.clone()
     }
