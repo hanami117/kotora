@@ -208,8 +208,13 @@ fn wide_card(s: &State, e: &Entry) -> El {
         .border(1.0, PAL.border)
         .hover(PAL.hover())
         .cursor(rune::Cursor::Pointer)
+        // The middle button plays the next episode, as on the list.
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
+            if tx.button() == rune::PointerButton::Middle {
+                return s.play_entry(stub.id);
+            }
             s.open_details(stub.clone());
         })
         .child(look::backdrop(s, id, e.cover_url.as_deref(), look::card_scrim()))
@@ -253,8 +258,13 @@ fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -
         .gap(6.0)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
+        // The middle button plays the next episode, as on the list.
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
+            if tx.button() == rune::PointerButton::Middle {
+                return s.play_entry(stub.id);
+            }
             s.open_details(stub.clone());
         })
         .child(p)

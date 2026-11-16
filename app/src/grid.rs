@@ -105,14 +105,15 @@ impl State {
             _ => return false,
         };
         self.grid.sel = Some(self.entries[self.rows[next]].id);
-        tx.scroll_into_view(row_key(self, next / per, per));
+        tx.scroll_into_view(row_key(next / per));
         true
     }
 }
 
-/// A grid row's key: its first card's media id (stable while the rows above don't change).
-fn row_key(s: &State, r: usize, per: usize) -> String {
-    s.rows.get(r * per).map_or_else(|| format!("gone-{r}"), |&k| format!("cards/{}", s.entries[k].id))
+/// A grid row's key: its index. A resize changes how many cards a row holds, not which rows
+/// there are, so the rows stay and only their cards move (at once, see `ui::main`).
+fn row_key(r: usize) -> String {
+    format!("cards/{r}")
 }
 
 /// The toolbar's segmented switch: List, Grid, Large (icons only on narrow windows).
@@ -160,7 +161,7 @@ pub fn cards(s: &State, st: Status, width: f32) -> El {
         col().key("grid").growth(GrowthSpec::default()).virtual_rows(
             rows,
             z.row_h,
-            move |s: &State, r| row_key(s, r, per).into(),
+            move |_: &State, r| row_key(r).into(),
             move |s: &State, r| {
                 let mut line = row().w_full().h(z.row_h).px(theme::PAGE_PAD).pt(if r == 0 { 4.0 } else { 0.0 }).gap(gap).items_start();
                 for &k in s.rows.iter().skip(r * per).take(per) {
@@ -283,12 +284,16 @@ fn hover_layer(s: &State, e: &Entry, plus: bool) -> El {
         .child(row().gap(6.0).center_y().child(edit_on_poster(e.id)).child(spacer()).child(if plus && has_next(s, e) { plus_on_poster(e.id) } else { el() }))
 }
 
-/// The card as a whole opens the details page (its buttons keep their own presses).
+/// The card as a whole opens the details page (its buttons keep their own presses); the
+/// middle button plays the next episode (see `card_dense`/`card_large`: `pointer_buttons`).
 fn open(e: &Entry) -> impl Fn(&mut State, &mut Tx) + 'static {
     let stub = Stub::from_entry(e);
     move |s: &mut State, tx: &mut Tx| {
         tx.instant();
         s.grid.sel = Some(stub.id);
+        if tx.button() == rune::PointerButton::Middle {
+            return s.play_entry(stub.id);
+        }
         s.open_details(stub.clone());
     }
 }
@@ -318,6 +323,7 @@ fn card_dense(s: &State, e: &Entry, st: Status) -> El {
         .gap(6.0)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(open(e))
         .child(p)
         .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
@@ -341,6 +347,7 @@ fn card_large(s: &State, e: &Entry, _st: Status) -> El {
         .border(1.0, PAL.border)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
+        .pointer_buttons([rune::PointerButton::Middle])
         .on_press_tx(open(e))
         .child(p)
         .child(

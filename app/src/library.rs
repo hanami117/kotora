@@ -22,7 +22,7 @@ use kotora_core::{Status, paths};
 use rune::{El, TextEdit, TextStyle, Tx, col, el, icon, row, text, text_input};
 
 use crate::icons;
-use crate::model::{Entry, Handle, State};
+use crate::model::{Entry, Handle, Page, State};
 use crate::play::{self, Player};
 use crate::theme::{self, PAL};
 use crate::ui::{button, card, cell, ghost, option};
@@ -376,6 +376,77 @@ pub fn play_next(s: &mut State, id: u32) -> Result<String, String> {
         }
     });
     Ok(note)
+}
+
+/// A short note at the window's bottom that goes by itself ([`TOAST_SECS`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Toast {
+    pub text: String,
+    /// The note is an error ("Episode 7 not in your folders").
+    pub warn: bool,
+    pub until: std::time::Instant,
+}
+
+/// How long a toast stays.
+pub const TOAST_SECS: f64 = 3.5;
+
+impl State {
+    /// Middle-click, P and Cmd/Ctrl+Return: plays the next episode of `id` as ▶ Play does, and
+    /// says so in a toast, or says why not ("Episode 7 not in your folders").
+    pub fn play_entry(&mut self, id: u32) {
+        let (text, warn) = match play_next(self, id) {
+            Ok(note) => (note, false),
+            Err(m) => (m, true),
+        };
+        self.toast = Some(Toast { text, warn, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(TOAST_SECS) });
+    }
+
+    /// The entry P plays: the grid's selection, the list row whose editor is open, or the
+    /// open details page's anime when it is on the list.
+    pub fn play_target(&self) -> Option<u32> {
+        let on_list = |id: u32| self.entries.iter().any(|e| e.id == id).then_some(id);
+        match self.page {
+            Page::List(st) if self.view_of(st) != kotora_core::config::ListView::List => {
+                self.grid.sel.filter(|id| self.rows.iter().any(|&k| self.entries[k].id == *id))
+            }
+            Page::List(_) => self.editor.map(|ed| ed.id).and_then(on_list),
+            Page::Details => self.detail.as_ref().map(|d| d.id()).and_then(on_list),
+            _ => None,
+        }
+    }
+}
+
+/// `poll`: the toast goes when its time is up (one wake, nothing ticks meanwhile).
+pub fn toast_tick(s: &mut State, tx: &mut Tx) -> bool {
+    let Some(t) = &s.toast else { return false };
+    let now = std::time::Instant::now();
+    if now >= t.until {
+        s.toast = None;
+        return true;
+    }
+    tx.wake_after(t.until - now);
+    false
+}
+
+/// The toast, bottom right over the page.
+pub fn toast(t: &Toast) -> El {
+    let c = if t.warn { PAL.warn() } else { PAL.ok() };
+    row()
+        .key("toast")
+        .role("status")
+        .label(t.text.clone())
+        .pin(None, None, Some(24.0), Some(24.0))
+        .max_w(420.0)
+        .px(14.0)
+        .py(10.0)
+        .gap(10.0)
+        .center_y()
+        .radius(theme::R_LG)
+        .fill(PAL.raised)
+        .border(1.0, PAL.border_strong)
+        .shadow(8.0, 24.0, rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
+        .child(el().size(8.0, 8.0).radius(4.0).fill(c))
+        .child(text(t.text.clone()).font(theme::BODY).color(PAL.text).wrap().min_w(0.0))
 }
 
 pub(crate) fn press_play(s: &mut State, id: u32) {

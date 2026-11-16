@@ -31,16 +31,25 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // sidebar keeps a band clear for them. None in full screen; Linux draws its own frame.
     s.covers.set_scale(cx.env().scale);
     let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 { theme::TITLEBAR_BAND } else { 0.0 };
-    row()
+    // A window resize (the window's size changed since the last build) reflows the pages:
+    // posters change rows, columns and the sidebar card change size. That lands at once, as in
+    // Finder: no fading rows, no cards sliding up. Changes the user makes (filter, sort, view)
+    // keep their own transitions.
+    let size = cx.layout_size("root").unwrap_or([0.0, 0.0]);
+    let resized = s.main_size.replace(size) != size;
+    let root = row()
         .key("root")
         .w_full()
         .h_full()
-        .fill(PAL.bg)
+        .fill(PAL.bg);
+    let root = if resized { root.instant_changes() } else { root };
+    root
         .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
         // Menus last, so they draw over everything.
         .children(s.sort_menu.then(|| sort_menu(s)))
+        .children(s.toast.as_ref().map(crate::library::toast))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
@@ -51,7 +60,8 @@ pub fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     s.sync_tray();
     let now = crate::now::tick(s, tx);
     let airing = crate::airing::tick(s, tx);
-    now || airing
+    let toast = crate::library::toast_tick(s, tx);
+    now || airing || toast
 }
 
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
@@ -91,6 +101,12 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if k.key == rune::Key::Escape && s.page == Page::Search {
         tx.instant();
         s.close_search();
+        return true;
+    }
+    // P (or Cmd/Ctrl+Return) plays the selected entry's next episode, as a middle-click does.
+    let p = matches!(&k.key, rune::Key::Text(t) if t.eq_ignore_ascii_case("p")) && !(k.mods.cmd || k.mods.ctrl || k.mods.alt);
+    if (p || (k.key == rune::Key::Enter && k.mods.cmd)) && let Some(id) = s.play_target() {
+        s.play_entry(id);
         return true;
     }
     s.grid_key(k, tx)
@@ -936,9 +952,14 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     .role("button")
     .label(format!("Edit {}", e.title))
     .hover(PAL.hover())
-    // A press on the row opens its editor (`+1` keeps its own press).
+    // A press on the row opens its editor (`+1` keeps its own press); the middle button plays
+    // the next episode.
+    .pointer_buttons([rune::PointerButton::Middle])
     .on_press_tx(move |s: &mut State, tx: &mut Tx| {
         tx.instant();
+        if tx.button() == rune::PointerButton::Middle {
+            return s.play_entry(id);
+        }
         s.toggle_editor(id);
     });
     let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });

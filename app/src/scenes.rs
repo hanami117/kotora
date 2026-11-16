@@ -591,6 +591,23 @@ pub const SCENES: &[Scene] = &[
     }),
     // ▶ on the Watching rows whose next episode is in the folders.
     ("library-list", crate::library::fake),
+    // Library folders with the grid: a middle-click or P plays the next episode.
+    ("library-grid", |s| {
+        crate::library::fake(s);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    // The toast after a middle-click: playing, and the next file missing.
+    ("toast-play", |s| {
+        crate::library::fake(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.grid.sel = Some(0);
+        s.play_entry(0);
+    }),
+    ("toast-missing", |s| {
+        crate::library::fake(s);
+        s.play_entry(7);
+    }),
     ("library-details", |s| {
         crate::library::fake(s);
         details(s, 0, true);
@@ -1056,6 +1073,67 @@ mod tests {
             rt.frame(1.0 / 60.0);
         }
         rt
+    }
+
+    /// Middle-click and P play the next episode, as ▶ Play does; the toast says what happened.
+    #[test]
+    fn middle_click_and_p_play_the_next_episode() {
+        let mut s = State::fake();
+        crate::library::fake(&mut s);
+        s.play_entry(0);
+        let t = s.toast.clone().unwrap();
+        assert!(!t.warn && t.text.contains("episode 6"), "{t:?}");
+        s.play_entry(7);
+        let t = s.toast.clone().unwrap();
+        assert!(t.warn && t.text == "Episode 12 not in your folders", "{t:?}");
+        // P: the grid's selection, else nothing on a list page.
+        s.prefs.views.set(Status::Watching, kotora_core::config::ListView::Grid);
+        s.grid.sel = None;
+        assert_eq!(s.play_target(), None);
+        s.grid.sel = Some(3);
+        assert_eq!(s.play_target(), Some(3));
+        // The table: the row whose editor is open.
+        s.prefs.views.set(Status::Watching, kotora_core::config::ListView::List);
+        assert_eq!(s.play_target(), None);
+        s.toggle_editor(1);
+        assert_eq!(s.play_target(), Some(1));
+        for name in ["toast-play", "toast-missing"] {
+            assert!(render(name, (1280.0, 800.0)).find("toast").is_some(), "{name}");
+        }
+        // No library folders: the toast says where to add one.
+        let mut s = State::fake();
+        s.play_entry(0);
+        assert!(s.toast.unwrap().text.contains("Settings"));
+    }
+
+    /// A window resize reflows the grids at once: cards that change rows are in their new place
+    /// and fully drawn on the frame after it, with nothing left to move (no fading rows, no
+    /// cards sliding in). Narrowing 1280 to 900 pt in steps, as a live drag does.
+    #[test]
+    fn a_resize_lands_at_once() {
+        for name in ["list-grid-covers", "list-large-covers", "list-covers", "home-covers"] {
+            let mut rt = render(name, (1280.0, 800.0));
+            for w in (900..=1240).rev().step_by(20) {
+                rt.set_viewport((w as f32, 800.0), 1.0);
+                rt.frame(1.0 / 120.0);
+            }
+            rt.frame(1.0 / 60.0);
+            // A card that changed rows leaves no fading copy behind.
+            let ghosts: Vec<String> = rt.elements().into_iter().filter(|e| e.exiting).filter_map(|e| e.key).filter(|k| k.starts_with("card/") || k.starts_with("cont/") || k.starts_with("cards/")).collect();
+            assert!(ghosts.is_empty(), "{name}: fading copies {ghosts:?}");
+            rt.frame(1.0 / 60.0);
+            let keys: Vec<String> = (0..12).map(|i| format!("card/{i}")).chain((0..12).map(|i| format!("cont/{i}"))).chain(["np-mini".to_string(), "rows".to_string()]).collect();
+            let now: Vec<_> = keys.iter().map(|k| rt.presented(k)).collect();
+            for _ in 0..40 {
+                rt.frame(1.0 / 60.0);
+            }
+            for (k, before) in keys.iter().zip(now) {
+                let Some((r, o)) = before else { continue };
+                let (r2, o2) = rt.presented(k).unwrap();
+                assert!(o >= 0.999 && o2 >= 0.999, "{name}: {k} half drawn ({o}, then {o2}) after the resize");
+                assert!(r.iter().zip(r2).all(|(a, b)| (a - b).abs() < 0.5), "{name}: {k} still moving: {r:?} -> {r2:?}");
+            }
+        }
     }
 
     /// Every scene lays out with the sidebar and its page, at the default and the minimum size.
