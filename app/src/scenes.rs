@@ -479,6 +479,38 @@ pub const SCENES: &[Scene] = &[
         s.airing_details(9301);
     }),
     ("settings-page", |s| s.go(Page::Settings)),
+    // Library folders (`library.rs`): one folder online, one on an unplugged drive; Open with.
+    ("library-settings", |s| {
+        crate::library::fake(s);
+        s.go(Page::Settings);
+    }),
+    ("library-settings-error", |s| {
+        crate::library::fake(s);
+        s.library.draft = rune::TextEdit::new("/Volumes/Media/Anime/Lanterns");
+        s.library.error = Some("That overlaps /Volumes/Media/Anime, already in the list.".into());
+        s.go(Page::Settings);
+    }),
+    // ▶ on the Watching rows whose next episode is in the folders.
+    ("library-list", crate::library::fake),
+    ("library-details", |s| {
+        crate::library::fake(s);
+        details(s, 0, true);
+    }),
+    ("library-details-missing", |s| {
+        crate::library::fake(s);
+        details(s, 7, true);
+    }),
+    ("library-details-offline", |s| {
+        crate::library::fake(s);
+        details(s, 4, true);
+    }),
+    // Nothing plays: Up next.
+    ("library-now-idle", |s| {
+        crate::library::fake(s);
+        s.now = None;
+        s.library.note = Some("Opening episode 6 of Lanterns of Kirigaoka in IINA".into());
+        s.go(Page::NowPlaying);
+    }),
     // Settings → Titles: English or Japanese where the anime has one, romaji where not.
     ("settings-titles-japanese", |s| {
         s.set_titles(TitleLang::Japanese);

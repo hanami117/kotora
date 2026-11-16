@@ -776,6 +776,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
                 .child(text(e.progress.to_string()).font(theme::NUM_MED).color(PAL.text))
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
+        .children(crate::library::row_button(s, e))
         .child(if plus { plus_button(id) } else { el().size(38.0, 26.0) });
     let score = match e.score {
         Some(n) => text(n.to_string()).font(theme::NUM_MED).color(PAL.text),
@@ -1446,11 +1447,11 @@ fn settings(s: &State, wide: bool) -> El {
                     .gap(16.0)
                     .w_full()
                     .items_start()
-                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)))
+                    .child(col().gap(16.0).grow(1.0).min_w(0.0).child(accounts_card(s)).child(players_card(s)).child(crate::library::settings_card(s)))
                     .child(col().gap(16.0).grow(1.0).min_w(0.0).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(about_card(s))),
             )
     } else {
-        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(about_card(s))
+        col().gap(16.0).w_full().child(accounts_card(s)).child(updates_card(s)).child(display_card(s)).child(startup_card(s)).child(players_card(s)).child(crate::library::settings_card(s)).child(about_card(s))
     };
     col()
         .key("page/Settings")
@@ -2099,6 +2100,9 @@ fn now_page(s: &State, wide: bool) -> El {
         None => now_empty(),
     };
     let mut side = col().gap(16.0);
+    if s.now.is_none() {
+        side = side.children(crate::library::up_next_card(s));
+    }
     if let Some(n) = &s.now {
         if n.picking {
             side = side.child(picker_card(n));

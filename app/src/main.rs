@@ -16,6 +16,7 @@ mod ctl;
 mod detect;
 mod details;
 mod icons;
+mod library;
 #[cfg(target_os = "macos")]
 mod iina;
 #[cfg(target_os = "macos")]
@@ -23,6 +24,7 @@ mod menu_bar;
 mod model;
 mod now;
 mod online;
+mod play;
 mod precise;
 mod queue;
 mod scenes;
@@ -159,6 +161,7 @@ fn main() {
         online::start(&mut s);
         // Players: sources and recognition on their own threads, event driven.
         detect::start(&mut s);
+        library::start(&mut s);
         s
     });
     app.run();

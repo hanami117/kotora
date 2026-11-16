@@ -197,6 +197,9 @@ pub enum Request {
     },
     /// Episodes of the user's list that air in the next 7 days (estimated). Replies `Airing`.
     Airing,
+    /// Opens the next episode's file (progress + 1) from the library folders in the player of
+    /// Settings → Library. Replies `Done`, or `Error` with why not.
+    Next { title: String },
 }
 
 // ------------------------------------------------------------------------------------- replies

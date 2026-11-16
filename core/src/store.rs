@@ -129,6 +129,20 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         fetched_at INTEGER NOT NULL,
         PRIMARY KEY (service, year, season)
      );",
+    // 7: library folders (`library.rs`). One row per episode file found in a folder of Settings →
+    // Library: its size and time (a rescan parses only new or changed files) and what its name
+    // says. Not service data: matching to the list happens in memory, so signing out keeps it.
+    "CREATE TABLE library_file (
+        path TEXT PRIMARY KEY,
+        folder TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        episode INTEGER,
+        season INTEGER,
+        grp TEXT
+     );
+     CREATE INDEX library_file_folder ON library_file (folder);",
 ];
 
 /// Details of titles not on the list kept at most (the newest).

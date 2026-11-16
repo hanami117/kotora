@@ -9,6 +9,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   estimate (`kot`: `--anyway` skips the question). Only the total episode count is a hard limit.
 - **Add as Watching at episode N:** one button on Now Playing's "Not on your list" card adds the anime and
   records the playing episode in one change.
+- **Library folders and Play next episode:** Settings → Library takes the folders where your anime are (an
+  unplugged drive shows as offline and is never forgotten). Kotora finds the episodes in them, leaves out samples,
+  extras and creditless openings, and links them to your list with the same rules as the playing file. A ▶ on
+  Watching rows, a Play button on the details page and an "Up next" card on Now Playing open the next episode in
+  the player of your choice (Open with: automatic, system default, mpv, IINA, VLC). `kot next TITLE` does the same.
 
 ### Changed
 - **Update automatically asks** instead of recording when the episode would skip one (two or more ahead of your

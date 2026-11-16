@@ -50,6 +50,7 @@ pub struct Config {
     pub recognition: Recognition,
     pub display: Display,
     pub startup: Startup,
+    pub library: Library,
 }
 
 /// Which title the app (and `kot`, through the app) shows.
@@ -109,6 +110,32 @@ pub struct Display {
 pub struct Startup {
     /// The login start passes `--hidden`: the tray or menu bar icon only, no window.
     pub background: bool,
+}
+
+/// Settings → Library: the folders where the anime files are, and the player "Play next
+/// episode" opens.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Library {
+    /// Folders, as added. A folder that is missing (an unplugged drive) stays here: it shows as
+    /// offline, and its files come back with it.
+    pub folders: Vec<String>,
+    /// `auto` (the player Kotora last saw playing, else the system's), `default` (the system's),
+    /// `mpv`, `iina`, `vlc`.
+    pub open_with: String,
+    /// The player Kotora last saw playing (`mpv`, `iina`, `vlc`), for `auto`.
+    pub last_player: String,
+}
+
+impl Default for Library {
+    fn default() -> Self {
+        Library { folders: Vec::new(), open_with: "auto".into(), last_player: String::new() }
+    }
+}
+
+/// A TOML array of strings.
+pub fn quote_list(items: &[String]) -> String {
+    format!("[{}]", items.iter().map(|s| quote(s)).collect::<Vec<_>>().join(", "))
 }
 
 /// Recognition settings.
@@ -221,6 +248,7 @@ impl std::fmt::Debug for Config {
             .field("recognition", &self.recognition)
             .field("display", &self.display)
             .field("startup", &self.startup)
+            .field("library_folders", &self.library.folders.len())
             .finish()
     }
 }
@@ -243,6 +271,8 @@ struct File {
     display: Display,
     #[serde(default)]
     startup: Startup,
+    #[serde(default)]
+    library: Library,
 }
 
 #[derive(Deserialize, Default)]
@@ -266,6 +296,7 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
+            library: f.library,
         })
     }
 
@@ -405,6 +436,18 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_folders_round_trip() {
+        let c = Config::default();
+        assert!(c.library.folders.is_empty());
+        assert_eq!(c.library.open_with, "auto");
+        let folders = vec!["/Volumes/Disk \"A\"/Anime".to_string(), "/srv/anime\\x".to_string()];
+        let text = set_line("", "library", "folders", &quote_list(&folders));
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.library.folders, folders);
+        assert_eq!(Config::parse(&set_line(&text, "library", "folders", &quote_list(&[]))).unwrap().library.folders, Vec::<String>::new());
+    }
 
     #[test]
     fn reads_the_client_id() {

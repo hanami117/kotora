@@ -8,6 +8,7 @@
 pub mod airing;
 pub mod config;
 pub mod covers;
+pub mod library;
 pub mod loopback;
 pub mod mal;
 pub mod manga;
