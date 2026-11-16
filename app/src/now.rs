@@ -684,6 +684,8 @@ impl State {
             reached: n.reached,
             recorded: n.recorded.map(|r| r.episode),
             dismissed: n.dismissed,
+            position: n.position.map(|p| p.max(0.0) as u32),
+            duration: n.duration.map(|d| d.max(0.0) as u32),
         })
     }
 

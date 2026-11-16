@@ -226,3 +226,53 @@ fn an_old_app_refuses_new_requests_plainly() {
     assert!(matches!(serde_json::from_str::<OldRequest>(r#"{"cmd":"quit"}"#), Ok(OldRequest::Quit)));
     let _ = (OldRequest::Status, OldRequest::Show);
 }
+
+/// The dashboard request and reply: the wire form, and a new client reading a reply with fields
+/// missing (an older app) or extra (a newer one).
+#[test]
+fn dashboard_wire_format_is_backward_compatible() {
+    assert_eq!(serde_json::to_string(&Request::Dash).unwrap(), r#"{"cmd":"dash"}"#);
+    let d = Dashboard {
+        now_unix: 1_800_000_000,
+        now: None,
+        rows: vec![DashRow { title: "Neon".into(), progress: 3, episodes: Some(12), updated_at: 5, on_disk: true, ..Default::default() }],
+        queue: 1,
+        synced_at: None,
+        offline: false,
+    };
+    let text = serde_json::to_string(&Reply::Dash(d.clone())).unwrap();
+    assert_eq!(
+        text,
+        r#"{"reply":"dash","now_unix":1800000000,"rows":[{"title":"Neon","progress":3,"episodes":12,"updated_at":5,"on_disk":true,"aired":false}],"queue":1,"offline":false}"#
+    );
+    assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), Reply::Dash(d));
+    let Reply::Dash(sparse) = serde_json::from_str::<Reply>(r#"{"reply":"dash","rows":[{"title":"X","brand_new":1}],"extra":true}"#).unwrap() else { panic!("not a dash") };
+    assert_eq!(sparse.rows[0].title, "X");
+    assert_eq!(sparse.queue, 0);
+    // NowInfo grew `position` and `duration`: a reply without them reads too.
+    let n: NowInfo = serde_json::from_str(r#"{"player":"mpv","title":"X"}"#).unwrap();
+    assert_eq!((n.position, n.duration), (None, None));
+}
+
+/// Old app, new `kot`: the app (before the dashboard) refuses `dash` as "bad request", and `kot`
+/// falls back to the status lines. New app, old `kot`: an old client never sends `dash`, and the
+/// replies it knows are unchanged.
+#[test]
+fn an_old_app_refuses_the_dashboard_request() {
+    #[derive(Deserialize)]
+    #[serde(tag = "cmd", rename_all = "snake_case")]
+    #[allow(dead_code)]
+    enum OldRequest {
+        Status,
+        Airing,
+    }
+    assert!(serde_json::from_str::<OldRequest>(&serde_json::to_string(&Request::Dash).unwrap()).is_err());
+    assert!(serde_json::from_str::<OldRequest>(&serde_json::to_string(&Request::Status).unwrap()).is_ok());
+    // An old NowInfo reader ignores the new position/duration.
+    #[derive(Deserialize)]
+    struct OldNow {
+        player: String,
+    }
+    let with_new = serde_json::to_string(&NowInfo { player: "mpv".into(), position: Some(5), duration: Some(9), ..Default::default() }).unwrap();
+    assert_eq!(serde_json::from_str::<OldNow>(&with_new).unwrap().player, "mpv");
+}

@@ -98,6 +98,15 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             };
             Ok(Reply::Airing { items: s.ctl_airing(), note })
         })),
+        Request::Dash => reply(on_ui(handle, false, |s| {
+            if !s.has_list() {
+                return Err("Not signed in.".to_string());
+            }
+            if s.airing.shows.is_empty() {
+                s.airing_fetch(false);
+            }
+            Ok(Reply::Dash(s.ctl_dash()))
+        })),
         Request::Confirm => reply(on_ui(handle, true, |s| {
             let (title, _) = s.confirm_offer()?;
             let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;
@@ -267,5 +276,39 @@ mod tests {
         let mut s = State::fake();
         crate::model::airing_entry(&mut s, 0, 8);
         assert!(matches!(plus_one(&mut s, "Kirigaoka", false), Ok(Reply::Edited { .. })));
+    }
+
+    /// The dashboard gathers a 300-entry list (with a library and a season of airing shows) well
+    /// inside the 20 ms budget, and the whole round trip over the socket does too.
+    #[test]
+    fn the_dashboard_is_gathered_fast() {
+        let mut s = State::fake();
+        crate::library::fake(&mut s);
+        crate::model::airing_entry(&mut s, 0, 5);
+        let template = s.entries.clone();
+        let mut n = 10_000;
+        while n < 10_300 {
+            for e in &template {
+                let mut e = e.clone();
+                e.id = n;
+                e.status = Status::Watching;
+                n += 1;
+                s.entries.push(e);
+            }
+        }
+        let started = std::time::Instant::now();
+        let dash = s.ctl_dash();
+        let gather = started.elapsed();
+        assert!(dash.rows.len() >= 300, "{} rows", dash.rows.len());
+        assert!(dash.rows.iter().any(|r| r.on_disk || r.air_at.is_some()), "the fake list has something to show");
+        let path = std::env::temp_dir().join(format!("kotora-dash-test-{}", std::process::id())).join("ctl.sock");
+        let server = kotora_ctl::serve(&path, move |_| Reply::Dash(dash.clone())).unwrap();
+        let mut client = kotora_ctl::Client::connect_to(server.path()).unwrap();
+        client.request(&Request::Dash).unwrap();
+        let started = std::time::Instant::now();
+        assert!(matches!(client.request(&Request::Dash).unwrap(), Reply::Dash(_)));
+        let trip = started.elapsed();
+        eprintln!("dash: gather {gather:?}, socket round trip {trip:?}");
+        assert!(gather + trip < Duration::from_millis(20), "gather {gather:?} + round trip {trip:?}");
     }
 }

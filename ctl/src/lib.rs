@@ -200,6 +200,9 @@ pub enum Request {
     /// Opens the next episode's file (progress + 1) from the library folders in the player of
     /// Settings → Library. Replies `Done`, or `Error` with why not.
     Next { title: String },
+    /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
+    /// with what comes next, the queue and the last sync. Replies `Dash`.
+    Dash,
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -229,6 +232,49 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+    Dash(Dashboard),
+}
+
+/// What `kot` shows with no command. Every field has a default, so an older or newer app's reply
+/// still reads. The app only gathers; `kot` sorts and lays it out.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dashboard {
+    /// The app's clock, unix seconds (`kot` counts "in 2d" and "3 min ago" from it).
+    pub now_unix: i64,
+    /// What plays; `None` when nothing does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub now: Option<NowInfo>,
+    /// The Watching (and rewatching) entries, in no particular order.
+    pub rows: Vec<DashRow>,
+    /// Changes waiting in the sync queue.
+    pub queue: u32,
+    /// When the list was last read or sent, unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced_at: Option<i64>,
+    pub offline: bool,
+}
+
+/// One Watching anime on the dashboard.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashRow {
+    pub title: String,
+    pub progress: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episodes: Option<u32>,
+    /// When the entry last changed, unix seconds.
+    pub updated_at: i64,
+    /// The next episode (progress + 1) is a file in the library folders.
+    pub on_disk: bool,
+    /// Unix seconds of the next episode's slot (estimated), when it hasn't aired yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub air_at: Option<i64>,
+    /// "Wed 18:00", in the user's zone; with `air_at`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub air_slot: String,
+    /// The next episode has aired (by the estimate) but isn't on disk.
+    pub aired: bool,
 }
 
 /// One episode in `kot airing`. The app writes the day and time in its (the user's) zone.
@@ -283,6 +329,11 @@ pub struct NowInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recorded: Option<u32>,
     pub dismissed: bool,
+    /// Seconds into the file and its length, when the player says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
 }
 
 /// One list entry, as `kot list` prints it.
