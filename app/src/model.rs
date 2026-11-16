@@ -1297,6 +1297,7 @@ pub fn fake_now() -> Now {
         mark: None,
         counted: false,
         announced: false,
+        gone: false,
     }
 }
 

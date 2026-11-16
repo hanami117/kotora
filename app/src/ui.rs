@@ -284,7 +284,13 @@ fn now_mini(s: &State, now: &Now, tall: bool) -> El {
         (Some(ep), None) => format!("Episode {ep}"),
         _ => String::new(),
     };
-    let player = if now.playing { now.player.clone() } else { format!("{} \u{b7} paused", now.player) };
+    let player = if now.playing {
+        now.player.clone()
+    } else if now.gone {
+        format!("{} \u{b7} closed", now.player)
+    } else {
+        format!("{} \u{b7} paused", now.player)
+    };
     let tail = match now.fraction() {
         Some(f) => row()
             .key("np-mini/progress")
@@ -2025,7 +2031,9 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
     }
     // The process source has no position: say so instead of an empty bar.
     let no_position = n.position.is_none() && n.via == crate::precise::VIA_PROCESS;
-    let verb = if no_position {
+    let verb = if n.gone {
+        "Closed"
+    } else if no_position {
         "Open"
     } else if n.playing {
         "Playing"

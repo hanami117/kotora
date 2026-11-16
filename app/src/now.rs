@@ -64,6 +64,9 @@ pub struct Now {
     pub counted: bool,
     /// The "Episode detected" notification went out for this file.
     pub announced: bool,
+    /// The player is gone (closed, or it stopped the file); the card stays only for the Undo
+    /// of an episode recorded just before. It must not read as "Paused".
+    pub gone: bool,
 }
 
 /// What of the matched entry decides the offer.
@@ -248,6 +251,7 @@ impl Now {
             mark: None,
             counted: false,
             announced: false,
+            gone: false,
         }
     }
 
@@ -400,6 +404,7 @@ impl State {
             if self.now.as_ref().is_some_and(|n| n.recorded.is_some() && !n.dismissed) {
                 if let Some(n) = &mut self.now {
                     n.playing = false;
+                    n.gone = true;
                 }
                 return true;
             }
@@ -1337,6 +1342,26 @@ mod tests {
         assert_eq!(offer_for(e, Some(6)), Some(6));
         assert_eq!(offer_for(e, Some(5)), None);
         assert_eq!(offer_for(e, Some(13)), None);
+    }
+
+    /// The player closes right after an episode was recorded: the card stays for its Undo,
+    /// but it says the player is closed, not paused; without a recorded episode it goes.
+    #[test]
+    fn a_closed_player_never_reads_as_paused() {
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        s.record(false).unwrap();
+        assert!(s.now_seen(None));
+        let n = s.now.as_ref().expect("kept for Undo");
+        assert!(n.gone && !n.playing);
+        // The player comes back on the same file: playing again, not "closed".
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        assert!(!s.now.as_ref().unwrap().gone);
+        // Nothing recorded: the page empties at once.
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, false)));
+        assert!(s.now_seen(None));
+        assert!(s.now.is_none());
     }
 
     #[test]
