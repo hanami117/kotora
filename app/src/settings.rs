@@ -203,7 +203,7 @@ const SPECS: &[Spec] = &[
     spec(Row::ClientId, Section::Account, "MyAnimeList Client ID", "The ID of your own MyAnimeList API app. Set up again.", "client id api key apiconfig setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
     spec(Row::AniList, Section::Account, "AniList", "Coming in v0.3.", "anilist account sign in"),
-    spec(Row::VlcWeb, Section::Detection, "VLC web interface", "VLC on the Mac reports through its web interface, with a password.", "vlc web interface http password lua config.toml"),
+    spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
     spec(Row::KeepHigher, Section::Detection, "Keep the higher progress in conflicts", "When only the progress differs and yours is higher, Kotora sends yours.", "conflict conflicts sync queue progress"),
@@ -821,7 +821,11 @@ fn row_el(s: &State, r: Row) -> El {
         Row::Player(sw) => player(s, sw),
         Row::VlcWeb => line(
             "VLC web interface",
-            "VLC on the Mac reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password).",
+            if cfg!(windows) {
+                "VLC reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password) and start Kotora again."
+            } else {
+                "VLC on the Mac reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password)."
+            },
             if p.vlc_set_up { pill("set/vlc-web", "Set up", PAL.ok()) } else { pill("set/vlc-web", "Not set up", PAL.faint) },
         ),
         Row::Auto => {
@@ -1100,11 +1104,16 @@ mod tests {
             assert!(finds("iina", Row::Player(Switch::Iina)));
             assert!(finds("vlc password", Row::VlcWeb));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
             assert!(finds("haruna", Row::Player(Switch::OtherMpris)));
             assert!(rows("vlc password").is_empty(), "the web interface is the Mac's");
+        }
+        #[cfg(windows)]
+        {
+            assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
+            assert!(finds("vlc password", Row::VlcWeb));
         }
     }
 

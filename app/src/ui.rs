@@ -2222,7 +2222,9 @@ fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Optio
 
 /// Nothing plays: how to let Kotora see the players.
 fn now_empty() -> El {
-    let help = if cfg!(target_os = "macos") {
+    let help = if cfg!(windows) {
+        "On Windows a player needs one setting first. mpv: add the line input-ipc-server=\\\\.\\pipe\\mpvsocket to mpv.conf and restart mpv. VLC: turn on its web interface with a password, and put the password in config.toml ([vlc] password); Settings \u{2192} Detection says how."
+    } else if cfg!(target_os = "macos") {
         "mpv, IINA and VLC are found by themselves, by the file they have open. For the position too, mpv and IINA use their IPC socket (Kotora offers to turn it on; see Settings \u{2192} Players), and VLC its web interface with a password in config.toml ([vlc] password)."
     } else {
         "mpv, VLC, mpc-qt, Celluloid and Haruna are found by themselves, by the file they have open. For the position too, VLC and mpc-qt use MPRIS, and mpv its IPC socket (Kotora offers to turn it on)."

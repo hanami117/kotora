@@ -518,7 +518,13 @@ fn sign_in(s: &State) -> El {
 }
 
 fn done(s: &State) -> El {
-    let players = if cfg!(target_os = "macos") { "mpv, IINA or VLC" } else { "mpv, VLC or mpc-qt" };
+    let players = if cfg!(target_os = "macos") {
+        "mpv, IINA or VLC"
+    } else if cfg!(windows) {
+        "mpv or VLC"
+    } else {
+        "mpv, VLC or mpc-qt"
+    };
     let list = if s.loading || (s.syncing && s.entries.is_empty()) {
         "Loading your list\u{2026}".to_string()
     } else {

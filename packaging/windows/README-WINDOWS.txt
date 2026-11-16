@@ -45,15 +45,17 @@ What should work
 
 Player setup
 ------------
-mpv: Kotora can add the line itself (Now Playing page or Settings, Detection, "precise
-mode"), or add it by hand to %APPDATA%\mpv\mpv.conf:
+mpv: add this line to %APPDATA%\mpv\mpv.conf (make the file if there is none):
     input-ipc-server=\\.\pipe\mpvsocket
 Then restart mpv. Kotora looks for the pipe every 3 seconds.
 (A portable mpv with its own portable_config folder: put the line in that mpv.conf.)
 
 VLC: Tools, Preferences, Show settings "All", Interface, Main interfaces: tick "Web".
-Then Main interfaces, Lua: set a password under "Lua HTTP". Restart VLC. In Kotora:
-Settings, Detection, VLC web interface: type the same password.
+Then Main interfaces, Lua: set a password under "Lua HTTP". Restart VLC. Then quit
+Kotora, open %APPDATA%\kotora\config.toml in Notepad (make the file if there is none),
+add these two lines with your password, and start Kotora again:
+    [vlc]
+    password = "your password"
 
 
 What does not work yet
