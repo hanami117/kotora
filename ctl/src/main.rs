@@ -230,10 +230,17 @@ fn console_width() -> Option<usize> {
     (ok && ws.ws_col > 0).then(|| usize::from(ws.ws_col))
 }
 
-/// No ioctl here (Windows): `$COLUMNS`, else 80.
-#[cfg(not(unix))]
+/// The console window's width on Windows (the visible columns, not the buffer's).
+#[cfg(windows)]
 fn console_width() -> Option<usize> {
-    None
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Console::{CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo};
+    // SAFETY: an all-zero CONSOLE_SCREEN_BUFFER_INFO is a valid plain-data value; the call fills it
+    // for stdout's handle, and fails (returns 0) when stdout isn't a console.
+    let mut info: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetConsoleScreenBufferInfo(io::stdout().as_raw_handle() as _, &mut info) } != 0;
+    let cols = i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1;
+    (ok && cols > 0).then_some(cols as usize)
 }
 
 fn interactive() -> bool {
