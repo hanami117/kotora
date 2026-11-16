@@ -346,3 +346,22 @@ fn sign_in_checks_the_token_before_saving_it() {
     assert_eq!(TokenStore::new(path).load_anilist(), Some(token));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn mal_ids_map_to_anilist_media_fifty_a_request() {
+    const BY_MAL: &str = include_str!("fixtures/by-mal.json");
+    let empty = r#"{"data":{"Page":{"pageInfo":{"hasNextPage":false},"media":[]}}}"#;
+    // 120 ids: three requests (50, 50, 20); the fixture answers the first.
+    let ids: Vec<u32> = (1001..1121).collect();
+    let (mut c, seen, _) = client(vec![ok(BY_MAL), ok(empty), ok(empty)]);
+    let got = c.media_by_mal("tok", &ids).unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    let sizes: Vec<usize> = seen.iter().map(|(_, _, b)| b["variables"]["ids"].as_array().unwrap().len()).collect();
+    assert_eq!(sizes, vec![50, 50, 20]);
+    assert!(seen[0].2["query"].as_str().unwrap().contains("idMal_in"));
+    // One media per MAL id (the first: not the recap), and none for ids not asked.
+    let pairs: Vec<(u32, Option<u32>)> = got.iter().map(|m| (m.id, m.id_mal)).collect();
+    assert_eq!(pairs, vec![(171001, Some(1001)), (171004, Some(1004))]);
+    assert_eq!(got[1].title, "Shizuka na Niwa");
+}

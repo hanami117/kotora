@@ -515,62 +515,124 @@ impl Store {
     /// change's id (`None`: nothing to send). The list is `media.kind`'s; a manga added as
     /// Completed also starts at the last volume (when known).
     pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
-        let sc = Scope::new(service, media.kind);
-        if entry_values(&self.conn, sc, media.id)?.is_some() {
-            return self.enqueue(sc, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
-        }
-        let volumes = match (media.kind, status, media.volumes) {
-            (Kind::Manga, Status::Completed, Some(n)) => n,
-            _ => 0,
-        };
-        let progress = match (status, media.episodes, progress) {
-            (Status::Completed, Some(n), _) => n,
-            (_, Some(n), Some(p)) => p.min(n),
-            (_, None, Some(p)) => p,
-            _ => 0,
-        };
         let tx = self.conn.transaction()?;
-        tx.execute(
-            "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
-               kind, volumes, authors, start_date)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-             ON CONFLICT (service, kind, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
-               title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
-               format = excluded.format, air_status = excluded.air_status,
-               cover_url = COALESCE(excluded.cover_url, media.cover_url), fetched_at = excluded.fetched_at,
-               volumes = excluded.volumes, authors = excluded.authors, start_date = COALESCE(excluded.start_date, media.start_date)",
-            params![
-                service,
-                media.id,
-                media.title,
-                media.title_en,
-                media.title_ja,
-                serde_json::to_string(&media.synonyms).unwrap_or_else(|_| "[]".into()),
-                media.episodes,
-                media.format,
-                media.air_status,
-                media.cover_url,
-                now,
-                sc.kind.name(),
-                media.volumes,
-                serde_json::to_string(&media.authors).unwrap_or_else(|_| "[]".into()),
-                if media.kind == Kind::Manga { media.start_date.clone() } else { None }
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO entry (service, kind, media_id, status, progress, score, rewatching, updated_at, volumes) VALUES (?1, ?6, ?2, ?3, ?4, NULL, 0, ?5, ?7)",
-            params![service, media.id, status.mal_name(), progress, now, sc.kind.name(), volumes],
-        )?;
-        // `old_*` hold the added status and 0: the change always sends the status.
-        tx.execute(
-            "INSERT INTO pending_op (service, kind, media_id, status, progress, score, old_status, old_progress, old_score,
-                base_updated_at, created_at, edited_at, added, volumes)
-             VALUES (?1, ?6, ?2, ?3, ?4, NULL, ?3, 0, 0, 0, ?5, ?5, 1, ?7)",
-            params![service, media.id, status.mal_name(), (progress > 0).then_some(progress), now, sc.kind.name(), (volumes > 0).then_some(volumes)],
-        )?;
-        let id = tx.last_insert_rowid();
+        let id = add_tx(&tx, service, media, status, progress, now)?;
         tx.commit()?;
-        Ok(Some(id))
+        Ok(id)
+    }
+}
+
+/// [`Store::add_to_list`] inside the caller's transaction.
+fn add_tx(tx: &Connection, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
+    let sc = Scope::new(service, media.kind);
+    if entry_values(tx, sc, media.id)?.is_some() {
+        return enqueue_tx(tx, sc, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
+    }
+    let volumes = match (media.kind, status, media.volumes) {
+        (Kind::Manga, Status::Completed, Some(n)) => n,
+        _ => 0,
+    };
+    let progress = match (status, media.episodes, progress) {
+        (Status::Completed, Some(n), _) => n,
+        (_, Some(n), Some(p)) => p.min(n),
+        (_, None, Some(p)) => p,
+        _ => 0,
+    };
+    tx.execute(
+        "INSERT INTO media (service, id, title, title_en, title_ja, synonyms, episodes, format, air_status, cover_url, fetched_at,
+           kind, volumes, authors, start_date, id_mal)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+         ON CONFLICT (service, kind, id) DO UPDATE SET title = excluded.title, title_en = excluded.title_en,
+           title_ja = excluded.title_ja, synonyms = excluded.synonyms, episodes = excluded.episodes,
+           format = excluded.format, air_status = excluded.air_status,
+           cover_url = COALESCE(excluded.cover_url, media.cover_url), fetched_at = excluded.fetched_at,
+           volumes = excluded.volumes, authors = excluded.authors, start_date = COALESCE(excluded.start_date, media.start_date),
+           id_mal = COALESCE(excluded.id_mal, media.id_mal)",
+        params![
+            service,
+            media.id,
+            media.title,
+            media.title_en,
+            media.title_ja,
+            serde_json::to_string(&media.synonyms).unwrap_or_else(|_| "[]".into()),
+            media.episodes,
+            media.format,
+            media.air_status,
+            media.cover_url,
+            now,
+            sc.kind.name(),
+            media.volumes,
+            serde_json::to_string(&media.authors).unwrap_or_else(|_| "[]".into()),
+            if media.kind == Kind::Manga { media.start_date.clone() } else { None },
+            media.id_mal
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO entry (service, kind, media_id, status, progress, score, rewatching, updated_at, volumes) VALUES (?1, ?6, ?2, ?3, ?4, NULL, 0, ?5, ?7)",
+        params![service, media.id, status.mal_name(), progress, now, sc.kind.name(), volumes],
+    )?;
+    // `old_*` hold the added status and 0: the change always sends the status.
+    tx.execute(
+        "INSERT INTO pending_op (service, kind, media_id, status, progress, score, old_status, old_progress, old_score,
+            base_updated_at, created_at, edited_at, added, volumes)
+         VALUES (?1, ?6, ?2, ?3, ?4, NULL, ?3, 0, 0, 0, ?5, ?5, 1, ?7)",
+        params![service, media.id, status.mal_name(), (progress > 0).then_some(progress), now, sc.kind.name(), (volumes > 0).then_some(volumes)],
+    )?;
+    Ok(Some(tx.last_insert_rowid()))
+}
+
+impl Store {
+    /// Applies an import (`listxml::actions`) to the anime list of `service`: each add and update
+    /// goes into the sync queue like an edit made by hand, all in one transaction (the whole
+    /// import is saved, or nothing). Returns the queued changes' ids, for
+    /// [`Store::undo_import`].
+    pub fn import(&mut self, service: &str, actions: &[crate::listxml::Action], now: i64) -> Result<Vec<i64>> {
+        use crate::listxml::Action;
+        let tx = self.conn.transaction()?;
+        let mut ids = Vec::new();
+        for a in actions {
+            let id = match a {
+                Action::Add { media, values } => {
+                    let first = add_tx(&tx, service, media, values.status, Some(values.progress), now)?;
+                    // The rest of the values merge into the waiting add.
+                    // A rewatch: the add starts a Completed entry at the last episode; the
+                    // rewatch's own episode comes with the rest.
+                    let rest = Change {
+                        progress: values.rewatching.then_some(values.progress),
+                        score: Some(values.score),
+                        rewatching: Some(values.rewatching),
+                        times_rewatched: Some(values.times_rewatched),
+                        ..Change::default()
+                    };
+                    let (cur, _) = entry_values(&tx, Scope::new(service, media.kind), media.id)?.ok_or_else(|| StoreError("the added anime is not on the saved list".into()))?;
+                    let rest = rest.without_same(&cur);
+                    if rest.is_empty() { first } else { enqueue_tx(&tx, Scope::new(service, media.kind), media.id, rest, now)?.or(first) }
+                }
+                Action::Update { media_id, change } => enqueue_tx(&tx, Scope::new(service, Kind::Anime), *media_id, *change, now)?,
+            };
+            if let Some(id) = id
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// Undo an import: its changes that still wait (queued, in conflict or failed) are discarded
+    /// and their entries go back; what was sent already stays sent. Returns how many were
+    /// discarded.
+    pub fn undo_import(&mut self, service: &str, ids: &[i64]) -> Result<usize> {
+        let mut n = 0;
+        for &id in ids {
+            let state: Option<String> = self.conn.query_row("SELECT state FROM pending_op WHERE id = ?1 AND service = ?2", params![id, service], |r| r.get(0)).optional()?;
+            if matches!(state.as_deref(), Some("queued" | "conflict" | "failed")) {
+                self.discard(service, id)?;
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 }
 

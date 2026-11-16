@@ -12,6 +12,7 @@ pub mod config;
 pub mod covers;
 pub mod http;
 pub mod library;
+pub mod listxml;
 pub mod loopback;
 pub mod mal;
 pub mod manga;
