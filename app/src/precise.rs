@@ -71,6 +71,10 @@ pub struct Offer {
     pub for_iina: bool,
     /// Turn on for IINA was clicked in the prompt: its answer goes into `done`.
     pub iina_pending: bool,
+    /// Windows: the player `done` is about ("mpv.net"), when it isn't plain mpv.
+    pub who: Option<String>,
+    /// Windows: what else Turn on did (the file is new, where the backup is).
+    pub note: Option<String>,
 }
 
 /// `/home/x/.config/mpv/mpv.conf` → `~/.config/mpv/mpv.conf` (shown, never saved).
@@ -86,6 +90,12 @@ impl State {
     /// socket Kotora watches yet: precise detection is worth offering.
     pub fn mpv_process_only(&self) -> bool {
         self.mpv_seen_by_process() && !self.precise.conf_watched
+    }
+
+    /// Windows: the process scan sees an mpv or mpv.net.
+    #[cfg(windows)]
+    pub fn mpv_process_live(&self) -> bool {
+        self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
     }
 
     /// mpv is seen by its process only: no IPC socket answers.
@@ -189,9 +199,18 @@ impl State {
         self.precise.hidden = false;
         let Some(h) = self.handle.clone() else { return };
         self.precise.busy = true;
+        #[cfg(windows)]
+        let detector = self.glue.as_ref().map(|g| g.detector());
         let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
-            let r = write_mpv_conf();
-            h.update_if(move |s, _| s.precise_written(r));
+            #[cfg(not(windows))]
+            let (r, who, note) = (write_mpv_conf(), None, None);
+            #[cfg(windows)]
+            let (r, who, note) = write_mpv_conf_win(detector.as_deref());
+            h.update_if(move |s, _| {
+                s.precise.who = who;
+                s.precise.note = note;
+                s.precise_written(r)
+            });
         });
     }
 
@@ -244,6 +263,7 @@ pub(crate) fn watched_sockets() -> Vec<std::path::PathBuf> {
 
 /// At start (never headless; on a short thread): does `mpv.conf` already set a socket Kotora
 /// watches? Then mpv only needs a restart and no offer is shown.
+#[cfg(not(windows))]
 pub fn check_conf(h: crate::model::Handle) {
     let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
         let watched = kotora_detect::mpvconf::check().is_ok_and(|c| c.watched(&watched_sockets()));
@@ -255,8 +275,97 @@ pub fn check_conf(h: crate::model::Handle) {
     });
 }
 
+/// Windows, at start and when an mpv or mpv.net process appears (never headless; on a short
+/// thread): the `mpv.conf` of each such player that runs (else of the config folders that
+/// exist) is read. A pipe one of them sets is watched from now on, whatever its name, and when
+/// every file sets one nothing is offered: the player only needs a restart.
+#[cfg(windows)]
+pub fn check_conf_win(h: crate::model::Handle, detector: std::sync::Arc<kotora_detect::Detector>) {
+    use kotora_detect::mpvconf::{WinEnv, win_check};
+    let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
+        let targets = WinEnv::current().targets(&running_mpvs());
+        let pipes: Vec<Option<std::path::PathBuf>> = targets.iter().map(|t| win_check(&t.file).ok().flatten()).collect();
+        for pipe in pipes.iter().flatten() {
+            detector.watch_socket(pipe);
+        }
+        let watched = !pipes.is_empty() && pipes.iter().all(Option::is_some);
+        h.update_if(move |s, _| {
+            let changed = s.precise.conf_watched != watched;
+            s.precise.conf_watched = watched;
+            changed
+        });
+    });
+}
+
+/// The mpv and mpv.net processes running now: (mpv.net?, program path).
+#[cfg(windows)]
+fn running_mpvs() -> Vec<(bool, std::path::PathBuf)> {
+    kotora_detect::winproc::players().iter().filter_map(|p| Some((p.family.mpv_net()?, std::path::PathBuf::from(&p.exe)))).collect()
+}
+
+/// Windows: adds mpv's IPC pipe (the first name Kotora watches) to the `mpv.conf` of the
+/// players that run, or of the config folders that exist: the file is created when missing and
+/// backed up when not. Runs on a short thread. With the answer: the player's name and a note.
+#[cfg(windows)]
+fn write_mpv_conf_win(detector: Option<&kotora_detect::Detector>) -> (Precise, Option<String>, Option<String>) {
+    use kotora_detect::mpvconf::{WinEnabled, WinEnv, win_enable};
+    let sockets = watched_sockets();
+    let Some(pipe) = sockets.first() else {
+        return (Precise::Failed("No mpv pipe name is set: add one to [players] mpv_sockets in config.toml.".into()), None, None);
+    };
+    let results: Vec<_> = WinEnv::current().targets(&running_mpvs()).into_iter().map(|t| (t.player, win_enable(&t.file, pipe).map_err(|e| format!("Can't write {}: {e}", t.file.display())))).collect();
+    // A pipe the user set under another name is watched from now on.
+    for (_, r) in &results {
+        if let (Ok(WinEnabled::AlreadySet { pipe, .. }), Some(d)) = (r, detector) {
+            d.watch_socket(pipe);
+        }
+    }
+    win_answer(results)
+}
+
+/// Puts the answers for one or two `mpv.conf` files into one: what was written wins over
+/// "already set", which wins over an error.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn win_answer(results: Vec<(&'static str, Result<kotora_detect::mpvconf::WinEnabled, String>)>) -> (Precise, Option<String>, Option<String>) {
+    use kotora_detect::mpvconf::WinEnabled;
+    let both = |v: Vec<String>| v.join(" and ");
+    let names = |keep: &dyn Fn(&Result<WinEnabled, String>) -> bool| {
+        let mut v: Vec<String> = Vec::new();
+        for (p, r) in &results {
+            if keep(r) && !v.iter().any(|x| x == p) {
+                v.push(p.to_string());
+            }
+        }
+        both(v)
+    };
+    let wrote: Vec<_> = results.iter().filter_map(|(_, r)| if let Ok(WinEnabled::Wrote { file, text, created, backup }) = r { Some((file, text, *created, backup)) } else { None }).collect();
+    if let Some((_, text, _, _)) = wrote.first() {
+        let mut notes = Vec::new();
+        for (file, _, created, backup) in &wrote {
+            let name = tilde(&file.display().to_string());
+            match backup {
+                Some(b) => notes.push(format!("{name} was copied to {} first.", b.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())),
+                None if *created => notes.push(format!("{name} didn\u{2019}t exist: Kotora made it.")),
+                None => {}
+            }
+        }
+        let who = names(&|r| matches!(r, Ok(WinEnabled::Wrote { .. })));
+        notes.push(format!("Close {who} and open it again once."));
+        let file = both(wrote.iter().map(|(f, ..)| f.display().to_string()).collect());
+        return (Precise::Wrote { file, text: text.replace("\r\n", "\n") }, Some(who), Some(notes.join(" ")));
+    }
+    let set: Vec<_> = results.iter().filter_map(|(_, r)| if let Ok(WinEnabled::AlreadySet { file, pipe }) = r { Some((file, pipe)) } else { None }).collect();
+    if let Some((file, pipe)) = set.first() {
+        let who = names(&|r| matches!(r, Ok(WinEnabled::AlreadySet { .. })));
+        return (Precise::AlreadySet { file: file.display().to_string(), socket: pipe.display().to_string(), watched: true }, Some(who), None);
+    }
+    let error = results.into_iter().find_map(|(_, r)| r.err()).unwrap_or_else(|| "No mpv.conf was found: APPDATA is not set.".into());
+    (Precise::Failed(error), None, None)
+}
+
 /// Appends mpv's IPC socket (the first path Kotora watches) to the user's `mpv.conf`. Runs on a
 /// short thread.
+#[cfg(not(windows))]
 fn write_mpv_conf() -> Precise {
     use kotora_detect::mpvconf::{self, Enabled};
     let sockets = watched_sockets();
@@ -275,7 +384,7 @@ fn write_mpv_conf() -> Precise {
 
 /// The banner on top of the pages (below the Now Playing banner, never with it).
 pub fn banner(s: &State) -> El {
-    let who = if s.precise.for_iina { "IINA" } else { "mpv" };
+    let who = if s.precise.for_iina { "IINA" } else { s.precise.who.as_deref().unwrap_or("mpv") };
     let info = PAL.st_completed;
     let base = row()
         .key("precise")
@@ -295,10 +404,16 @@ pub fn banner(s: &State) -> El {
             .child(icon(&icons::CHECK, 18.0).color(PAL.ok()))
             .child(words(
                 &format!("Precise detection is on from {who}'s next start"),
-                col()
-                    .gap(4.0)
-                    .child(text(format!("Added to {}:", tilde(file))).font(theme::LABEL).color(PAL.dim))
-                    .child(text(lines.trim_end().to_string()).key("precise/written").font(mono).color(PAL.text).wrap()),
+                {
+                    let c = col()
+                        .gap(4.0)
+                        .child(text(format!("Added to {}:", tilde(file))).font(theme::LABEL).color(PAL.dim))
+                        .child(text(lines.trim_end().to_string()).key("precise/written").font(mono).color(PAL.text).wrap());
+                    match s.precise.note.as_ref().filter(|_| !s.precise.for_iina) {
+                        Some(note) => c.child(text(note.clone()).key("precise/note").font(theme::LABEL).color(PAL.dim).wrap()),
+                        None => c,
+                    }
+                },
             ))
             .child(button("precise/ok", "OK", false, Some(State::close_precise))),
         Some(Precise::AlreadySet { file, socket, watched }) => base
@@ -324,11 +439,15 @@ pub fn banner(s: &State) -> El {
         None => base
             .child(el().size(8.0, 8.0).radius(4.0).fill(info))
             .child(words(
-                "mpv is seen by its open file only",
-                text("Kotora knows the episode but not how far in you are, so it counts the time the file is open. Precise detection adds one line to your mpv.conf (input-ipc-server); it works from mpv's next start.")
-                    .font(theme::LABEL)
-                    .color(PAL.dim)
-                    .wrap(),
+                if cfg!(windows) { "mpv is seen by its window only" } else { "mpv is seen by its open file only" },
+                text(if cfg!(windows) {
+                    "Kotora knows the episode but not how far in you are, so it counts the time the file is open. Precise detection adds one line to the player\u{2019}s mpv.conf (input-ipc-server): the file is made if it is missing, and copied first if it exists. Restart the player once afterwards."
+                } else {
+                    "Kotora knows the episode but not how far in you are, so it counts the time the file is open. Precise detection adds one line to your mpv.conf (input-ipc-server); it works from mpv's next start."
+                })
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap(),
             ))
             .child(if s.precise.busy {
                 button("precise/on", "Turning on\u{2026}", true, None)
@@ -356,8 +475,15 @@ pub fn prompt(s: &State) -> Option<El> {
             Some(kotora_detect::iinaconf::Setup::ConfDir { file }) => format!("Adds one line to {} (input-ipc-server). It works from IINA's next start.", tilde(&file.display().to_string())),
             _ => "Adds one line to IINA's mpv.conf (input-ipc-server). It works from IINA's next start.".to_string(),
         },
+        _ if cfg!(windows) => "Adds one line to its mpv.conf (input-ipc-server): the file is made if it is missing, and copied first if it exists. Restart the player once afterwards.".to_string(),
         _ => "Adds one line to your mpv.conf (input-ipc-server). It works from mpv's next start.".to_string(),
     };
+    // "mpv.net" on Windows, where the mpv switch covers both.
+    let player = match (&s.now, sw) {
+        (Some(n), Switch::Mpv) if cfg!(windows) => n.player.as_str(),
+        _ => player,
+    };
+    let seen_by = if cfg!(windows) { "window" } else { "open file" };
     let info = PAL.st_completed;
     Some(
         row()
@@ -384,7 +510,7 @@ pub fn prompt(s: &State) -> Option<El> {
                             .color(PAL.text)
                             .wrap(),
                     )
-                    .child(text(format!("{player} is seen by its open file only, so Kotora can't tell how far in you are. {what}")).font(theme::LABEL).color(PAL.dim).wrap()),
+                    .child(text(format!("{player} is seen by its {seen_by} only, so Kotora can't tell how far in you are. {what}")).font(theme::LABEL).color(PAL.dim).wrap()),
             )
             .child(button("precise-prompt/on", "Turn on", true, Some(State::precise_prompt_on)))
             .child(button("precise-prompt/not-now", "Not now", false, Some(State::precise_prompt_not_now))),
@@ -393,12 +519,24 @@ pub fn prompt(s: &State) -> Option<El> {
 
 /// Settings → Players, under mpv: what precise detection would add, with Turn on.
 pub fn settings_hint(s: &State) -> Option<El> {
-    if !s.mpv_seen_by_process() {
+    settings_hint_on(s, cfg!(windows))
+}
+
+/// `windows`: the Windows wording, and Turn on also while no mpv runs (there the file may not
+/// exist yet, and nothing else says how to make it).
+pub(crate) fn settings_hint_on(s: &State, windows: bool) -> Option<El> {
+    let seen = s.mpv_seen_by_process();
+    let ipc_live = s.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led));
+    if !seen && !(windows && s.prefs.players.mpv && !ipc_live && !s.precise.conf_watched) {
         return None;
     }
-    let (line, action) = match s.precise.conf_watched {
-        true => ("mpv.conf sets the IPC socket Kotora watches; restart mpv to use it.".to_string(), None),
-        false => ("Seen by its open file only: no position. Precise detection adds its IPC socket to mpv.conf.".to_string(), Some(small_button("set/precise-on", "Turn on", false, Some(State::enable_precise)))),
+    let turn_on = || Some(small_button("set/precise-on", if s.precise.busy { "Turning on\u{2026}" } else { "Turn on" }, false, if s.precise.busy { None } else { Some(State::enable_precise) }));
+    let (line, action) = match (s.precise.conf_watched, windows) {
+        (true, true) => ("mpv.conf sets the IPC pipe Kotora watches: close the player and open it again to use it.".to_string(), None),
+        (true, false) => ("mpv.conf sets the IPC socket Kotora watches; restart mpv to use it.".to_string(), None),
+        (false, true) if seen => ("Seen by its window only: no position. Precise detection adds one line to the player\u{2019}s mpv.conf (made if missing, copied first if it exists).".to_string(), turn_on()),
+        (false, true) => ("Precise detection is off: mpv and mpv.net are seen by their window only, with no position. Turn on adds one line to mpv.conf (made if missing, copied first if it exists).".to_string(), turn_on()),
+        (false, false) => ("Seen by its open file only: no position. Precise detection adds its IPC socket to mpv.conf.".to_string(), Some(small_button("set/precise-on", "Turn on", false, Some(State::enable_precise)))),
     };
     let mut r = row()
         .key("set/precise")
@@ -544,6 +682,58 @@ mod tests {
         s.prefs.players.process_minutes = 20;
         assert_eq!(prompt_line(&s, Switch::Mpv), "Turn on precise detection for mpv: Kotora counts at 90% instead of after 20 min");
         assert_eq!(prompt_line(&s, Switch::Iina), "Turn on precise detection for IINA: Kotora counts at 90% instead of after 20 min");
+    }
+
+    #[test]
+    fn windows_answers_say_which_file_and_what_else_was_done() {
+        use kotora_detect::mpvconf::WinEnabled;
+        use std::path::PathBuf;
+        let text = "# Added by Kotora\r\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\r\n".to_string();
+        // mpv.net fresh from its installer: the file is made.
+        let made = WinEnabled::Wrote { file: PathBuf::from("/a/mpv.net/mpv.conf"), text: text.clone(), created: true, backup: None };
+        let (r, who, note) = win_answer(vec![("mpv.net", Ok(made.clone()))]);
+        assert_eq!(r, Precise::Wrote { file: "/a/mpv.net/mpv.conf".into(), text: text.replace("\r\n", "\n") });
+        assert_eq!(who.as_deref(), Some("mpv.net"));
+        assert_eq!(note.as_deref(), Some("/a/mpv.net/mpv.conf didn\u{2019}t exist: Kotora made it. Close mpv.net and open it again once."));
+        // An existing file: where its copy is.
+        let kept = WinEnabled::Wrote { file: PathBuf::from("/a/mpv/mpv.conf"), text: text.clone(), created: false, backup: Some(PathBuf::from("/a/mpv/mpv.conf.kotora-backup")) };
+        let (_, who, note) = win_answer(vec![("mpv", Ok(kept.clone()))]);
+        assert_eq!(who.as_deref(), Some("mpv"));
+        assert_eq!(note.as_deref(), Some("/a/mpv/mpv.conf was copied to mpv.conf.kotora-backup first. Close mpv and open it again once."));
+        // Two players, one already set: what was written is what is shown.
+        let set = WinEnabled::AlreadySet { file: PathBuf::from("/a/mpv/mpv.conf"), pipe: PathBuf::from(r"\\.\pipe\mine") };
+        let (r, who, _) = win_answer(vec![("mpv", Ok(set.clone())), ("mpv.net", Ok(made))]);
+        assert!(matches!(r, Precise::Wrote { .. }));
+        assert_eq!(who.as_deref(), Some("mpv.net"));
+        // Only "already set": watched from now on, so only a restart is asked.
+        let (r, who, note) = win_answer(vec![("mpv", Ok(set))]);
+        assert_eq!(r, Precise::AlreadySet { file: "/a/mpv/mpv.conf".into(), socket: r"\\.\pipe\mine".into(), watched: true });
+        assert_eq!((who.as_deref(), note), (Some("mpv"), None));
+        // An error alone is the answer; beside a written file it isn't.
+        let (r, ..) = win_answer(vec![("mpv", Err("Can't write X: denied".into()))]);
+        assert_eq!(r, Precise::Failed("Can't write X: denied".into()));
+        let (r, ..) = win_answer(vec![("mpv", Err("Can't write X: denied".into())), ("mpv.net", Ok(kept))]);
+        assert!(matches!(r, Precise::Wrote { .. }));
+    }
+
+    #[test]
+    fn windows_settings_offer_turn_on_before_mpv_ever_ran() {
+        let mut s = State::fake();
+        s.now = None;
+        s.players = Vec::new();
+        assert!(settings_hint_on(&s, false).is_none(), "elsewhere mpv is found first");
+        assert!(settings_hint_on(&s, true).is_some());
+        // mpv.conf already sets the pipe: nothing to turn on while no mpv runs.
+        s.precise.conf_watched = true;
+        assert!(settings_hint_on(&s, true).is_none());
+        // The pipe answers: nothing to say.
+        s.precise.conf_watched = false;
+        s.players = vec![PlayerState { switch: Switch::Mpv, via: VIA_IPC, line: "playing".into(), led: Led::Playing }];
+        assert!(settings_hint_on(&s, true).is_none());
+        // Switched off: nothing.
+        s.players = Vec::new();
+        s.prefs.players.mpv = false;
+        assert!(settings_hint_on(&s, true).is_none());
     }
 
     #[test]

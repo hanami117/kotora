@@ -40,8 +40,8 @@ pub struct Glue {
 }
 
 impl Glue {
-    /// For IINA (macOS), which adds its socket to the running detection.
-    #[cfg(target_os = "macos")]
+    /// For IINA (macOS) and mpv's pipe on Windows, which add a socket to the running detection.
+    #[cfg(any(target_os = "macos", windows))]
     pub fn detector(&self) -> Arc<Detector> {
         self.detector.clone()
     }
@@ -70,6 +70,7 @@ pub fn start(s: &mut State) {
     crate::settings::load(s, &c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(windows))]
     crate::precise::check_conf(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
@@ -82,6 +83,9 @@ pub fn start(s: &mut State) {
     // IINA's own settings may name a socket Kotora doesn't watch yet: add it to the running detection.
     #[cfg(target_os = "macos")]
     crate::iina::check(h.clone(), Some(detector.clone()));
+    // Windows: which mpv.conf applies depends on the players that run; a pipe it names is watched.
+    #[cfg(windows)]
+    crate::precise::check_conf_win(h.clone(), detector.clone());
     let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
     s.glue = Some(Glue { tx, detector });
 }
