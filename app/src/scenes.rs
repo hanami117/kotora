@@ -775,6 +775,62 @@ pub const SCENES: &[Scene] = &[
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
+    // Settings → Account → Mirror edits (`mirror.rs`). The search brings the row to the top.
+    ("settings-mirror", |s| {
+        s.mirror.other_signed_in = true;
+        mirror_settings(s);
+    }),
+    // The other service isn't signed in: the switch is off and says how.
+    ("settings-mirror-sign-in", mirror_settings),
+    ("settings-mirror-busy", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.busy = Some("Looking up 12 MyAnimeList ids on AniList\u{2026}".into());
+        mirror_settings(s);
+    }),
+    ("settings-mirror-preview", |s| {
+        crate::mirror::fake_preview(s);
+        mirror_settings(s);
+    }),
+    // A status conflict settled for AniList's status.
+    ("settings-mirror-preview-picked", |s| {
+        crate::mirror::fake_preview(s);
+        if let Some(p) = &mut s.mirror.preview
+            && let Some(r) = p.p.merge.iter().find(|r| r.conflict.is_some())
+        {
+            p.mirror_status.insert(r.mal_id);
+        }
+        mirror_settings(s);
+    }),
+    // AniList is the main list, MyAnimeList the mirror.
+    ("settings-mirror-preview-anilist", |s| {
+        anilist(s);
+        crate::mirror::fake_preview(s);
+        mirror_settings(s);
+    }),
+    ("settings-mirror-on", |s| {
+        crate::mirror::fake_on(s);
+        s.mirror.note = Some("On. Queued 14 changes for AniList and 3 for MyAnimeList.".into());
+        mirror_settings(s);
+    }),
+    ("settings-mirror-error", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.error = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        mirror_settings(s);
+    }),
+    // The Queue page with the mirror's part: website edits, a conflict, waiting, failed, sent.
+    ("queue-mirror", |s| {
+        queue_covers(s);
+        crate::mirror::fake_on(s);
+        s.go(Page::Queue);
+    }),
+    // Nothing waits for the main list; the mirror still has things to show.
+    ("queue-mirror-only", |s| {
+        s.ops.clear();
+        s.queue = 0;
+        crate::mirror::fake_on(s);
+        s.mirror.trouble = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        s.go(Page::Queue);
+    }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
     ("settings-library", |s| {
         crate::library::fake(s);
@@ -1327,6 +1383,11 @@ fn many(s: &mut State) {
 
 /// The wizard at `step`, first run (no Client ID, nobody signed in).
 /// AniList is the active service and signed in (the fake list is the same).
+fn mirror_settings(s: &mut State) {
+    crate::settings::open(s, Section::Account);
+    crate::settings::set_query(s, "mirror");
+}
+
 fn anilist(s: &mut State) {
     s.service = kotora_core::service::ServiceId::AniList;
     s.account = Some(("demo_user".into(), "AniList"));
@@ -1483,6 +1544,47 @@ mod tests {
         assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
         let rt = render("settings-account-anilist-own-id", (1280.0, 800.0));
         assert!(rt.find("set/cid/input").is_some());
+    }
+
+    #[test]
+    fn mirror_scenes() {
+        // Off, both signed in: the switch works.
+        let rt = render("settings-mirror", (1280.0, 800.0));
+        assert!(rt.find("set/mirror-switch").is_some() && rt.find("set/mirror-preview").is_none());
+        // The preview: counts, the lists, a status to pick, the three choices and Cancel.
+        let rt = render("settings-mirror-preview", (1280.0, 1800.0));
+        for k in [
+            "set/mirror-preview",
+            "set/mirror-counts",
+            "set/mirror-list-only-main",
+            "set/mirror-list-only-mirror",
+            "set/mirror-list-different",
+            "set/mirror-conflicts",
+            "set/mirror-conflicts-all",
+            "set/mirror-list-unmatched",
+            "set/mirror-main-wins",
+            "set/mirror-merge",
+            "set/mirror-dont-align",
+            "set/mirror-cancel",
+        ] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(render("settings-mirror-preview-picked", (1280.0, 1800.0)).find("set/mirror-conflicts").is_some());
+        assert!(render("settings-mirror-preview-anilist", (1280.0, 1800.0)).find("set/mirror-main-wins").is_some());
+        assert!(render("settings-mirror-busy", (1280.0, 800.0)).find("set/mirror-preview").is_none());
+        assert!(render("settings-mirror-error", (1280.0, 800.0)).find("set/mirror-error").is_some());
+        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-note").is_some());
+        assert!(render("settings-mirror-sign-in", (1280.0, 800.0)).find("set/mirror-switch").is_some());
+        // The Queue page: website edits, the conflict, the mirror's list, and the badge.
+        let rt = render("queue-mirror", (1280.0, 1400.0));
+        for k in ["queue-mirror", "mirror-edit/9101/use-mirror", "mirror-edit/9101/leave", "queue-mirror-list", "qmh/waiting", "qmh/failed", "qmh/sent", "qmh/waits"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(rt.find("mirror-conflict/900/keep").is_some() && rt.find("mirror-conflict/900/take").is_some());
+        let rt = render("queue-mirror-only", (1280.0, 1400.0));
+        assert!(rt.find("queue-empty").is_none() && rt.find("queue-mirror/trouble").is_some());
+        // Off: no mirror part.
+        assert!(render("queue-page", (1280.0, 800.0)).find("queue-mirror").is_none());
     }
 
     #[test]

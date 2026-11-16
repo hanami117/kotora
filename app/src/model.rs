@@ -484,6 +484,8 @@ pub struct State {
     pub settings: crate::settings::SettingsUi,
     /// Settings → Account: export and import (`transfer.rs`).
     pub transfer: crate::transfer::Transfer,
+    /// Settings → Account → Mirror edits to the other service, and the mirror's queue (`mirror.rs`).
+    pub mirror: crate::mirror::MirrorUi,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -554,6 +556,7 @@ impl State {
             intro: None,
             settings: Default::default(),
             transfer: Default::default(),
+            mirror: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -1231,6 +1234,7 @@ impl State {
     /// the list, the queue, the user, and the service's answers (search results, the open page,
     /// the seasons). Nothing on disk is touched here.
     pub fn forget_account(&mut self) {
+        self.mirror = crate::mirror::MirrorUi { worker: self.mirror.worker.clone(), ..Default::default() };
         self.covers.clear();
         self.online = Default::default();
         self.airing.cancel();

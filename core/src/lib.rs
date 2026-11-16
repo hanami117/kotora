@@ -16,6 +16,7 @@ pub mod listxml;
 pub mod loopback;
 pub mod mal;
 pub mod manga;
+pub mod mirror;
 pub mod model;
 pub mod paths;
 pub mod queue;

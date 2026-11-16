@@ -112,7 +112,7 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
         Cmd::UndoImport(ids) => {
             let now = now_unix();
             let touched: Vec<u32> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| o.media_id).collect();
-            let r = store.undo_import(service, &ids).map_err(|e| format!("The import can't be taken back: {e}"));
+            let r = store.undo_import(service, &ids, now).map_err(|e| format!("The import can't be taken back: {e}"));
             h.update_if(move |s, _| crate::transfer::undone(s, r));
             touched
         }
@@ -137,11 +137,11 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
         }
         Cmd::TakeTheirs(id) => {
             let m = media(store, id);
-            store.take_theirs(crate::account::name(), id).map(|_| m)
+            store.take_theirs(crate::account::name(), id, now).map(|_| m)
         }
         Cmd::Discard(id) => {
             let m = media(store, id);
-            store.discard(crate::account::name(), id).map(|_| m)
+            store.discard(crate::account::name(), id, now).map(|_| m)
         }
         // Handled by `transfer`.
         Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
@@ -192,6 +192,8 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         }
         if !touched.is_empty() {
             report(h, snapshot(&store, &touched, None));
+            // The same changes may wait for the mirror now.
+            crate::mirror::kick(h, false);
         }
         // A switch to the other service: its client from now on.
         if svc.as_ref().is_some_and(|c| c.name() != crate::account::name()) {

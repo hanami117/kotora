@@ -186,7 +186,7 @@ fn take_theirs_drops_the_change_and_shows_the_services_values() {
     f.remote.insert(1, Remote { values: v(Status::Dropped, 4, None), updated_at: 400 });
     step(&mut s, &mut f, 600).unwrap();
     let id = s.queue("mal", 600).unwrap()[0].id;
-    s.take_theirs("mal", id).unwrap();
+    s.take_theirs("mal", id, 1_000).unwrap();
     assert_eq!(s.open_count("mal").unwrap(), 0);
     let e = entry(&s, 1);
     assert_eq!((e.status, e.progress, e.score, e.updated_at), (Status::Dropped, 4, None, 400));
@@ -302,7 +302,7 @@ fn a_refused_change_fails_with_the_services_words_until_edited_or_discarded() {
     let op = s.queue("mal", 602).unwrap().remove(0);
     assert_eq!((op.state, op.error, op.change.progress, op.edits), (OpState::Queued, None, Some(12), 2));
     // Discard: the entry goes back.
-    s.discard("mal", op.id).unwrap();
+    s.discard("mal", op.id, 1_000).unwrap();
     let e = entry(&s, 1);
     assert_eq!((e.progress, e.updated_at), (3, 100));
     assert_eq!(s.open_count("mal").unwrap(), 0);
@@ -337,7 +337,7 @@ fn take_theirs_on_a_removed_entry_drops_it() {
     let mut f = Fake::default();
     step(&mut s, &mut f, 600).unwrap();
     let id = s.queue("mal", 600).unwrap()[0].id;
-    s.take_theirs("mal", id).unwrap();
+    s.take_theirs("mal", id, 1_000).unwrap();
     assert!(s.load_item("mal", 1).unwrap().is_none());
 }
 
@@ -474,7 +474,7 @@ fn edits_merge_into_an_add_and_keep_its_status() {
 fn discarding_an_add_takes_it_off_the_list() {
     let (mut s, _) = setup();
     let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap().unwrap();
-    s.discard("mal", id).unwrap();
+    s.discard("mal", id, 1_000).unwrap();
     assert!(s.load_item("mal", 7).unwrap().is_none());
     assert_eq!(s.open_count("mal").unwrap(), 0);
 }
@@ -685,7 +685,7 @@ fn a_manga_conflict_keeps_the_volumes_and_higher_counts_win() {
     let op = s.queue("mal", 800).unwrap().into_iter().find(|o| o.state == OpState::Conflict).unwrap();
     assert_eq!((op.kind, op.remote.unwrap().values), (Kind::Manga, read(40, 6)));
     // Take theirs: the manga entry takes the service's values; the anime 1 is untouched.
-    s.take_theirs("mal", op.id).unwrap();
+    s.take_theirs("mal", op.id, 1_000).unwrap();
     let mi = s.load_item(MANGA, 1).unwrap().unwrap();
     assert_eq!((mi.progress, mi.volumes, mi.updated_at), (40, 6, 5000));
     assert_eq!(entry(&s, 1).progress, 3);
@@ -705,7 +705,7 @@ fn a_manga_conflict_can_keep_mine_or_be_discarded() {
     // Discard puts the manga entry back.
     s.enqueue(MANGA, 1, chapters(23, Some(4)), 700).unwrap();
     let id = s.queue("mal", 700).unwrap()[0].id;
-    s.discard("mal", id).unwrap();
+    s.discard("mal", id, 1_000).unwrap();
     let mi = s.load_item(MANGA, 1).unwrap().unwrap();
     assert_eq!((mi.progress, mi.volumes), (22, 3));
 }
