@@ -1,5 +1,6 @@
-//! The MyAnimeList Client ID from the app (Stage 5): the field of the setup wizard (`setup.rs`)
-//! and a masked field in Settings, so nobody edits `config.toml` by hand.
+//! The user's own MyAnimeList Client ID (advanced): Kotora has its own built in (`core::service`),
+//! so sign-in needs none. Settings → Account has "Use my own client ID…" with a field, and "Use
+//! Kotora's built-in ID" to go back; nobody edits `config.toml` by hand.
 //!
 //! Save checks the ID on the UI thread (`config::check_client_id`, instant), then writes
 //! `config.toml` on a short thread (comments kept, 0600) and re-reads the sign-in state, so Sign in
@@ -15,9 +16,6 @@ use crate::online;
 use crate::theme::{self, PAL};
 use crate::ui::{button, field_hint, small_button};
 
-/// MyAnimeList's page where an app (and its Client ID) is registered.
-pub const API_PAGE: &str = "https://myanimelist.net/apiconfig";
-
 /// The Client ID field and what it shows.
 #[derive(Default)]
 pub struct ClientIdForm {
@@ -30,8 +28,6 @@ pub struct ClientIdForm {
     pub saving: bool,
     /// The saved ID's last four characters (Settings shows only those).
     pub hint: Option<String>,
-    /// The redirect URL was copied (the button says so).
-    pub copied: bool,
     /// The sign-in link was copied (the wizard's "browser didn't open" line).
     pub link_copied: bool,
     /// Saved in this session (the Welcome page says so above Sign in).
@@ -74,15 +70,37 @@ impl State {
                 f.editing = false;
                 f.saved = true;
                 f.draft.clear();
-                // The wizard moves on to the sign-in.
-                if self.setup == crate::setup::Step::Paste {
-                    self.setup = crate::setup::Step::SignIn;
-                }
                 // Sign in is enabled at once; a running sign-in or a signed-in account stays.
                 if self.auth == Auth::NoClientId {
                     self.auth = auth;
                     self.error = None;
                 }
+            }
+            Err(e) => f.error = Some(e),
+        }
+        true
+    }
+
+    /// "Use Kotora's built-in ID": blank the saved one. A sign-in made with the old ID is asked
+    /// for again when it runs out.
+    fn use_built_in_client_id(&mut self) {
+        let Some(h) = self.handle.clone() else { return };
+        self.client_id.saving = true;
+        std::thread::spawn(move || {
+            let msg = Msg::ClientIdCleared(config::clear_client_id(&paths::config_file()).map_err(|e| format!("Can't save it: {e}")));
+            h.update_if(move |s, _| s.apply(msg));
+        });
+    }
+
+    /// The writer's answer: no saved ID any more.
+    pub fn client_id_cleared(&mut self, r: Result<(), String>) -> bool {
+        let f = &mut self.client_id;
+        f.saving = false;
+        match r {
+            Ok(()) => {
+                f.hint = None;
+                f.error = None;
+                f.editing = false;
             }
             Err(e) => f.error = Some(e),
         }
@@ -167,7 +185,8 @@ pub(crate) fn copy_button(key: &str, copied: bool, f: impl Fn(&mut State, &mut T
         .child(text(if copied { "Copied" } else { "Copy" }).font(theme::LABEL_BTN).color(PAL.text))
 }
 
-/// Settings → Accounts: the ID, masked, with Change (or the field while changing).
+/// Settings → Account: Kotora's own ID (nothing to set up), or the user's own, masked, with Change
+/// and "Use Kotora's built-in ID" (or the field while changing).
 pub fn settings_row(s: &State) -> El {
     let f = &s.client_id;
     let head = col()
@@ -177,18 +196,22 @@ pub fn settings_row(s: &State) -> El {
         .child(text("MyAnimeList Client ID").font(theme::BODY_MED).color(PAL.text))
         .child(match &f.hint {
             Some(h) => text(format!("{}{h}", "\u{2022}".repeat(12))).key("set/cid-masked").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim),
-            None => text("Not set: Sign in needs one").font(theme::LABEL).color(PAL.warn()),
+            None => text("Kotora\u{2019}s own: nothing to set up").key("set/cid-built-in").font(theme::LABEL).color(PAL.dim),
         });
     if !f.editing {
-        let label = if f.hint.is_some() { "Change" } else { "Set" };
-        return row()
-            .key("set/cid")
-            .gap(8.0)
-            .py(10.0)
-            .center_y()
-            .child(head)
-            .child(small_button("set/setup-again", "Set up again", false, Some(State::setup_again)))
-            .child(small_button("set/cid-change", label, f.hint.is_none(), Some(State::edit_client_id)));
+        let mut r = row().key("set/cid").gap(8.0).py(10.0).center_y().child(head).child(small_button("set/setup-again", "Set up again", false, Some(State::setup_again)));
+        if f.hint.is_some() {
+            let built_in = if f.saving { small_button("set/cid-built-in-use", "Saving\u{2026}", false, None) } else { small_button("set/cid-built-in-use", "Use Kotora\u{2019}s built-in ID", false, Some(State::use_built_in_client_id)) };
+            r = r.child(built_in).child(small_button("set/cid-change", "Change", false, Some(State::edit_client_id)));
+        } else {
+            // Advanced: sign-in works without this. For someone with an app of their own.
+            r = r.child(small_button("set/cid-change", "Use my own client ID\u{2026}", false, Some(State::edit_client_id)));
+        }
+        let mut c = col().gap(4.0).child(r);
+        if let Some(e) = &f.error {
+            c = c.child(text(e.clone()).key("set/cid/error").font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap());
+        }
+        return c.key("set/cid-wrap");
     }
     let mut c = col()
         .key("set/cid")
@@ -197,9 +220,9 @@ pub fn settings_row(s: &State) -> El {
         .child(row().gap(12.0).center_y().child(head).child(spacer()).child(small_button("set/cid-cancel", "Cancel", false, Some(State::cancel_client_id))))
         .child(id_field(s, "set/cid", 300.0));
     let note = if s.account.is_some() {
-        "A new ID needs a new sign-in: MyAnimeList asks again when the current one runs out."
+        "Advanced. A new ID needs a new sign-in: MyAnimeList asks again when the current one runs out."
     } else {
-        "From myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback."
+        "Advanced. From myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback."
     };
     c = c.child(text(note).font(theme::LABEL).color(PAL.faint).wrap());
     c

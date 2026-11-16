@@ -93,17 +93,17 @@ tarball (`kotora-0.1.2.tar.gz`) works the same way.
 
 With Rust and `librsvg` (`brew install librsvg`): `packaging/macos/build.sh` builds `target/macos/Kotora.app`.
 
-## First start: your MyAnimeList Client ID
+## First start: sign in
 
-MyAnimeList asks every app to have its own Client ID. It is free and takes a minute. Kotora's Welcome page
-walks you through it:
+Open Kotora, press **Start**, then **Sign in with MyAnimeList**. Your browser opens MyAnimeList's own page:
+allow Kotora there and you are back in the app with your list. Kotora never sees your password. There is
+nothing to register: Kotora has its own MyAnimeList client ID built in. A client ID is public by design (it
+identifies the app, it is not a secret), as it is in Taiga.
 
-1. Open <https://myanimelist.net/apiconfig> and press **Create ID**.
-2. App type **other**, non-commercial use. Put `http://127.0.0.1:47321/callback` as the redirect URL
-   (the Welcome page has a Copy button). The other fields can say anything.
-3. Paste the **Client ID** (not the secret) into Kotora and press Save, then **Sign in**.
-
-You can also run `kot config client-id ID`.
+**Your own client ID (advanced).** If you would rather use an API app of your own, register one at
+<https://myanimelist.net/apiconfig> (app type **other**, redirect URL `http://127.0.0.1:47321/callback`), then
+Settings → Account → **Use my own client ID…** (or `kot config client-id ID`). **Use Kotora's built-in ID**
+there goes back. Developers can also set `KOTORA_MAL_CLIENT_ID`, which wins over both.
 
 ## Privacy
 
@@ -140,7 +140,7 @@ kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
-kot config client-id ID
+kot config client-id ID   (optional: your own MyAnimeList client ID)
 kot show | kot quit
 ```
 

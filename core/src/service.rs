@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Change, ListItem, Media, Remote, Status};
 
+/// Kotora's own MyAnimeList API client id (type "other", PKCE, no secret, redirect URL
+/// `http://127.0.0.1:47321/callback`). A client id is public by design: Taiga ships its own in
+/// its source the same way. It makes sign-in one click. A user's own id (Settings → Account) and
+/// `KOTORA_MAL_CLIENT_ID` win over it.
+pub const MAL_CLIENT_ID: Option<&str> = Some("908dfd0cdb73e89f00555d3f9153ef66");
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
     /// The service can't be reached (no network, timeout, 5xx). The saved list still works.

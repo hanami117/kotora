@@ -183,7 +183,7 @@ pub enum Request {
     Confirm,
     /// Not now: hides the offer for this file. Replies `Now`.
     Dismiss,
-    /// Saves the MyAnimeList Client ID (as the Welcome page's field does). Replies `Done`.
+    /// Saves the user's own MyAnimeList Client ID (as Settings → Account's field does; optional). Replies `Done`.
     SetClientId { id: String },
     /// Starts a rewatch of a completed entry: a part of its title, or its MyAnimeList id.
     /// Replies `Edited`.

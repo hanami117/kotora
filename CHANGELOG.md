@@ -4,6 +4,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-16
+
+### Changed
+- **Signing in to MyAnimeList is one click.** Kotora now has its own MyAnimeList client ID built in (a client ID is
+  public by design, as in Taiga), so there is nothing to register or paste. The setup wizard is three steps:
+  Welcome, Sign in, Done. A client ID you saved earlier keeps being used.
+- **Your own client ID is an advanced option:** Settings → Account → **Use my own client ID…**, and **Use Kotora's
+  built-in ID** to go back. `kot config client-id ID` still works, and so does `KOTORA_MAL_CLIENT_ID` (it wins).
+
 ### Packaging
 - `kotora-bin` is on the AUR (prebuilt x86_64 binary). AUR `kotora` 0.1.2-2 fixes `kot --version`.
 

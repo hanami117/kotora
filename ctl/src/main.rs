@@ -57,7 +57,7 @@ Commands:
                         library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   MyAnimeList for (it must find one), or its id
-  config client-id ID   save your MyAnimeList Client ID
+  config client-id ID   use your own MyAnimeList Client ID (optional)
   show                  show the window
   quit                  quit Kotora
   help                  this text
