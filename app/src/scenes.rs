@@ -874,8 +874,11 @@ mod tests {
                 let rt = render(name, size);
                 assert!(rt.find("sidebar").is_some(), "{name}: sidebar");
                 assert!(rt.find("main").is_some(), "{name}: main");
-                // The sign-in screen and the wizard have no top bar.
-                assert!(rt.find("top").is_some() || rt.find("welcome").is_some() || rt.find("page/setup").is_some(), "{name}: page title");
+                // The sign-in screen and the wizard have no top bar; Now Playing's hero is its title.
+                assert!(
+                    rt.find("top").is_some() || rt.find("welcome").is_some() || rt.find("page/setup").is_some() || rt.find("np-card").is_some(),
+                    "{name}: page title"
+                );
             }
         }
     }

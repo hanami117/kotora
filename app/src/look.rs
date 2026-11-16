@@ -83,3 +83,11 @@ pub fn live_dot(playing: bool, size: f32) -> El {
 pub fn card_scrim() -> Scrim {
     if PAL.light { Scrim::even(0.66) } else { Scrim::even(0.62) }
 }
+
+/// A border that reads on a backdrop in both themes.
+pub fn glass_border() -> Color {
+    if PAL.light { Color::BLACK.alpha(0.08) } else { Color::WHITE.alpha(0.08) }
+}
+
+/// Large type for heroes and banners.
+pub const HERO_TITLE: rune::TextStyle = rune::TextStyle::new(32.0, 600.0).tracking(-0.4);
