@@ -73,7 +73,10 @@ jobs:
       release: ${{ steps.v.outputs.release }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
-      - run: pacman -Syu --noconfirm --needed git rust pkgconf
+      # The libraries are the run-time depends of packaging/aur/PKGBUILD: the linker needs them (libxkbcommon).
+      - run: >-
+          pacman -Syu --noconfirm --needed git rust pkgconf
+          dbus gcc-libs libx11 libxcursor libxi libxkbcommon libxkbcommon-x11 libxrandr vulkan-icd-loader wayland
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ env.TAG }}
