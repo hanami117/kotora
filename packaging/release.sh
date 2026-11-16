@@ -6,7 +6,9 @@
 #   packaging/release.sh --no-dmg    the same without the DMG (e.g. on Linux)
 #   packaging/release.sh --no-dmg --linux-bin
 #                                    also the prebuilt Linux x86_64 tarball for the AUR's kotora-bin
-#                                    (build it on Linux x86_64; it is a release build of the tag)
+#                                    (build it on Linux x86_64; it is a release build of the tag).
+#                                    The release notes list kotora-bin and this tarball either way, so
+#                                    on a Mac the Linux step must follow before the release is final.
 #
 # Before: the version in Cargo.toml's [workspace.package], the build number in BUILD, a CHANGELOG.md
 # section "## [<version>]", everything committed, and an annotated (signed) tag on HEAD:
@@ -157,16 +159,16 @@ say "Writing release notes from CHANGELOG.md"
     cat <<NOTES
 
 ### Install
-- **Arch Linux**: \`yay -S kotora\` (AUR, builds from this release's source tarball)$(
-    ((linux_bin)) && printf ' or `yay -S kotora-bin` (prebuilt, from `%s`)' "$bin"
-).
+- **Arch Linux**: \`yay -S kotora\` (AUR, builds from this release's source tarball) or \`yay -S kotora-bin\` (AUR,
+  the prebuilt binary from \`$bin\`, nothing to build). Install one of the two; they conflict.
 - **macOS** (Apple silicon, macOS 13 or later): download \`Kotora-$release.dmg\` and drag Kotora to Applications.
   Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
   and click **Open Anyway** (or run \`xattr -dr com.apple.quarantine /Applications/Kotora.app\`).
 - **Other Linux**: download \`$src\`, unpack it and run \`./install.sh\` (needs Rust, pkgconf and a Vulkan
-  driver; see the README).
+  driver; see the README). On x86_64 you can instead unpack the prebuilt \`$bin\` and copy its
+  \`bin/\` and \`share/\` folders to \`/usr/local\` (or \`~/.local\`).
 
-Sign in with MyAnimeList in one click: Kotora has its own client ID built in, so there is nothing to register.
+Sign in with MyAnimeList or AniList in one click: Kotora has its own client IDs built in, so there is nothing to register.
 Checksums are in \`SHA256SUMS\`.
 NOTES
 } >"$out/notes.md"
@@ -213,11 +215,23 @@ $(sed 's/^/   /' "$out/latest.json")
    packaging/aur/PKGBUILD   pkgver=$version  _build=$build  sha256sums=('$src_sha')
                             pkgrel: 1 for a new version, else one more than the AUR's
                             then: makepkg --printsrcinfo > .SRCINFO, push to aur.archlinux.org/kotora.git
-$( ((linux_bin)) && cat <<BINPKG
+$(
+if ((linux_bin)); then
+cat <<BINPKG
 
 4. The AUR package kotora-bin:
    packaging/aur-bin/PKGBUILD   pkgver=$version  _build=$build  sha256sums=('$(sha256 "$out/$bin")')
                                 (the same pkgrel rule; push to aur.archlinux.org/kotora-bin.git)
 BINPKG
+else
+cat <<NOBIN
+
+4. The AUR package kotora-bin (the notes above already list it and $bin):
+   not built here. On Linux x86_64, from the same tag, run: packaging/release.sh --no-dmg --linux-bin
+   then upload $bin and its .sha256 to the release, append its line to the release's SHA256SUMS,
+   and update packaging/aur-bin/PKGBUILD (pkgver, sha256sums). Until then \`yay -S kotora-bin\` and the
+   binary tarball in the notes don't exist yet.
+NOBIN
+fi
 )
 DONE
