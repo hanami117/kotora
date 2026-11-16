@@ -23,6 +23,13 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   **Use Kotora's built-in ID** in Settings → Account works for both.
 - A saved list from a newer Kotora is refused with "Update Kotora to open it", and left as it is.
 
+### Fixed
+- **Linux shortcuts:** Ctrl , opens Settings and Ctrl 1 to 5 open Watching, Plan to Watch, Completed, On Hold
+  and Dropped. They only worked from the macOS menu bar before.
+- **`kot --version`** shows branch and commit only for builds made in Kotora's own git repository. A build
+  from a source tarball that sits inside another git checkout (an AUR helper's clone, say) no longer picks
+  up that checkout's facts.
+
 ### Upgrading from 0.1
 - Kotora 0.2 upgrades the saved list's database (`~/.local/share/kotora/kotora.db`) when it first starts, and
   keeps the 0.1 file beside it as `kotora.db.schema-9.bak`. Your list, sign-in, waiting changes and settings
