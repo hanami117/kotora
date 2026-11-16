@@ -121,7 +121,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     };
     let mut side = side.child(brand(s));
     if let Some((name, service)) = &s.account {
-        side = side.child(account(s, name, service));
+        side = side.child(account(s, name, service, s.lit_page() == Page::Profile));
     }
     let lit = s.lit_page();
     // The pages scroll on their own when the window is too short for them; the playing card
@@ -280,7 +280,8 @@ fn brand(s: &State) -> El {
 /// The cover cache's id for the profile picture (no anime has it).
 pub(crate) const AVATAR_ID: u32 = u32::MAX;
 
-fn account(s: &State, name: &str, service: &str) -> El {
+/// The account card; it opens the Profile page (`on`: that page is open).
+fn account(s: &State, name: &str, service: &str, on: bool) -> El {
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     // The profile picture, round, over the initial (shown while it loads, offline or with none).
     let mut face = el()
@@ -295,13 +296,20 @@ fn account(s: &State, name: &str, service: &str) -> El {
     }
     row()
         .key("account")
+        .role("button")
+        .label(format!("Profile: {name}"))
+        .focusable(true)
         .gap(8.0)
         .padding(8.0)
         .mb(14.0)
         .center_y()
         .radius(theme::R_MD)
-        .fill(PAL.surface)
-        .border(1.0, PAL.border)
+        .fill(if on { PAL.raised } else { PAL.surface })
+        .border(1.0, if on { PAL.border_strong } else { PAL.border })
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| go_to(s, Page::Profile, tx))
         .child(face)
         .child(
             col()
@@ -381,6 +389,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::List(st) => list_page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),
         Page::Home => crate::home::page(s),
+        Page::Profile if s.account.is_none() => welcome(s),
+        Page::Profile => crate::profile::page(s, wide),
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),

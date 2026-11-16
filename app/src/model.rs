@@ -27,6 +27,8 @@ pub type Handle = AppHandle<State>;
 pub enum Page {
     /// Shelves: continue watching, airing this week, plan to watch (`home.rs`).
     Home,
+    /// The account: picture, name, MyAnimeList's numbers, the score spread (`profile.rs`).
+    Profile,
     List(Status),
     NowPlaying,
     Queue,
@@ -322,7 +324,9 @@ pub fn waiting_label(state: OpState) -> &'static str {
 #[derive(Debug)]
 pub enum Msg {
     /// The saved list and the queue from the database, at start.
-    Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, synced_at: Option<i64>, ops: Vec<Op> },
+    Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, profile: Option<Box<kotora_core::service::Profile>>, synced_at: Option<i64>, ops: Vec<Op> },
+    /// The Profile page's facts, fresh after a sync.
+    Profile(Box<kotora_core::service::Profile>),
     /// The queue changed: all of it, the entries it touched, and those that left the list.
     /// `offline`: a send failed for lack of network (true) or went through (false).
     Queue { ops: Vec<Op>, items: Vec<ListItem>, gone: Vec<u32>, offline: Option<bool> },
@@ -377,6 +381,8 @@ pub struct State {
     pub account: Option<(String, &'static str)>,
     /// The account's profile picture URL; the sidebar draws it round, else the initial.
     pub avatar: Option<String>,
+    /// The Profile page's facts from the service (join date, anime statistics), when known.
+    pub profile: Option<kotora_core::service::Profile>,
     /// While signing in: MyAnimeList's sign-in page, and whether the browser opened it.
     pub sign_in_link: Option<(String, bool)>,
     /// The setup wizard's step (`setup.rs`).
@@ -470,6 +476,7 @@ impl State {
             auth: Auth::SignedIn,
             account: Some(("demo_user".into(), "MyAnimeList")),
             avatar: None,
+            profile: Some(crate::profile::fake()),
             sign_in_link: None,
             setup: crate::setup::Step::Welcome,
             setup_back: Page::List(Status::Watching),
@@ -520,6 +527,7 @@ impl State {
         s.entries.clear();
         s.auth = auth;
         s.account = None;
+        s.profile = None;
         s.queue = 0;
         s.ops.clear();
         s.synced_at = None;
@@ -1026,8 +1034,12 @@ impl State {
     fn apply_msg(&mut self, msg: Msg) -> bool {
         let service = "MyAnimeList";
         match msg {
-            Msg::Cache { items, user, picture, synced_at, ops } => {
+            Msg::Cache { items, user, picture, profile, synced_at, ops } => {
                 self.ops = ops;
+                // A sync's answer is newer than the saved one.
+                if self.profile.is_none() {
+                    self.profile = profile.map(|p| *p);
+                }
                 // A sync that already finished is newer than the cache read.
                 if self.synced_at.is_none() || self.entries.is_empty() {
                     self.set_items(&items);
@@ -1143,6 +1155,14 @@ impl State {
             Msg::Reached { key, file } => self.now_reached(&key, &file),
             Msg::Players(v) => self.players_seen(v),
             Msg::ClientIdSaved(r) => self.client_id_saved(r),
+            Msg::Profile(p) => {
+                // A late answer after sign out is dropped.
+                let changed = self.account.is_some() && self.profile.as_ref() != Some(&*p);
+                if changed {
+                    self.profile = Some(*p);
+                }
+                changed
+            }
             Msg::Picture(url) => {
                 let changed = self.account.is_some() && self.avatar != url;
                 if changed {
@@ -1164,6 +1184,7 @@ impl State {
                 self.auth = Auth::SignedOut;
                 self.account = None;
                 self.avatar = None;
+                self.profile = None;
                 self.entries.clear();
                 self.ops.clear();
                 self.queue = 0;
@@ -1735,7 +1756,7 @@ mod tests {
     fn an_old_cache_never_replaces_a_newer_sync() {
         let mut s = State::start(Auth::SignedIn);
         s.apply(Msg::Synced { items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)], synced_at: 10 });
-        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), picture: None, synced_at: Some(5), ops: vec![] });
+        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), picture: None, profile: None, synced_at: Some(5), ops: vec![] });
         assert_eq!(s.entries.len(), 1);
         assert_eq!(s.entries[0].title, "Fresh");
         assert_eq!(s.account.as_ref().map(|a| a.0.as_str()), Some("demo_user"));
@@ -1748,9 +1769,9 @@ mod tests {
         s.entries.clear();
         s.loading = true;
         s.syncing = true;
-        s.apply(Msg::Cache { items: vec![], user: None, picture: None, synced_at: None, ops: vec![] });
+        s.apply(Msg::Cache { items: vec![], user: None, picture: None, profile: None, synced_at: None, ops: vec![] });
         assert!(s.loading, "nothing saved yet: keep the skeleton");
-        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, picture: None, synced_at: Some(1), ops: vec![] });
+        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, picture: None, profile: None, synced_at: Some(1), ops: vec![] });
         assert!(!s.loading);
     }
 

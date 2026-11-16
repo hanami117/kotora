@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::airing::{self, Broadcast, SeasonAnime};
 use crate::{Change, ListItem, Media, Remote, Status, Values};
 use crate::ratelimit::Limiter;
-use crate::service::{AnimeHit, Details, ListService, MyEntry, SearchHit, ServiceError, User};
+use crate::service::{AnimeHit, AnimeStats, Details, ListService, MyEntry, Profile, SearchHit, ServiceError, User};
 use crate::time;
 use crate::tokens::{Token, TokenStore};
 
@@ -338,13 +338,12 @@ impl<T: Transport> Client<T> {
         parse_details(&r.body).map_err(ServiceError::Other)
     }
 
-    /// The user's name and profile picture (`GET /users/@me?fields=picture`; MAL leaves the
-    /// picture out when none is set).
+    /// The user's name, profile picture, join date and anime statistics, in one request
+    /// (`GET /users/@me?fields=picture,anime_statistics`; MAL leaves the picture out when none
+    /// is set).
     pub fn fetch_user(&mut self, access: &str) -> Result<User, ServiceError> {
-        let r = self.get(format!("{API}/users/@me?fields=picture"), access)?;
-        let me: Me = serde_json::from_str(&r.body).map_err(|_| ServiceError::Other("can't read the user answer".into()))?;
-        let picture = me.picture.filter(|p| p.starts_with("https://"));
-        Ok(User { name: me.name, picture })
+        let r = self.get(format!("{API}/users/@me?fields=picture,anime_statistics"), access)?;
+        parse_user(&r.body).ok_or_else(|| ServiceError::Other("can't read the user answer".into()))
     }
 
     /// One page of a season's anime, most members first (`GET /anime/season/{year}/{season}`,
@@ -640,6 +639,49 @@ struct Me {
     name: String,
     #[serde(default)]
     picture: Option<String>,
+    #[serde(default)]
+    joined_at: Option<String>,
+    #[serde(default)]
+    anime_statistics: Option<RawStats>,
+}
+
+/// MAL's `anime_statistics` (the fields Kotora shows; the rest are left out).
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawStats {
+    num_items_watching: f64,
+    num_items_completed: f64,
+    num_items_on_hold: f64,
+    num_items_dropped: f64,
+    num_items_plan_to_watch: f64,
+    num_days: f64,
+    num_episodes: f64,
+    num_times_rewatched: f64,
+    mean_score: f64,
+}
+
+/// The `/users/@me` answer. MAL sends counts as numbers that may carry a fraction; they are
+/// rounded and kept non-negative.
+fn parse_user(body: &str) -> Option<User> {
+    let me: Me = serde_json::from_str(body).ok()?;
+    let n = |v: f64| if v.is_finite() && v > 0.0 { v.round().min(f64::from(u32::MAX)) as u32 } else { 0 };
+    let f = |v: f64| if v.is_finite() && v > 0.0 { v } else { 0.0 };
+    let stats = me.anime_statistics.map(|r| AnimeStats {
+        days: f(r.num_days),
+        episodes: n(r.num_episodes),
+        mean_score: f(r.mean_score).min(10.0),
+        rewatched: n(r.num_times_rewatched),
+        watching: n(r.num_items_watching),
+        completed: n(r.num_items_completed),
+        on_hold: n(r.num_items_on_hold),
+        dropped: n(r.num_items_dropped),
+        plan_to_watch: n(r.num_items_plan_to_watch),
+    });
+    Some(User {
+        name: me.name,
+        picture: me.picture.filter(|p| p.starts_with("https://")),
+        profile: Profile { joined: me.joined_at.filter(|j| !j.trim().is_empty()), stats },
+    })
 }
 
 #[derive(Deserialize)]
@@ -922,6 +964,32 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+
+    /// `/users/@me?fields=picture,anime_statistics`, made up in MAL's shape.
+    #[test]
+    fn user_with_statistics() {
+        let body = r#"{"id":1,"name":"demo_user","picture":"https://cdn.example.invalid/u.jpg","joined_at":"2019-03-02T10:20:30+00:00",
+            "anime_statistics":{"num_items_watching":11,"num_items_completed":236,"num_items_on_hold":7,"num_items_dropped":2,
+            "num_items_plan_to_watch":48,"num_items":304,"num_days_watched":61.3,"num_days":63.07,"num_episodes":3790.0,
+            "num_times_rewatched":4,"mean_score":7.62}}"#;
+        let u = parse_user(body).unwrap();
+        assert_eq!(u.name, "demo_user");
+        assert_eq!(u.picture.as_deref(), Some("https://cdn.example.invalid/u.jpg"));
+        assert_eq!(u.profile.joined.as_deref(), Some("2019-03-02T10:20:30+00:00"));
+        let st = u.profile.stats.unwrap();
+        assert_eq!((st.watching, st.completed, st.on_hold, st.dropped, st.plan_to_watch), (11, 236, 7, 2, 48));
+        assert_eq!(st.total(), 304);
+        assert_eq!(st.count(Status::Completed), 236);
+        assert_eq!((st.episodes, st.rewatched), (3790, 4));
+        assert!((st.days - 63.07).abs() < 1e-9 && (st.mean_score - 7.62).abs() < 1e-9);
+        // No statistics asked for, no picture, odd numbers: nothing breaks.
+        let u = parse_user(r#"{"name":"x","picture":"http://insecure.invalid/p.jpg","anime_statistics":{"num_items_watching":-3,"num_episodes":2.6,"mean_score":12}}"#).unwrap();
+        assert!(u.picture.is_none(), "https only");
+        let st = u.profile.stats.unwrap();
+        assert_eq!((st.watching, st.episodes, st.mean_score), (0, 3, 10.0));
+        assert!(parse_user(r#"{"name":"x"}"#).unwrap().profile.stats.is_none());
+        assert!(parse_user("not json").is_none());
+    }
 
     /// Answers from a script and records every request it saw.
     /// (method, url, bearer, form body)
@@ -1328,7 +1396,7 @@ mod tests {
         let u = mal.user().unwrap();
         assert_eq!((u.name.as_str(), u.picture.as_deref()), ("demo_user", Some("https://cdn.example.invalid/images/userimages/5.jpg?t=1")));
         assert_eq!(mal.user().unwrap().picture, None, "no picture set");
-        assert_eq!(seen.lock().unwrap()[0].1, "https://api.myanimelist.net/v2/users/@me?fields=picture");
+        assert_eq!(seen.lock().unwrap()[0].1, "https://api.myanimelist.net/v2/users/@me?fields=picture,anime_statistics");
     }
 
     /// Made-up season answer in MyAnimeList's shape (no real titles).

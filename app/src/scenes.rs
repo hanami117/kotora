@@ -128,6 +128,24 @@ pub const SCENES: &[Scene] = &[
         s.set_sort(Sort::Title);
         s.set_sort_rev(true);
     }),
+    // The account card opens the Profile page: picture, MyAnimeList's numbers, the scores.
+    ("profile", |s| s.go(Page::Profile)),
+    ("profile-picture", |s| {
+        fake_covers(s);
+        s.avatar = Some("https://cdn.example.invalid/images/userimages/1.jpg".into());
+        s.go(Page::Profile);
+    }),
+    // Before the first answer: counts from the saved list, dashes for the rest.
+    ("profile-pending", |s| {
+        s.profile = None;
+        s.go(Page::Profile);
+    }),
+    ("profile-no-scores", |s| {
+        for e in &mut s.entries {
+            e.score = None;
+        }
+        s.go(Page::Profile);
+    }),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
     // First run: no Client ID in config.toml, so the setup wizard (`setup.rs`), step 1.
@@ -1016,6 +1034,20 @@ mod tests {
         assert!(!s.sort_rev, "a new order starts its own way");
         s.go(Page::List(Status::Completed));
         assert!(!s.sort_menu, "leaving the page closes it");
+    }
+
+    #[test]
+    fn profile_page_shows_the_numbers() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("profile", size);
+            for key in ["page/profile", "profile/avatar", "profile/name", "profile/joined", "profile/open-mal", "profile/days", "profile/bar", "profile/bar/completed", "profile/chart", "profile/score/8", "profile/sign-out"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(render("profile-pending", size).find("profile/pending").is_some());
+        }
+        let mut s = State::fake();
+        s.go(Page::List(Status::Watching));
+        assert!(s.page != Page::Profile);
     }
 
     /// The grid views: the switch, cards in rows, +1 always on Watching posters; the table's
