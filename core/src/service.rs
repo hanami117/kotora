@@ -136,6 +136,7 @@ impl AnimeHit {
             kind: self.kind,
             volumes: self.volumes,
             next_airing: None,
+            id_mal: None,
         }
     }
 
@@ -257,6 +258,7 @@ impl Details {
             kind: self.kind,
             volumes: self.volumes,
             next_airing: self.next_airing,
+            id_mal: None,
         }
     }
 

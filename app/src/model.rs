@@ -1556,6 +1556,7 @@ mod tests {
                 kind: Default::default(),
                 volumes: None,
                 next_airing: None,
+                id_mal: None,
             },
             status,
             progress,

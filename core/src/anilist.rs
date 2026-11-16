@@ -436,6 +436,7 @@ impl RawMedia {
             volumes: None,
             authors: Vec::new(),
             next_airing: next,
+            id_mal: self.id_mal.filter(|id| *id > 0),
         }
     }
 

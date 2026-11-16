@@ -254,6 +254,7 @@ impl MangaNode {
             start_date: non_empty(self.start_date),
             broadcast: None,
             next_airing: None,
+            id_mal: None,
         }
     }
 }

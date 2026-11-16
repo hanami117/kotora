@@ -122,6 +122,7 @@ fn the_list_maps_statuses_scores_formats_and_airing() {
     assert_eq!((m.id, m.title.as_str(), m.title_en.as_deref(), m.title_ja.as_deref()), (170001, "Kirigaoka no Lantern", Some("Lanterns of Kirigaoka"), Some("霧ヶ丘のランタン")));
     assert_eq!((m.format.as_str(), m.air_status.as_str(), m.episodes, m.start_date.as_deref()), ("tv", "currently_airing", Some(12), Some("2026-10-03")));
     assert_eq!(m.next_airing, Some(NextAiring { episode: 8, at: 1_795_271_400 }));
+    assert_eq!(m.id_mal, Some(59001), "kept for mirroring later");
     assert_eq!(m.broadcast, Some(airing::Broadcast { day: 5, minute: Some(23 * 60 + 30) }), "Saturday 23:30 JST");
     assert_eq!(m.cover_url.as_deref(), Some("https://s4.anilist.example.invalid/media/anime/cover/small/bx170001.jpg"));
     let velvet = &items[1];

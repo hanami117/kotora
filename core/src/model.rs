@@ -35,6 +35,9 @@ pub struct Media {
     /// The next episode and its exact time, when the service knows it (AniList
     /// `nextAiringEpisode`; MyAnimeList has none). The timetable prefers it to its estimate.
     pub next_airing: Option<crate::airing::NextAiring>,
+    /// AniList media: the MyAnimeList id, when AniList knows it (for mirroring later). `None`
+    /// on MyAnimeList's own rows.
+    pub id_mal: Option<u32>,
 }
 
 impl Media {

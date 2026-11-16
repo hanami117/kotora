@@ -279,6 +279,7 @@ impl SeasonAnime {
             kind: Default::default(),
             volumes: None,
             next_airing: self.next_airing,
+            id_mal: None,
         }
     }
 

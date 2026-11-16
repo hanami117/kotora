@@ -218,6 +218,7 @@ impl State {
                 kind: Default::default(),
                 volumes: None,
                 next_airing: None,
+                id_mal: None,
             },
         };
         if let Err(e) = self.add_media(media, status) {

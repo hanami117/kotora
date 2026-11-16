@@ -779,6 +779,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
                 kind: Default::default(),
                 volumes: None,
                 next_airing: None,
+                id_mal: None,
             },
             status,
             progress: ls.num_episodes_watched,

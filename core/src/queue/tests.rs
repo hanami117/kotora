@@ -70,6 +70,7 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
             kind: Default::default(),
             volumes: None,
             next_airing: None,
+            id_mal: None,
         },
         status: Status::Watching,
         progress,
