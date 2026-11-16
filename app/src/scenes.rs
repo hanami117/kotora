@@ -302,7 +302,10 @@ pub const SCENES: &[Scene] = &[
         let _ = s.start_rewatch_playing();
     }),
     // The queue as in the mockup: a conflict, two waiting, one failed, two sent today.
-    ("queue-page", |s| s.go(Page::Queue)),
+    ("queue-page", |s| {
+        queue_covers(s);
+        s.go(Page::Queue);
+    }),
     ("queue-empty", |s| {
         s.ops.clear();
         s.queue = 0;
@@ -734,6 +737,14 @@ fn search(s: &mut State, q: &str, answered: bool) {
             h.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", h.id));
         }
         s.online.show(q, hits);
+    }
+}
+
+/// Fake covers for the queue's entries.
+fn queue_covers(s: &mut State) {
+    s.covers.fake();
+    for e in s.entries.iter_mut() {
+        e.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", e.id));
     }
 }
 
