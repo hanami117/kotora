@@ -11,14 +11,21 @@
 //!   solid orange `LEAD` longer (nothing runs, so a late frame in that time costs no motion;
 //!   Rune charges running motion for a hitch, up to 250 ms), and only then starts the tweens.
 //!
+//! - **A window that resizes as it opens** (a tiling window manager enlarges it at once): the
+//!   hold also waits until the window's size has been the same for `SETTLE`, at most
+//!   `MAX_WAIT` after the first frame, solid orange meanwhile (`hold`). The layer sits outside
+//!   `root` (`ui::view`), which lands a resize's changes at once, so the tweens keep running if
+//!   a resize comes in mid-run; and the geometry is laid out for the window's current size on
+//!   every build (`Fit`), as vectors, never a drawing made for one size and stretched.
+//!
 //! - **When:** only on a real cold start with a window (`at_launch`): not a `--hidden` or login
 //!   start in the background, not a test instance, not headless (scenes freeze frames of it), and
 //!   never when the window comes back from the tray or menu bar. Settings → Appearance →
 //!   Startup animation turns it off (`[display] intro`).
 //! - **Reduce Motion** (macOS, GNOME `enable-animations`, KDE; Rune reads them): the orange
 //!   layer only fades out.
-//! - **Motion:** every piece is a vector shape (`Shape` fills, no images), in one 1600×1000 box
-//!   stretched to the window. Each track below is a tween Rune runs itself, set once when the
+//! - **Motion:** every piece is a vector shape (`Shape` fills, no images), drawn in one 1600×1000
+//!   box that `Fit` covers the window with (one scale, centred: angles and widths hold). Each track below is a tween Rune runs itself, set once when the
 //!   intro starts, so the view isn't rebuilt per frame; `poll` only starts and ends it. A scene
 //!   evaluates the same tracks at a fixed time instead (`Intro::frozen`).
 //!
@@ -33,9 +40,40 @@ use rune::{Anim, AnimExt, Color, Curve, Cx, Easing, El, Shape, Tx, el};
 use crate::model::State;
 use crate::theme::PAL;
 
-/// The shapes' coordinate box, stretched to the window.
+/// The shapes' coordinate box. `Fit` lays it over the window.
 const VW: f32 = 1600.0;
 const VH: f32 = 1000.0;
+
+/// How the 1600×1000 box lies on a window of `w` × `h` points: one scale that covers the whole
+/// window (so no edge ever shows), centred. Claw angles and widths keep their look at any size
+/// or shape, and a resize only recomputes the points: they stay vectors.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fit {
+    w: f32,
+    h: f32,
+    k: f32,
+}
+
+impl Fit {
+    fn new([w, h]: [f32; 2]) -> Fit {
+        let (w, h) = (w.max(1.0), h.max(1.0));
+        Fit { w, h, k: (w / VW).max(h / VH) }
+    }
+
+    /// A box point in window points.
+    fn pt(self, p: [f32; 2]) -> [f32; 2] {
+        [(p[0] - VW / 2.0) * self.k + self.w / 2.0, (p[1] - VH / 2.0) * self.k + self.h / 2.0]
+    }
+
+    fn pts(self, v: Vec<[f32; 2]>) -> Vec<[f32; 2]> {
+        v.into_iter().map(|p| self.pt(p)).collect()
+    }
+
+    /// A shape whose points are already in window points.
+    fn shape(self, pts: Vec<[f32; 2]>, color: Color) -> Shape {
+        Shape::new().fill(self.pts(pts), color).view_box(self.w, self.h)
+    }
+}
 
 /// One property's change: it starts `at` seconds after the intro starts and takes `dur`.
 #[derive(Clone, Copy)]
@@ -76,6 +114,11 @@ const SPLIT: f32 = 0.45;
 /// Nothing runs then, so startup work on the UI thread (first sync results, covers) that hitches
 /// a frame or two costs no motion; the 0.8 s below is then seen whole.
 pub const LEAD: f64 = 0.10;
+/// ...and the window's size has been the same this long (a window manager that resizes it as it
+/// opens: the intro starts after that settles).
+pub const SETTLE: f64 = 0.12;
+/// The most the hold waits for the window to settle, from the first presented frame.
+pub const MAX_WAIT: f64 = 0.40;
 /// The whole intro; it is dropped after this.
 pub const TOTAL: f32 = 0.8;
 /// Reduce Motion: the layer holds a moment, then fades.
@@ -216,9 +259,9 @@ fn strip_away(k: usize) -> [f32; 2] {
 /// through) and a bright glint along its leading edge.
 /// Each piece is its own element with one fill: a fading shape of several pieces would paint
 /// through a window-sized layer.
-fn slash_shapes(k: usize) -> [(&'static str, Shape); 3] {
+fn slash_shapes(k: usize, fit: Fit) -> [(&'static str, Shape); 3] {
     let w = [30.0, 38.0, 32.0][k];
-    let one = |pts: Vec<[f32; 2]>, color: Color| Shape::new().fill(pts, color).view_box(VW, VH);
+    let one = |pts: Vec<[f32; 2]>, color: Color| fit.shape(pts, color);
     [
         ("rim", one(mark(k, w * 1.5, 0.0), rim())),
         ("cut", one(mark(k, w, 0.0), PAL.bg)),
@@ -235,8 +278,8 @@ fn hex(s: &str) -> Color {
     rune::color::hex(s).unwrap_or(Color::WHITE)
 }
 
-fn strip_shape(k: usize) -> Shape {
-    Shape::new().fill(strip(k), PAL.accent).view_box(VW, VH)
+fn strip_shape(k: usize, fit: Fit) -> Shape {
+    fit.shape(strip(k), PAL.accent)
 }
 
 /// 小虎's colour over the orange: cream in the dark theme, the dark brown text on the accent
@@ -262,6 +305,10 @@ pub struct Intro {
     reduced: Cell<bool>,
     /// Scenes: draw the Reduce Motion fade whatever the system says.
     force_reduced: bool,
+    /// The window's size at the last poll, and the poll time it last changed (the hold waits
+    /// for it to settle).
+    size: Option<[f32; 2]>,
+    changed: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,7 +339,7 @@ pub fn at_launch(l: Launch) -> Option<Intro> {
 
 impl Intro {
     fn new() -> Intro {
-        Intro { phase: Phase::Start, armed: false, since: None, arm_at: None, frozen: None, reduced: Cell::new(false), force_reduced: false }
+        Intro { phase: Phase::Start, armed: false, since: None, arm_at: None, frozen: None, reduced: Cell::new(false), force_reduced: false, size: None, changed: None }
     }
 
     /// Scenes: the intro held at `progress` (0 to 1) of its run.
@@ -318,6 +365,49 @@ impl Intro {
     }
 }
 
+/// How often the hold looks at the window's size.
+const WATCH: f64 = 0.04;
+
+impl Intro {
+    /// Notes the window's size at poll time `t`; a different size is a resize just now. The
+    /// first real size is not one, and nor is "not laid out yet" (zero).
+    fn watch(&mut self, size: [f32; 2], t: f64) {
+        if size[0] < 1.0 || size[1] < 1.0 {
+            return;
+        }
+        if let Some(old) = self.size
+            && ((old[0] - size[0]).abs() > 0.5 || (old[1] - size[1]).abs() > 0.5)
+        {
+            self.changed = Some(t);
+        }
+        self.size = Some(size);
+    }
+}
+
+/// What the hold before the run does at poll time `now`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Hold {
+    /// The run starts now.
+    Go,
+    /// Not yet: at least this many seconds more.
+    Wait(f64),
+}
+
+/// The solid-orange hold, from `armed` (the poll time the first frame was presented). The run
+/// starts once `LEAD` has passed and the window's size has not changed for `SETTLE` (`changed`
+/// is when it last did), or `MAX_WAIT` after `armed`, whichever comes first.
+fn hold(armed: f64, changed: Option<f64>, now: f64) -> Hold {
+    const EPS: f64 = 1e-3;
+    let waited = now - armed;
+    if waited >= MAX_WAIT - EPS {
+        return Hold::Go;
+    }
+    let lead = LEAD - waited;
+    let settle = changed.map_or(0.0, |c| SETTLE - (now - c));
+    let left = lead.max(settle);
+    if left <= EPS { Hold::Go } else { Hold::Wait(left.min(MAX_WAIT - waited)) }
+}
+
 /// Any click or key: the layer goes at once (its own fade-out, 0.15 s).
 pub fn skip(s: &mut State) {
     s.intro = None;
@@ -326,10 +416,12 @@ pub fn skip(s: &mut State) {
 /// `AppSpec::poll`: starts the run once the window shows, and drops the intro when it is over.
 /// The window going (closed to the tray mid-intro) drops it too: it never replays later.
 pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
+    let size = s.main_size.get();
     let Some(i) = s.intro.as_mut() else { return false };
     if i.frozen.is_some() {
         return false;
     }
+    i.watch(size, t);
     if !s.window {
         // Closed (to the tray) after it began: it never replays. Not shown yet (a macOS launch
         // checked for a login start): it waits for the window.
@@ -353,20 +445,23 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
         // The frame is up: the solid orange holds `LEAD`, then the tweens start.
         (Phase::Start, None) => {
             i.since = Some(t);
-            tx.wake_after(Duration::from_secs_f64(LEAD));
+            tx.wake_after(Duration::from_secs_f64(LEAD.min(WATCH)));
             false
         }
-        (Phase::Start, Some(since)) if t - since >= LEAD - 1e-3 => {
-            i.phase = Phase::Run;
-            i.since = Some(t);
-            tx.animated();
-            tx.wake_after(Duration::from_secs_f32(TOTAL));
-            true
-        }
-        (Phase::Start, Some(since)) => {
-            tx.wake_after(Duration::from_secs_f64((LEAD - (t - since)).max(0.0)));
-            false
-        }
+        (Phase::Start, Some(since)) => match hold(since, i.changed, t) {
+            Hold::Go => {
+                i.phase = Phase::Run;
+                i.since = Some(t);
+                tx.animated();
+                tx.wake_after(Duration::from_secs_f32(TOTAL));
+                true
+            }
+            // A resize shows in `main_size` only at the next build, so look often.
+            Hold::Wait(left) => {
+                tx.wake_after(Duration::from_secs_f64(left.min(WATCH)));
+                false
+            }
+        },
         (Phase::Run, Some(since)) => {
             let total = if i.reduced.get() || i.force_reduced { REDUCED_TOTAL } else { TOTAL } as f64;
             if t - since >= total {
@@ -429,6 +524,8 @@ pub fn overlay(s: &State, cx: &Cx<State>) -> Option<El> {
         (None, Phase::Start) => (0.0, false),
         (None, Phase::Run) => (f32::INFINITY, true),
     };
+    // The geometry follows the window's size as it is now (every build; a resize rebuilds).
+    let fit = Fit::new(cx.layout_size("root").unwrap_or([1280.0, 800.0]));
     let pin = Some(0.0);
     let layer = el().key("intro").role("image").label("Kotora").pin(pin, pin, pin, pin)
         // Esc, any click or key skips; the app underneath takes none until the layer is gone.
@@ -447,7 +544,7 @@ pub fn overlay(s: &State, cx: &Cx<State>) -> Option<El> {
     for k in 0..4 {
         let away = strip_away(k);
         let m = STRIP_MOVE.at_time(t);
-        let e = el().key(format!("intro/strip/{k}")).pin(pin, pin, pin, pin).shape(strip_shape(k));
+        let e = el().key(format!("intro/strip/{k}")).pin(pin, pin, pin, pin).shape(strip_shape(k, fit));
         let e = set_offset(e, [away[0] * m, away[1] * m], motion.then_some(STRIP_MOVE));
         layer = layer.child(set_opacity(e, 1.0 - STRIP_FADE.at_time(t), motion.then_some(STRIP_FADE)));
     }
@@ -457,8 +554,9 @@ pub fn overlay(s: &State, cx: &Cx<State>) -> Option<El> {
         let track = slash_track(k);
         let c = claw(k);
         // The mark grows out of its starting point, so it rips across from the top right.
-        for (part, shape) in slash_shapes(k) {
-            let e = el().key(format!("intro/slash/{k}/{part}")).pin(pin, pin, pin, pin).shape(shape).origin(c[0][0] / VW, c[0][1] / VH);
+        let [ox, oy] = fit.pt(c[0]);
+        for (part, shape) in slash_shapes(k, fit) {
+            let e = el().key(format!("intro/slash/{k}/{part}")).pin(pin, pin, pin, pin).shape(shape).origin(ox / fit.w, oy / fit.h);
             let e = set_scale(e, track.at_time(t).max(0.001), motion.then_some(track));
             layer = layer.child(set_opacity(e, 1.0 - CUT_FADE.at_time(t), motion.then_some(CUT_FADE)));
         }
@@ -729,5 +827,152 @@ mod tests {
         const { assert!(REDUCED_FADE.at + REDUCED_FADE.dur <= REDUCED_TOTAL + 1e-3) };
         // Slashes about 90 ms apart.
         assert!((slash_track(1).at - slash_track(0).at - 0.09).abs() < 1e-3);
+    }
+
+    // ---- a window that resizes as it opens ----
+
+    #[test]
+    fn the_hold_waits_for_the_size_to_settle_up_to_a_cap() {
+        const EPS: f64 = 1e-6;
+        // No resize: the approved hold, `LEAD`, and not a millisecond more.
+        assert!(matches!(hold(10.0, None, 10.0), Hold::Wait(l) if (l - LEAD).abs() < EPS));
+        assert_eq!(hold(10.0, None, 10.0 + LEAD), Hold::Go);
+        // A resize at 50 ms: the run waits for it to be still for SETTLE (until 170 ms).
+        let changed = Some(10.05);
+        assert!(matches!(hold(10.0, changed, 10.0 + LEAD), Hold::Wait(l) if (l - 0.07).abs() < EPS));
+        assert_eq!(hold(10.0, changed, 10.0 + 0.05 + SETTLE), Hold::Go);
+        // A window that keeps changing: gone at the cap, from the first frame.
+        assert!(matches!(hold(10.0, Some(10.39), 10.39), Hold::Wait(l) if l <= MAX_WAIT - 0.39 + EPS));
+        assert_eq!(hold(10.0, Some(10.39), 10.0 + MAX_WAIT), Hold::Go);
+        // A resize before the first frame that has settled by then costs nothing.
+        assert_eq!(hold(10.0, Some(9.8), 10.0 + LEAD), Hold::Go);
+        const { assert!(SETTLE > 0.0 && MAX_WAIT > LEAD + SETTLE) };
+    }
+
+    fn resize_to(s: &mut State, size: [f32; 2]) {
+        s.main_size.set(size);
+    }
+
+    #[test]
+    fn a_resize_at_open_delays_the_start_and_the_run_still_plays_whole() {
+        let mut s = running();
+        resize_to(&mut s, [1280.0, 800.0]);
+        present(&mut s);
+        assert!(!poll_at(&mut s, 5.0));
+        // The window manager enlarges it in steps at 40, 80 and 120 ms.
+        for (t, size) in [(5.04, [1400.0, 860.0]), (5.08, [1550.0, 930.0]), (5.12, [1700.0, 1000.0])] {
+            resize_to(&mut s, size);
+            assert!(!poll_at(&mut s, t), "still solid orange at {t}");
+            assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Start));
+        }
+        // LEAD alone has long passed, but the size changed at 5.12.
+        assert!(!poll_at(&mut s, 5.12 + SETTLE - 0.02), "waits for SETTLE after the last change");
+        assert!(poll_at(&mut s, 5.12 + SETTLE), "starts once the size has been still");
+        assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Run));
+        // Played whole from there, unchanged.
+        assert!(!poll_at(&mut s, 5.12 + SETTLE + TOTAL as f64 - 0.01));
+        assert!(poll_at(&mut s, 5.12 + SETTLE + TOTAL as f64));
+        assert!(s.intro.is_none());
+    }
+
+    #[test]
+    fn a_window_that_never_settles_starts_at_the_cap() {
+        let mut s = running();
+        resize_to(&mut s, [1000.0, 700.0]);
+        present(&mut s);
+        poll_at(&mut s, 2.0);
+        let mut t = 2.0;
+        let mut w = 1000.0;
+        while t < 2.0 + MAX_WAIT - 0.05 {
+            t += 0.03;
+            w += 10.0;
+            resize_to(&mut s, [w, 700.0]);
+            assert!(!poll_at(&mut s, t), "waiting at {t}");
+        }
+        assert!(poll_at(&mut s, 2.0 + MAX_WAIT), "the cap");
+    }
+
+    #[test]
+    fn the_first_layout_and_an_unlaid_out_window_are_not_resizes() {
+        let mut s = running();
+        present(&mut s);
+        poll_at(&mut s, 3.0); // main_size is still [0, 0]
+        resize_to(&mut s, [1280.0, 800.0]); // the first real size
+        poll_at(&mut s, 3.03);
+        assert!(s.intro.as_ref().is_some_and(|i| i.changed.is_none()));
+        assert!(poll_at(&mut s, 3.0 + LEAD), "the plain hold");
+    }
+
+    #[test]
+    fn a_resize_mid_run_does_not_cut_the_run_short() {
+        // The run is not restarted or held by a late resize either.
+        let mut s = running();
+        resize_to(&mut s, [1280.0, 800.0]);
+        present(&mut s);
+        poll_at(&mut s, 1.0);
+        assert!(poll_at(&mut s, 1.0 + LEAD));
+        resize_to(&mut s, [1700.0, 1000.0]);
+        assert!(!poll_at(&mut s, 1.0 + LEAD + 0.2));
+        assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Run));
+        assert!(poll_at(&mut s, 1.0 + LEAD + TOTAL as f64));
+        assert!(s.intro.is_none());
+    }
+
+    #[test]
+    fn the_resize_rule_does_not_snap_the_intro() {
+        // `root` lands a window resize's changes at once; the intro is outside it, so a strip
+        // that is mid-slide when the window grows keeps sliding, where it would jump to the end.
+        let mut rt = runtime(live(), false);
+        for _ in 0..42 {
+            rt.frame(1.0 / 60.0); // 0.1 s hold + about 0.6 s of the run
+        }
+        let info = |rt: &rune::Runtime<State>| {
+            rt.elements().into_iter().find(|e| e.key.as_deref() == Some("intro/strip/3")).expect("the strip")
+        };
+        let before = info(&rt);
+        assert!(before.rect != before.target, "mid-slide: {:?} {:?}", before.rect, before.target);
+        rt.set_viewport((1700.0, 1000.0), 1.0);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.intro.is_some(), "still playing");
+        let after = info(&rt);
+        assert!(after.rect != after.target, "not snapped to its end: {:?} {:?}", after.rect, after.target);
+        assert!(after.moving, "its tween runs on");
+        // While the page under it did reflow at once (the rule still holds for `root`).
+        let root = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("root")).expect("root");
+        assert_eq!(root.target[2].round() as i32, 1700);
+    }
+
+    // ---- the geometry follows the window ----
+
+    #[test]
+    fn the_box_covers_the_window_at_any_size_and_shape() {
+        for size in [[1280.0, 800.0], [1700.0, 1000.0], [960.0, 600.0], [2560.0, 1300.0], [900.0, 1400.0], [3440.0, 1440.0]] {
+            let f = Fit::new(size);
+            let (a, b) = (f.pt([0.0, 0.0]), f.pt([VW, VH]));
+            assert!(a[0] <= 0.5 && a[1] <= 0.5 && b[0] >= size[0] - 0.5 && b[1] >= size[1] - 0.5, "{size:?} covered");
+            let m = f.pt([VW / 2.0, VH / 2.0]);
+            assert!((m[0] - size[0] / 2.0).abs() < 1e-3 && (m[1] - size[1] / 2.0).abs() < 1e-3, "centred");
+            // One scale on both axes: a claw keeps its angle.
+            let (p, q) = (f.pt([100.0, 100.0]), f.pt([200.0, 300.0]));
+            assert!(((q[0] - p[0]) / (q[1] - p[1]) - 0.5).abs() < 1e-4, "angle kept");
+        }
+        // The same window: the identity at the design size.
+        assert_eq!(Fit::new([VW, VH]).pt([321.0, 654.0]), [321.0, 654.0]);
+    }
+
+    #[test]
+    fn the_shapes_are_drawn_for_the_current_size_not_the_first() {
+        // The shapes' view box is the window itself (1:1, nothing stretched), at the first
+        // size and after a resize.
+        let mut rt = runtime(live(), false);
+        rt.set_viewport((1700.0, 1000.0), 1.0);
+        rt.frame(1.0 / 60.0);
+        let cover = |rt: &rune::Runtime<State>, key: &str| {
+            rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.target)
+        };
+        for key in ["intro", "intro/strip/0", "intro/slash/1/cut"] {
+            let [x, y, w, h] = cover(&rt, key).expect(key);
+            assert!(x.abs() < 0.5 && y.abs() < 0.5 && (w - 1700.0).abs() < 0.5 && (h - 1000.0).abs() < 0.5, "{key}: {x} {y} {w} {h}");
+        }
     }
 }

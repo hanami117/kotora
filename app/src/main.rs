@@ -44,6 +44,7 @@ mod theme;
 mod tray;
 mod ui;
 mod update;
+mod winsize;
 
 use std::io::Write;
 use std::sync::OnceLock;
@@ -167,13 +168,17 @@ fn main() {
         return;
     }
     rune::set_app_id(APP_ID);
+    // The window opens at `winsize::DEFAULT` cut to the screen; headless keeps 1280×800 (every
+    // snap and script is made for it, and `--size` overrides it).
+    let min_size = (960.0, 600.0);
+    let size = if rune::is_headless() { (1280.0, 800.0) } else { winsize::initial(min_size) };
     let spec = AppSpec::<State> {
         scenes: scenes::SCENES,
         setup: Some(setup),
         poll: Some(ui::poll),
         on_key: Some(ui::on_key),
-        min_size: Some((960.0, 600.0)),
-        ..AppSpec::new("Kotora \u{5c0f}\u{864e}", (1280.0, 800.0), State::fake, ui::view)
+        min_size: Some(min_size),
+        ..AppSpec::new("Kotora \u{5c0f}\u{864e}", size, State::fake, ui::view)
     };
     let app = App::new(spec).tab_visits_controls(true).on_frame_encoded(log_first_frame());
     // macOS: the traffic lights pinned in a band at the sidebar's top (`theme::TRAFFIC_LIGHTS`),

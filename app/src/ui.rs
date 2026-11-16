@@ -43,7 +43,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .fill(PAL.bg);
     let root = if resized { root.instant_changes() } else { root };
-    root
+    let root = root
         .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
@@ -51,9 +51,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children(s.sort_menu.then(|| sort_menu(s)))
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
-        .children(s.toast.as_ref().map(crate::library::toast))
-        // The startup intro covers everything while it plays.
-        .children(crate::intro::overlay(s, cx))
+        .children(s.toast.as_ref().map(crate::library::toast));
+    // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
+    // window resize lands every change inside `root` at once, and that must not cut the intro's
+    // own tweens short (a window manager that enlarges the window as it opens).
+    el().key("shell").w_full().h_full().child(root).children(crate::intro::overlay(s, cx))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
