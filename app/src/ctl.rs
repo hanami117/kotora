@@ -39,11 +39,11 @@ pub fn other_copy_running(show: bool) -> bool {
 fn answer(handle: &Handle, req: Request) -> Reply {
     let status = |r: Result<kotora_ctl::Status, String>| match r {
         Ok(st) => Reply::Status(st),
-        Err(message) => Reply::Error { message },
+        Err(message) => Reply::Error { message, anyway: false },
     };
     let reply = |r: Result<Result<Reply, String>, String>| match r.and_then(|r| r) {
         Ok(reply) => reply,
-        Err(message) => Reply::Error { message },
+        Err(message) => Reply::Error { message, anyway: false },
     };
     match req {
         Request::Status => status(on_ui(handle, false, |s| s.ctl_status())),
@@ -64,20 +64,14 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             status(r)
         }
         Request::List { status: st } => reply(on_ui(handle, false, move |s| list(s, st.as_deref()))),
-        Request::PlusOne { title } => reply(on_ui(handle, true, move |s| {
-            let i = s.find(&title)?;
-            let i = s.plus_one(s.entries[i].id)?;
-            Ok(Reply::Edited { entry: s.entries[i].ctl() })
-        })),
-        Request::Set { title, progress, status: st, score } => reply(on_ui(handle, true, move |s| {
-            let i = s.find(&title)?;
+        Request::PlusOne { title, anyway } => reply(on_ui(handle, true, move |s| plus_one(s, &title, anyway))),
+        Request::Set { title, progress, status: st, score, anyway } => reply(on_ui(handle, true, move |s| {
             let status = match st.as_deref() {
                 Some(name) => Some(parse_status(name)?),
                 None => None,
             };
             let change = Change { status, progress, score: score.map(|n| (n > 0).then_some(n)), ..Default::default() };
-            let i = s.edit(s.entries[i].id, change)?;
-            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+            set(s, &title, change, anyway)
         })),
         Request::Rewatch { title } => reply(on_ui(handle, true, move |s| {
             // A MyAnimeList id, or a part of the title.
@@ -117,7 +111,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Now { now: s.ctl_now() })
         })),
         Request::SetClientId { id } => match kotora_core::config::save_client_id(&kotora_core::paths::config_file(), &id) {
-            Err(message) => Reply::Error { message },
+            Err(message) => Reply::Error { message, anyway: false },
             Ok(id) => {
                 let hint = kotora_core::config::client_id_hint(&id);
                 let auth = crate::online::initial_auth();
@@ -135,14 +129,14 @@ fn answer(handle: &Handle, req: Request) -> Reply {
         Request::Add { query, status: st } => {
             let status = match st.as_deref().map(parse_status).transpose() {
                 Ok(s) => s.unwrap_or(Status::Watching),
-                Err(message) => return Reply::Error { message },
+                Err(message) => return Reply::Error { message, anyway: false },
             };
             match find_online(&query) {
                 Ok(media) => reply(on_ui(handle, true, move |s| {
                     let i = s.add_media(media, status)?;
                     Ok(Reply::Edited { entry: s.entries[i].ctl() })
                 })),
-                Err(message) => Reply::Error { message },
+                Err(message) => Reply::Error { message, anyway: false },
             }
         }
         Request::Sync => reply(on_ui(handle, true, |s| {
@@ -153,6 +147,29 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Status(s.ctl_status()))
         })),
     }
+}
+
+/// `kot +1`: an episode that hasn't aired yet (by the estimate) is held: the reply says so and
+/// `kot` asks "Mark anyway?" (or says to run it again with `--anyway`).
+fn plus_one(s: &mut State, title: &str, anyway: bool) -> Result<Reply, String> {
+    let i = s.find(title)?;
+    let (id, next) = (s.entries[i].id, s.entries[i].progress + 1);
+    if !anyway && let Some(message) = s.not_aired_text(id, &Change { progress: Some(next), ..Default::default() }) {
+        return Ok(Reply::Error { message, anyway: true });
+    }
+    let i = s.plus_one(id)?;
+    Ok(Reply::Edited { entry: s.entries[i].ctl() })
+}
+
+/// `kot set`: as `kot +1`, an episode not aired yet is held. Past the count is refused.
+fn set(s: &mut State, title: &str, change: Change, anyway: bool) -> Result<Reply, String> {
+    let i = s.find(title)?;
+    let id = s.entries[i].id;
+    if !anyway && let Some(message) = s.not_aired_text(id, &change) {
+        return Ok(Reply::Error { message, anyway: true });
+    }
+    let i = s.edit(id, change)?;
+    Ok(Reply::Edited { entry: s.entries[i].ctl() })
 }
 
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
@@ -215,4 +232,35 @@ fn on_ui<T: Send + 'static>(handle: &Handle, redraw: bool, f: impl FnOnce(&mut S
         redraw
     });
     rx.recv_timeout(UI_TIMEOUT).map_err(|_| "Kotora didn't answer in time".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `kot +1` and `kot set` hold an episode that hasn't aired yet; `--anyway` marks it.
+    #[test]
+    fn kot_asks_before_an_episode_not_aired_yet() {
+        let mut s = State::fake();
+        crate::model::airing_entry(&mut s, 0, 5);
+        let p = |s: &State| s.entries.iter().find(|e| e.id == 0).unwrap().progress;
+        match plus_one(&mut s, "Kirigaoka", false) {
+            Ok(Reply::Error { message, anyway: true }) => assert!(message.starts_with("Episode 6 of Lanterns of Kirigaoka hasn't aired yet"), "{message}"),
+            other => panic!("not held: {other:?}"),
+        }
+        assert_eq!(p(&s), 5);
+        assert!(matches!(plus_one(&mut s, "Kirigaoka", true), Ok(Reply::Edited { .. })));
+        assert_eq!(p(&s), 6);
+        let set9 = || Change { progress: Some(9), ..Default::default() };
+        assert!(matches!(set(&mut s, "Kirigaoka", set9(), false), Ok(Reply::Error { anyway: true, .. })));
+        assert_eq!(p(&s), 6);
+        assert!(matches!(set(&mut s, "Kirigaoka", set9(), true), Ok(Reply::Edited { .. })));
+        assert_eq!(p(&s), 9);
+        // Past the count: a plain error, anyway or not.
+        assert!(set(&mut s, "Kirigaoka", Change { progress: Some(13), ..Default::default() }, true).is_err());
+        // An aired episode goes through at once.
+        let mut s = State::fake();
+        crate::model::airing_entry(&mut s, 0, 8);
+        assert!(matches!(plus_one(&mut s, "Kirigaoka", false), Ok(Reply::Edited { .. })));
+    }
 }

@@ -4,6 +4,16 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Not aired yet:** `+1`, the editor and `kot +1` / `kot set` ask "Mark anyway?" for an episode past the airing
+  estimate (`kot`: `--anyway` skips the question). Only the total episode count is a hard limit.
+- **Add as Watching at episode N:** one button on Now Playing's "Not on your list" card adds the anime and
+  records the playing episode in one change.
+
+### Changed
+- **Update automatically asks** instead of recording when the episode would skip one (two or more ahead of your
+  progress) or hasn't aired yet by the estimate. The banner and `kot now` say why.
+
 ## [0.1.0] - date to be set
 
 First release. MyAnimeList only; Linux first, macOS from source.

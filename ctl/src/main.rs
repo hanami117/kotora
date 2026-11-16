@@ -4,8 +4,8 @@
 //! kot            same as `kot status`
 //! kot status     the app's state in two lines
 //! kot list       the Watching list (`kot list all`, `kot list completed`, …)
-//! kot +1 TITLE   one more episode
-//! kot set TITLE EP [--status S] [--score N|none]
+//! kot +1 TITLE [--anyway]   one more episode
+//! kot set TITLE EP [--status S] [--score N|none] [--anyway]
 //! kot queue      changes waiting to sync
 //! kot sync       send the queue now, then read the list again
 //! kot now        what plays, and the episode Kotora offers to record
@@ -38,6 +38,8 @@ Commands:
   +1 TITLE              one more episode of TITLE
   set TITLE EP          set the episodes watched
       [--status STATUS] [--score N|none]
+  --anyway              with +1 and set: mark an episode that hasn't
+                        aired yet (by the estimate) without asking
   queue                 changes waiting to sync
   sync                  send the queue now, then read the list again
   now                   what plays, and the episode Kotora offers
@@ -75,7 +77,13 @@ fn main() -> ExitCode {
         ["list"] => Request::List { status: Some("watching".into()) },
         ["list", "all"] => Request::List { status: None },
         ["list", st] => Request::List { status: Some((*st).to_string()) },
-        ["+1", title @ ..] if !title.is_empty() => Request::PlusOne { title: title.join(" ") },
+        ["+1", rest @ ..] => match parse_plus_one(rest) {
+            Ok(r) => r,
+            Err(m) => {
+                eprintln!("kot: {m} (try kot help)");
+                return ExitCode::from(2);
+            }
+        },
         ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
@@ -109,7 +117,19 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match ask(&req) {
+    let mut reply = ask(&req);
+    // Held: the episode hasn't aired yet by the estimate. Ask on a terminal, else say how.
+    if let Ok(Reply::Error { message, anyway: true }) = &reply {
+        eprintln!("kot: {message}");
+        if !confirm("Mark anyway? [y/N] ") {
+            if !interactive() {
+                eprintln!("kot: run it again with --anyway to mark it.");
+            }
+            return ExitCode::FAILURE;
+        }
+        reply = ask(&with_anyway(req.clone()));
+    }
+    match reply {
         Ok(Reply::Status(st)) => {
             if req == Request::Sync {
                 println!("{}", sync_text(&st));
@@ -142,11 +162,11 @@ fn main() -> ExitCode {
             println!("{message}");
             ExitCode::SUCCESS
         }
-        Ok(Reply::Error { message }) if message.starts_with("bad request") => {
+        Ok(Reply::Error { message, .. }) if message.starts_with("bad request") => {
             eprintln!("kot: this Kotora is older than kot and doesn't know that command; update Kotora");
             ExitCode::FAILURE
         }
-        Ok(Reply::Error { message }) => {
+        Ok(Reply::Error { message, .. }) => {
             eprintln!("kot: {message}");
             ExitCode::FAILURE
         }
@@ -163,6 +183,42 @@ fn main() -> ExitCode {
 
 fn ask(req: &Request) -> io::Result<Reply> {
     Client::connect()?.request(req)
+}
+
+fn interactive() -> bool {
+    use std::io::IsTerminal;
+    io::stdin().is_terminal() && io::stderr().is_terminal()
+}
+
+/// A yes/no question on the terminal; no terminal (a script): no.
+fn confirm(question: &str) -> bool {
+    use std::io::Write;
+    if !interactive() {
+        return false;
+    }
+    eprint!("{question}");
+    let _ = io::stderr().flush();
+    let mut line = String::new();
+    io::stdin().read_line(&mut line).is_ok() && matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// The same request, marked "anyway".
+fn with_anyway(req: Request) -> Request {
+    match req {
+        Request::PlusOne { title, .. } => Request::PlusOne { title, anyway: true },
+        Request::Set { title, progress, status, score, .. } => Request::Set { title, progress, status, score, anyway: true },
+        other => other,
+    }
+}
+
+/// `+1 TITLE… [--anyway]`.
+fn parse_plus_one(words: &[&str]) -> Result<Request, String> {
+    let anyway = words.contains(&"--anyway");
+    let title: Vec<&str> = words.iter().copied().filter(|w| *w != "--anyway").collect();
+    if title.is_empty() {
+        return Err("+1 needs a title".into());
+    }
+    Ok(Request::PlusOne { title: title.join(" "), anyway })
 }
 
 /// Two lines: the version, then the account and the list.
@@ -189,7 +245,7 @@ fn status_text(st: &Status) -> String {
 
 /// `set TITLE… [EP] [--status S] [--score N|none]`: the last bare number is the episode.
 fn parse_set(words: &[&str]) -> Result<Request, String> {
-    let (mut title, mut progress, mut status, mut score) = (Vec::new(), None, None, None);
+    let (mut title, mut progress, mut status, mut score, mut anyway) = (Vec::new(), None, None, None, false);
     let mut i = 0;
     while i < words.len() {
         match words[i] {
@@ -205,6 +261,7 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
                 });
                 i += 1;
             }
+            "--anyway" => anyway = true,
             w => title.push(w),
         }
         i += 1;
@@ -222,7 +279,7 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
     if progress.is_none() && status.is_none() && score.is_none() {
         return Err("set needs an episode number, --status or --score".into());
     }
-    Ok(Request::Set { title: title.join(" "), progress, status, score })
+    Ok(Request::Set { title: title.join(" "), progress, status, score, anyway })
 }
 
 /// `add QUERY… [--status S]`.
@@ -318,6 +375,9 @@ fn now_text(now: Option<&NowInfo>) -> String {
         (None, Some(ep)) => format!("  Episode {ep} is offered once it counts as watched (kot confirm records it now).\n"),
         (None, None) => "  Nothing to record.\n".into(),
     });
+    if let (None, Some(note)) = (n.recorded, &n.note) {
+        out.push_str(&format!("  {note}\n"));
+    }
     out
 }
 
@@ -360,18 +420,33 @@ mod tests {
     fn set_reads_the_title_and_the_episode() {
         assert_eq!(
             parse_set(&["Lanterns", "of", "Kirigaoka", "6"]),
-            Ok(Request::Set { title: "Lanterns of Kirigaoka".into(), progress: Some(6), status: None, score: None })
+            Ok(Request::Set { title: "Lanterns of Kirigaoka".into(), progress: Some(6), status: None, score: None, anyway: false })
         );
         assert_eq!(
             parse_set(&["Neon", "Ronin", "2099", "--status", "completed", "--score", "9"]),
-            Ok(Request::Set { title: "Neon Ronin".into(), progress: Some(2099), status: Some("completed".into()), score: Some(9) }),
+            Ok(Request::Set { title: "Neon Ronin".into(), progress: Some(2099), status: Some("completed".into()), score: Some(9), anyway: false }),
             "a number at the end is the episode; the app refuses one past the end"
         );
-        assert_eq!(parse_set(&["86", "--score", "none"]), Ok(Request::Set { title: "86".into(), progress: None, status: None, score: Some(0) }));
+        assert_eq!(parse_set(&["86", "--score", "none"]), Ok(Request::Set { title: "86".into(), progress: None, status: None, score: Some(0), anyway: false }));
         assert!(parse_set(&["Neon"]).is_err());
         assert!(parse_set(&["6"]).is_err(), "a lone number is a title with nothing to set");
         assert!(parse_set(&["Neon", "--score", "11"]).is_err());
         assert!(parse_set(&["Neon", "--status"]).is_err());
+    }
+
+    #[test]
+    fn anyway_marks_an_episode_not_aired_yet() {
+        assert_eq!(parse_plus_one(&["Lanterns", "--anyway"]), Ok(Request::PlusOne { title: "Lanterns".into(), anyway: true }));
+        assert_eq!(parse_plus_one(&["Neon", "Ronin"]), Ok(Request::PlusOne { title: "Neon Ronin".into(), anyway: false }));
+        assert!(parse_plus_one(&["--anyway"]).is_err());
+        assert!(parse_plus_one(&[]).is_err());
+        assert_eq!(
+            parse_set(&["Lanterns", "9", "--anyway"]),
+            Ok(Request::Set { title: "Lanterns".into(), progress: Some(9), status: None, score: None, anyway: true })
+        );
+        // A held request is sent again as it was, plus "anyway".
+        let set = Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, anyway: false };
+        assert_eq!(with_anyway(set), Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, anyway: true });
     }
 
     #[test]
@@ -463,6 +538,8 @@ mod tests {
             now_text(Some(&n)),
             "Playing in mpv (IPC socket, 82%): Lanterns of Kirigaoka episode 6\n  [Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv\n  In your list (Watching), sure\n  Update to episode 6? kot confirm\n"
         );
+        let skip = NowInfo { offer: Some(8), episode: Some(8), note: Some("Skips episode 7: Kotora asks before it records.".into()), ..n.clone() };
+        assert!(now_text(Some(&skip)).ends_with("  Update to episode 8? kot confirm\n  Skips episode 7: Kotora asks before it records.\n"));
         assert!(now_text(Some(&NowInfo { recorded: Some(6), ..n.clone() })).ends_with("Recorded episode 6.\n"));
         assert!(now_text(Some(&NowInfo { offer: None, ..n })).ends_with("Nothing to record.\n"));
     }

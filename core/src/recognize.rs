@@ -446,5 +446,11 @@ pub fn offer(item: &ListItem, episode: Option<u32>) -> Option<u32> {
     Some(ep)
 }
 
+/// The episodes a record of `episode` would skip (the first and the last), when it is two or more
+/// ahead of the progress: "Update automatically" asks then instead of recording.
+pub fn skipped(progress: u32, episode: u32) -> Option<(u32, u32)> {
+    (episode > progress.saturating_add(1)).then(|| (progress + 1, episode - 1))
+}
+
 #[cfg(test)]
 mod tests;

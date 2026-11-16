@@ -164,6 +164,16 @@ fn offers_only_a_new_episode() {
     assert_eq!(offer(&re, Some(3)), Some(3));
 }
 
+#[test]
+fn a_record_two_or_more_ahead_skips_episodes() {
+    assert_eq!(skipped(5, 6), None, "the next episode");
+    assert_eq!(skipped(5, 5), None);
+    assert_eq!(skipped(5, 3), None, "a rewatch going back");
+    assert_eq!(skipped(5, 7), Some((6, 6)));
+    assert_eq!(skipped(0, 4), Some((1, 3)));
+    assert_eq!(skipped(u32::MAX, 3), None);
+}
+
 /// Upstream anitomy's own test data, when given: `KOTORA_ANITOMY_DATA=/path/to/data.json
 /// cargo test -p kotora-core anitomy_upstream -- --ignored --nocapture`. Prints how many file names
 /// get the title and episode upstream expects. Not in the repo (it holds real release names).

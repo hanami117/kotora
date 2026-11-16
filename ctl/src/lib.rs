@@ -151,8 +151,13 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<String>,
     },
-    /// One more episode of the entry whose title matches. Replies `Edited`.
-    PlusOne { title: String },
+    /// One more episode of the entry whose title matches. Replies `Edited`; an episode that
+    /// hasn't aired yet (by the estimate) replies `Error` with `anyway` unless `anyway` is set.
+    PlusOne {
+        title: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        anyway: bool,
+    },
     /// Sets the progress, status or score of the entry whose title matches. Replies `Edited`.
     Set {
         title: String,
@@ -164,6 +169,9 @@ pub enum Request {
         /// 1-10; 0 removes the score.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         score: Option<u8>,
+        /// Mark an episode that hasn't aired yet without asking (as `PlusOne`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        anyway: bool,
     },
     /// The sync queue. Replies `Queue`.
     Queue,
@@ -197,7 +205,13 @@ pub enum Request {
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum Reply {
     Status(Status),
-    Error { message: String },
+    /// `anyway`: the request was held, not refused: the same request with `anyway` set does it
+    /// ("Episode 9 … hasn't aired yet").
+    Error {
+        message: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        anyway: bool,
+    },
     List { entries: Vec<Entry> },
     /// The entry after an edit; the change waits in the queue.
     Edited { entry: Entry },
@@ -256,6 +270,10 @@ pub struct NowInfo {
     /// The episode Update would record.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offer: Option<u32>,
+    /// Why the offer asks even with "Update automatically" on: "Skips episode 5", "Episode 9
+    /// hasn't aired yet (expected …)".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// The episode counts as watched (the banner shows).
     pub reached: bool,
     /// The episode recorded from here.
@@ -425,7 +443,7 @@ fn connection(stream: UnixStream, handler: &(dyn Fn(Request) -> Reply + Send + S
         }
         let reply = match serde_json::from_str::<Request>(&line) {
             Ok(req) => handler(req),
-            Err(e) => Reply::Error { message: format!("bad request: {e}") },
+            Err(e) => Reply::Error { message: format!("bad request: {e}"), anyway: false },
         };
         let Ok(mut out) = serde_json::to_string(&reply) else { return };
         out.push('\n');

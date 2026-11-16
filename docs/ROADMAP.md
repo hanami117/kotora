@@ -442,6 +442,19 @@ Third batch (2026-11-15, user-approved): merges and rewatching.
     `list_status{num_times_rewatched}` field syntax on the list. Tested with recorded-shape JSON only.
 - [ ] Live test of the third batch by the user (rewatch writes need the user's OK on their account).
 
+- [x] Safer updates (2026-11-16, branch `safer-updates`):
+  - Not aired yet: an episode past the airing estimate (`airing::not_aired`: the timetable moved
+    forward by the progress; a not-yet-aired show with no timetable counts as nothing aired) asks
+    "Mark anyway?" from `+1`, the editor and `kot +1` / `kot set` (`--anyway`, or a y/N question on a
+    terminal). The protocol: `anyway` on the two requests and on `Error` (held, not refused). Past
+    the total episode count stays a hard error. Finished shows and shows with no slot time never ask.
+  - Update automatically asks (never records) when the episode skips one (`recognize::skipped`) or
+    hasn't aired yet; the banner, the notification and `kot now` say why.
+  - "Add as Watching at episode N" on the "Not on your list" card: one queued add with the progress
+    (`Store::add_to_list(.., progress, ..)`), and the banner shows it recorded, with Undo.
+  - Scenes: `list-plus-one-not-aired`, `list-editor-not-aired`, `now-playing-offer-skip`,
+    `now-playing-offer-not-aired`, `now-playing-not-on-list-added`.
+
 Decided in this stage (easy to change):
 - The list page's box filters the whole list, not only the page's status, once it holds a query; the
   chips hide while it does. Clearing it brings the status page back. MyAnimeList is searched only

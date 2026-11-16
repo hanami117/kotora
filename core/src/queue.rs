@@ -476,14 +476,17 @@ impl Store {
 
     /// Search and add: puts `media` on the saved list with `status` and queues the add, in one
     /// transaction. Completed starts at the last episode (when the count is known), anything else
-    /// at 0. An anime already on the list gets a status change instead. Returns the queued
+    /// at `progress` (Now Playing's "Add as Watching at episode N": add and record in one change)
+    /// or 0. An anime already on the list gets a status (and progress) change instead. Returns the queued
     /// change's id (`None`: nothing to send).
-    pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, now: i64) -> Result<Option<i64>> {
+    pub fn add_to_list(&mut self, service: &str, media: &Media, status: Status, progress: Option<u32>, now: i64) -> Result<Option<i64>> {
         if entry_values(&self.conn, service, media.id)?.is_some() {
-            return self.enqueue(service, media.id, Change { status: Some(status), ..Default::default() }, now);
+            return self.enqueue(service, media.id, Change { status: Some(status), progress, ..Default::default() }, now);
         }
-        let progress = match (status, media.episodes) {
-            (Status::Completed, Some(n)) => n,
+        let progress = match (status, media.episodes, progress) {
+            (Status::Completed, Some(n), _) => n,
+            (_, Some(n), Some(p)) => p.min(n),
+            (_, None, Some(p)) => p,
             _ => 0,
         };
         let tx = self.conn.transaction()?;

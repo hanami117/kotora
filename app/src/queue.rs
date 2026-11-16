@@ -28,8 +28,8 @@ const SERVICE: &str = "mal";
 #[derive(Clone, Debug)]
 pub enum Cmd {
     Edit { media_id: u32, change: Change },
-    /// Put an anime on the list (search and add).
-    Add { media: Media, status: Status },
+    /// Put an anime on the list (search and add), at `progress` when given.
+    Add { media: Box<Media>, status: Status, progress: Option<u32> },
     /// Send what waits now (no backoff wait); `refresh`: read the whole list afterwards.
     Kick { refresh: bool },
     KeepMine(i64),
@@ -96,7 +96,7 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
     let media = |store: &Store, id: i64| store.queue(SERVICE, now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| o.media_id);
     let r = match cmd {
         Cmd::Edit { media_id, change } => store.enqueue(SERVICE, media_id, change, now).map(|_| Some(media_id)),
-        Cmd::Add { media, status } => store.add_to_list(SERVICE, &media, status, now).map(|_| Some(media.id)),
+        Cmd::Add { media, status, progress } => store.add_to_list(SERVICE, &media, status, progress, now).map(|_| Some(media.id)),
         Cmd::Kick { refresh: r } => {
             *refresh |= r;
             store.retry_now(SERVICE).map(|_| None)

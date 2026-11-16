@@ -57,6 +57,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.query.focused = true;
         return true;
     }
+    if k.key == rune::Key::Escape && s.ask.is_some() {
+        s.ask = None;
+        return true;
+    }
     if k.key == rune::Key::Escape && s.editor.is_some() {
         s.editor = None;
         return true;
@@ -341,7 +345,42 @@ fn main(s: &State, wide: bool, width: f32) -> El {
     } else if s.precise_banner() {
         m = m.child(crate::precise::banner(s));
     }
+    if let Some(a) = &s.ask {
+        m = m.child(ask_bar(a));
+    }
     m.child(col().grow(1.0).min_h(0.0).w_full().child(page))
+}
+
+/// "Mark anyway?": an edit by hand (`+1`, the editor) of an episode that hasn't aired yet by the
+/// estimate waits here. Escape or Cancel drops it.
+fn ask_bar(a: &crate::model::Ask) -> El {
+    row()
+        .key("ask")
+        .mx(theme::PAGE_PAD)
+        .mt(14.0)
+        .px(14.0)
+        .py(10.0)
+        .gap(12.0)
+        .center_y()
+        .radius(theme::R_LG)
+        .fill(mix(PAL.bg, PAL.warn(), 0.10))
+        .border(1.0, PAL.warn().alpha(0.45))
+        .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.warn()))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(3.0)
+                .child(text(a.question.clone()).key("ask/question").font(theme::BODY).color(PAL.text).wrap())
+                .child(text("Times are estimated from MyAnimeList's weekly slot.").font(theme::LABEL).color(PAL.dim)),
+        )
+        .child(text("Mark anyway?").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
+        .child(button("ask/anyway", "Mark anyway", true, Some(|s: &mut State| {
+            if let Err(m) = s.mark_anyway() {
+                s.error = Some(m);
+            }
+        })))
+        .child(button("ask/cancel", "Cancel", false, Some(|s: &mut State| s.ask = None)))
 }
 
 /// The page's top bar: title, count, and (on the list) search and sort.
@@ -779,7 +818,7 @@ pub(crate) fn plus_button(id: u32) -> El {
         .hover_group()
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
-            if let Err(m) = s.plus_one(id) {
+            if let Err(m) = s.plus_one_or_ask(id) {
                 s.error = Some(m);
             }
         })
@@ -1705,14 +1744,27 @@ fn banner(s: &State) -> El {
     let ep = s.offer().map_or(0, |(_, ep)| ep);
     let total = s.offer().and_then(|(i, _)| s.entries[i].episodes).map_or("?".to_string(), |n| n.to_string());
     let matched = if n.sure() { "Matched in your list" } else { "Not sure it's this one" };
-    let small = [pct.as_deref(), Some(matched)].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+    // Skips an episode, or not aired yet by the estimate: said here, and never recorded by itself.
+    // For a sure match the note takes the place of "Matched in your list".
+    let note = s.offer_note();
+    let matched = if note.is_some() && n.sure() { None } else { Some(matched) };
+    let small = [pct.as_deref(), matched].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+    let small = match note {
+        Some(note) => row()
+            .min_w(0.0)
+            .gap(6.0)
+            .child(text(small).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0))
+            .child(text("\u{b7}").font(theme::LABEL).color(PAL.dim))
+            .child(text(note).key("banner/note").font(theme::LABEL).color(PAL.warn()).truncate().min_w(0.0)),
+        None => row().min_w(0.0).child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
+    };
     b.child(
         col()
             .grow(1.0)
             .min_w(0.0)
             .gap(3.0)
             .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
-            .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
+            .child(small),
     )
     .child(text(format!("Update to {ep} / {total}?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
     .child(button("banner/update", "Update", true, Some(|s: &mut State| {
@@ -1982,9 +2034,16 @@ fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
     }
 }
 
-fn not_on_list_card(id: u32, title: &str, relation: Option<&str>) -> El {
+fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Option<u32>) -> El {
+    let (say, add) = match episode {
+        Some(ep) => (
+            format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it as Watching and record episode {ep} in one change."),
+            format!("Add as Watching at episode {ep}"),
+        ),
+        None => (format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."), "Add as Watching".to_string()),
+    };
     let mut c = card("np-not-on-list", "Not on your list").child(
-        text(format!("MyAnimeList knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."))
+        text(say)
             .font(theme::LABEL)
             .color(PAL.dim)
             .wrap(),
@@ -2002,7 +2061,7 @@ fn not_on_list_card(id: u32, title: &str, relation: Option<&str>) -> El {
             row()
                 .gap(8.0)
                 .mt(12.0)
-                .child(action("np/add".into(), "Add as Watching", true, |s, _| s.add_playing()))
+                .child(action("np/add".into(), &add, true, |s, _| s.add_playing()))
                 .child(crate::details::details_ghost(crate::details::Stub::bare(id, title))),
         )
 }
@@ -2039,7 +2098,7 @@ fn now_page(s: &State, wide: bool) -> El {
         } else if matches!(n.found, Found::List { sure: false, .. }) && n.recorded.is_none() {
             side = side.child(unsure_card(s, n));
         } else if let Found::NotOnList { media_id, title } = &n.found {
-            side = side.child(not_on_list_card(*media_id, title, n.relation.as_deref()));
+            side = side.child(not_on_list_card(*media_id, title, n.relation.as_deref(), n.episode().filter(|ep| *ep > 0)));
         }
     }
     side = side.child(players_status_card(s));
