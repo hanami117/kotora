@@ -38,31 +38,43 @@ What should work
 - kot.exe (see above).
 - Library folders (Settings, Library): add a folder with Choose... or type its path
   (D:\Anime), then "Play next episode" opens the file in your default player, mpv or VLC.
-- Detection, two ways (both need a one-time setup, see below):
-    mpv  through its IPC pipe
-    VLC  through its web interface
+- Detection with no setup: open a video in mpv, mpv.net, MPC-HC, MPC-BE, VLC or PotPlayer
+  and Kotora shows it on Now Playing within about 5 seconds. It reads the player's window
+  title and the command line it was started with. It does not know how far in you are
+  (PotPlayer excepted), so it offers the update once the file has been open for 15 minutes
+  (Settings, Detection, "Count a file after it stays open"), and it always asks first.
+- Precise detection (the real position and pause), one click each in Settings, Detection:
+    mpv, mpv.net     "Turn on" adds one line to the player's mpv.conf
+    MPC-HC, MPC-BE   "Turn on" switches on the player's web interface
+    VLC              type the password of its web interface
+    PotPlayer        nothing to do
 
 
-Player setup
-------------
-mpv: add this line to %APPDATA%\mpv\mpv.conf (make the file if there is none):
+Precise detection
+-----------------
+mpv and mpv.net: Settings, Detection, under mpv: Turn on. Kotora adds the line
     input-ipc-server=\\.\pipe\mpvsocket
-Then restart mpv. Kotora looks for the pipe every 3 seconds.
-(A portable mpv with its own portable_config folder: put the line in that mpv.conf.)
+to the mpv.conf of the player that is running: %APPDATA%\mpv.net\mpv.conf for mpv.net,
+%APPDATA%\mpv\mpv.conf for mpv, or portable_config\mpv.conf beside a portable player
+(Scoop's mpv too). A missing file is made. An existing file is first copied to
+mpv.conf.kotora-backup and then only added to; a line that is already there is left alone.
+Kotora shows what it wrote. Close the player and open it again once.
+
+MPC-HC and MPC-BE: close the player, then Settings, Detection, under MPC-HC / MPC-BE:
+Turn on. Kotora sets the player's own "web interface" setting (on, this computer only).
+Or by hand in the player: View, Options, Player, Web Interface, tick "Listen on port".
+A portable copy that keeps its settings in an .ini file needs the by-hand way.
 
 VLC: Tools, Preferences, Show settings "All", Interface, Main interfaces: tick "Web".
-Then Main interfaces, Lua: set a password under "Lua HTTP". Restart VLC. Then quit
-Kotora, open %APPDATA%\kotora\config.toml in Notepad (make the file if there is none),
-add these two lines with your password, and start Kotora again:
-    [vlc]
-    password = "your password"
+Then Main interfaces, Lua: set a password under "Lua HTTP". Restart VLC. Then type the same
+password in Kotora: Settings, Detection, VLC web interface, Save.
 
 
 What does not work yet
 ----------------------
-- Detection with no setup. On Linux and macOS Kotora sees the file a player has open by
-  itself; on Windows this is not written yet. MPC-HC, MPC-BE, PotPlayer and other players
-  are not seen at all.
+- Detection without setup has limits: a file with a title of its own inside (not its file
+  name) may show under that title; a player started with a custom window title is not
+  seen; other players than the six above are not seen at all.
 - Desktop notifications (toasts). The banner inside the window still shows.
 - Start at login (the switch in Settings is greyed out).
 - The update check (this build never looks for a newer version).
