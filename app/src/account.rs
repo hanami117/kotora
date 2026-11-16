@@ -59,7 +59,7 @@ pub fn open_for(id: ServiceId) -> Option<Service> {
     tokens.load(id.name())?;
     match id {
         ServiceId::Mal => {
-            let cid = Config::load(&paths::config_file()).ok()?.mal_client_id?;
+            let cid = Config::load(&paths::config_file()).ok()?.effective_client_id(ServiceId::Mal)?;
             Some(Box::new(Mal::new(Client::new(cid, UreqTransport::default()), tokens)))
         }
         // AniList needs its Client ID only to sign in: the token works alone.

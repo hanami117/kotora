@@ -26,7 +26,7 @@ use crate::ui::{alert, button, ghost};
 /// The wizard's steps, in order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Step {
-    /// "Which service do you use?" (not numbered, not in [`Step::ALL`]).
+    /// "Which service do you use?" (not numbered, in no list of [`Step::all`]).
     Service,
     #[default]
     Welcome,
@@ -37,19 +37,27 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 5] = [Step::Welcome, Step::Create, Step::Paste, Step::SignIn, Step::Done];
+    /// Registering your own client: Welcome, Create, Paste, Sign in, Done.
+    const OWN_ID: [Step; 5] = [Step::Welcome, Step::Create, Step::Paste, Step::SignIn, Step::Done];
+    /// A service with a Client ID built in (AniList): no Create or Paste.
+    const BUILT_IN: [Step; 3] = [Step::Welcome, Step::SignIn, Step::Done];
 
-    /// 1 to 5; 0 for the service choice.
-    pub fn number(self) -> usize {
-        Step::ALL.iter().position(|s| *s == self).map_or(0, |i| i + 1)
+    /// The numbered steps for `svc`: a service with a built-in Client ID skips registering one.
+    pub fn all(svc: ServiceId) -> &'static [Step] {
+        if svc.built_in_client_id().is_some() { &Step::BUILT_IN } else { &Step::OWN_ID }
     }
 
-    fn next(self) -> Step {
-        Step::ALL.get(self.number()).copied().unwrap_or(Step::Done)
+    /// 1 to the last; 0 for the service choice.
+    pub fn number(self, svc: ServiceId) -> usize {
+        Step::all(svc).iter().position(|s| *s == self).map_or(0, |i| i + 1)
     }
 
-    fn prev(self) -> Step {
-        Step::ALL[self.number().saturating_sub(2)]
+    fn next(self, svc: ServiceId) -> Step {
+        Step::all(svc).get(self.number(svc)).copied().unwrap_or(Step::Done)
+    }
+
+    fn prev(self, svc: ServiceId) -> Step {
+        Step::all(svc)[self.number(svc).saturating_sub(2)]
     }
 }
 
@@ -65,7 +73,11 @@ fn sign_in_problem(svc: ServiceId, e: &str) -> Option<(String, String)> {
     if e.contains("refused") || e.contains("denied") {
         return Some((
             format!("{name} said no"),
-            format!("The sign-in was denied. Try again and allow it, so Kotora can read and update your list. If it keeps failing, check that your {}'s redirect URL is exactly the one from step 2.", if svc == ServiceId::AniList { "client" } else { "app" }),
+            if svc.built_in_client_id().is_some() {
+                "The sign-in was denied. Try again and approve it, so Kotora can read and update your list.".to_string()
+            } else {
+                format!("The sign-in was denied. Try again and allow it, so Kotora can read and update your list. If it keeps failing, check that your {}'s redirect URL is exactly the one from step 2.", if svc == ServiceId::AniList { "client" } else { "app" })
+            },
         ));
     }
     Some(("Sign-in failed".into(), e.to_string()))
@@ -99,6 +111,11 @@ impl State {
             crate::account::set_active(id);
             self.auth = online::initial_auth();
             self.client_id.hint = crate::clientid::saved_hint(id);
+            // A built-in Client ID means the list pages no longer show the wizard by themselves.
+            if self.page != Page::Setup {
+                self.setup_back = self.page;
+                self.page = Page::Setup;
+            }
             std::thread::spawn(move || {
                 if let Err(e) = kotora_core::config::save_service(&kotora_core::paths::config_file(), id.name()) {
                     eprintln!("kotora: {e}");
@@ -137,7 +154,7 @@ impl State {
             return;
         }
         if self.setup_can_go_on() {
-            self.setup = self.setup.next();
+            self.setup = self.setup.next(self.service);
             if self.setup == Step::Paste && self.client_id.hint.is_none() {
                 self.client_id.draft.focused = true;
             }
@@ -157,7 +174,7 @@ impl State {
     }
 
     pub fn setup_prev(&mut self) {
-        self.setup = if self.setup == Step::Welcome && self.setup_service { Step::Service } else { self.setup.prev() };
+        self.setup = if self.setup == Step::Welcome && self.setup_service { Step::Service } else { self.setup.prev(self.service) };
     }
 
     /// Next is enabled: a saved ID to leave Paste, an account to leave Sign in.
@@ -183,17 +200,18 @@ impl Page {
 // ---------------------------------------------------------------------------------------- view
 
 /// "Step 2 of 5" and five bars, the done ones orange.
-fn indicator(step: Step) -> El {
-    let n = step.number();
+fn indicator(step: Step, svc: ServiceId) -> El {
+    let n = step.number(svc);
+    let total = Step::all(svc).len();
     let mut bars = row().gap(4.0);
-    for i in 1..=Step::ALL.len() {
+    for i in 1..=total {
         bars = bars.child(el().w(28.0).h(4.0).radius(2.0).fill(if i <= n { PAL.accent } else { PAL.border }));
     }
     row()
         .key("setup/indicator")
         .gap(12.0)
         .center_y()
-        .child(text(format!("Step {n} of {}", Step::ALL.len())).font(theme::LABEL_NUM).color(PAL.dim))
+        .child(text(format!("Step {n} of {total}")).font(theme::LABEL_NUM).color(PAL.dim))
         .child(bars)
 }
 
@@ -319,7 +337,11 @@ fn welcome(s: &State) -> El {
     };
     c.child(text(if s.setup_service { format!("Set up {name}") } else { "Welcome to Kotora".to_string() }).font(TextStyle::new(28.0, 600.0)).color(PAL.text).wrap())
         .child(para(&format!("Kotora keeps your {name} list up to date while you watch. It notices the episode playing in your own video player and asks before it records it.")))
-        .child(para(&format!("You need two things: a {name} account, and a free \u{201c}Client ID\u{201d}. {register}; it takes about 2 minutes, and the next steps show you how.")))
+        .child(if s.service.built_in_client_id().is_some() {
+            para(&format!("All you need is a {name} account. Kotora signs you in through {name}'s own page in your browser: one click to approve, then you are back here."))
+        } else {
+            para(&format!("You need two things: a {name} account, and a free \u{201c}Client ID\u{201d}. {register}; it takes about 2 minutes, and the next steps show you how."))
+        })
         .child(text(format!("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with {name}.")).font(theme::LABEL).color(PAL.faint).wrap())
 }
 
@@ -541,9 +563,10 @@ fn sign_in(s: &State) -> El {
             );
         }
         if s.service == ServiceId::AniList {
-            // A client registered with AniList's PIN page shows the token there instead.
+            // If the page can't come back to Kotora (a busy port, a blocked loopback), the address
+            // it ended on holds the token; a client registered with the PIN page shows it there.
             wait = wait
-                .child(text("AniList showed you a token instead? Paste it here:").font(theme::LABEL).color(PAL.dim).wrap())
+                .child(text("The page didn\u{2019}t come back here? Paste the address your browser ended on, or the token AniList showed:").font(theme::LABEL).color(PAL.dim).wrap())
                 .child(token_field(s, "setup/token"));
         }
         return c.child(wait);
@@ -561,6 +584,9 @@ fn sign_in(s: &State) -> El {
                 .child(text(head).font(theme::BODY_MED).color(PAL.err()).wrap())
                 .child(text(why).font(theme::LABEL).color(PAL.text).wrap()),
         );
+    }
+    if s.service == ServiceId::AniList && s.error.as_deref().and_then(|e| sign_in_problem(s.service, e)).is_some() {
+        c = c.child(text("Or paste the address your browser ended on, or the token AniList showed:").font(theme::LABEL).color(PAL.dim).wrap()).child(token_field(s, "setup/token"));
     }
     let label = if s.error.as_deref().and_then(|e| sign_in_problem(s.service, e)).is_some() { "Try again".to_string() } else { format!("Sign in with {name}") };
     c.child(row().mt(4.0).child(button("setup/sign-in", &label, true, Some(online::sign_in)).h(36.0).px(16.0)))
@@ -630,7 +656,7 @@ pub fn page(s: &State, width: f32) -> El {
     };
     let mut head = row().gap(12.0).center_y();
     if step != Step::Service {
-        head = head.child(indicator(step));
+        head = head.child(indicator(step, s.service));
     }
     head = head.child(spacer());
     if s.setup_closable() && step != Step::Done {
@@ -648,7 +674,7 @@ pub fn page(s: &State, width: f32) -> El {
     };
     foot = foot.child(button("setup/next", label, true, can.then_some(State::setup_next as fn(&mut State))));
     let mut card = col()
-        .key(if step == Step::Service { "setup/service".to_string() } else { format!("setup/{}", step.number()) })
+        .key(if step == Step::Service { "setup/service".to_string() } else { format!("setup/{}", step.number(s.service)) })
         .w_full()
         .min_w(0.0)
         .max_w(680.0)
@@ -741,7 +767,7 @@ mod tests {
         let mut s = first_run();
         s.setup_service = true;
         s.setup = s.setup_first();
-        assert_eq!((s.setup, s.setup.number()), (Step::Service, 0));
+        assert_eq!((s.setup, s.setup.number(s.service)), (Step::Service, 0));
         assert!(s.handle.is_none(), "tests and scenes never write the config file");
         s.choose_service(ServiceId::Mal);
         assert_eq!(s.setup, Step::Welcome);
@@ -767,24 +793,21 @@ mod tests {
     }
 
     #[test]
-    fn the_anilist_card_sets_up_anilist() {
+    fn the_anilist_card_goes_straight_to_sign_in() {
         let mut s = first_run();
         s.setup_service = true;
         s.setup = s.setup_first();
         s.choose_service(ServiceId::AniList);
         assert_eq!((s.setup, s.service), (Step::Welcome, ServiceId::AniList));
+        // Kotora's own Client ID is built in: three steps, no Create or Paste.
+        assert_eq!(Step::all(ServiceId::AniList), [Step::Welcome, Step::SignIn, Step::Done]);
+        assert_eq!(Step::all(ServiceId::Mal).len(), 5);
+        assert_eq!((Step::Welcome.number(ServiceId::AniList), Step::SignIn.number(ServiceId::AniList), Step::Done.number(ServiceId::AniList)), (1, 2, 3));
         s.setup_next();
-        assert_eq!(s.setup, Step::Create);
-        // A Client ID is a number on AniList: a MyAnimeList-shaped one is refused.
-        s.setup_next();
-        s.client_id.draft.replace_text("0123456789abcdef0123456789abcdef".to_string());
-        s.save_client_id();
-        assert!(s.client_id.error.as_deref().is_some_and(|e| e.contains("a number")));
-        s.client_id.draft.replace_text("12345".to_string());
-        s.save_client_id();
-        assert_eq!(s.client_id.error, None);
-        s.apply(Msg::ClientIdSaved(Ok(("2345".into(), Auth::SignedOut))));
         assert_eq!(s.setup, Step::SignIn);
+        s.setup_prev();
+        assert_eq!(s.setup, Step::Welcome);
+        s.setup_next();
         // The words are AniList's.
         assert!(sign_in_problem(ServiceId::AniList, "AniList refused the sign-in (access_denied)").is_some_and(|(h, _)| h == "AniList said no"));
         // A bad paste says why and keeps waiting.
@@ -795,6 +818,19 @@ mod tests {
         assert_eq!(s.auth, Auth::SigningIn);
         s.apply(Msg::SignedIn { user: "demo_user".into(), picture: None });
         assert_eq!((s.setup, s.account.as_ref().map(|a| a.1)), (Step::Done, Some("AniList")));
+    }
+
+    #[test]
+    fn a_built_in_id_means_no_missing_client_id() {
+        // Without a saved ID, AniList (built in) is signed out, not "no Client ID".
+        let cfg = kotora_core::config::Config::default();
+        assert!(cfg.has_client_id(ServiceId::AniList) && !cfg.has_client_id(ServiceId::Mal));
+        let mut s = State::fake();
+        s.service = ServiceId::AniList;
+        s.auth = Auth::SignedOut;
+        s.setup = Step::SignIn;
+        s.go(Page::Setup);
+        assert!(s.setup_closable(), "nothing to register first");
     }
 
     #[test]

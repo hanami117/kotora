@@ -201,7 +201,7 @@ const SPECS: &[Spec] = &[
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
     spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in. Or switch to it.", "mal myanimelist account service sign in sign out log in login logout user switch use"),
-    spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app or AniList API client. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
+    spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
     spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", "VLC on the Mac reports through its web interface, with a password.", "vlc web interface http password lua config.toml"),

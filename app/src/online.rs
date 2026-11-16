@@ -39,7 +39,7 @@ pub fn initial_auth() -> Auth {
 /// in, so a saved AniList token is enough.
 pub fn auth_for(id: ServiceId) -> Auth {
     let cfg = Config::load(&paths::config_file()).unwrap_or_default();
-    let has_id = cfg.client_id(id).is_some();
+    let has_id = cfg.has_client_id(id);
     match (id, account::has_token(id), has_id) {
         (ServiceId::AniList, true, _) | (ServiceId::Mal, true, true) => Auth::SignedIn,
         (_, _, true) => Auth::SignedOut,
@@ -100,7 +100,7 @@ fn sync_now(h: &Handle, mut store: Store) {
     let Some(mut service) = account::open() else {
         let fail = match Config::load(&paths::config_file()) {
             Err(e) => Fail::Other(e),
-            Ok(c) if active == ServiceId::Mal && c.mal_client_id.is_none() => Fail::Other("No MyAnimeList Client ID in config.toml.".into()),
+            Ok(c) if active == ServiceId::Mal && !c.has_client_id(ServiceId::Mal) => Fail::Other("No MyAnimeList Client ID in config.toml.".into()),
             Ok(_) => Fail::SignInAgain,
         };
         return send(h, Msg::SyncFailed(fail));
@@ -271,9 +271,22 @@ fn save_account(id: ServiceId, user: &User) -> Result<(String, Option<String>), 
 /// posts the token back. A client registered with AniList's PIN page instead shows the token
 /// there, to paste ([`sign_in_with_token`]).
 fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
-    let id = Config::load(&paths::config_file())?.anilist_client_id.ok_or("No AniList Client ID in config.toml.")?;
-    let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for AniList's reply: {e}", mal::PORT))?;
+    let id = Config::load(&paths::config_file())?.effective_client_id(ServiceId::AniList).ok_or("No AniList Client ID.")?;
     let url = anilist::authorize_url(&id);
+    let listener = match loopback::bind() {
+        Ok(l) => l,
+        Err(e) => {
+            // The port is busy: the page still opens, and the address it ends on (or a token)
+            // can be pasted. Pasting ends this wait.
+            let opened = open_browser(&url).is_ok();
+            send_link(h, seq, url, opened);
+            let until = std::time::Instant::now() + SIGN_IN_TIMEOUT;
+            while !cancel.load(Ordering::Relaxed) && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            return Err(if cancel.load(Ordering::Relaxed) { "sign-in cancelled".to_string() } else { format!("Can't listen on port {} for AniList's reply: {e}", mal::PORT) });
+        }
+    };
     let opened = open_browser(&url).is_ok();
     send_link(h, seq, url, opened);
     let posted = loopback::wait_for_token(&listener, SIGN_IN_TIMEOUT, cancel)?;
@@ -283,7 +296,7 @@ fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Op
 }
 
 fn sign_in_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
-    let id = Config::load(&paths::config_file())?.mal_client_id.ok_or("No MyAnimeList Client ID in config.toml.")?;
+    let id = Config::load(&paths::config_file())?.effective_client_id(ServiceId::Mal).ok_or("No MyAnimeList Client ID in config.toml.")?;
     // Bind first: if the port is busy there is no point in opening the browser.
     let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for MyAnimeList's reply: {e}", mal::PORT))?;
     let pkce = Pkce::new().map_err(|e| format!("Can't make a sign-in code: {e}"))?;

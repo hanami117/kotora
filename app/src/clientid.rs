@@ -191,10 +191,22 @@ pub fn settings_row(s: &State) -> El {
         .gap(2.0)
         .child(text(format!("{} Client ID", s.service.title())).font(theme::BODY_MED).color(PAL.text))
         .child(match &f.hint {
+            None if s.service.built_in_client_id().is_some() => text("Kotora\u{2019}s own: nothing to set up").key("set/cid-built-in").font(theme::LABEL).color(PAL.dim),
             Some(h) => text(format!("{}{h}", "\u{2022}".repeat(12))).key("set/cid-masked").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim),
             None => text("Not set: Sign in needs one").font(theme::LABEL).color(PAL.warn()),
         });
     if !f.editing {
+        // Advanced: with a built-in ID the sign-in needs nothing; "Use my own client ID" is for
+        // someone who registered their own client (or whose sign-in the built-in one blocks).
+        if s.service.built_in_client_id().is_some() && f.hint.is_none() {
+            return row()
+                .key("set/cid")
+                .gap(8.0)
+                .py(10.0)
+                .center_y()
+                .child(head)
+                .child(small_button("set/cid-change", "Use my own client ID\u{2026}", false, Some(State::edit_client_id)));
+        }
         let label = if f.hint.is_some() { "Change" } else { "Set" };
         return row()
             .key("set/cid")
@@ -214,7 +226,7 @@ pub fn settings_row(s: &State) -> El {
     let note = match (s.service, s.account.is_some()) {
         (ServiceId::Mal, true) => "A new ID needs a new sign-in: MyAnimeList asks again when the current one runs out.",
         (ServiceId::Mal, false) => "From myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback.",
-        (ServiceId::AniList, true) => "Your sign-in keeps working; a new ID is used at the next sign-in.",
+        (ServiceId::AniList, true) => "Advanced. Your sign-in keeps working; your own ID is used at the next sign-in.",
         (ServiceId::AniList, false) => "From anilist.co/settings/developer: a client with the redirect URL http://127.0.0.1:47321/callback.",
     };
     c = c.child(text(note).font(theme::LABEL).color(PAL.faint).wrap());
