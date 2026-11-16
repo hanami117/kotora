@@ -188,7 +188,9 @@ pub fn season_text(season: Option<&(u16, String)>) -> Option<String> {
 pub struct MyEntry {
     pub status: String,
     pub progress: u32,
-    pub score: Option<u8>,
+    /// On the 100-point scale (saved details from before 0.2.1 are moved there by the
+    /// schema 12 migration).
+    pub score: Option<crate::Score>,
     pub rewatching: bool,
     /// Finished rewatches (older saved details have none: 0).
     #[serde(default)]
@@ -310,6 +312,9 @@ pub struct Profile {
     /// ISO date or date-time ("2019-03-02T10:20:30+00:00").
     pub joined: Option<String>,
     pub stats: Option<AnimeStats>,
+    /// How the user scores (AniList's list setting; MyAnimeList is always 1-10). Read with
+    /// every sign-in and sync.
+    pub score_format: crate::ScoreFormat,
 }
 
 /// The service's own count of the user's anime (MAL `anime_statistics`).
@@ -363,7 +368,8 @@ pub trait ListService {
     fn get_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError>;
     /// Sends one change and returns the entry as the service saved it.
     fn update_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError>;
-    /// Removes one anime from the list. Nothing in the app asks for it yet.
+    /// Removes one anime from the list ("Remove from list", through the queue). Not on the list
+    /// there: nothing to do, `Ok`.
     fn delete_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
         Err(ServiceError::Other(format!("{} can't remove entries in Kotora yet", self.title())))
     }
@@ -426,6 +432,14 @@ pub trait ListService {
             Kind::Manga => self.update_manga_entry(media_id, change),
         }
     }
+    /// Removes one entry of a list of `kind` (anime only for now: Kotora has no manga UI).
+    fn delete_entry_of(&mut self, kind: Kind, media_id: u32) -> Result<(), ServiceError> {
+        match kind {
+            Kind::Anime => self.delete_entry(media_id),
+            Kind::Manga => Err(ServiceError::Other(format!("{} manga entries can't be removed in Kotora yet", self.title()))),
+        }
+    }
+
     /// The search bar's search in `kind`.
     fn browse_of(&mut self, kind: Kind, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         match kind {

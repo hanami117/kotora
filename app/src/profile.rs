@@ -20,8 +20,8 @@ use crate::ui::{AVATAR_ID, card, hex, small_button};
 pub fn score_spread(entries: &[Entry]) -> [u32; 10] {
     let mut n = [0u32; 10];
     for e in entries {
-        if let Some(sc @ 1..=10) = e.score {
-            n[usize::from(sc) - 1] += 1;
+        if let Some(sc) = e.score {
+            n[usize::from(sc.to_ten()) - 1] += 1;
         }
     }
     n
@@ -230,6 +230,7 @@ pub fn fake() -> Profile {
     Profile {
         joined: Some("2019-03-02T10:20:30+00:00".into()),
         stats: Some(AnimeStats { days: 63.1, episodes: 3790, mean_score: 7.62, rewatched: 4, watching: 11, completed: 236, on_hold: 7, dropped: 2, plan_to_watch: 48 }),
+        ..Profile::default()
     }
 }
 
@@ -245,16 +246,18 @@ mod tests {
         }
         assert_eq!(score_spread(&s.entries), [0; 10]);
         assert_eq!(spread_mean(&[0; 10]), None);
-        let scores = [Some(8), Some(8), Some(10), Some(1), None, Some(7)];
+        let ten = kotora_core::score::ten;
+        let scores = [ten(8), ten(8), ten(10), ten(1), None, ten(7)];
         for (e, sc) in s.entries.iter_mut().zip(scores) {
             e.score = sc;
         }
         let n = score_spread(&s.entries);
         assert_eq!(n, [1, 0, 0, 0, 0, 0, 1, 2, 0, 1]);
         assert!((spread_mean(&n).unwrap() - 34.0 / 5.0).abs() < 1e-9);
-        // A score out of range (never from MAL) is left out rather than miscounted.
-        s.entries[4].score = Some(11);
-        assert_eq!(score_spread(&s.entries).iter().sum::<u32>(), 5);
+        // An AniList 73 counts as a 7, a 4 as a 1.
+        s.entries[4].score = kotora_core::Score::from_points(73);
+        s.entries[5].score = kotora_core::Score::from_points(4);
+        assert_eq!(score_spread(&s.entries), [2, 0, 0, 0, 0, 0, 1, 2, 0, 1]);
     }
 
     #[test]

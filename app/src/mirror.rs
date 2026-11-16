@@ -26,7 +26,7 @@ use kotora_core::queue::{self, Op, OpState, Step};
 use kotora_core::service::{ListService, ServiceError, ServiceId};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::{ListItem, Status, Values, paths};
+use kotora_core::{ListItem, ScoreFormat, Status, Values, paths};
 use rune::{El, col, el, row, text};
 
 use crate::model::{Handle, State};
@@ -52,6 +52,9 @@ pub struct MirrorUi {
     pub edits: Vec<WebEdit>,
     pub waits: Vec<Wait>,
     pub synced_at: Option<i64>,
+    /// How the mirror service shows scores (AniList: the saved profile's format; MyAnimeList:
+    /// 1-10).
+    pub fmt: ScoreFormat,
     /// The mirror service's last problem (offline, sign in again), in plain words.
     pub trouble: Option<String>,
     pub worker: Arc<Worker>,
@@ -138,6 +141,7 @@ struct Snapshot {
     edits: Vec<WebEdit>,
     waits: Vec<Wait>,
     synced_at: Option<i64>,
+    fmt: ScoreFormat,
 }
 
 fn snapshot(store: &Store) -> Snapshot {
@@ -149,6 +153,10 @@ fn snapshot(store: &Store) -> Snapshot {
         edits: store.web_edits().unwrap_or_default(),
         waits: store.mirror_waits().unwrap_or_default(),
         synced_at: to.and_then(|t| store.synced_at(t).ok().flatten()),
+        fmt: match link.map(|l| l.to) {
+            Some(ServiceId::AniList) => store.profile(ServiceId::AniList.name()).ok().flatten().map(|p| p.score_format).unwrap_or_default(),
+            _ => ScoreFormat::Point10,
+        },
     }
 }
 
@@ -159,6 +167,7 @@ fn report(h: &Handle, snap: Snapshot, trouble: Option<Option<String>>) {
         s.mirror.edits = snap.edits;
         s.mirror.waits = snap.waits;
         s.mirror.synced_at = snap.synced_at;
+        s.mirror.fmt = snap.fmt;
         if let Some(t) = trouble {
             s.mirror.trouble = t;
         }
@@ -539,7 +548,7 @@ pub fn settings_row(s: &State) -> El {
         c = c.child(text(e.clone()).key("set/mirror-error").font(theme::LABEL).color(PAL.status(Status::Dropped)).wrap().pb(12.0));
     }
     if let Some(p) = &m.preview {
-        c = c.child(preview(p));
+        c = c.child(preview(p, (fmt_of(s, p.p.link.main), fmt_of(s, p.p.link.to))));
     }
     c
 }
@@ -562,7 +571,16 @@ fn on_note(s: &State) -> String {
     parts.join(" ")
 }
 
-fn values_text(v: &Values) -> String {
+/// How `svc` shows scores: the active service's format, the mirror's saved one, MyAnimeList's 1-10.
+fn fmt_of(s: &State, svc: ServiceId) -> ScoreFormat {
+    match svc {
+        ServiceId::Mal => ScoreFormat::Point10,
+        _ if svc == s.service => s.score_format(),
+        _ => s.mirror.fmt,
+    }
+}
+
+fn values_text(v: &Values, fmt: ScoreFormat) -> String {
     let mut t = v.status.label().to_string();
     if v.rewatching {
         t.push_str(", rewatching");
@@ -571,12 +589,12 @@ fn values_text(v: &Values) -> String {
         t.push_str(&format!(", episode {}", v.progress));
     }
     if let Some(sc) = v.score {
-        t.push_str(&format!(", score {sc}"));
+        t.push_str(&format!(", score {}", fmt.words(sc)));
     }
     t
 }
 
-fn preview(prev: &Prev) -> El {
+fn preview(prev: &Prev, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
     use kotora_core::listxml::Verdict;
     let p = &prev.p;
     let (main, to) = (p.link.main.title(), p.link.to.title());
@@ -594,15 +612,15 @@ fn preview(prev: &Prev) -> El {
             .child(count_pill("set/mirror-same", c.same, "the same", PAL.status(Status::Completed)))
             .child(count_pill("set/mirror-unmatched", c.unmatched, "not mirrored", PAL.faint)),
     );
-    let only_main: Vec<String> = p.plan.rows.iter().filter(|r| r.verdict == Verdict::New).map(|r| format!("{}: {}", r.title(), r.entry.values().map(|v| values_text(&v)).unwrap_or_default())).collect();
+    let only_main: Vec<String> = p.plan.rows.iter().filter(|r| r.verdict == Verdict::New).map(|r| format!("{}: {}", r.title(), r.entry.values().map(|v| values_text(&v, fm)).unwrap_or_default())).collect();
     if !only_main.is_empty() {
         box_ = box_.child(group("set/mirror-list-only-main", format!("Only on {main}"), only_main));
     }
-    let only_mirror: Vec<String> = p.only_mirror.iter().map(|o| format!("{}: {}", o.item.media.title, values_text(&o.item.values()))).collect();
+    let only_mirror: Vec<String> = p.only_mirror.iter().map(|o| format!("{}: {}", o.item.media.title, values_text(&o.item.values(), ft))).collect();
     if !only_mirror.is_empty() {
         box_ = box_.child(group("set/mirror-list-only-mirror", format!("Only on {to}"), only_mirror));
     }
-    let diff: Vec<String> = p.merge.iter().map(|r| format!("{}: {main} {} \u{b7} {to} {}", r.title, values_text(&r.main), values_text(&r.mirror))).collect();
+    let diff: Vec<String> = p.merge.iter().map(|r| format!("{}: {main} {} \u{b7} {to} {}", r.title, values_text(&r.main, fm), values_text(&r.mirror, ft))).collect();
     if !diff.is_empty() {
         box_ = box_.child(group("set/mirror-list-different", "On both, different".into(), diff));
     }
@@ -696,8 +714,8 @@ pub fn in_queue(s: &State) -> bool {
     s.mirror.has_queue_items()
 }
 
-fn saved_text(v: Option<&mirror::Saved>, removed: &str) -> String {
-    v.map_or_else(|| removed.to_string(), |v| values_text(&v.values()))
+fn saved_text(v: Option<&mirror::Saved>, removed: &str, fmt: ScoreFormat) -> String {
+    v.map_or_else(|| removed.to_string(), |v| values_text(&v.values(), fmt))
 }
 
 /// The Queue page's mirror part: website edits, conflicts, then waiting, failed and sent.
@@ -705,6 +723,7 @@ pub fn queue_section(s: &State) -> El {
     let m = &s.mirror;
     let Some(link) = m.link else { return el() };
     let (main, to) = (link.main.title(), link.to.title());
+    let fmts = (fmt_of(s, link.main), fmt_of(s, link.to));
     let now = s.clock();
     let mut c = col().key("queue-mirror").gap(14.0).mx(theme::PAGE_PAD);
     let mut head = row().gap(8.0).center_y().child(text(format!("{to} mirror")).font(theme::SECTION).color(PAL.text));
@@ -716,10 +735,10 @@ pub fn queue_section(s: &State) -> El {
         c = c.child(crate::ui::alert("queue-mirror/trouble", PAL.warn(), t.clone(), None).mb(0.0));
     }
     for e in &m.edits {
-        c = c.child(web_edit_card(e, main, to, now));
+        c = c.child(web_edit_card(e, main, to, now, fmts));
     }
     for op in m.ops.iter().filter(|o| o.state == OpState::Conflict) {
-        c = c.child(conflict_card(op, main, to));
+        c = c.child(conflict_card(op, main, to, fmts));
     }
     let mut list = col().key("queue-mirror-list").px(16.0).py(6.0).radius(theme::R_LG).fill(PAL.surface).border(1.0, PAL.border);
     let mut any = false;
@@ -737,7 +756,7 @@ pub fn queue_section(s: &State) -> El {
         any = true;
         list = list.child(text(label.to_uppercase()).key(format!("qmh/{key}")).font(theme::CAPTION).color(PAL.faint).pt(12.0).pb(4.0));
         for op in ops {
-            list = list.child(op_row(op, now));
+            list = list.child(op_row(op, now, fmts.1));
         }
     }
     if !m.waits.is_empty() {
@@ -762,9 +781,9 @@ pub fn queue_section(s: &State) -> El {
     c
 }
 
-fn op_row(op: &Op, now: i64) -> El {
+fn op_row(op: &Op, now: i64, fmt: ScoreFormat) -> El {
     let id = op.id;
-    let mut what = col().gap(2.0).grow(1.0).min_w(0.0).child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
+    let mut what = col().gap(2.0).grow(1.0).min_w(0.0).child(text(kotora_core::queue::describe_op_with(op, fmt)).font(theme::LABEL_NUM).color(PAL.text));
     match (&op.error, op.state) {
         (Some(e), OpState::Failed) => what = what.child(text(e.clone()).font(theme::LABEL).color(PAL.status(Status::Dropped)).truncate()),
         (Some(e), OpState::Queued) => what = what.child(text(format!("{e}; Kotora tries again by itself")).font(theme::LABEL).color(PAL.faint).truncate()),
@@ -823,7 +842,7 @@ fn card(key: String, title: String, why: String, sides: El, foot: Option<El>) ->
 }
 
 /// An entry changed, added or removed on the mirror's website.
-fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64) -> El {
+fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
     let mal = e.mal_id;
     let k = format!("mirror-edit/{mal}");
     let settle = |how: Settle| move |s: &mut State, _: &mut rune::Tx| send(s, Cmd::Settle(mal, how));
@@ -835,19 +854,28 @@ fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64) -> El {
     };
     let sides = row()
         .gap(12.0)
-        .child(side(format!("{k}/main"), main.to_string(), saved_text(e.main.as_ref(), "Not on the list"), use_main.map(|l| action(format!("{k}/use-main"), &l, true, settle(Settle::UseMain))), true))
-        .child(side(format!("{k}/mirror"), to.to_string(), saved_text(e.mirror.as_ref(), "Removed"), use_mirror.map(|l| action(format!("{k}/use-mirror"), &l, false, settle(Settle::UseMirror))), false));
+        .child(side(format!("{k}/main"), main.to_string(), saved_text(e.main.as_ref(), "Not on the list", fm), use_main.map(|l| action(format!("{k}/use-main"), &l, true, settle(Settle::UseMain))), true))
+        .child(side(format!("{k}/mirror"), to.to_string(), saved_text(e.mirror.as_ref(), "Removed", ft), use_mirror.map(|l| action(format!("{k}/use-mirror"), &l, false, settle(Settle::UseMirror))), false));
     let foot = row().child(action(format!("{k}/leave"), "Leave both as they are", false, settle(Settle::Leave)));
     card(k, format!("{to}: {}", e.title), why, sides, Some(foot))
 }
 
 /// A mirrored change whose entry changed on the mirror's website after Kotora's last look.
-fn conflict_card(op: &Op, main: &str, to: &str) -> El {
+fn conflict_card(op: &Op, main: &str, to: &str, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
     let id = op.id;
     let k = format!("mirror-conflict/{id}");
-    let mine = values_text(&op.mine());
+    if op.removed {
+        // A mirrored Remove from list, and the entry changed on the mirror's website since.
+        let theirs = op.remote.as_ref().map_or_else(|| "Removed".to_string(), |r| values_text(&r.values, ft));
+        let sides = row()
+            .gap(12.0)
+            .child(side(format!("{k}/mine"), format!("Removed from your {main} list"), format!("Was {}", values_text(&op.old, ft)), Some(action(format!("{k}/keep"), "Remove anyway", true, move |s, _| send(s, Cmd::KeepMine(id)))), true))
+            .child(side(format!("{k}/theirs"), to.to_string(), theirs, Some(action(format!("{k}/take"), &format!("Keep it on {to}"), false, move |s, _| send(s, Cmd::TakeTheirs(id)))), false));
+        return card(k, format!("{to}: {}", op.title), format!("{to} changed after you removed it. Kotora didn\u{2019}t remove it there. Pick one."), sides, None);
+    }
+    let mine = values_text(&op.mine(), fm);
     let (theirs, take) = match &op.remote {
-        Some(r) => (values_text(&r.values), format!("Keep {to}\u{2019}s")),
+        Some(r) => (values_text(&r.values, ft), format!("Keep {to}\u{2019}s")),
         None => ("Removed".to_string(), "Leave it removed".to_string()),
     };
     let sides = row()
@@ -946,7 +974,7 @@ pub fn fake_on(s: &mut State) {
     for (n, (i, state, change)) in [
         (0, OpState::Conflict, kotora_core::Change { progress: Some(4), ..Default::default() }),
         (1, OpState::Queued, kotora_core::Change { progress: Some(7), ..Default::default() }),
-        (2, OpState::Failed, kotora_core::Change { score: Some(Some(8)), ..Default::default() }),
+        (2, OpState::Failed, kotora_core::Change { score: Some(kotora_core::score::ten(8)), ..Default::default() }),
         (3, OpState::Done, kotora_core::Change { status: Some(Status::Completed), ..Default::default() }),
     ]
     .into_iter()
@@ -971,8 +999,9 @@ pub fn fake_on(s: &mut State) {
             next_try: 0,
             error: (state == OpState::Failed).then(|| "Validation error: score".to_string()),
             sent_at: (state == OpState::Done).then_some(now - 300),
-            remote: (state == OpState::Conflict).then_some(kotora_core::Remote { values: Values { score: Some(3), ..old }, updated_at: now - 900 }),
+            remote: (state == OpState::Conflict).then_some(kotora_core::Remote { values: Values { score: kotora_core::score::ten(3), ..old }, updated_at: now - 900 }),
             added: false,
+            removed: false,
         });
     }
     s.mirror.ops = ops;

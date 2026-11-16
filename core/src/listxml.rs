@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
 use crate::model::{Change, ListItem, Media, Values};
+use crate::score::Score;
 use crate::service::ServiceId;
 use crate::store::Store;
 use crate::{Kind, Status};
@@ -49,8 +50,9 @@ pub struct XmlEntry {
     /// `None`: a status Kotora doesn't know.
     pub status: Option<Status>,
     pub watched: u32,
-    /// 1-10; `None`: 0 (not scored) or missing.
-    pub score: Option<u8>,
+    /// The file's `my_score` (1-10) on the 100-point scale (`Score::from_ten`); `None`: 0 (not
+    /// scored) or missing. Written back with `Score::to_ten`.
+    pub score: Option<Score>,
     /// `my_start_date`, `None` for `0000-00-00`.
     pub start_date: Option<String>,
     pub finish_date: Option<String>,
@@ -165,7 +167,7 @@ fn read_entry(n: roxmltree::Node) -> XmlEntry {
         status: status_from_xml(&raw_status),
         raw_status,
         watched: num(n, "my_watched_episodes"),
-        score: (1..=10).contains(&score).then_some(score as u8),
+        score: if (1..=10).contains(&score) { Score::from_ten(score) } else { None },
         start_date: date("my_start_date"),
         finish_date: date("my_finish_date"),
         times_watched: num(n, "my_times_watched"),
@@ -340,7 +342,7 @@ pub fn write(user_name: &str, rows: &[ExportRow]) -> String {
         x.push_str(&format!("\t\t<my_start_date>{}</my_start_date>\n", xml_date(r.start.as_deref())));
         x.push_str(&format!("\t\t<my_finish_date>{}</my_finish_date>\n", xml_date(r.finish.as_deref())));
         x.push_str("\t\t<my_rated></my_rated>\n");
-        x.push_str(&format!("\t\t<my_score>{}</my_score>\n", it.score.unwrap_or(0)));
+        x.push_str(&format!("\t\t<my_score>{}</my_score>\n", it.score.map_or(0, Score::to_ten)));
         x.push_str("\t\t<my_storage></my_storage>\n");
         x.push_str("\t\t<my_storage_value>0.00</my_storage_value>\n");
         x.push_str(&format!("\t\t<my_status>{}</my_status>\n", status_to_xml(it.status)));
@@ -528,7 +530,7 @@ pub(crate) fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Ch
         times_rewatched: Some(v.times_rewatched),
         volumes: None,
     }
-    .without_same(cur);
+    .without_same_ten(cur);
     if same_slot {
         let v = Values { progress: cur.progress.max(file.progress), ..keep_mine };
         return (change_to(v), None, change_to(v));
@@ -580,7 +582,7 @@ pub fn plan(file: &XmlList, service: &str, list: &[ListItem], mapped: &HashMap<u
             row.target = Some(it.media.id);
             row.media = Some(it.media.clone());
             row.current = Some(cur);
-            let same = cur.status == want.status && cur.progress == want.progress && cur.score == want.score && cur.rewatching == want.rewatching && cur.times_rewatched == want.times_rewatched;
+            let same = cur.status == want.status && cur.progress == want.progress && Score::same_ten(cur.score, want.score) && cur.rewatching == want.rewatching && cur.times_rewatched == want.times_rewatched;
             if same {
                 row.verdict = Verdict::Same;
             } else {

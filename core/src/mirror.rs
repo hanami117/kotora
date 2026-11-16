@@ -19,8 +19,8 @@
 //!   changed there after Kotora's last look stops as a conflict in the mirror's queue (the
 //!   queue's own check), and the mirror's sync ([`sync_mirror`]) lists entries changed, added or
 //!   removed there as [`WebEdit`]s for the user to settle ([`Store::settle_web_edit`]).
-//! - Nothing is ever removed from either list: Kotora has no remove yet, and an entry only on the
-//!   mirror stays there in every choice.
+//! - Nothing is ever removed from the mirror: an entry only on the mirror stays there in every
+//!   choice, and Remove from list on the main list is not mirrored.
 //! - A failure on one side never blocks the other: each service has its own queue and its own
 //!   worker, and only the user's own entries and edits are sent.
 //!
@@ -40,7 +40,7 @@ use crate::listxml::{self, Action, Plan, StatusConflict, Verdict, XmlEntry, XmlL
 use crate::queue::{discard_tx, enqueue_tx, entry_values, import_tx, open_ops};
 use crate::service::{ListService, ServiceError, ServiceId};
 use crate::store::{Result, Store, StoreError};
-use crate::{Change, Kind, ListItem, Media, Scope, Status, Values};
+use crate::{Change, Kind, ListItem, Media, Score, Scope, Status, Values};
 
 const LINK: &str = "mirror:link";
 const WAITS: &str = "mirror:waits";
@@ -93,9 +93,10 @@ fn add_change(v: &Values) -> Change {
     }
 }
 
-/// The same list values (anime: volumes don't count).
+/// The same list values (anime: volumes don't count; scores compared on the 1-10 scale, so a
+/// MyAnimeList 7 and an AniList 73 are the same).
 pub fn same(a: &Values, b: &Values) -> bool {
-    full(a).without_same(b).is_empty()
+    full(a).without_same_ten(b).is_empty()
 }
 
 /// Values as the `kv` lists keep them.
@@ -103,7 +104,8 @@ pub fn same(a: &Values, b: &Values) -> bool {
 pub struct Saved {
     pub status: String,
     pub progress: u32,
-    pub score: Option<u8>,
+    /// 100-point scale (as the store keeps it).
+    pub score: Option<Score>,
     pub rewatching: bool,
     pub times: u32,
 }
@@ -295,6 +297,9 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
     }
     let Some(mal) = mal_id_tx(tx, link.main, media_id)? else { return Ok(()) };
     let after = entry_values(tx, sc, media_id)?.map(|(v, _)| v);
+    if before.is_none() && after.is_none() {
+        return Ok(());
+    }
     let to = Scope::new(link.to.name(), Kind::Anime);
     let Some(after) = after else {
         // The entry left the main list (a discarded add): what it queued for the mirror and
@@ -320,7 +325,15 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
     let episodes: Option<u32> = tx.query_row("SELECT episodes FROM media WHERE service = ?1 AND kind = 'anime' AND id = ?2", params![sc.service, media_id], |r| r.get(0)).optional()?.flatten();
     match id_on(tx, link.to, mal)? {
         Some(mid) if entry_values(tx, to, mid)?.is_some() => {
-            enqueue_tx(tx, to, mid, change, now)?;
+            // A score that is the same on the mirror's scale doesn't go (a MyAnimeList 7 and an
+            // AniList 73).
+            let change = match entry_values(tx, to, mid)? {
+                Some((cur, _)) => change.without_same_ten(&cur),
+                None => change,
+            };
+            if !change.is_empty() {
+                enqueue_tx(tx, to, mid, change, now)?;
+            }
         }
         Some(mid) => {
             // Not on the mirror: added there with the main entry's values.
@@ -482,7 +495,7 @@ impl Store {
                         let to = Scope::new(link.to.name(), Kind::Anime);
                         match entry_values(&tx, to, m.id)? {
                             Some((cur, _)) => {
-                                enqueue_tx(&tx, to, m.id, add_change(&v).without_same(&cur), now)?;
+                                enqueue_tx(&tx, to, m.id, add_change(&v).without_same_ten(&cur), now)?;
                             }
                             None => add_to_mirror(&tx, to.service, m, &v, now)?,
                         }
@@ -810,12 +823,12 @@ pub fn align_actions(p: &Preview, align: Align, mirror_status: &HashSet<u32>) ->
             Align::MainWins => r.main,
             _ => r.merged(mirror_status.contains(&r.mal_id)),
         };
-        let c = full(&target).without_same(&r.mirror);
+        let c = full(&target).without_same_ten(&r.mirror);
         if !c.is_empty() {
             to.push(Action::Update { media_id: r.mirror_id, change: c });
         }
         if align == Align::Merge {
-            let c = full(&target).without_same(&r.main);
+            let c = full(&target).without_same_ten(&r.main);
             if !c.is_empty() {
                 main.push(Action::Update { media_id: r.main_id, change: c });
             }

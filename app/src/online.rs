@@ -557,7 +557,7 @@ mod tests {
             fn user(&mut self) -> Result<kotora_core::service::User, ServiceError> {
                 self.0 += 1;
                 let stats = kotora_core::service::AnimeStats { completed: self.0, ..Default::default() };
-                let profile = kotora_core::service::Profile { joined: Some("2019-03-02".into()), stats: Some(stats) };
+                let profile = kotora_core::service::Profile { joined: Some("2019-03-02".into()), stats: Some(stats), ..Default::default() };
                 Ok(kotora_core::service::User { name: "demo_user".into(), picture: Some(format!("https://cdn.example.invalid/u.jpg?t={}", self.0)), profile })
             }
             fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {

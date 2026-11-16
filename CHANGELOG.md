@@ -22,8 +22,33 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   and you choose when statuses disagree), or don't align (only new edits). From then on every change you make in
   Kotora, and every edit made on the main service's website, also goes to the other list through its own queue at
   its own pace; a failure on one side never holds up the other. Edits made on the mirror's website are never
-  overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Nothing is ever removed
-  from either list. Anime only; AniList entries without a MyAnimeList id are listed as not mirrored.
+  overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Scores are compared on
+  MyAnimeList's 1 to 10 scale, so a MyAnimeList 7 and an AniList 73 count as the same and neither is rounded.
+  Nothing is ever removed from the other list. Anime only; AniList entries without a MyAnimeList id are listed
+  as not mirrored.
+- **Remove from list:** in an entry's right-click menu, on its details page and as `kot remove TITLE` (or its
+  id). Kotora asks first, then the anime leaves your list at once and the removal waits in the sync queue like
+  any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
+  it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
+  instead of deleting it: Remove anyway, or Keep it.
+- **The list filter searches online when nothing matches:** type a title that isn't on your list in the list's
+  filter box (Ctrl F) and, after a short pause, MyAnimeList's or AniList's results show right under "No match in
+  your list". Open one for its details, or add it with + Watching. It searches like the Search page does
+  (3 letters or more, the same pause and rate limit, answers kept for a while), and not at all while something on
+  your list matches.
+
+### Changed
+- **Scores in your AniList score format:** the list, the posters, the editor, the details page, the Score menu
+  and `kot` show and set scores the way you score on AniList: 100 points (73), 10 points with a decimal (7.3),
+  10 points, 5 stars or 3 smileys. Kotora reads the format from your AniList settings with each sync.
+  `kot set TITLE --score 7.3` (or `73`, `***`, `:)`) takes it the same way. MyAnimeList stays 1 to 10.
+- **kotora-bin is built by the release workflow:** a tag push builds the Linux tarball in an Arch container,
+  adds it and its checksum to the release, and (after approval) updates kotora-bin on the AUR.
+
+### Fixed
+- **AniList scores keep their precision.** A 73 was saved as 7 and could go back to AniList as 70. Kotora now
+  keeps every score on AniList's 100-point scale, and picking the score that already shows (4 stars for a 73)
+  changes nothing. The saved list is upgraded on first start (a copy, `kotora.db.schema-11.bak`, is kept beside it).
 
 ## [0.2.0] - 2026-11-16
 

@@ -35,6 +35,10 @@ pub enum Cmd {
     Import(Vec<kotora_core::listxml::Action>),
     /// Takes back an import's changes that still wait.
     UndoImport(Vec<i64>),
+    /// Remove from list: off the saved list, the removal queued.
+    Remove { media_id: u32 },
+    /// Undo of a removal that hasn't left: its queued removal is discarded.
+    UndoRemove { media_id: u32 },
 }
 
 /// The worker's mailbox. `slot` holds the sender while a worker thread runs.
@@ -145,6 +149,17 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
         }
         // Handled by `transfer`.
         Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
+        Cmd::Remove { media_id } => store.remove_from_list(crate::account::name(), media_id, now).map(|_| Some(media_id)),
+        Cmd::UndoRemove { media_id } => {
+            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kotora_core::Kind::Anime && o.state.is_open()));
+            match waiting {
+                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| Some(media_id)),
+                // Too late: the run loop's snapshot of the entry takes it off the list again.
+                _ => {
+                    return Err(format!("It was already removed on {}. Add it again from Search.", crate::account::active().title()));
+                }
+            }
+        }
     };
     r.map_err(|e| e.to_string())
 }
@@ -184,10 +199,15 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                 touched.extend(transfer(h, &mut store, cmd));
                 continue;
             }
+            let undo = if let Cmd::UndoRemove { media_id } = &cmd { Some(*media_id) } else { None };
             match apply(&mut store, cmd, &mut refresh) {
                 Ok(Some(id)) => touched.push(id),
                 Ok(None) => {}
-                Err(m) => report(h, Msg::QueueError(m)),
+                Err(m) => {
+                    // An Undo too late: the entry the UI put back goes again.
+                    touched.extend(undo);
+                    report(h, Msg::QueueError(m));
+                }
             }
         }
         if !touched.is_empty() {

@@ -3,6 +3,7 @@
 use std::io::Write as _;
 
 use super::*;
+use crate::score::ten;
 use crate::queue::{self, Outcome, Step};
 use crate::service::{Details, ListService, MyEntry, ServiceError};
 use crate::{Remote, Scope};
@@ -23,7 +24,7 @@ fn item(m: Media, v: Values) -> ListItem {
     ListItem { media: m, status: v.status, progress: v.progress, score: v.score, rewatching: v.rewatching, times_rewatched: v.times_rewatched, volumes: 0, updated_at: 100 }
 }
 
-fn vals(status: Status, progress: u32, score: Option<u8>) -> Values {
+fn vals(status: Status, progress: u32, score: Option<Score>) -> Values {
     Values::new(status, progress, score)
 }
 
@@ -39,7 +40,7 @@ fn reads_a_mal_export_plain_and_gzipped() {
     assert_eq!(plain.user_name.as_deref(), Some("demo_user"));
     assert_eq!(plain.entries.len(), 9);
     let h = by_id(&plain, 1001);
-    assert_eq!((h.title.as_str(), h.series_type.as_str(), h.episodes, h.watched, h.score), ("Harbor Lights", "TV", Some(12), 5, Some(7)));
+    assert_eq!((h.title.as_str(), h.series_type.as_str(), h.episodes, h.watched, h.score), ("Harbor Lights", "TV", Some(12), 5, ten(7)));
     assert_eq!((h.start_date.as_deref(), h.finish_date.as_deref()), (Some("2026-10-02"), None), "0000-00-00 is no date");
     assert_eq!(h.status, Some(Status::Watching));
 }
@@ -69,7 +70,7 @@ fn edge_cases_read_safely() {
 fn a_rewatch_reads_as_completed_with_the_rewatch_episode() {
     let f = parse(FILE.as_bytes()).unwrap();
     let v = by_id(&f, 1003).values().unwrap();
-    assert_eq!(v, Values { status: Status::Completed, progress: 6, score: Some(9), rewatching: true, times_rewatched: 1, volumes: 0 });
+    assert_eq!(v, Values { status: Status::Completed, progress: 6, score: ten(9), rewatching: true, times_rewatched: 1, volumes: 0 });
 }
 
 #[test]
@@ -96,12 +97,12 @@ fn not_a_list_export_says_so() {
 fn mal_store() -> Store {
     let mut s = Store::open_memory().unwrap();
     s.set_account("mal", "demo_user").unwrap();
-    let a = item(media(1001, "Harbor Lights", Some(12)), vals(Status::Watching, 5, Some(7)));
-    let mut b = item(media(1003, "Starfall Academy", Some(24)), Values { rewatching: true, times_rewatched: 1, ..vals(Status::Completed, 6, Some(9)) });
+    let a = item(media(1001, "Harbor Lights", Some(12)), vals(Status::Watching, 5, ten(7)));
+    let mut b = item(media(1003, "Starfall Academy", Some(24)), Values { rewatching: true, times_rewatched: 1, ..vals(Status::Completed, 6, ten(9)) });
     b.media.format = "ona".into();
     let c = item(media(1008, "Tea & <Tide> ]]> Finale", None), vals(Status::PlanToWatch, 0, None));
     s.replace_list("mal", &[a, b, c], 100).unwrap();
-    let mine = MyEntry { status: "completed".into(), progress: 6, score: Some(9), rewatching: true, times_rewatched: 1, volumes: 0, start_date: Some("2025-01".into()), finish_date: Some("2025-03-30".into()) };
+    let mine = MyEntry { status: "completed".into(), progress: 6, score: ten(9), rewatching: true, times_rewatched: 1, volumes: 0, start_date: Some("2025-01".into()), finish_date: Some("2025-03-30".into()) };
     s.save_details("mal", &Details { id: 1003, title: "Starfall Academy".into(), format: "ona".into(), mine: Some(mine), ..Details::default() }, 100).unwrap();
     s
 }
@@ -167,10 +168,10 @@ fn file_names_carry_the_date() {
 fn import_list() -> Vec<ListItem> {
     vec![
         item(media(1001, "Harbor Lights", Some(12)), vals(Status::Watching, 3, None)),
-        item(media(1004, "Quiet Garden", Some(13)), vals(Status::Watching, 2, Some(8))),
+        item(media(1004, "Quiet Garden", Some(13)), vals(Status::Watching, 2, ten(8))),
         item(media(1002, "Paper Moon Express", Some(1)), vals(Status::Completed, 1, None)),
         item(media(1005, "Ember Tide", None), vals(Status::Watching, 1, None)),
-        item(media(1007, "Cats and Dogs", Some(2)), vals(Status::Completed, 2, Some(8))),
+        item(media(1007, "Cats and Dogs", Some(2)), vals(Status::Completed, 2, ten(8))),
     ]
 }
 
@@ -202,7 +203,7 @@ fn merge_rules_higher_progress_empty_scores_and_status_conflicts() {
     let f = parse(FILE.as_bytes()).unwrap();
     let p = plan(&f, "mal", &import_list(), &HashMap::new());
     // Same status: the higher progress, and a score where there was none.
-    assert_eq!(row(&p, 1001).update, Change { progress: Some(5), score: Some(Some(7)), ..Change::default() });
+    assert_eq!(row(&p, 1001).update, Change { progress: Some(5), score: Some(ten(7)), ..Change::default() });
     // Watching vs On hold: asked. Keeping mine keeps the score too; the file's status brings
     // its progress.
     let r = row(&p, 1004);
@@ -321,7 +322,7 @@ fn an_import_goes_through_the_queue_and_undo_takes_it_back() {
     assert_eq!(ids.len(), 3);
     // The list shows it at once; the service has nothing yet.
     let e = s.load_item("mal", 1003).unwrap().unwrap();
-    assert_eq!(e.values(), Values { status: Status::Completed, progress: 6, score: Some(9), rewatching: true, times_rewatched: 1, volumes: 0 });
+    assert_eq!(e.values(), Values { status: Status::Completed, progress: 6, score: ten(9), rewatching: true, times_rewatched: 1, volumes: 0 });
     assert_eq!(s.load_item("mal", 1004).unwrap().unwrap().status, Status::OnHold);
     assert_eq!(s.load_item("mal", 1001).unwrap().unwrap().progress, 5);
     assert!(!f.remote.contains_key(&1003));
@@ -346,17 +347,45 @@ fn an_imported_add_is_sent_with_all_its_values() {
     let p = plan(&file, "mal", &s.load_list("mal").unwrap(), &HashMap::new());
     s.import("mal", &actions(&p, Mode::NewOnly, &HashSet::new()), 500).unwrap();
     while let Step::Handled { .. } = queue::step(&mut s, &mut f, 600).unwrap() {}
-    assert_eq!(f.remote[&1003].values, Values { status: Status::Completed, progress: 6, score: Some(9), rewatching: true, times_rewatched: 1, volumes: 0 });
+    assert_eq!(f.remote[&1003].values, Values { status: Status::Completed, progress: 6, score: ten(9), rewatching: true, times_rewatched: 1, volumes: 0 });
 }
 
 #[test]
 fn an_import_into_anilist_keeps_the_mal_id() {
     let mut s = Store::open_memory().unwrap();
-    let add = Action::Add { media: Box::new(Media { id_mal: Some(1003), ..media(173003, "Hoshifuri Gakuen", Some(24)) }), values: vals(Status::Watching, 4, Some(8)) };
+    let add = Action::Add { media: Box::new(Media { id_mal: Some(1003), ..media(173003, "Hoshifuri Gakuen", Some(24)) }), values: vals(Status::Watching, 4, ten(8)) };
     s.import("anilist", &[add], 500).unwrap();
     let it = s.load_item(Scope::new("anilist", Kind::Anime), 173003).unwrap().unwrap();
-    assert_eq!((it.media.id_mal, it.progress, it.score), (Some(1003), 4, Some(8)));
+    assert_eq!((it.media.id_mal, it.progress, it.score), (Some(1003), 4, ten(8)));
     // A second preview finds it on the list by its MAL id.
-    let file = XmlList { entries: vec![XmlEntry { mal_id: 1003, status: Some(Status::Watching), raw_status: "Watching".into(), watched: 4, score: Some(8), ..blank() }], ..XmlList::default() };
+    let file = XmlList { entries: vec![XmlEntry { mal_id: 1003, status: Some(Status::Watching), raw_status: "Watching".into(), watched: 4, score: ten(8), ..blank() }], ..XmlList::default() };
     assert_eq!(plan(&file, "anilist", &s.load_list("anilist").unwrap(), &HashMap::new()).rows[0].verdict, Verdict::Same);
+}
+
+/// A MAL XML file scores 1-10: read on the 100-point scale, written back rounded, and compared
+/// on the 1-10 scale (an AniList 73 is the file's 7: the same, never rounded down to 70).
+#[test]
+fn file_scores_are_tens_and_a_73_is_the_files_7() {
+    let file = XmlList {
+        entries: vec![
+            XmlEntry { mal_id: 1, status: Some(Status::Watching), raw_status: "Watching".into(), watched: 3, score: ten(7), ..blank() },
+            XmlEntry { mal_id: 2, status: Some(Status::Watching), raw_status: "Watching".into(), watched: 3, score: ten(8), ..blank() },
+        ],
+        ..XmlList::default()
+    };
+    let al = |id: u32, points: u32| item(Media { id_mal: Some(id), ..media(id + 170_000, "A", Some(12)) }, vals(Status::Watching, 3, Score::from_points(points)));
+    let p = plan(&file, "anilist", &[al(1, 73), al(2, 73)], &HashMap::new());
+    assert_eq!(row(&p, 1).verdict, Verdict::Same);
+    assert_eq!(row(&p, 2).verdict, Verdict::Different);
+    assert!(row(&p, 2).update.is_empty(), "a score already there is kept");
+    // Written: 73 is 7, 75 is 8, none is 0.
+    let rows: Vec<ExportRow> = [73, 75, 0]
+        .iter()
+        .enumerate()
+        .map(|(i, &pts)| ExportRow { item: item(media(i as u32 + 1, "A", Some(12)), vals(Status::Watching, 3, Score::from_points(pts))), start: None, finish: None })
+        .collect();
+    let x = write("demo_user", &rows);
+    let back = parse(x.as_bytes()).unwrap();
+    assert_eq!(back.entries.iter().map(|e| e.score).collect::<Vec<_>>(), [ten(7), ten(8), None]);
+    assert!(x.contains("<my_score>7</my_score>") && x.contains("<my_score>0</my_score>"));
 }

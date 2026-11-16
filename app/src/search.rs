@@ -1,7 +1,10 @@
 //! Search and add (Stage 5). The search page (the sidebar's Search, Ctrl K) shows the user's own
 //! entries that match (every status), then MyAnimeList's results that are not on the list, each
 //! with "+ Watching" and a menu of the other statuses. The list page's search box is a quick
-//! filter: the list's matches, and one line that takes the query to the search page.
+//! filter: the list's matches, and one line that takes the query to the search page. When
+//! nothing on the list matches, that line says so ("No match in your list") and the service is
+//! searched right there, as on the search page (same pause, same cache, same rate budget); its
+//! results open the details page and add as on the search page.
 //!
 //! The MyAnimeList search runs only when signed in and online, for 3 characters or more, after
 //! the typing stops for [`DEBOUNCE`]: each keystroke bumps a number and a short thread sleeps, then
@@ -140,8 +143,14 @@ impl State {
             return;
         }
         self.refresh();
-        // The list page's box only filters the list.
-        if self.page != Page::Search {
+        // The list page's box filters the list; the service is asked only when nothing matches.
+        if self.page != Page::Search && !self.rows.is_empty() {
+            let o = &mut self.online;
+            if o.pending {
+                o.seq.fetch_add(1, Ordering::Relaxed);
+                o.pending = false;
+                o.query.clear();
+            }
             return;
         }
         let q = norm(self.search_text());
@@ -291,7 +300,8 @@ pub enum SRow {
     Hit(usize),
     /// Why there are no results (yet).
     Note,
-    /// The list page's filter: "Search MyAnimeList for …" (opens the search page).
+    /// The list page's filter: "Search MyAnimeList for …" (opens the search page); with no
+    /// match on the list, "No match in your list — search MyAnimeList for …".
     Find,
 }
 
@@ -301,17 +311,21 @@ pub fn layout(s: &State) -> Vec<SRow> {
     if let Some((id, false)) = link_id(s.search_text(), s.service) {
         v.push(SRow::Id(id));
     }
-    // The list page's filter: the way to MyAnimeList first, then the list's matches.
-    if s.page != Page::Search {
+    // The list page's filter: the way to MyAnimeList first, then the list's matches; with none,
+    // the service's results right under it.
+    let filter = s.page != Page::Search;
+    if filter {
         v.push(SRow::Find);
     }
-    v.push(SRow::ListHead);
-    if s.rows.is_empty() {
-        v.push(SRow::ListNone);
-    }
-    v.extend((0..s.rows.len()).map(SRow::List));
-    if s.page != Page::Search {
-        return v;
+    if !(filter && s.rows.is_empty()) {
+        v.push(SRow::ListHead);
+        if s.rows.is_empty() {
+            v.push(SRow::ListNone);
+        }
+        v.extend((0..s.rows.len()).map(SRow::List));
+        if filter {
+            return v;
+        }
     }
     v.push(SRow::Head);
     let n = if blocked(s).is_some() || s.online.pending || s.online.error.is_some() { 0 } else { s.new_hits().len() };
@@ -382,9 +396,16 @@ pub fn line(s: &State, r: SRow) -> El {
     }
 }
 
-/// Above the list's matches: take the filter to the search page (MyAnimeList too).
+/// Above the list's matches: take the filter to the search page (MyAnimeList too). With no
+/// match it says so first; the results are already searched below it.
 fn find_line(s: &State) -> El {
     let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
+    let q = s.query.text.trim();
+    let label = if s.rows.is_empty() {
+        format!("No match in your list \u{2014} search {} for \u{201c}{q}\u{201d}", s.service.title())
+    } else {
+        format!("Search {} for \u{201c}{q}\u{201d}", s.service.title())
+    };
     row()
         .key("sr/find-line")
         .h(44.0)
@@ -399,7 +420,7 @@ fn find_line(s: &State) -> El {
             s.search_for_query();
         })
         .child(icon(&icons::SEARCH, 16.0).color(PAL.accent_hi))
-        .child(text(format!("Search {} for \u{201c}{}\u{201d}", s.service.title(), s.query.text.trim())).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
+        .child(text(label).font(theme::BODY_MED).color(PAL.text).truncate().min_w(0.0))
         .child(spacer())
         .child(crate::ui::kbd(kbd))
 }
@@ -750,15 +771,15 @@ mod tests {
         assert!(s.rows.iter().any(|&i| s.entries[i].id == 9103), "it matches, so it shows among the list's matches");
     }
 
-    /// The list page's box only filters: no MyAnimeList search, one line to the search page,
-    /// which takes the query along; Escape comes back.
+    /// The list page's box filters: with matches no MyAnimeList search, one line to the search
+    /// page, which takes the query along; Escape comes back.
     #[test]
     fn the_list_box_filters_and_hands_over() {
         let mut s = State::fake();
         s.go(Page::List(Status::Completed));
         s.query.replace_text("lantern");
         s.search_changed();
-        assert!(!s.online.pending, "a filter never asks MyAnimeList");
+        assert!(!s.online.pending, "a filter with matches never asks MyAnimeList");
         let l = layout(&s);
         assert_eq!((l[0], l[1], l[2]), (SRow::Find, SRow::ListHead, SRow::List(0)));
         assert!(!l.contains(&SRow::Head));
@@ -774,6 +795,56 @@ mod tests {
         s.auth = crate::model::Auth::SignedOut;
         s.open_search();
         assert_ne!(s.page, Page::Search);
+    }
+
+    /// With no match on the list, the filter asks the service after the pause (once per query:
+    /// the answer is kept), and stops asking when a match comes back.
+    #[test]
+    fn a_filter_with_no_match_searches_the_service() {
+        let mut s = State::fake();
+        s.go(Page::List(Status::Watching));
+        s.query.replace_text("orchid");
+        s.search_changed();
+        assert!(s.rows.is_empty() && s.online.pending, "nothing on the list: the service is asked after the pause");
+        assert_eq!(layout(&s), [SRow::Find, SRow::Head, SRow::Note]);
+        let seq = s.online.seq.load(Ordering::Relaxed);
+        assert!(s.online_answer(seq, "orchid".into(), Ok(fake_hits())));
+        assert_eq!(layout(&s), [SRow::Find, SRow::Head, SRow::Hit(0), SRow::Hit(1), SRow::Hit(2), SRow::Hit(3)]);
+        // A result opens its details page and adds as on the search page.
+        s.open_mal_id(9101);
+        assert_eq!(s.page, Page::Details);
+        s.go(Page::List(Status::Watching));
+        s.add_hit(9102, Status::Watching);
+        assert!(s.entries.iter().any(|e| e.id == 9102 && e.waiting.is_some()));
+        // Typing on: the same query again is answered from memory.
+        s.query.replace_text("orchi");
+        s.search_changed();
+        let asked = s.online.seq.load(Ordering::Relaxed);
+        s.query.replace_text("orchid");
+        s.search_changed();
+        assert!(!s.online.pending && s.online.hits.len() == 5, "from memory");
+        assert_eq!(s.online.seq.load(Ordering::Relaxed), asked + 1);
+        // A query that matches the list again: a waiting search is dropped.
+        s.query.replace_text("orchidx");
+        s.search_changed();
+        assert!(s.online.pending);
+        s.query.replace_text("lantern");
+        s.search_changed();
+        assert!(!s.rows.is_empty() && !s.online.pending);
+        assert!(!layout(&s).contains(&SRow::Head));
+        // Too short, offline or signed out: nothing is asked; the note says why.
+        for q in ["fz", "zzz"] {
+            let mut s = State::fake();
+            s.offline = q == "zzz";
+            s.query.replace_text(q);
+            s.search_changed();
+            assert!(!s.online.pending && blocked(&s).is_some(), "{q}");
+        }
+        let mut s = State::fake();
+        s.auth = crate::model::Auth::Expired;
+        s.query.replace_text("orchid");
+        s.search_changed();
+        assert!(!s.online.pending);
     }
 
     #[test]

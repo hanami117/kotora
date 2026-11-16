@@ -1,7 +1,7 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
 //! `--list-scenes` lists them. Every view and state gets one.
 
-use kotora_core::Status;
+use kotora_core::{Score, ScoreFormat, Status};
 use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
 
@@ -110,6 +110,20 @@ pub const SCENES: &[Scene] = &[
     ("list-search-none", |s| {
         s.query.replace_text("zzzz");
         s.refresh();
+    }),
+    // No match on the list: the filter searches the service right there (0.2.1): waiting for
+    // the pause, its results (open the details page, + Watching), too short, offline, nothing.
+    ("list-filter-online-searching", |s| filter_online(s, "orchid", None)),
+    ("list-filter-online", |s| filter_online(s, "orchid", Some(crate::search::fake_hits()))),
+    ("list-filter-online-short", |s| filter_online(s, "fz", None)),
+    ("list-filter-online-offline", |s| {
+        s.offline = true;
+        filter_online(s, "orchid", None);
+    }),
+    ("list-filter-online-none", |s| filter_online(s, "zzzz", Some(Vec::new()))),
+    ("list-filter-online-anilist", |s| {
+        anilist(s);
+        filter_online(s, "orchid", Some(crate::search::fake_hits()));
     }),
     ("list-sort-title", |s| s.set_sort(Sort::Title)),
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
@@ -280,7 +294,7 @@ pub const SCENES: &[Scene] = &[
     ("list-editor-changed", |s| {
         s.toggle_editor(4);
         s.editor_status(Status::Completed);
-        s.editor_score(Some(9));
+        s.editor_score(kotora_core::score::ten(9));
     }),
     // `+1` pressed on a synced row: the number moves at once and the row waits to sync.
     ("list-plus-one", |s| {
@@ -460,6 +474,26 @@ pub const SCENES: &[Scene] = &[
         if let Some(op) = s.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
             op.remote = None;
         }
+        s.go(Page::Queue);
+    }),
+    // Remove from list (0.2.1): the question (list and details page), the toast with Undo, the
+    // removal waiting in the queue, and its conflict when the entry changed on the service.
+    ("list-remove-confirm", |s| s.ask_remove(2)),
+    ("details-remove-confirm", |s| {
+        details(s, 0, true);
+        s.ask_remove(0);
+    }),
+    ("list-removed", |s| {
+        let _ = s.remove_entry(2);
+    }),
+    ("queue-removal", |s| {
+        queue_covers(s);
+        removal(s, OpState::Queued);
+        s.go(Page::Queue);
+    }),
+    ("queue-removal-conflict", |s| {
+        queue_covers(s);
+        removal(s, OpState::Conflict);
         s.go(Page::Queue);
     }),
     // One change on its way, nothing else open.
@@ -874,6 +908,62 @@ pub const SCENES: &[Scene] = &[
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Grid);
     }),
+    // Scores in each AniList score format (0.2.1): list rows, posters, the row editor (the 100-
+    // point and decimal ones with a fine − / +), the details page and the Score menu.
+    ("list-score-100", |s| scores_in(s, ScoreFormat::Point100)),
+    ("list-score-decimal", |s| scores_in(s, ScoreFormat::Point10Decimal)),
+    ("list-score-stars", |s| scores_in(s, ScoreFormat::Point5)),
+    ("list-score-smileys", |s| scores_in(s, ScoreFormat::Point3)),
+    ("list-grid-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    ("list-large-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+    }),
+    ("list-editor-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        s.toggle_editor(0);
+        s.editor_score_step(1);
+    }),
+    ("list-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        s.toggle_editor(0);
+    }),
+    ("details-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        details(s, 0, true);
+    }),
+    ("details-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        details(s, 0, true);
+        s.toggle_editor(0);
+    }),
+    ("ctx-menu-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
+    }),
+    ("ctx-menu-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
+    }),
     // The right-click menu of an entry: on a list row, with each submenu, on a poster (opened
     // with the Menu key, under it) and on a Home card; and the toast with Undo after a move.
     ("ctx-menu", |s| s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0))),
@@ -1239,6 +1329,20 @@ fn iina_by_process(s: &mut State) {
 }
 
 /// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
+/// The Watching page's filter holding `q` (nothing on the list matches it), and the service's
+/// answer, if it came.
+fn filter_online(s: &mut State, q: &str, hits: Option<Vec<kotora_core::service::AnimeHit>>) {
+    s.covers.fake();
+    s.query.replace_text(q);
+    s.search_changed();
+    if let Some(mut hits) = hits {
+        for h in hits.iter_mut().filter(|h| h.id != 9104) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
+    }
+}
+
 fn search(s: &mut State, q: &str, answered: bool) {
     s.covers.fake();
     for e in s.entries.iter_mut().filter(|e| e.id < 12) {
@@ -1391,6 +1495,45 @@ fn mirror_settings(s: &mut State) {
 fn anilist(s: &mut State) {
     s.service = kotora_core::service::ServiceId::AniList;
     s.account = Some(("demo_user".into(), "AniList"));
+}
+
+/// Signed in to AniList with score format `fmt`, the fake scores made finer than 1-10 (73, 88,
+/// 41, …) so each format's rounding shows.
+fn scores_in(s: &mut State, fmt: ScoreFormat) {
+    anilist(s);
+    s.profile = Some(kotora_core::service::Profile { score_format: fmt, ..crate::profile::fake() });
+    const FINE: [u32; 8] = [73, 88, 41, 100, 56, 7, 65, 92];
+    for (i, e) in s.entries.iter_mut().filter(|e| e.score.is_some()).enumerate() {
+        e.score = Score::from_points(FINE[i % FINE.len()]);
+    }
+    s.refresh();
+}
+
+/// A removal of the second fake entry in the queue, the entry gone from the list. A conflict has
+/// the service's newer entry beside it.
+fn removal(s: &mut State, state: OpState) {
+    let Some(i) = s.entries.iter().position(|e| e.id == 2) else { return };
+    let e = s.entries.remove(i);
+    let Some(mut op) = s.ops.first().cloned() else { return };
+    op.id = 90;
+    op.media_id = e.id;
+    op.title = e.title.clone();
+    op.episodes = e.episodes;
+    op.change = kotora_core::Change::default();
+    op.old = e.values();
+    op.removed = true;
+    op.added = false;
+    op.edits = 1;
+    op.state = state;
+    op.error = None;
+    op.remote = (state == OpState::Conflict).then(|| kotora_core::Remote {
+        values: kotora_core::Values { progress: e.progress + 2, ..e.values() },
+        updated_at: s.clock() - 600,
+    });
+    s.ops.retain(|o| o.media_id != e.id);
+    s.ops.insert(0, op);
+    s.queue = s.ops.iter().filter(|o| o.state.is_open()).count() as u32;
+    s.refresh();
 }
 
 fn setup(s: &mut State, step: Step) {
@@ -1891,10 +2034,17 @@ mod tests {
 
     #[test]
     fn search_with_no_match_says_so() {
-        // A query searches the whole list (and MyAnimeList): nothing on the list says so in a line.
+        // A query searches the whole list: nothing there says so in the line to the service,
+        // whose results show under it.
         let rt = render("list-search-none", (1280.0, 800.0));
-        assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
+        assert!(rt.find("sr/find").is_some() && rt.find("sr/online-head").is_some() && rt.find("sr/list-none").is_none());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+        let rt = render("list-filter-online", (1280.0, 800.0));
+        assert!(rt.find("hit/9101").is_some() && rt.find("hit/0").is_none(), "results, not the ones on the list");
+        assert!(rt.find("add").is_some());
+        assert!(render("list-filter-online", (960.0, 600.0)).find("add").is_some(), "fits a small window");
+        assert!(render("list-filter-online-searching", (1280.0, 800.0)).find("sr/note").is_some());
+        assert!(render("list-filter-online-short", (1280.0, 800.0)).find("sr/note").is_some());
     }
 
     /// Airing: both views, the filters and the states find their parts, wide and narrow.

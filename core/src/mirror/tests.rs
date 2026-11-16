@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
+use crate::score::ten;
 use crate::model::Remote;
 use crate::queue::{self, OpState, Outcome, Step};
 
@@ -103,13 +104,18 @@ impl ListService for Fake {
         self.list.insert(id, (m, r));
         Ok(r)
     }
+    fn delete_entry(&mut self, id: u32) -> std::result::Result<(), ServiceError> {
+        self.check(format!("delete {id}"))?;
+        self.list.remove(&id);
+        Ok(())
+    }
     fn media_by_mal_ids(&mut self, ids: &[u32]) -> std::result::Result<Vec<Media>, ServiceError> {
         self.check(format!("lookup {}", ids.len()))?;
         Ok(ids.iter().filter_map(|id| self.catalogue.get(id).cloned()).collect())
     }
 }
 
-fn v(status: Status, progress: u32, score: Option<u8>) -> Values {
+fn v(status: Status, progress: u32, score: Option<Score>) -> Values {
     Values::new(status, progress, score)
 }
 
@@ -163,15 +169,15 @@ fn two_lists() -> (Store, Fake, Fake) {
     let mut store = Store::open_memory().unwrap();
     let mut mal = Fake::new(ServiceId::Mal);
     let mut al = anilist_knowing(&[1, 2, 3, 4, 5]);
-    mal.put(1, v(Status::Watching, 3, Some(7)));
-    mal.put(2, v(Status::Watching, 5, Some(8)));
-    mal.put(3, v(Status::Completed, 12, Some(9)));
+    mal.put(1, v(Status::Watching, 3, ten(7)));
+    mal.put(2, v(Status::Watching, 5, ten(8)));
+    mal.put(3, v(Status::Completed, 12, ten(9)));
     mal.put(5, v(Status::Dropped, 4, None));
     mal.put(9, v(Status::PlanToWatch, 0, None));
     al.put(2, v(Status::Watching, 7, None));
-    al.put(3, v(Status::Completed, 12, Some(9)));
-    al.put(4, v(Status::OnHold, 2, Some(6)));
-    al.put(5, v(Status::Completed, 12, Some(7)));
+    al.put(3, v(Status::Completed, 12, ten(9)));
+    al.put(4, v(Status::OnHold, 2, ten(6)));
+    al.put(5, v(Status::Completed, 12, ten(7)));
     synced(&mut store, &mut mal, &mut al, 10);
     (store, mal, al)
 }
@@ -191,7 +197,7 @@ fn the_preview_sorts_both_lists_by_mal_id() {
     assert_eq!(al.calls.last().map(String::as_str), Some("lookup 2"));
     // The merge keeps the further progress and fills the empty score; status pairs are asked.
     let r2 = p.merge.iter().find(|r| r.mal_id == 2).unwrap();
-    assert_eq!(r2.merged(false), v(Status::Watching, 7, Some(8)));
+    assert_eq!(r2.merged(false), v(Status::Watching, 7, ten(8)));
     let r5 = p.merge.iter().find(|r| r.mal_id == 5).unwrap();
     assert_eq!(r5.conflict, Some(StatusConflict { mine: Status::Dropped, file: Status::Completed }));
 }
@@ -211,7 +217,7 @@ fn main_wins_makes_the_mirror_a_copy_and_keeps_what_only_the_mirror_has() {
     for m in [1, 2, 3, 5] {
         assert_eq!(al.values(m), mal.values(m), "anime {m}");
     }
-    assert_eq!(al.values(4), Some(v(Status::OnHold, 2, Some(6))), "only on AniList: kept");
+    assert_eq!(al.values(4), Some(v(Status::OnHold, 2, ten(6))), "only on AniList: kept");
     assert_eq!(al.values(9), None);
 }
 
@@ -225,11 +231,11 @@ fn merge_fills_both_sides_and_asks_about_unclear_statuses() {
     store.start_mirror(link, &to, &main, 20).unwrap();
     drain(&mut store, &mut al, 30);
     drain(&mut store, &mut mal, 30);
-    assert_eq!(mal.values(2), Some(v(Status::Watching, 7, Some(8))));
-    assert_eq!(al.values(2), Some(v(Status::Watching, 7, Some(8))));
-    assert_eq!(mal.values(5), Some(v(Status::Completed, 12, Some(7))), "AniList's status, as picked");
+    assert_eq!(mal.values(2), Some(v(Status::Watching, 7, ten(8))));
+    assert_eq!(al.values(2), Some(v(Status::Watching, 7, ten(8))));
+    assert_eq!(mal.values(5), Some(v(Status::Completed, 12, ten(7))), "AniList's status, as picked");
     assert_eq!(al.values(5), mal.values(5));
-    assert_eq!(mal.values(4), Some(v(Status::OnHold, 2, Some(6))), "only on AniList: added to MAL");
+    assert_eq!(mal.values(4), Some(v(Status::OnHold, 2, ten(6))), "only on AniList: added to MAL");
     assert_eq!(al.values(1), mal.values(1), "only on MAL: added to AniList");
     // Nothing more waits: the main list's merge changes needed nothing more on the mirror.
     assert_eq!(store.open_count("anilist").unwrap(), 0);
@@ -257,24 +263,24 @@ fn dont_align_mirrors_only_new_edits_and_only_what_they_change() {
     assert_eq!(store.mirror_waits().unwrap()[0].mal_id, 1);
     assert_eq!(map_waits(&mut al, &mut store, 65).unwrap(), 1);
     drain(&mut store, &mut al, 70);
-    assert_eq!(al.values(1), Some(v(Status::Watching, 4, Some(7))));
+    assert_eq!(al.values(1), Some(v(Status::Watching, 4, ten(7))));
 }
 
 #[test]
 fn a_failure_on_one_side_never_blocks_the_other() {
     let (mut store, mut mal, mut al) = two_lists();
     store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-    store.enqueue("mal", 3, Change { score: Some(Some(10)), ..Change::default() }, 40).unwrap();
+    store.enqueue("mal", 3, Change { score: Some(ten(10)), ..Change::default() }, 40).unwrap();
     al.down = Some(ServiceError::Offline("no network".into()));
     assert!(matches!(drain(&mut store, &mut al, 50)[..], [Outcome::Retry(_)]));
     assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent], "MAL goes on alone");
-    assert_eq!(mal.values(3).unwrap().score, Some(10));
+    assert_eq!(mal.values(3).unwrap().score, ten(10));
     // AniList back: its change goes out at its next try.
     al.down = None;
     assert_eq!(drain(&mut store, &mut al, 50 + queue::MAX_BACKOFF), [Outcome::Sent]);
-    assert_eq!(al.values(3).unwrap().score, Some(10));
+    assert_eq!(al.values(3).unwrap().score, ten(10));
     // The other way round: AniList refusing doesn't stop MAL either.
-    store.enqueue("mal", 3, Change { score: Some(Some(9)), ..Change::default() }, 2_000).unwrap();
+    store.enqueue("mal", 3, Change { score: Some(ten(9)), ..Change::default() }, 2_000).unwrap();
     al.down = Some(ServiceError::Other("Validation error".into()));
     assert!(matches!(drain(&mut store, &mut al, 2_010)[..], [Outcome::Failed(_)]));
     assert_eq!(drain(&mut store, &mut mal, 2_010), [Outcome::Sent]);
@@ -286,13 +292,13 @@ fn a_website_edit_on_the_mirror_is_a_conflict_never_overwritten() {
     store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
     // Edited on anilist.co, then in Kotora before the mirror's next sync.
     let before = al.values(3).unwrap();
-    al.put(3, Values { score: Some(5), ..before });
+    al.put(3, Values { score: ten(5), ..before });
     store.enqueue("mal", 3, Change { progress: Some(11), ..Change::default() }, 40).unwrap();
     assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Conflict]);
-    assert_eq!(al.values(3).unwrap(), Values { score: Some(5), ..before }, "untouched");
+    assert_eq!(al.values(3).unwrap(), Values { score: ten(5), ..before }, "untouched");
     assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent], "the main list still gets it");
     let op = store.queue("anilist", 50).unwrap().into_iter().find(|o| o.state == OpState::Conflict).unwrap();
-    assert_eq!(op.remote.unwrap().values.score, Some(5));
+    assert_eq!(op.remote.unwrap().values.score, ten(5));
 }
 
 #[test]
@@ -306,7 +312,7 @@ fn the_mirrors_sync_lists_website_edits_and_the_user_settles_them() {
     // The first mirror sync after the alignment finds nothing.
     assert_eq!(sync_mirror(&mut al, &mut store, 40).unwrap().web_edits, 0);
     // On anilist.co: 2 changed, 7 added, 1 removed.
-    al.put(2, v(Status::Watching, 9, Some(8)));
+    al.put(2, v(Status::Watching, 9, ten(8)));
     al.put(7, v(Status::PlanToWatch, 0, None));
     al.list.remove(&(1 + AL));
     let r = sync_mirror(&mut al, &mut store, 50).unwrap();
@@ -326,15 +332,15 @@ fn the_mirrors_sync_lists_website_edits_and_the_user_settles_them() {
     assert_eq!(map_waits(&mut al, &mut store, 65).unwrap(), 1);
     drain(&mut store, &mut mal, 70);
     drain(&mut store, &mut al, 70);
-    assert_eq!(mal.values(2), Some(v(Status::Watching, 9, Some(8))));
+    assert_eq!(mal.values(2), Some(v(Status::Watching, 9, ten(8))));
     assert_eq!(mal.values(7), Some(v(Status::PlanToWatch, 0, None)));
     assert_eq!(al.values(1), mal.values(1));
     // Leave: asked again only when AniList changes it again.
-    al.put(3, v(Status::Completed, 12, Some(4)));
+    al.put(3, v(Status::Completed, 12, ten(4)));
     sync_mirror(&mut al, &mut store, 80).unwrap();
     store.settle_web_edit(3, Settle::Leave, None, 90).unwrap();
     assert_eq!(sync_mirror(&mut al, &mut store, 100).unwrap().web_edits, 0);
-    assert_eq!(mal.values(3).unwrap().score, Some(9), "left as it was");
+    assert_eq!(mal.values(3).unwrap().score, ten(9), "left as it was");
     // A difference that can't be settled that way says why.
     al.list.remove(&(3 + AL));
     sync_mirror(&mut al, &mut store, 110).unwrap();
@@ -373,7 +379,7 @@ fn a_website_edit_on_the_main_list_is_mirrored_at_the_sync() {
     let (mut store, mut mal, mut al) = two_lists();
     store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
     let old = store.load_list("mal").unwrap();
-    mal.put(2, v(Status::Watching, 6, Some(8)));
+    mal.put(2, v(Status::Watching, 6, ten(8)));
     store.replace_list("mal", &mal.fetch_list().unwrap(), 30).unwrap();
     assert_eq!(after_main_sync(&mut store, "mal", &old, 30).unwrap(), 1);
     let ops = store.queue("anilist", 30).unwrap();
@@ -389,7 +395,7 @@ fn a_website_edit_on_the_main_list_is_mirrored_at_the_sync() {
     assert_eq!(after_main_sync(&mut store, "mal", &[], 40).unwrap(), 0, "no saved list before: never the whole list");
     // An edit made on MAL before the mirror was turned on is not mirrored.
     store.stop_mirror().unwrap();
-    mal.put(3, v(Status::Completed, 12, Some(1)));
+    mal.put(3, v(Status::Completed, 12, ten(1)));
     let old = store.load_list("mal").unwrap();
     store.start_mirror(Link::of(ServiceId::Mal), &[], &[], mal.clock + 10).unwrap();
     store.replace_list("mal", &mal.fetch_list().unwrap(), 45).unwrap();
@@ -404,7 +410,7 @@ fn anilist_main_entries_without_a_mal_id_are_not_mirrored() {
     al.put(1, v(Status::Watching, 1, None));
     // An AniList-only anime: no idMal.
     al.list.insert(555, (Media { id: 555, title: "Web Short".into(), ..Media::default() }, Remote { values: v(Status::Watching, 2, None), updated_at: 5 }));
-    mal.put(2, v(Status::Completed, 12, Some(8)));
+    mal.put(2, v(Status::Completed, 12, ten(8)));
     synced(&mut store, &mut al, &mut mal, 10);
     let link = Link::of(ServiceId::AniList);
     let p = preview(&store, link, &mut al, &mut mal);
@@ -417,7 +423,7 @@ fn anilist_main_entries_without_a_mal_id_are_not_mirrored() {
     drain(&mut store, &mut mal, 30);
     drain(&mut store, &mut al, 30);
     assert_eq!(mal.values(1), Some(v(Status::Watching, 1, None)));
-    assert_eq!(al.values(2), Some(v(Status::Completed, 12, Some(8))));
+    assert_eq!(al.values(2), Some(v(Status::Completed, 12, ten(8))));
     // Edits of the anime with no MyAnimeList id stay on AniList.
     store.enqueue("anilist", 555, Change { progress: Some(3), ..Change::default() }, 40).unwrap();
     assert_eq!(store.open_count("mal").unwrap(), 0);
@@ -436,7 +442,7 @@ fn off_drops_what_waits_and_signing_out_turns_it_off() {
     assert_eq!(store.mirror_link().unwrap(), None);
     assert_eq!(store.load_item("anilist", 2 + AL).unwrap().unwrap().progress, 7, "AniList's saved entry back as it was");
     // Edits no longer go to AniList.
-    store.enqueue("mal", 3, Change { score: Some(Some(1)), ..Change::default() }, 30).unwrap();
+    store.enqueue("mal", 3, Change { score: Some(ten(1)), ..Change::default() }, 30).unwrap();
     assert_eq!(store.open_count("anilist").unwrap(), 0);
     // On again, then the mirror signs out: off.
     store.start_mirror(link, &[], &[], 40).unwrap();
@@ -465,6 +471,75 @@ fn links_read_and_write() {
     assert_eq!(Link::parse(&Link::of(ServiceId::AniList).text()), Some(Link { main: ServiceId::AniList, to: ServiceId::Mal }));
     assert_eq!(Link::parse("mal>mal"), None);
     assert_eq!(Link::parse("nope"), None);
-    let s = Saved::from(Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, Some(9)) });
-    assert_eq!(s.values(), Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, Some(9)) });
+    let s = Saved::from(Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, ten(9)) });
+    assert_eq!(s.values(), Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, ten(9)) });
+}
+
+// ------------------------------------------------------------------- scores across services
+
+/// The agreed rule: MyAnimeList scores 1-10 and AniList keeps 100 points, so the two are
+/// compared on the 1-10 scale. A MAL 7 and an AniList 73 are the same (7.3 rounds to 7); a 75
+/// is an 8 and differs.
+#[test]
+fn a_mal_7_and_an_anilist_73_are_the_same_score() {
+    let mut store = Store::open_memory().unwrap();
+    let mut mal = Fake::new(ServiceId::Mal);
+    let mut al = anilist_knowing(&[1, 2]);
+    mal.put(1, v(Status::Watching, 3, ten(7)));
+    mal.put(2, v(Status::Watching, 3, ten(7)));
+    al.put(1, v(Status::Watching, 3, Score::from_points(73)));
+    al.put(2, v(Status::Watching, 3, Score::from_points(75)));
+    synced(&mut store, &mut mal, &mut al, 10);
+    let link = Link::of(ServiceId::Mal);
+    let p = preview(&store, link, &mut mal, &mut al);
+    let c = p.counts();
+    assert_eq!((c.same, c.different), (1, 1), "73 is a 7, 75 an 8");
+    assert!(p.plan.rows.iter().any(|r| r.entry.mal_id == 1 && r.verdict == Verdict::Same));
+    // Main wins: only 2's score goes, as MAL's 7 (70); 1's 73 is left alone.
+    let (to, main) = align_actions(&p, Align::MainWins, &HashSet::new());
+    assert!(main.is_empty());
+    assert_eq!(to.len(), 1);
+    store.start_mirror(link, &to, &main, 20).unwrap();
+    drain(&mut store, &mut al, 30);
+    assert_eq!(al.values(1).unwrap().score, Score::from_points(73), "kept: the same on MAL's scale");
+    assert_eq!(al.values(2).unwrap().score, ten(7));
+    // A later edit: the progress goes alone (AniList's 73 stays), a new score goes as MAL's.
+    store.enqueue("mal", 1, Change { progress: Some(4), ..Change::default() }, 40).unwrap();
+    drain(&mut store, &mut al, 45);
+    assert_eq!(al.values(1), Some(v(Status::Watching, 4, Score::from_points(73))));
+    store.enqueue("mal", 1, Change { score: Some(ten(8)), ..Change::default() }, 50).unwrap();
+    drain(&mut store, &mut al, 60);
+    assert_eq!(al.values(1), Some(v(Status::Watching, 4, ten(8))));
+}
+
+/// AniList main, MyAnimeList mirror: a 73 goes to MAL as a 7, and the merge never rounds the
+/// AniList 73 down to 70.
+#[test]
+fn an_anilist_73_goes_to_mal_as_7_and_stays_73_on_anilist() {
+    let mut store = Store::open_memory().unwrap();
+    let mut al = anilist_knowing(&[1, 2]);
+    let mut mal = Fake::new(ServiceId::Mal);
+    al.put(1, v(Status::Watching, 5, Score::from_points(73)));
+    al.put(2, v(Status::Watching, 2, Score::from_points(73)));
+    mal.put(1, v(Status::Watching, 3, None));
+    mal.put(2, v(Status::Watching, 2, ten(7)));
+    synced(&mut store, &mut al, &mut mal, 10);
+    let link = Link::of(ServiceId::AniList);
+    let p = preview(&store, link, &mut al, &mut mal);
+    assert_eq!((p.counts().same, p.counts().different), (1, 1));
+    let (to, main) = align_actions(&p, Align::Merge, &HashSet::new());
+    assert!(main.is_empty(), "AniList keeps its 73 and its progress: {main:?}");
+    store.start_mirror(link, &to, &main, 20).unwrap();
+    drain(&mut store, &mut mal, 30);
+    assert_eq!(mal.values(1), Some(v(Status::Watching, 5, Score::from_points(73))));
+    assert_eq!(al.values(1).unwrap().score, Score::from_points(73));
+    // The fake keeps what it is sent; MAL itself answers 7 (70), as a sync then saves it.
+    mal.put(1, v(Status::Watching, 5, ten(7)));
+    store.replace_list("mal", &mal.fetch_list().unwrap(), 35).unwrap();
+    // Fine-tuning on AniList (73 to 71) is still a 7 on MAL: nothing goes there.
+    store.enqueue("anilist", 1 + AL, Change { score: Some(Score::from_points(71)), ..Change::default() }, 40).unwrap();
+    assert_eq!(store.open_count("mal").unwrap(), 0);
+    store.enqueue("anilist", 1 + AL, Change { score: Some(Score::from_points(76)), ..Change::default() }, 41).unwrap();
+    drain(&mut store, &mut mal, 50);
+    assert_eq!(mal.values(1).unwrap().score.map(Score::to_ten), Some(8));
 }

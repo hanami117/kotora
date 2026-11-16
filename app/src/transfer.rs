@@ -406,7 +406,7 @@ fn values_text(r: &PlanRow) -> String {
         t.push_str(&format!(", episode {}", v.progress));
     }
     if let Some(sc) = v.score {
-        t.push_str(&format!(", score {sc}"));
+        t.push_str(&format!(", score {}", sc.to_ten()));
     }
     t
 }
@@ -592,10 +592,10 @@ fn fake_file(s: &State) -> String {
         let st = listxml::status_to_xml(it.status);
         match i % 5 {
             // Further along in the file.
-            0 => add(it.media.id, &it.media.title, st, it.progress + 1, it.score.unwrap_or(0)),
+            0 => add(it.media.id, &it.media.title, st, it.progress + 1, it.score.map_or(0, kotora_core::Score::to_ten)),
             // A status the plan can't settle.
-            1 if it.status != Status::Dropped => add(it.media.id, &it.media.title, "Dropped", it.progress, it.score.unwrap_or(0)),
-            _ => add(it.media.id, &it.media.title, st, it.progress, it.score.unwrap_or(0)),
+            1 if it.status != Status::Dropped => add(it.media.id, &it.media.title, "Dropped", it.progress, it.score.map_or(0, kotora_core::Score::to_ten)),
+            _ => add(it.media.id, &it.media.title, st, it.progress, it.score.map_or(0, kotora_core::Score::to_ten)),
         }
     }
     add(9101, "Moonlit Harbor", "Plan to Watch", 0, 0);
