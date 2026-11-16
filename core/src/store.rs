@@ -337,7 +337,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", true)?;
         let version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))? as usize;
         if version > MIGRATIONS.len() {
-            return Err(StoreError(format!("the database is from a newer Kotora (schema {version})")));
+            return Err(StoreError(format!("it was saved by a newer Kotora (database schema {version}, this one knows {}). Update Kotora to open it; nothing was changed", MIGRATIONS.len())));
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
             let tx = conn.transaction()?;
@@ -937,6 +937,105 @@ pub(crate) mod tests {
         assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
         assert_eq!(s.load_list("mal").unwrap().len(), 4);
         assert_eq!(std::fs::read(&bak).unwrap(), first, "the first copy is kept");
+    }
+
+    /// A database written by Kotora 0.1.3 itself (`tests/fixtures/kotora-0.1.3.db`: made up by
+    /// 0.1.3's own `Store` calls, WAL mode as installed, schema 9) upgrades to 0.2 (schema 11):
+    /// the copy first, every row kept, the AniList columns empty on MyAnimeList rows, and an
+    /// AniList list beside the MyAnimeList one afterwards.
+    #[test]
+    fn the_0_1_3_database_upgrades_to_0_2() {
+        let dir = std::env::temp_dir().join(format!("kotora-mig-013-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _g = Scratch(dir.clone());
+        let path = dir.join("kotora.db");
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kotora-0.1.3.db");
+        std::fs::copy(fixture, &path).unwrap();
+        let before = counts(&Connection::open(&path).unwrap());
+        assert_eq!(before, [1, 6, 6, 3, 2, 1, 5, 1, 2, 0, 1]);
+        {
+            // Its schema is the one migrations 1 to 9 make: 0.1.3 shipped those unchanged.
+            let c = Connection::open(&path).unwrap();
+            assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0)).unwrap() as usize, SCHEMA_0_1);
+            let fresh = Connection::open_in_memory().unwrap();
+            for m in &MIGRATIONS[..SCHEMA_0_1] {
+                fresh.execute_batch(m).unwrap();
+            }
+            assert_eq!(schema_of(&c), schema_of(&fresh));
+        }
+        let mut s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 11);
+        assert_eq!(MIGRATIONS.len(), 11, "0.2 is schema 11; a new migration needs its own upgrade test");
+        let bak = backup_path(&path, SCHEMA_0_1);
+        {
+            let b = Connection::open(&bak).unwrap();
+            assert_eq!(b.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0)).unwrap() as usize, SCHEMA_0_1);
+            assert_eq!(counts(&b), before, "the copy is the whole 0.1.3 database");
+            assert_eq!(b.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)).unwrap(), "ok");
+        }
+        assert_eq!(counts(&s.conn), before);
+        let fk: Option<String> = s.conn.query_row("PRAGMA foreign_key_check", [], |r| r.get(0)).optional().unwrap();
+        assert_eq!(fk, None);
+        let empty: i64 = s.conn.query_row("SELECT COUNT(*) FROM media WHERE next_airing IS NULL AND id_mal IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(empty, 6, "MyAnimeList rows leave the AniList columns empty");
+        // The list, the queue and the account as 0.1.3 left them.
+        let list = s.load_list("mal").unwrap();
+        assert_eq!(list.len(), 6);
+        assert!(list.iter().all(|i| i.media.kind == Kind::Anime && i.media.next_airing.is_none() && i.media.id_mal.is_none()));
+        let lanterns = s.load_item("mal", 5001).unwrap().unwrap();
+        assert_eq!((lanterns.progress, lanterns.score), (6, Some(8)), "the waiting edit lies over the list");
+        assert_eq!(lanterns.media.broadcast, Broadcast::from_text("saturday 23:30"));
+        let harbor = s.load_item("mal", 5002).unwrap().unwrap();
+        assert_eq!((harbor.rewatching, harbor.times_rewatched), (true, 2));
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("demo_user"));
+        assert_eq!(s.synced_at("mal").unwrap(), Some(1_790_000_000));
+        assert!(s.profile("mal").unwrap().is_some());
+        assert_eq!(s.recognition("mal", "lanterns of kirigaoka#1").unwrap(), Some((5001, "user".into(), "Lanterns of Kirigaoka".into())));
+        assert!(s.details("mal", 5001).unwrap().is_some());
+        let q = s.queue("mal", 1_790_000_100).unwrap();
+        assert_eq!(q.len(), 3);
+        assert_eq!((q[0].change.progress, q[1].change.score, q[2].added), (Some(6), Some(Some(10)), true));
+        assert_eq!(s.open_count("mal").unwrap(), 3);
+        // AniList beside it: its own list and account; MyAnimeList's untouched.
+        assert!(s.load_list("anilist").unwrap().is_empty() && s.account("anilist").unwrap().is_none());
+        let mut al = tests::item(5001, "AniList Lanterns", Status::Watching, 2, 1_790_001_000);
+        al.media.id_mal = Some(5001);
+        al.media.next_airing = Some(NextAiring { episode: 3, at: 1_790_100_000 });
+        s.replace_list("anilist", &[al], 1_790_001_000).unwrap();
+        s.set_account("anilist", "demo_user").unwrap();
+        let back = s.load_item("anilist", 5001).unwrap().unwrap();
+        assert_eq!((back.media.title.as_str(), back.media.id_mal, back.media.next_airing.map(|n| n.episode)), ("AniList Lanterns", Some(5001), Some(3)));
+        assert_eq!(s.load_list("mal").unwrap().len(), 6);
+        assert_eq!(s.load_item("mal", 5001).unwrap().unwrap().media.title, "Lanterns of Kirigaoka");
+        drop(s);
+        // Opening again: nothing runs, the copy stays as it was.
+        let bak_before = std::fs::read(&bak).unwrap();
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 11);
+        assert_eq!(std::fs::read(&bak).unwrap(), bak_before);
+        let baks: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.contains(".bak")).collect();
+        assert_eq!(baks, ["kotora.db.schema-9.bak"]);
+    }
+
+    /// A database from a newer Kotora (what 0.1.x sees after 0.2 upgraded it) is refused with
+    /// a plain error, and the file is not changed: no migration, no copy.
+    #[test]
+    fn a_database_from_a_newer_kotora_is_refused_untouched() {
+        let dir = std::env::temp_dir().join(format!("kotora-newer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _g = Scratch(dir.clone());
+        let path = dir.join("kotora.db");
+        drop(Store::open(&path).unwrap());
+        let future = MIGRATIONS.len() + 1;
+        Connection::open(&path).unwrap().pragma_update(None, "user_version", future as u32).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let err = Store::open(&path).err().expect("a newer schema is refused");
+        assert!(err.0.starts_with(&format!("it was saved by a newer Kotora (database schema {future}, this one knows {})", MIGRATIONS.len())), "{}", err.0);
+        assert!(err.0.contains("Update Kotora"));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "not changed");
+        assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains(".bak")));
     }
 
     /// A new database (and one already current) gets no copy.
