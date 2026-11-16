@@ -52,7 +52,8 @@ pub fn start(s: &mut State) {
         let _ = store.queue_start("mal", now);
         if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (store.load_list("mal"), store.account("mal"), store.synced_at("mal"), store.queue("mal", now)) {
             let picture = store.picture("mal").ok().and_then(|(url, _)| url);
-            send(&h, Msg::Cache { items, user, picture, synced_at, ops });
+            let profile = store.profile("mal").ok().flatten().map(Box::new);
+            send(&h, Msg::Cache { items, user, picture, profile, synced_at, ops });
         }
         if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
     });
@@ -82,26 +83,23 @@ fn sync_now(h: &Handle, mut store: Store) {
     let msg = sync_with(&mut service, &mut store, now_unix());
     let synced = matches!(msg, Msg::Synced { .. });
     send(h, msg);
-    if synced && let Some(m) = refresh_picture(&mut service, &store, now_unix()) {
-        send(h, m);
+    if synced {
+        for m in refresh_user(&mut service, &store, now_unix()) {
+            send(h, m);
+        }
     }
 }
 
-/// How often a sync asks for the profile picture again.
-pub const PICTURE_EVERY: i64 = 86_400;
-
-/// After a good sync: the user's name and picture again, at most once a day (one request).
-/// The new picture URL is saved; the image itself is a cover-cache file (`art.rs`).
-pub fn refresh_picture(service: &mut dyn ListService, store: &Store, now: i64) -> Option<Msg> {
+/// After a good sync: the user's name, picture, join date and anime statistics again (one
+/// request, through the same rate budget as the list). The picture URL and the Profile page's
+/// facts are saved; the image itself is a cover-cache file (`art.rs`).
+pub fn refresh_user(service: &mut dyn ListService, store: &Store, now: i64) -> Vec<Msg> {
     let name = service.name();
-    let (_, at) = store.picture(name).ok()?;
-    if at.is_some_and(|at| (0..PICTURE_EVERY).contains(&(now - at))) {
-        return None;
-    }
-    let user = service.user().ok()?;
+    let Ok(user) = service.user() else { return Vec::new() };
     let _ = store.set_account(name, &user.name);
-    store.set_picture(name, user.picture.as_deref(), now).ok()?;
-    Some(Msg::Picture(user.picture))
+    let _ = store.set_picture(name, user.picture.as_deref(), now);
+    let _ = store.set_profile(name, &user.profile);
+    vec![Msg::Picture(user.picture), Msg::Profile(Box::new(user.profile))]
 }
 
 /// Fetches the list, saves it, and says what happened. The list sent to the UI is the saved one,
@@ -337,7 +335,7 @@ mod tests {
 
     /// The picture is asked for after a sync at most once a day, and saved.
     #[test]
-    fn the_picture_refreshes_daily() {
+    fn the_user_refreshes_with_each_sync() {
         struct Who(u32);
         impl ListService for Who {
             fn name(&self) -> &'static str {
@@ -351,7 +349,9 @@ mod tests {
             }
             fn user(&mut self) -> Result<kotora_core::service::User, ServiceError> {
                 self.0 += 1;
-                Ok(kotora_core::service::User { name: "demo_user".into(), picture: Some(format!("https://cdn.example.invalid/u.jpg?t={}", self.0)) })
+                let stats = kotora_core::service::AnimeStats { completed: self.0, ..Default::default() };
+                let profile = kotora_core::service::Profile { joined: Some("2019-03-02".into()), stats: Some(stats) };
+                Ok(kotora_core::service::User { name: "demo_user".into(), picture: Some(format!("https://cdn.example.invalid/u.jpg?t={}", self.0)), profile })
             }
             fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
                 unreachable!()
@@ -365,11 +365,14 @@ mod tests {
         }
         let store = Store::open_memory().unwrap();
         let mut who = Who(0);
-        assert!(matches!(refresh_picture(&mut who, &store, 1000), Some(Msg::Picture(Some(u))) if u.ends_with("t=1")));
-        assert!(refresh_picture(&mut who, &store, 1000 + PICTURE_EVERY - 1).is_none(), "not twice a day");
-        assert_eq!(who.0, 1);
-        assert!(matches!(refresh_picture(&mut who, &store, 1000 + PICTURE_EVERY), Some(Msg::Picture(Some(u))) if u.ends_with("t=2")));
-        assert_eq!(store.picture("mal").unwrap(), (Some("https://cdn.example.invalid/u.jpg?t=2".into()), Some(1000 + PICTURE_EVERY)));
+        let m = refresh_user(&mut who, &store, 1000);
+        assert!(matches!(&m[0], Msg::Picture(Some(u)) if u.ends_with("t=1")));
+        assert!(matches!(&m[1], Msg::Profile(p) if p.stats.unwrap().completed == 1));
+        let m = refresh_user(&mut who, &store, 1060);
+        assert_eq!(who.0, 2, "one request per sync");
+        assert!(matches!(&m[0], Msg::Picture(Some(u)) if u.ends_with("t=2")));
+        assert_eq!(store.picture("mal").unwrap(), (Some("https://cdn.example.invalid/u.jpg?t=2".into()), Some(1060)));
+        assert_eq!(store.profile("mal").unwrap().and_then(|p| p.stats).map(|s| s.completed), Some(2));
         assert_eq!(store.account("mal").unwrap().as_deref(), Some("demo_user"));
     }
 

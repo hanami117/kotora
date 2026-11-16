@@ -32,6 +32,7 @@ mod now;
 mod online;
 mod play;
 mod precise;
+mod profile;
 mod queue;
 mod scenes;
 mod search;

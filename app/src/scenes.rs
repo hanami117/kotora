@@ -109,6 +109,43 @@ pub const SCENES: &[Scene] = &[
     }),
     ("list-sort-title", |s| s.set_sort(Sort::Title)),
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
+    // The Sort menu open, in each view; a reversed order on the button.
+    ("list-sort-menu", |s| s.sort_menu = true),
+    ("list-grid-sort-menu", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.set_sort(Sort::Title);
+        s.sort_menu = true;
+    }),
+    ("list-large-sort-menu", |s| {
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+        s.set_sort(Sort::Score);
+        s.set_sort_rev(true);
+        s.sort_menu = true;
+    }),
+    ("list-sort-reversed", |s| {
+        s.set_sort(Sort::Title);
+        s.set_sort_rev(true);
+    }),
+    // The account card opens the Profile page: picture, MyAnimeList's numbers, the scores.
+    ("profile", |s| s.go(Page::Profile)),
+    ("profile-picture", |s| {
+        fake_covers(s);
+        s.avatar = Some("https://cdn.example.invalid/images/userimages/1.jpg".into());
+        s.go(Page::Profile);
+    }),
+    // Before the first answer: counts from the saved list, dashes for the rest.
+    ("profile-pending", |s| {
+        s.profile = None;
+        s.go(Page::Profile);
+    }),
+    ("profile-no-scores", |s| {
+        for e in &mut s.entries {
+            e.score = None;
+        }
+        s.go(Page::Profile);
+    }),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
     // First run: no Client ID in config.toml, so the setup wizard (`setup.rs`), step 1.
@@ -1005,7 +1042,8 @@ fn update_scene(s: &mut State, install: kotora_core::update::Install, minimum: O
 #[cfg(test)]
 mod tests {
     use super::SCENES;
-    use crate::model::Sort;
+    use crate::model::{Page, Sort};
+    use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
     use crate::model::State;
     use rune::{Env, Runtime};
@@ -1039,6 +1077,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The Sort menu: the orders and directions with a check on those in force, in every view;
+    /// picking one closes it.
+    #[test]
+    fn sort_menu_lists_the_orders() {
+        for name in ["list-sort-menu", "list-grid-sort-menu", "list-large-sort-menu"] {
+            let rt = render(name, (1280.0, 800.0));
+            for key in ["sort-menu", "sort/updated", "sort/title", "sort/score", "sort/progress", "sort/dir/0", "sort/dir/1"] {
+                assert!(rt.find(key).is_some(), "{name}: {key}");
+            }
+        }
+        assert!(render("list", (1280.0, 800.0)).find("sort-menu").is_none(), "closed by default");
+        let mut s = State::fake();
+        s.sort_menu = true;
+        s.set_sort(Sort::Score);
+        s.set_sort_rev(true);
+        let low = s.rows.first().map(|&k| s.entries[k].score);
+        s.set_sort_rev(false);
+        let high = s.rows.first().map(|&k| s.entries[k].score);
+        assert!(low < high, "{low:?} < {high:?}");
+        s.set_sort(Sort::Title);
+        assert!(!s.sort_rev, "a new order starts its own way");
+        s.go(Page::List(Status::Completed));
+        assert!(!s.sort_menu, "leaving the page closes it");
+    }
+
+    #[test]
+    fn profile_page_shows_the_numbers() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("profile", size);
+            for key in ["page/profile", "profile/avatar", "profile/name", "profile/joined", "profile/open-mal", "profile/days", "profile/bar", "profile/bar/completed", "profile/chart", "profile/score/8", "profile/sign-out"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(render("profile-pending", size).find("profile/pending").is_some());
+        }
+        let mut s = State::fake();
+        s.go(Page::List(Status::Watching));
+        assert!(s.page != Page::Profile);
     }
 
     /// The grid views: the switch, cards in rows, +1 always on Watching posters; the table's

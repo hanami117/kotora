@@ -478,6 +478,15 @@ impl Store {
         self.kv_set(&format!("{service}:picture_at"), &now.to_string())
     }
 
+    /// The Profile page's facts from the last answer (`None`: never asked).
+    pub fn profile(&self, service: &str) -> Result<Option<crate::service::Profile>> {
+        Ok(self.kv_get(&format!("{service}:profile"))?.and_then(|v| serde_json::from_str(&v).ok()))
+    }
+
+    pub fn set_profile(&self, service: &str, p: &crate::service::Profile) -> Result<()> {
+        self.kv_set(&format!("{service}:profile"), &serde_json::to_string(p).unwrap_or_default())
+    }
+
     /// Unix seconds of the last full sync of `service`.
     pub fn synced_at(&self, service: &str) -> Result<Option<i64>> {
         Ok(self.kv_get(&format!("{service}:synced_at"))?.and_then(|v| v.parse().ok()))
@@ -683,7 +692,12 @@ pub(crate) mod tests {
         s.set_picture("mal", None, 8).unwrap();
         assert_eq!(s.picture("mal").unwrap(), (None, Some(8)), "none set: asked, nothing to show");
         s.set_picture("mal", Some("https://cdn.example.invalid/u.jpg"), 9).unwrap();
+        assert_eq!(s.profile("mal").unwrap(), None);
+        let p = crate::service::Profile { joined: Some("2019-03-02".into()), stats: Some(crate::service::AnimeStats { completed: 3, days: 1.5, ..Default::default() }) };
+        s.set_profile("mal", &p).unwrap();
+        assert_eq!(s.profile("mal").unwrap(), Some(p), "the profile keeps through a restart");
         s.clear_service("mal").unwrap();
+        assert_eq!(s.profile("mal").unwrap(), None, "sign out deletes the profile");
         assert_eq!(s.picture("mal").unwrap(), (None, None), "sign out deletes the picture");
         assert_eq!(s.account("mal").unwrap(), None);
         assert!(s.load_list("mal").unwrap().is_empty());

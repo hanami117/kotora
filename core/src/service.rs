@@ -175,11 +175,55 @@ impl Details {
     }
 }
 
-/// The signed-in user: name and profile picture URL (none set, or a service without one).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The signed-in user: name and profile picture URL (none set, or a service without one), and
+/// what the Profile page shows.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct User {
     pub name: String,
     pub picture: Option<String>,
+    pub profile: Profile,
+}
+
+/// The Profile page's facts from the service: when the user joined and their anime numbers.
+/// Saved as JSON in the store's `kv` table (it goes with sign out).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Profile {
+    /// ISO date or date-time ("2019-03-02T10:20:30+00:00").
+    pub joined: Option<String>,
+    pub stats: Option<AnimeStats>,
+}
+
+/// The service's own count of the user's anime (MAL `anime_statistics`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnimeStats {
+    pub days: f64,
+    pub episodes: u32,
+    pub mean_score: f64,
+    pub rewatched: u32,
+    pub watching: u32,
+    pub completed: u32,
+    pub on_hold: u32,
+    pub dropped: u32,
+    pub plan_to_watch: u32,
+}
+
+impl AnimeStats {
+    /// Entries with status `st`.
+    pub fn count(&self, st: Status) -> u32 {
+        match st {
+            Status::Watching => self.watching,
+            Status::Completed => self.completed,
+            Status::OnHold => self.on_hold,
+            Status::Dropped => self.dropped,
+            Status::PlanToWatch => self.plan_to_watch,
+        }
+    }
+
+    pub fn total(&self) -> u32 {
+        Status::ALL.iter().map(|st| self.count(*st)).sum()
+    }
 }
 
 /// The user's own list: read it, read one entry, change one entry.
@@ -190,9 +234,10 @@ pub trait ListService {
     fn title(&self) -> &'static str;
     /// The signed-in user's name.
     fn user_name(&mut self) -> Result<String, ServiceError>;
-    /// The signed-in user with the profile picture, in one request where the service allows.
+    /// The signed-in user with the profile picture and the Profile page's facts, in one
+    /// request where the service allows.
     fn user(&mut self) -> Result<User, ServiceError> {
-        Ok(User { name: self.user_name()?, picture: None })
+        Ok(User { name: self.user_name()?, ..Default::default() })
     }
     /// The whole list.
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError>;

@@ -39,6 +39,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
         .child(el().w(1.0).h_full().fill(PAL.border))
         .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
+        // Menus last, so they draw over everything.
+        .children(s.sort_menu.then(|| sort_menu(s)))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
@@ -119,7 +121,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     };
     let mut side = side.child(brand(s));
     if let Some((name, service)) = &s.account {
-        side = side.child(account(s, name, service));
+        side = side.child(account(s, name, service, s.lit_page() == Page::Profile));
     }
     let lit = s.lit_page();
     // The pages scroll on their own when the window is too short for them; the playing card
@@ -278,7 +280,8 @@ fn brand(s: &State) -> El {
 /// The cover cache's id for the profile picture (no anime has it).
 pub(crate) const AVATAR_ID: u32 = u32::MAX;
 
-fn account(s: &State, name: &str, service: &str) -> El {
+/// The account card; it opens the Profile page (`on`: that page is open).
+fn account(s: &State, name: &str, service: &str, on: bool) -> El {
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     // The profile picture, round, over the initial (shown while it loads, offline or with none).
     let mut face = el()
@@ -293,13 +296,20 @@ fn account(s: &State, name: &str, service: &str) -> El {
     }
     row()
         .key("account")
+        .role("button")
+        .label(format!("Profile: {name}"))
+        .focusable(true)
         .gap(8.0)
         .padding(8.0)
         .mb(14.0)
         .center_y()
         .radius(theme::R_MD)
-        .fill(PAL.surface)
-        .border(1.0, PAL.border)
+        .fill(if on { PAL.raised } else { PAL.surface })
+        .border(1.0, if on { PAL.border_strong } else { PAL.border })
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| go_to(s, Page::Profile, tx))
         .child(face)
         .child(
             col()
@@ -379,6 +389,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::List(st) => list_page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),
         Page::Home => crate::home::page(s),
+        Page::Profile if s.account.is_none() => welcome(s),
+        Page::Profile => crate::profile::page(s, wide),
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => settings(s, wide),
@@ -469,7 +481,7 @@ fn top_with(s: &State, title: &str, count: Option<usize>, extra: Option<String>,
             }),
     );
     if tools {
-        t = t.child(spacer()).child(search_box(s)).child(sort_select(s.sort));
+        t = t.child(spacer()).child(search_box(s)).child(sort_select(s));
         if s.auth == Auth::SignedIn {
             t = t.child(refresh_button(s.syncing));
         }
@@ -514,29 +526,95 @@ fn search_box(s: &State) -> El {
         .child(self::kbd(kbd))
 }
 
-/// The sort control cycles through the orders on each press.
-fn sort_select(sort: Sort) -> El {
-    row()
+/// The Sort button: opens the Sort menu ([`sort_menu`]), by a press, Space, Return or Down.
+fn sort_select(s: &State) -> El {
+    let (sort, open) = (s.sort, s.sort_menu);
+    let toggle = |s: &mut State, tx: &mut Tx| {
+        tx.instant();
+        s.sort_menu = !s.sort_menu;
+    };
+    let b = row()
         .key("sort")
         .role("button")
-        .label(format!("Sort: {}", sort.label()))
+        .label(format!("Sort: {}, {}", sort.label(), sort.directions()[usize::from(s.sort_rev)]))
         .focusable(true)
         .h(32.0)
         .px(10.0)
         .gap(8.0)
         .center_y()
         .radius(theme::R_SM)
-        .fill(PAL.field)
-        .border(1.0, PAL.border)
+        .fill(if open { PAL.raised } else { PAL.field })
+        .border(1.0, if open { PAL.border_strong } else { PAL.border })
         .hover(PAL.hover())
         .press(PAL.press())
-        .on_press_tx(|s: &mut State, tx: &mut Tx| {
-            tx.instant();
-            s.set_sort(s.sort.next());
+        .on_press_tx(toggle)
+        .on_key(move |s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+            if matches!(k.key, rune::Key::Enter | rune::Key::Down) && !s.sort_menu {
+                toggle(s, tx);
+                return true;
+            }
+            false
         })
         .child(text("Sort").font(theme::BODY).color(PAL.faint))
-        .child(text(sort.label()).font(theme::BODY_MED).color(PAL.text))
-        .child(icon(&icons::DOWN, 14.0).color(PAL.text))
+        .child(text(sort.label()).font(theme::BODY_MED).color(PAL.text));
+    // A reversed order shows as an arrow (the words are in the label and the menu).
+    let b = if s.sort_rev { b.child(text("\u{2191}").key("sort/rev").font(theme::BODY_MED).color(PAL.accent_hi)) } else { b };
+    b.child(icon(&icons::DOWN, 14.0).color(PAL.text))
+}
+
+/// The Sort menu, under the Sort button: the orders, then the two directions, a check on each
+/// one in force. It holds the keyboard while open (arrows move, Return or Space picks, Escape
+/// or a press outside closes it, and the focus goes back to the button). Mounted at the
+/// window's root so nothing clips it.
+fn sort_menu(s: &State) -> El {
+    let item = |key: String, label: &str, on: bool, pick: Box<dyn Fn(&mut State)>| {
+        row()
+            .key(key)
+            .role("menuitemradio")
+            .label(label.to_string())
+            .checked(on)
+            .focusable(true)
+            .focus_selected(on)
+            .focus_highlight(PAL.hover())
+            .h(30.0)
+            .px(8.0)
+            .gap(8.0)
+            .center_y()
+            .radius(theme::R_SM)
+            .press(PAL.press())
+            .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                pick(s);
+                s.sort_menu = false;
+            })
+            .child(el().size(14.0, 14.0).center().child(if on { icon(&icons::CHECK, 14.0).color(PAL.accent_hi) } else { el() }))
+            .child(text(label.to_string()).font(if on { theme::BODY_MED } else { theme::BODY }).color(PAL.text))
+    };
+    let heading = |t: &str| text(t.to_uppercase()).font(theme::CAPTION).color(PAL.faint).px(8.0).pt(6.0).pb(2.0);
+    let mut m = col()
+        .key("sort-menu")
+        .role("menu")
+        .label("Sort")
+        .focus_group()
+        .w(220.0)
+        .padding(4.0)
+        .radius(theme::R_MD)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border_strong)
+        .shadow(8.0, 24.0, Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
+        .anchored("sort", rune::Side::Bottom, rune::Align::End, 6.0)
+        .modal(true, |s: &mut State| s.sort_menu = false)
+        .focus_return("sort")
+        .child(heading("Sort by"));
+    for o in Sort::ALL {
+        m = m.child(item(format!("sort/{}", o.slug()), o.label(), s.sort == o, Box::new(move |s: &mut State| s.set_sort(o))));
+    }
+    m = m.child(el().w_full().h(1.0).my(4.0).fill(PAL.border)).child(heading("Order"));
+    for (i, label) in s.sort.directions().into_iter().enumerate() {
+        let rev = i == 1;
+        m = m.child(item(format!("sort/dir/{i}"), label, s.sort_rev == rev, Box::new(move |s: &mut State| s.set_sort_rev(rev))));
+    }
+    m
 }
 
 fn refresh_button(syncing: bool) -> El {
