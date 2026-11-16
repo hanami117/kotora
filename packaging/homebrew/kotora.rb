@@ -14,8 +14,8 @@
 # update notice points to the package manager and its update check reports the channel "homebrew"
 # (core/src/update.rs).
 cask "kotora" do
-  version "0.1.1"
-  sha256 "263ec7597dab69764ffb86b07fbcb63a6fd5732ff4270221fb14c3c043e3ba16"
+  version "0.1.3"
+  sha256 "df6a51a83d6803530c1277b17c521b76173348cdc15ac14326efcbb8fb2d12cd"
 
   url "https://github.com/hanami117/kotora/releases/download/v#{version}/Kotora-#{version}.dmg"
   name "Kotora"

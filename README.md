@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/banner.jpg" alt="Kotora: a native anime tracker for Linux and macOS"></p>
+
 # Kotora 小虎
 
 A native anime tracker for Linux and macOS, written in Rust.
@@ -16,7 +18,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.1.1. MyAnimeList only; AniList comes later.
+**Status:** version 0.1.3. MyAnimeList only; AniList comes later.
 
 ## Features
 
@@ -47,15 +49,20 @@ play, download or fetch video. For streaming sites, use [MAL-Sync](https://malsy
 From the AUR, with your AUR helper:
 
 ```sh
-yay -S kotora
+yay -S kotora      # builds from the release's source
+yay -S kotora-bin  # prebuilt x86_64 binary, no Rust toolchain needed
 ```
 
-It builds from the release's source and installs `kotora`, `kot`, the menu entry and the icons. Updates come
-with your AUR helper.
+Both install `kotora`, `kot`, the menu entry and the icons, and they conflict with each other: pick one.
+Updates come with your AUR helper. AUR pages: [kotora](https://aur.archlinux.org/packages/kotora) and
+[kotora-bin](https://aur.archlinux.org/packages/kotora-bin).
+
+The 0.1.2 release page has a Linux x86_64 tarball (`kotora-0.1.2-linux-x86_64.tar.gz`). It is built on Arch
+Linux, so it needs a recent glibc; on other distros, building from source is the safer way.
 
 ### macOS
 
-Apple silicon, macOS 13 or later. Download `Kotora-0.1.1.dmg` from the
+Apple silicon, macOS 13 or later. Download `Kotora-0.1.3.dmg` from the
 [release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
 
 Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
@@ -80,23 +87,23 @@ cd kotora
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
 keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
-tarball (`kotora-0.1.1.tar.gz`) works the same way.
+tarball (`kotora-0.1.3.tar.gz`) works the same way.
 
 ### From source (macOS)
 
 With Rust and `librsvg` (`brew install librsvg`): `packaging/macos/build.sh` builds `target/macos/Kotora.app`.
 
-## First start: your MyAnimeList Client ID
+## First start: sign in
 
-MyAnimeList asks every app to have its own Client ID. It is free and takes a minute. Kotora's Welcome page
-walks you through it:
+Open Kotora, press **Start**, then **Sign in with MyAnimeList**. Your browser opens MyAnimeList's own page:
+allow Kotora there and you are back in the app with your list. Kotora never sees your password. There is
+nothing to register: Kotora has its own MyAnimeList client ID built in. A client ID is public by design (it
+identifies the app, it is not a secret), as it is in Taiga.
 
-1. Open <https://myanimelist.net/apiconfig> and press **Create ID**.
-2. App type **other**, non-commercial use. Put `http://127.0.0.1:47321/callback` as the redirect URL
-   (the Welcome page has a Copy button). The other fields can say anything.
-3. Paste the **Client ID** (not the secret) into Kotora and press Save, then **Sign in**.
-
-You can also run `kot config client-id ID`.
+**Your own client ID (advanced).** If you would rather use an API app of your own, register one at
+<https://myanimelist.net/apiconfig> (app type **other**, redirect URL `http://127.0.0.1:47321/callback`), then
+Settings → Account → **Use my own client ID…** (or `kot config client-id ID`). **Use Kotora's built-in ID**
+there goes back. Developers can also set `KOTORA_MAL_CLIENT_ID`, which wins over both.
 
 ## Privacy
 
@@ -121,17 +128,19 @@ You can also run `kot config client-id ID`.
 `kot` talks to the running app.
 
 ```text
-kot                    what Kotora is doing
+kot                    a dashboard: what plays, your Watching list with what comes next, the sync queue
+kot status [--short]   what Kotora is doing (--short: one line)
 kot list [STATUS|all]  your list (watching, plan, completed, on-hold, dropped)
 kot +1 TITLE           one more episode
 kot set TITLE EP [--status S] [--score N|none]
 kot add QUERY|ID [--status S]
+kot airing | schedule   your anime airing in the next 7 days
 kot now                what plays, and the episode Kotora offers
 kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
-kot config client-id ID
+kot config client-id ID   (optional: your own MyAnimeList client ID)
 kot show | kot quit
 ```
 

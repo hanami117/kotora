@@ -791,7 +791,7 @@ fn row_el(s: &State, r: Row) -> El {
         Row::Mal => {
             let (line, action) = match (&s.account, s.auth) {
                 (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
-                (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
+                (None, Auth::NoClientId) => ("Finish the setup first".to_string(), small_button("sign-in", "Sign in", true, None)),
                 (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
                 (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
             };

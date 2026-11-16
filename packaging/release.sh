@@ -4,6 +4,9 @@
 #
 #   packaging/release.sh             checks, DMG (macOS), source tarball, checksums, notes, latest.json
 #   packaging/release.sh --no-dmg    the same without the DMG (e.g. on Linux)
+#   packaging/release.sh --no-dmg --linux-bin
+#                                    also the prebuilt Linux x86_64 tarball for the AUR's kotora-bin
+#                                    (build it on Linux x86_64; it is a release build of the tag)
 #
 # Before: the version in Cargo.toml's [workspace.package], the build number in BUILD, a CHANGELOG.md
 # section "## [<version>]", everything committed, and an annotated (signed) tag on HEAD:
@@ -21,6 +24,9 @@
 #   Kotora-<release>.dmg (+ .sha256)       macOS disk image, Apple silicon (packaging/macos/build.sh --dmg)
 #   Kotora-macOS.dmg (+ .sha256)           the same file under a stable name (the site's button)
 #   kotora-<release>.tar.gz (+ .sha256)    source tarball (`git archive` of the tag), top folder kotora-<version>/
+#   kotora-<release>-linux-x86_64.tar.gz (+ .sha256)
+#                                          with --linux-bin: stripped binaries, desktop entry and icons,
+#                                          top folder kotora-<version>-linux-x86_64/ (bin/, share/)
 #   SHA256SUMS                             all of them, in `shasum -c` form
 #   notes.md                               release notes (CHANGELOG section + install notes)
 #   latest.json                            for kotora.moe/latest.json and the update Worker
@@ -35,10 +41,12 @@ REPO=hanami117/kotora
 # A stable file name (the same bytes as the versioned one) so links can say releases/latest/download/.
 DMG_LATEST=Kotora-macOS.dmg
 dmg=1
+linux_bin=0
 while (($#)); do
     case "$1" in
         --no-dmg) dmg=0 ;;
-        -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit ;;
+        --linux-bin) linux_bin=1 ;;
+        -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit ;;
         *) die "unknown option '$1' (try --help)" ;;
     esac
     shift
@@ -92,6 +100,37 @@ src=kotora-$release.tar.gz
 say "Making the source tarball from $tag"
 git archive --format=tar.gz --prefix="kotora-$version/" -o "$out/$src" "$tag"
 
+# --- Linux x86_64 binary tarball (for the AUR's kotora-bin) -------------------------------------------
+bin=kotora-$release-linux-x86_64.tar.gz
+if ((linux_bin)); then
+    [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || die "--linux-bin needs Linux on x86_64"
+    command -v strip >/dev/null || die "--linux-bin needs strip (binutils)"
+    say "Building the Linux x86_64 release binaries from $tag"
+    # Its own target folder (the flags differ from a plain build, so nothing is shared). The home folder
+    # is remapped so the binaries carry no path of the builder's. KOTORA_CHANNEL=aur-bin makes the
+    # update check say "update with your AUR helper" (the install is under /usr).
+    tgt=${CARGO_TARGET_DIR:-target}/linux-bin
+    RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build --remap-path-prefix=$PWD=/src" \
+        KOTORA_CHANNEL=aur-bin CARGO_TARGET_DIR=$tgt \
+        cargo build --release --locked -p kotora -p kotora-ctl
+    id=io.github.hanami117.kotora
+    top=kotora-$version-linux-x86_64
+    stage=$out/stage/$top
+    install -Dm755 -s "$tgt/release/kotora" "$stage/bin/kotora"
+    install -Dm755 -s "$tgt/release/kot" "$stage/bin/kot"
+    install -Dm644 "packaging/linux/$id.desktop" "$stage/share/applications/$id.desktop"
+    install -Dm644 "assets/icons/$id.svg" "$stage/share/icons/hicolor/scalable/apps/$id.svg"
+    for icon in assets/icons/hicolor/*/apps/$id.png; do
+        size=$(basename "$(dirname "$(dirname "$icon")")")
+        install -Dm644 "$icon" "$stage/share/icons/hicolor/$size/apps/$id.png"
+    done
+    install -m644 LICENSE THIRD_PARTY_NOTICES.md README.md "$stage/"
+    # Same bytes on every run: sorted names, no owner, the tag's date, no name or time in gzip.
+    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$(git log -1 --format=%ct "$tag")" \
+        -C "$out/stage" -cf - "$top" | gzip -9n >"$out/$bin"
+    rm -rf "$out/stage"
+fi
+
 # --- Checksums ----------------------------------------------------------------------------------
 say "Writing checksums"
 : >"$out/SHA256SUMS"
@@ -118,14 +157,16 @@ say "Writing release notes from CHANGELOG.md"
     cat <<NOTES
 
 ### Install
-- **Arch Linux**: \`yay -S kotora\` (AUR, builds from this release's source tarball).
+- **Arch Linux**: \`yay -S kotora\` (AUR, builds from this release's source tarball)$(
+    ((linux_bin)) && printf ' or `yay -S kotora-bin` (prebuilt, from `%s`)' "$bin"
+).
 - **macOS** (Apple silicon, macOS 13 or later): download \`Kotora-$release.dmg\` and drag Kotora to Applications.
   Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
   and click **Open Anyway** (or run \`xattr -dr com.apple.quarantine /Applications/Kotora.app\`).
 - **Other Linux**: download \`$src\`, unpack it and run \`./install.sh\` (needs Rust, pkgconf and a Vulkan
   driver; see the README).
 
-You need your own MyAnimeList Client ID (free, a minute): the setup wizard walks you through it.
+Sign in with MyAnimeList in one click: Kotora has its own client ID built in, so there is nothing to register.
 Checksums are in \`SHA256SUMS\`.
 NOTES
 } >"$out/notes.md"
@@ -172,4 +213,11 @@ $(sed 's/^/   /' "$out/latest.json")
    packaging/aur/PKGBUILD   pkgver=$version  _build=$build  sha256sums=('$src_sha')
                             pkgrel: 1 for a new version, else one more than the AUR's
                             then: makepkg --printsrcinfo > .SRCINFO, push to aur.archlinux.org/kotora.git
+$( ((linux_bin)) && cat <<BINPKG
+
+4. The AUR package kotora-bin:
+   packaging/aur-bin/PKGBUILD   pkgver=$version  _build=$build  sha256sums=('$(sha256 "$out/$bin")')
+                                (the same pkgrel rule; push to aur.archlinux.org/kotora-bin.git)
+BINPKG
+)
 DONE

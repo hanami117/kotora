@@ -122,7 +122,7 @@ fn service(w: &Worker) -> Option<Mal<UreqTransport>> {
     if w.hold.load(Ordering::Relaxed) || paths::offline_forced() {
         return None;
     }
-    let id = Config::load(&paths::config_file()).ok()?.mal_client_id?;
+    let id = Config::load(&paths::config_file()).ok()?.effective_client_id()?;
     let tokens = TokenStore::new(paths::token_file());
     tokens.load_mal()?;
     Some(Mal::new(Client::new(id, UreqTransport::default()), tokens))

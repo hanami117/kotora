@@ -650,6 +650,33 @@ impl State {
         out.sort_by_key(|x| x.at);
         out
     }
+
+    /// The bare `kot` dashboard: what plays, the Watching list with what comes next, the queue
+    /// and the last sync. Reads state only (no disk walk, no network).
+    pub fn ctl_dash(&self) -> kotora_ctl::Dashboard {
+        let now = self.clock();
+        let rows = self
+            .entries
+            .iter()
+            .filter(|e| e.status == Status::Watching || e.rewatching)
+            .map(|e| {
+                let on_disk = crate::library::has_next_file(self, e);
+                let timetable = self.airing.shows.iter().find(|a| a.id == e.id).and_then(Timetable::of).map(|t| t.with_progress(e.progress, now));
+                let mut row = kotora_ctl::DashRow { title: e.title.clone(), progress: e.progress, episodes: e.episodes, updated_at: e.updated_at, on_disk, ..Default::default() };
+                if let Some(t) = timetable {
+                    if t.aired(now) > e.progress {
+                        row.aired = true;
+                    } else if let Some((_, at)) = t.next(now) {
+                        let c = self.airing.clock(at);
+                        row.air_at = Some(at);
+                        row.air_slot = format!("{} {}", DAY_SHORT[usize::from(c.weekday)], c.hhmm());
+                    }
+                }
+                row
+            })
+            .collect();
+        kotora_ctl::Dashboard { now_unix: now, now: self.ctl_now(), rows, queue: self.queue, synced_at: self.synced_at, offline: self.offline }
+    }
 }
 
 // ------------------------------------------------------------------------------------ workers

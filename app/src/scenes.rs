@@ -150,14 +150,8 @@ pub const SCENES: &[Scene] = &[
     }),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
-    // First run: no Client ID in config.toml, so the setup wizard (`setup.rs`), step 1.
+    // First run: nothing set up yet, so the setup wizard (`setup.rs`), step 1 of 3 (Kotora's own Client ID is built in).
     ("no-client-id", |s| setup(s, Step::Welcome)),
-    // Step 3 with a pasted value that isn't an ID (the inline error).
-    ("no-client-id-error", |s| {
-        setup(s, Step::Paste);
-        s.client_id.draft.replace_text("kotora-app-secret-from-mal");
-        s.save_client_id();
-    }),
     // The very first screen: "Which service do you use?" (nothing chosen, no Client ID, no token).
     // Snap it at --size 700x900 for the stacked cards; a Tab (--script) focuses MyAnimeList.
     ("setup-service", |s| {
@@ -168,25 +162,6 @@ pub const SCENES: &[Scene] = &[
     ("setup-welcome-after-service", |s| {
         setup(s, Step::Welcome);
         s.setup_service = true;
-    }),
-    ("setup-create", |s| setup(s, Step::Create)),
-    // The redirect URL copied: the button says so.
-    ("setup-create-copied", |s| {
-        setup(s, Step::Create);
-        s.client_id.copied = true;
-    }),
-    ("setup-paste", |s| setup(s, Step::Paste)),
-    // 64 hex characters: the Client Secret's shape, refused.
-    ("setup-paste-secret", |s| {
-        setup(s, Step::Paste);
-        s.client_id.draft.replace_text("3f9c0a7e5b1d2c48".repeat(4));
-        s.save_client_id();
-    }),
-    // Saved (after Back from the sign-in step): Next is on.
-    ("setup-paste-saved", |s| {
-        setup(s, Step::Paste);
-        s.auth = Auth::SignedOut;
-        s.client_id.hint = Some("8f3a".into());
     }),
     ("setup-sign-in", |s| {
         setup(s, Step::SignIn);
@@ -958,9 +933,9 @@ pub const SCENES: &[Scene] = &[
         s.save_client_id();
         crate::settings::open(s, Section::Account);
     }),
-    // No Client ID yet: Settings offers to set one.
+    // No saved Client ID of your own (Kotora's built-in one signs in): "Use my own client ID…".
     ("settings-no-client-id", |s| {
-        signed_out(s, Auth::NoClientId);
+        signed_out(s, Auth::SignedOut);
         s.client_id.hint = None;
         crate::settings::open(s, Section::Account);
     }),
@@ -1589,16 +1564,8 @@ mod tests {
     fn sign_in_screens_show_their_parts() {
         let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("page/setup").is_some() && rt.find("setup/indicator").is_some() && rt.find("setup/next").is_some());
-        assert!(rt.find("setup/back").is_none() && rt.find("setup/close").is_none(), "step 1, and no way around it without an ID");
-        let rt = render("setup-create", (960.0, 600.0));
-        for key in ["setup/open-api", "setup/copy-redirect", "setup/form/app-redirect-url", "setup/form/purpose-of-use", "setup/no-secret", "setup/back"] {
-            assert!(rt.find(key).is_some(), "{key}");
-        }
-        let rt = render("setup-paste", (1280.0, 800.0));
-        assert!(rt.find("setup/cid/input").is_some() && rt.find("setup/cid/save").is_some() && rt.find("setup/cid/error").is_none());
-        assert!(render("no-client-id-error", (1280.0, 800.0)).find("setup/cid/error").is_some());
-        assert!(render("setup-paste-secret", (1280.0, 800.0)).find("setup/cid/error").is_some());
-        assert!(render("setup-paste-saved", (1280.0, 800.0)).find("setup/cid-saved").is_some());
+        assert!(rt.find("setup/back").is_none() && rt.find("setup/close").is_none(), "first run: step 1, no way around it");
+        assert!(rt.find("setup/cid/input").is_none() && rt.find("setup/open-api").is_none(), "no Client ID to make or paste");
         assert!(render("setup-sign-in", (1280.0, 800.0)).find("setup/sign-in").is_some());
         let rt = render("setup-signing-in-no-browser", (960.0, 600.0));
         assert!(rt.find("setup/waiting").is_some() && rt.find("setup/link").is_some() && rt.find("setup/copy-link").is_some() && rt.find("setup/cancel").is_some());
@@ -1617,7 +1584,9 @@ mod tests {
         assert!(rt.find("set/setup-again").is_some());
         let rt = render("settings-client-id-change", (1280.0, 800.0));
         assert!(rt.find("set/cid/input").is_some() && rt.find("set/cid/error").is_some() && rt.find("set/cid-cancel").is_some());
-        assert!(render("settings-no-client-id", (1280.0, 800.0)).find("set/cid-change").is_some());
+        let rt = render("settings-no-client-id", (1280.0, 800.0));
+        assert!(rt.find("set/cid-change").is_some() && rt.find("set/cid-built-in").is_some() && rt.find("set/cid-built-in-use").is_none());
+        assert!(render("settings-account", (1280.0, 800.0)).find("set/cid-built-in-use").is_some(), "an own ID has a way back");
         let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("rows").is_none() && rt.find("account").is_none());
         let rt = render("signed-out", (1280.0, 800.0));

@@ -1,13 +1,14 @@
 //! `kot`: the command line for a running Kotora.
 //!
 //! ```text
-//! kot            same as `kot status`
-//! kot status     the app's state in two lines
+//! kot            a dashboard: what plays, the Watching list and what comes next, the sync queue
+//! kot status     the app's state in two lines (`--short`: one)
 //! kot list       the Watching list (`kot list all`, `kot list completed`, …)
 //! kot +1 TITLE [--anyway]   one more episode
 //! kot set TITLE EP [--status S] [--score N|none] [--anyway]
 //! kot queue      changes waiting to sync
 //! kot sync       send the queue now, then read the list again
+//! kot airing     your anime airing in the next 7 days (also `kot schedule`)
 //! kot now        what plays, and the episode Kotora offers to record
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
@@ -25,6 +26,8 @@
 use std::io;
 use std::process::ExitCode;
 
+mod dash;
+
 use kotora_ctl::{AiringItem, Client, Entry, NowInfo, QueueItem, Reply, Request, Status};
 
 const HELP: &str = "\
@@ -33,7 +36,9 @@ kot: talk to a running Kotora
 Usage: kot [COMMAND]
 
 Commands:
-  status                what Kotora is doing (the default)
+  (none)                a dashboard: what plays, your Watching list with
+                        what comes next, the sync queue
+  status [--short]      what Kotora is doing (--short: one line)
   list [STATUS|all]     your list; STATUS: watching (the default), plan,
                         completed, on-hold, dropped
   +1 TITLE              one more episode of TITLE
@@ -44,7 +49,7 @@ Commands:
   queue                 changes waiting to sync
   sync                  send the queue now, then read the list again
   now                   what plays, and the episode Kotora offers
-  airing                your anime airing in the next 7 days (estimated)
+  airing, schedule      your anime airing in the next 7 days (estimated)
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
   rewatch TITLE|ID      watch a completed anime again from episode 1
@@ -52,7 +57,7 @@ Commands:
                         library folders (Settings \u{2192} Library)
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   MyAnimeList for (it must find one), or its id
-  config client-id ID   save your MyAnimeList Client ID
+  config client-id ID   use your own MyAnimeList Client ID (optional)
   show                  show the window
   quit                  quit Kotora
   help                  this text
@@ -68,13 +73,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     let req = match words.as_slice() {
-        [] | ["status"] => Request::Status,
+        [] => Request::Dash,
+        ["status"] | ["status", "--short"] => Request::Status,
         ["show"] => Request::Show,
         ["quit"] => Request::Quit,
         ["queue"] => Request::Queue,
         ["sync"] => Request::Sync,
         ["now"] => Request::Now,
-        ["airing"] => Request::Airing,
+        ["airing" | "schedule"] => Request::Airing,
         ["confirm"] => Request::Confirm,
         ["dismiss"] => Request::Dismiss,
         ["list"] => Request::List { status: Some("watching".into()) },
@@ -133,9 +139,20 @@ fn main() -> ExitCode {
         }
         reply = ask(&with_anyway(req.clone()));
     }
+    // The dashboard needs a newer app, or a signed-in one: fall back to the status lines.
+    if req == Request::Dash && matches!(reply, Ok(Reply::Error { .. })) {
+        reply = ask(&Request::Status);
+    }
     match reply {
+        Ok(Reply::Dash(d)) => {
+            let color = stdout_is_tty() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+            print!("{}", dash::render(&d, terminal_width(), color));
+            ExitCode::SUCCESS
+        }
         Ok(Reply::Status(st)) => {
-            if req == Request::Sync {
+            if words == ["status", "--short"] {
+                println!("{}", status_short(&st));
+            } else if req == Request::Sync {
                 println!("{}", sync_text(&st));
             } else {
                 print!("{}", status_text(&st));
@@ -189,6 +206,24 @@ fn ask(req: &Request) -> io::Result<Reply> {
     Client::connect()?.request(req)
 }
 
+fn stdout_is_tty() -> bool {
+    use std::io::IsTerminal;
+    io::stdout().is_terminal()
+}
+
+/// The terminal's columns: asked from stdout, else `$COLUMNS`, else 80 (a pipe).
+fn terminal_width() -> usize {
+    if stdout_is_tty() {
+        let mut ws = libc::winsize { ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0 };
+        // SAFETY: TIOCGWINSZ fills the `winsize` we pass; stdout is a terminal.
+        let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0;
+        if ok && ws.ws_col > 0 {
+            return usize::from(ws.ws_col);
+        }
+    }
+    std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()).filter(|&n| n > 0).unwrap_or(80)
+}
+
 fn interactive() -> bool {
     use std::io::IsTerminal;
     io::stdin().is_terminal() && io::stderr().is_terminal()
@@ -227,6 +262,11 @@ fn parse_plus_one(words: &[&str]) -> Result<Request, String> {
 
 /// Two lines: the version, then the account and the list.
 fn status_text(st: &Status) -> String {
+    format!("Kotora {}\n{}\n", st.version, status_short(st))
+}
+
+/// The second line of `status_text` on its own: the account and the list.
+fn status_short(st: &Status) -> String {
     let who = match &st.account {
         Some(name) if st.service.is_empty() => name.clone(),
         Some(name) => format!("{name} on {}", st.service),
@@ -244,7 +284,7 @@ fn status_text(st: &Status) -> String {
     if !st.window {
         line.push_str(" · hidden");
     }
-    format!("Kotora {}\n{line}\n", st.version)
+    line
 }
 
 /// `set TITLE… [EP] [--status S] [--score N|none]`: the last bare number is the episode.

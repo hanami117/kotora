@@ -280,7 +280,7 @@ fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &st
     if paths::offline_forced() || items.is_empty() {
         return Found::Nothing;
     }
-    let Some(id) = Config::load(&paths::config_file()).ok().and_then(|c| c.mal_client_id) else { return Found::Nothing };
+    let Some(id) = Config::load(&paths::config_file()).ok().and_then(|c| c.effective_client_id()) else { return Found::Nothing };
     let tokens = TokenStore::new(paths::token_file());
     if tokens.load_mal().is_none() {
         return Found::Nothing;

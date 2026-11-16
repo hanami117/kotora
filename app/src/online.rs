@@ -26,13 +26,17 @@ fn send(h: &Handle, msg: Msg) {
     h.update_if(move |s, _| s.apply(msg));
 }
 
-/// What to show first: the Client ID and the token file decide.
+/// What to show first: a saved token means signed in. Kotora has its own Client ID, so signed
+/// out is only one click from signed in. `NoClientId` is the first run now (nothing chosen, no
+/// own ID, no token): the setup wizard is the page.
 pub fn initial_auth() -> Auth {
+    let has_token = TokenStore::new(paths::token_file()).load_mal().is_some();
+    if has_token {
+        return Auth::SignedIn;
+    }
     match Config::load(&paths::config_file()) {
-        Ok(c) if c.mal_client_id.is_some() => {
-            if TokenStore::new(paths::token_file()).load_mal().is_some() { Auth::SignedIn } else { Auth::SignedOut }
-        }
-        _ => Auth::NoClientId,
+        Ok(c) if c.needs_service_choice(false) => Auth::NoClientId,
+        _ => Auth::SignedOut,
     }
 }
 
@@ -82,8 +86,10 @@ pub fn refresh(s: &mut State) {
 
 fn sync_now(h: &Handle, mut store: Store) {
     let id = match Config::load(&paths::config_file()) {
-        Ok(Config { mal_client_id: Some(id), .. }) => id,
-        Ok(_) => return send(h, Msg::SyncFailed(Fail::Other("No MyAnimeList Client ID in config.toml.".into()))),
+        Ok(c) => match c.effective_client_id() {
+            Some(id) => id,
+            None => return send(h, Msg::SyncFailed(Fail::Other("No MyAnimeList Client ID.".into()))),
+        },
         Err(e) => return send(h, Msg::SyncFailed(Fail::Other(e))),
     };
     let mut service = Mal::new(Client::new(id, UreqTransport::default()), TokenStore::new(paths::token_file()));
@@ -142,7 +148,7 @@ pub fn mal_service() -> Option<Mal<UreqTransport>> {
     if paths::offline_forced() {
         return None;
     }
-    let id = Config::load(&paths::config_file()).ok()?.mal_client_id?;
+    let id = Config::load(&paths::config_file()).ok()?.effective_client_id()?;
     let tokens = TokenStore::new(paths::token_file());
     tokens.load_mal()?;
     Some(Mal::new(Client::new(id, UreqTransport::default()), tokens))
@@ -191,7 +197,7 @@ pub fn cancel_sign_in(s: &mut State) {
 }
 
 fn sign_in_flow(h: &Handle, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
-    let id = Config::load(&paths::config_file())?.mal_client_id.ok_or("No MyAnimeList Client ID in config.toml.")?;
+    let id = Config::load(&paths::config_file())?.effective_client_id().ok_or("No MyAnimeList Client ID.")?;
     // Bind first: if the port is busy there is no point in opening the browser.
     let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for MyAnimeList's reply: {e}", mal::PORT))?;
     let pkce = Pkce::new().map_err(|e| format!("Can't make a sign-in code: {e}"))?;
@@ -264,13 +270,6 @@ pub fn sign_out(s: &mut State) {
         }
         send(&h, Msg::SignedOut);
     });
-}
-
-/// "Check again" on the no-Client-ID screen: read `config.toml` once more.
-pub fn recheck_config(s: &mut State) {
-    if s.auth == Auth::NoClientId && initial_auth() != Auth::NoClientId {
-        s.auth = Auth::SignedOut;
-    }
 }
 
 #[cfg(test)]

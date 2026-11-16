@@ -520,6 +520,14 @@ impl Config {
         self.service.is_none() && self.mal_client_id.is_none() && !has_token
     }
 
+    /// The Client ID Kotora signs in with: the environment variable `KOTORA_MAL_CLIENT_ID`
+    /// (development), else the one in `config.toml` ("Use my own client ID"), else the one built
+    /// into Kotora.
+    pub fn effective_client_id(&self) -> Option<String> {
+        let env = std::env::var("KOTORA_MAL_CLIENT_ID").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        env.or_else(|| self.mal_client_id.clone()).or_else(|| crate::service::MAL_CLIENT_ID.map(str::to_string))
+    }
+
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
     pub fn load(path: &Path) -> Result<Config, String> {
         match std::fs::read_to_string(path) {
@@ -611,6 +619,11 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
 
 /// The services the first screen offers: the value written to `[account] service`.
 pub const SERVICE_MAL: &str = "mal";
+
+/// Goes back to Kotora's built-in Client ID: blanks `[mal] client_id` (a blank one counts as none).
+pub fn clear_client_id(path: &Path) -> Result<(), String> {
+    write_setting(path, "mal", "client_id", &quote(""))
+}
 
 /// Saves the chosen service (`[account] service`).
 pub fn save_service(path: &Path, service: &str) -> Result<(), String> {
@@ -839,6 +852,31 @@ mod tests {
         let t = set_line("[updates]\nautomatic = 1\n", "updates", "auto", "true");
         assert_eq!(t, "[updates]\nautomatic = 1\nauto = true\n");
         assert_eq!(set_line("", "updates", "auto", "true"), "[updates]\nauto = true\n");
+    }
+
+    #[test]
+    fn the_client_id_falls_back_to_the_built_in_one() {
+        use crate::service::MAL_CLIENT_ID;
+        // No environment variable is set for this one in tests.
+        let built_in = MAL_CLIENT_ID.unwrap();
+        assert_eq!(built_in.len(), 32, "a MyAnimeList id: 32 hex characters");
+        assert!(check_client_id(built_in).is_ok());
+        assert_eq!(Config::default().effective_client_id().as_deref(), Some(built_in));
+        let own = Config { mal_client_id: Some("mine".into()), ..Config::default() };
+        assert_eq!(own.effective_client_id().as_deref(), Some("mine"), "the user's own wins");
+    }
+
+    #[test]
+    fn going_back_to_the_built_in_id_blanks_the_saved_one() {
+        let dir = std::env::temp_dir().join(format!("kotora-clear-id-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[mal]\nclient_id = \"0123456789abcdef0123456789abcdef\" # mine\n\n[updates]\nauto = true\n").unwrap();
+        clear_client_id(&path).unwrap();
+        let c = Config::load(&path).unwrap();
+        assert_eq!(c.mal_client_id, None);
+        assert!(c.updates.auto, "the rest stays");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
