@@ -1,6 +1,8 @@
 //! The tray icon: Rune's StatusNotifierItem tray on Linux (`tray_linux.rs`), a menu bar item of
 //! our own on macOS (`tray_mac.rs`, Rune has no Mac tray). Both give `TrayCtl` the same API:
-//! the current detection line, Show Kotora and Quit.
+//! the current detection line, Play next (the next episodes in the library folders,
+//! `library::play_menu`), Show Kotora and Quit. Picking a Play next item plays it as ▶ Play
+//! does; the usual detection then offers the update.
 //!
 //! With a tray, closing the window only hides it: Kotora keeps running and detection keeps
 //! working. Quit in the tray, ⌘Q on the Mac and `kot quit` really quit. Same design as
@@ -23,7 +25,15 @@ pub fn show_window(handle: &Handle) {
     #[cfg(target_os = "macos")]
     handle.set_dock_icon(true);
     handle.open();
-    handle.update(|s: &mut State, _| s.window = true);
+    handle.update(|s: &mut State, _| {
+        s.window = true;
+        crate::library::refresh(s);
+    });
+}
+
+/// A tray Play next item was picked: play that anime's next episode (Settings' Open with).
+pub fn play(handle: &Handle, id: u32) {
+    handle.update(move |s: &mut State, _| s.play_entry(id));
 }
 
 /// The tray's first line: what plays, as the sidebar card has it ("Title · Ep 7"), or empty.
@@ -54,8 +64,10 @@ impl State {
             return;
         }
         let line = now_line(self);
+        let play = crate::library::play_menu(self);
         if let Some(t) = &mut self.tray {
             t.set_now(&line);
+            t.set_play(play);
         }
     }
 

@@ -1,5 +1,7 @@
 //! The macOS menu bar icon: an `NSStatusItem` whose menu has the detection line (disabled, also
-//! the tooltip), Show Kotora and Quit Kotora. Rune has no Mac tray, so this talks to AppKit
+//! the tooltip), a Play next submenu (`library::play_menu`), Show Kotora and Quit Kotora.
+//! Opening the menu asks for a quiet rescan of the library folders (`library::refresh`); the
+//! menu is one `NSMenu` filled again in place, so a rescan that ends while it is open shows in it. Rune has no Mac tray, so this talks to AppKit
 //! itself, as Uzumaki's `tray_mac.rs` does.
 //!
 //! AppKit objects live on the main thread. `TrayCtl` is built and used on the UI thread (the
@@ -10,10 +12,10 @@
 //! tints it for light and dark menu bars.
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength};
-use objc2_foundation::{NSData, NSObject, NSSize, NSString};
+use objc2_app_kit::{NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength};
+use objc2_foundation::{NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
 use crate::model::Handle;
 
@@ -23,6 +25,8 @@ const ICON_PX: u32 = 36;
 
 const SHOW: isize = 1;
 const QUIT: isize = 2;
+/// A Play next item's tag is this plus the anime's media id.
+const PLAY: isize = 1 << 40;
 
 struct Ivars {
     handle: Handle,
@@ -43,18 +47,36 @@ define_class!(
             match item.tag() {
                 SHOW => super::show_window(handle),
                 QUIT => handle.quit(),
+                t if t >= PLAY => {
+                    if let Ok(id) = u32::try_from(t - PLAY) {
+                        super::play(handle, id);
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    unsafe impl NSObjectProtocol for Target {}
+
+    unsafe impl NSMenuDelegate for Target {
+        /// The menu bar menu opens: look for new files (throttled, off the UI thread).
+        #[unsafe(method(menuWillOpen:))]
+        fn menu_will_open(&self, _menu: &NSMenu) {
+            self.ivars().handle.update(|s: &mut crate::model::State, _| crate::library::refresh(s));
         }
     }
 );
 
 pub struct TrayCtl {
     item: Retained<NSStatusItem>,
+    menu: Retained<NSMenu>,
     target: Retained<Target>,
     mtm: MainThreadMarker,
     /// The detection line, or empty.
     line: String,
+    /// The Play next items: (media id, "Title · Ep N").
+    play: Vec<(u32, String)>,
 }
 
 impl TrayCtl {
@@ -74,7 +96,12 @@ impl TrayCtl {
                 None => button.setTitle(&NSString::from_str("K")), // the icon failed to decode
             }
         }
-        let ctl = Self { item, target, mtm, line: String::new() };
+        let menu = NSMenu::new(mtm);
+        // Without this AppKit would grey and enable items by itself; be explicit.
+        menu.setAutoenablesItems(false);
+        menu.setDelegate(Some(ProtocolObject::from_ref(&*target)));
+        item.setMenu(Some(&menu));
+        let ctl = Self { item, menu, target, mtm, line: String::new(), play: Vec::new() };
         ctl.rebuild();
         Some(ctl)
     }
@@ -91,10 +118,17 @@ impl TrayCtl {
         self.rebuild();
     }
 
+    /// The Play next items; the menu is filled again only on a change.
+    pub fn set_play(&mut self, play: Vec<(u32, String)>) {
+        if play != self.play {
+            self.play = play;
+            self.rebuild();
+        }
+    }
+
     fn rebuild(&self) {
-        let menu = NSMenu::new(self.mtm);
-        // Without this AppKit would grey and enable items by itself; be explicit.
-        menu.setAutoenablesItems(false);
+        let menu = &self.menu;
+        menu.removeAllItems();
         if !self.line.is_empty() {
             let title = NSMenuItem::new(self.mtm);
             title.setTitle(&NSString::from_str(&self.line));
@@ -102,10 +136,21 @@ impl TrayCtl {
             menu.addItem(&title);
             menu.addItem(&NSMenuItem::separatorItem(self.mtm));
         }
-        self.add(&menu, "Show Kotora", SHOW);
+        if !self.play.is_empty() {
+            let sub = NSMenu::new(self.mtm);
+            sub.setAutoenablesItems(false);
+            for (id, label) in &self.play {
+                self.add(&sub, label, PLAY + *id as isize);
+            }
+            let head = NSMenuItem::new(self.mtm);
+            head.setTitle(&NSString::from_str("Play next"));
+            head.setSubmenu(Some(&sub));
+            menu.addItem(&head);
+            menu.addItem(&NSMenuItem::separatorItem(self.mtm));
+        }
+        self.add(menu, "Show Kotora", SHOW);
         menu.addItem(&NSMenuItem::separatorItem(self.mtm));
-        self.add(&menu, "Quit Kotora", QUIT);
-        self.item.setMenu(Some(&menu));
+        self.add(menu, "Quit Kotora", QUIT);
     }
 
     fn add(&self, menu: &NSMenu, title: &str, tag: isize) {
