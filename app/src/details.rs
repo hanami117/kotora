@@ -794,7 +794,9 @@ pub fn fake_details(id: u32, title: &str, mine: bool) -> Details {
             times_rewatched: 0,
             start_date: Some("2026-10-04".into()),
             finish_date: None,
+            volumes: 0,
         }),
+        ..Default::default()
     }
 }
 

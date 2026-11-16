@@ -1,0 +1,56 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 2001,
+        "title": "Paper Lanterns of Kirigaoka",
+        "main_picture": { "medium": "https://cdn.example.invalid/m2001m.jpg", "large": "https://cdn.example.invalid/m2001l.jpg" },
+        "alternative_titles": { "synonyms": ["Kirigaoka Lanterns"], "en": "Paper Lanterns", "ja": "" },
+        "num_chapters": 0,
+        "num_volumes": 0,
+        "media_type": "manga",
+        "status": "currently_publishing",
+        "authors": [
+          { "node": { "id": 501, "first_name": "Aoi", "last_name": "Hoshimiya" }, "role": "Story & Art" }
+        ]
+      },
+      "list_status": {
+        "status": "reading",
+        "score": 8,
+        "num_volumes_read": 3,
+        "num_chapters_read": 21,
+        "is_rereading": false,
+        "updated_at": "2026-11-01T09:00:00+00:00"
+      }
+    },
+    {
+      "node": {
+        "id": 2002,
+        "title": "The Quiet Archivist",
+        "main_picture": { "medium": "https://cdn.example.invalid/m2002m.jpg" },
+        "alternative_titles": { "synonyms": [], "en": "", "ja": "" },
+        "num_chapters": 48,
+        "num_volumes": 6,
+        "media_type": "light_novel",
+        "status": "finished",
+        "authors": [
+          { "node": { "id": 502, "first_name": "Ren", "last_name": "Tsukishiro" }, "role": "Story" },
+          { "node": { "id": 503, "first_name": "", "last_name": "Mokuren" }, "role": "Art" }
+        ]
+      },
+      "list_status": {
+        "status": "completed",
+        "score": 0,
+        "num_volumes_read": 6,
+        "num_chapters_read": 48,
+        "is_rereading": true,
+        "num_times_reread": 1,
+        "updated_at": "2026-10-20T12:30:00+00:00"
+      }
+    },
+    {
+      "node": { "id": 2009, "title": "No list status here" }
+    }
+  ],
+  "paging": { "next": "https://api.myanimelist.net/v2/users/@me/mangalist?offset=100&limit=100" }
+}

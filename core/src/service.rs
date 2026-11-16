@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Change, ListItem, Media, Remote, Status};
+use crate::{Change, Kind, ListItem, Media, Remote, Status};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
@@ -37,10 +37,12 @@ pub struct SearchHit {
     pub other_titles: Vec<String>,
 }
 
-/// One anime of an online search, with what a result row shows (search and add).
+/// One anime (or manga) of an online search, with what a result row shows (search and add).
+/// For a manga, `episodes` is the chapter count and `air_status` the publishing status.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AnimeHit {
+    pub kind: Kind,
     pub id: u32,
     pub title: String,
     pub title_en: Option<String>,
@@ -58,6 +60,12 @@ pub struct AnimeHit {
     pub mean: Option<f32>,
     /// A small cover (rows).
     pub cover_url: Option<String>,
+    /// Manga: the volume count, when known.
+    pub volumes: Option<u32>,
+    /// Manga: the authors, "First Last".
+    pub authors: Vec<String>,
+    /// Manga: the first publication date (`2021-04-08`, or shorter).
+    pub start_date: Option<String>,
 }
 
 impl AnimeHit {
@@ -73,11 +81,11 @@ impl AnimeHit {
             format: self.format.clone(),
             air_status: self.air_status.clone(),
             cover_url: self.cover_url.clone(),
-            start_date: None,
+            start_date: if self.kind == Kind::Manga { self.start_date.clone() } else { None },
             broadcast: None,
-            authors: Vec::new(),
-            kind: Default::default(),
-            volumes: None,
+            authors: self.authors.clone(),
+            kind: self.kind,
+            volumes: self.volumes,
         }
     }
 
@@ -108,22 +116,39 @@ pub struct MyEntry {
     /// Finished rewatches (older saved details have none: 0).
     #[serde(default)]
     pub times_rewatched: u32,
+    /// Manga: volumes read (0 for anime and older saved details).
+    #[serde(default)]
+    pub volumes: u32,
     /// `2024-10-03` (MAL may give only `2024-10` or `2024`).
     pub start_date: Option<String>,
     pub finish_date: Option<String>,
 }
 
 impl MyEntry {
+    /// `status` holds the anime name for both kinds (`watching` for a manga being read).
     pub fn status(&self) -> Option<Status> {
         Status::from_mal(&self.status)
     }
 }
 
-/// One anime's information page (MAL `GET /anime/{id}`). Saved as JSON in the store's
-/// `details` table for titles on the list or recently shown (see `Store::save_details`).
+/// One author of a manga and what they did ("Story & Art", "Story", "Art").
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Author {
+    /// "First Last" (MAL may have only one of the two).
+    pub name: String,
+    pub role: String,
+}
+
+/// One anime's or manga's information page (MAL `GET /anime/{id}`, `GET /manga/{id}`). Saved
+/// as JSON in the store's `details` table for titles on the list or recently shown (see
+/// `Store::save_details`). A manga's chapter count is `episodes`, its publishing status
+/// `air_status`; `season`, `studios`, `source` and `minutes` stay empty for it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Details {
+    /// Older saved details have none: anime.
+    pub kind: Kind,
     pub id: u32,
     pub title: String,
     pub title_en: Option<String>,
@@ -153,6 +178,12 @@ pub struct Details {
     pub cover_small: Option<String>,
     /// The user's entry when the anime is on the list.
     pub mine: Option<MyEntry>,
+    /// Manga: the volume count, when known.
+    pub volumes: Option<u32>,
+    /// Manga: who wrote and drew it.
+    pub authors: Vec<Author>,
+    /// Manga: the magazines or labels it ran in.
+    pub serialization: Vec<String>,
 }
 
 impl Details {
@@ -170,9 +201,9 @@ impl Details {
             cover_url: self.cover_small.clone().or_else(|| self.cover_url.clone()),
             start_date: self.start_date.clone(),
             broadcast: None,
-            authors: Vec::new(),
-            kind: Default::default(),
-            volumes: None,
+            authors: self.authors.iter().map(|a| a.name.clone()).collect(),
+            kind: self.kind,
+            volumes: self.volumes,
         }
     }
 
@@ -262,6 +293,61 @@ pub trait ListService {
     /// One anime's information page, with the user's entry if it is on the list.
     fn details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
         Err(ServiceError::Other("this service has no details page".into()))
+    }
+    /// The whole manga list (only asked once the user turned Manga on: see `Store::manga_enabled`).
+    fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    }
+    /// The service's copy of one manga entry; `None` when it is not on the list.
+    fn get_manga_entry(&mut self, _media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    }
+    /// Sends one change of a manga entry.
+    fn update_manga_entry(&mut self, _media_id: u32, _change: &Change) -> Result<Remote, ServiceError> {
+        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    }
+    /// A manga title search for the search bar.
+    fn browse_manga(&mut self, _query: &str, _limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        Ok(Vec::new())
+    }
+    /// One manga's information page, with the user's entry if it is on the list.
+    fn manga_details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
+        Err(ServiceError::Other("this service has no manga pages".into()))
+    }
+    /// [`ListService::fetch_list`] or [`ListService::fetch_manga_list`].
+    fn fetch_list_of(&mut self, kind: Kind) -> Result<Vec<ListItem>, ServiceError> {
+        match kind {
+            Kind::Anime => self.fetch_list(),
+            Kind::Manga => self.fetch_manga_list(),
+        }
+    }
+    /// One entry of a list of `kind`.
+    fn get_entry_of(&mut self, kind: Kind, media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        match kind {
+            Kind::Anime => self.get_entry(media_id),
+            Kind::Manga => self.get_manga_entry(media_id),
+        }
+    }
+    /// One change of an entry of a list of `kind`.
+    fn update_entry_of(&mut self, kind: Kind, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        match kind {
+            Kind::Anime => self.update_entry(media_id, change),
+            Kind::Manga => self.update_manga_entry(media_id, change),
+        }
+    }
+    /// The search bar's search in `kind`.
+    fn browse_of(&mut self, kind: Kind, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        match kind {
+            Kind::Anime => self.browse(query, limit),
+            Kind::Manga => self.browse_manga(query, limit),
+        }
+    }
+    /// The information page of an anime or a manga.
+    fn details_of(&mut self, kind: Kind, media_id: u32) -> Result<Details, ServiceError> {
+        match kind {
+            Kind::Anime => self.details(media_id),
+            Kind::Manga => self.manga_details(media_id),
+        }
     }
     /// One page of a season's anime, most members first (`page` from 0), and whether more
     /// pages follow.

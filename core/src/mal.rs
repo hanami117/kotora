@@ -28,6 +28,9 @@ const API: &str = "https://api.myanimelist.net/v2";
 const API_PREFIX: &str = "https://api.myanimelist.net/";
 const SERVICE: &str = "mal";
 
+mod manga;
+pub use manga::{manga_type_label, parse_manga_details, parse_manga_hits, parse_manga_list_page};
+
 // ------------------------------------------------------------------------------------ transport
 
 pub struct Request {
@@ -512,6 +515,7 @@ impl FullNode {
             air_status: self.status.unwrap_or_default(),
             mean: self.mean.filter(|m| *m > 0.0),
             cover_url: self.main_picture.and_then(|p| p.medium.or(p.large)),
+            ..AnimeHit::default()
         }
     }
 }
@@ -594,6 +598,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
             times_rewatched: m.num_times_rewatched,
             start_date: non_empty(m.start_date),
             finish_date: non_empty(m.finish_date),
+            volumes: 0,
         })
     });
     let (cover_url, cover_small) = match n.main_picture {
@@ -624,6 +629,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
         cover_url,
         cover_small,
         mine,
+        ..Details::default()
     })
 }
 
@@ -958,6 +964,26 @@ impl<T: Transport> ListService for Mal<T> {
     fn details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
         self.authed(|c, a| c.fetch_details(a, media_id))
     }
+
+    fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+        self.manga_list()
+    }
+
+    fn get_manga_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        self.manga_entry(media_id)
+    }
+
+    fn update_manga_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        self.manga_patch(media_id, change)
+    }
+
+    fn browse_manga(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        self.manga_browse(query, limit)
+    }
+
+    fn manga_details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
+        self.manga_page(media_id)
+    }
 }
 
 // ------------------------------------------------------------------------------------------ tests
@@ -1000,7 +1026,7 @@ mod tests {
     /// (method, url, bearer, form body)
     type Sent = (String, String, Option<String>, Option<String>);
 
-    struct Fake {
+    pub(super) struct Fake {
         answers: RefCell<VecDeque<Result<Response, String>>>,
         seen: Seen,
     }
@@ -1012,35 +1038,35 @@ mod tests {
         }
     }
 
-    type Seen = Arc<Mutex<Vec<Sent>>>;
+    pub(super) type Seen = Arc<Mutex<Vec<Sent>>>;
 
-    fn fake(answers: Vec<Result<Response, String>>) -> (Fake, Seen) {
+    pub(super) fn fake(answers: Vec<Result<Response, String>>) -> (Fake, Seen) {
         let seen: Seen = Arc::default();
         (Fake { answers: RefCell::new(answers.into()), seen: seen.clone() }, seen)
     }
 
-    fn ok(body: &str) -> Result<Response, String> {
+    pub(super) fn ok(body: &str) -> Result<Response, String> {
         Ok(Response { status: 200, retry_after: None, body: body.into() })
     }
 
-    fn status(code: u16, retry_after: Option<u64>) -> Result<Response, String> {
+    pub(super) fn status(code: u16, retry_after: Option<u64>) -> Result<Response, String> {
         Ok(Response { status: code, retry_after, body: "{}".into() })
     }
 
     const FIXTURE: &str = include_str!("../tests/mal_animelist_page1.json");
     const FIXTURE2: &str = include_str!("../tests/mal_animelist_page2.json");
 
-    fn tok_json(access: &str) -> String {
+    pub(super) fn tok_json(access: &str) -> String {
         format!(r#"{{"token_type":"Bearer","expires_in":3600,"access_token":"{access}","refresh_token":"fake-refresh-{access}"}}"#)
     }
 
-    fn client(f: Fake) -> (Client<Fake>, Arc<Mutex<Vec<Duration>>>) {
+    pub(super) fn client(f: Fake) -> (Client<Fake>, Arc<Mutex<Vec<Duration>>>) {
         let waits: Arc<Mutex<Vec<Duration>>> = Arc::default();
         let w = waits.clone();
         (Client::new("fake-client-id".into(), f).with_own_budget().with_sleep(move |d| w.lock().unwrap().push(d)), waits)
     }
 
-    fn tmp_tokens(name: &str, t: Option<Token>) -> TokenStore {
+    pub(super) fn tmp_tokens(name: &str, t: Option<Token>) -> TokenStore {
         let dir = std::env::temp_dir().join(format!("kotora-mal-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let s = TokenStore::new(dir.join("tokens.json"));
@@ -1050,7 +1076,7 @@ mod tests {
         s
     }
 
-    fn token(access: &str, expires_in: i64) -> Token {
+    pub(super) fn token(access: &str, expires_in: i64) -> Token {
         Token { access_token: access.into(), refresh_token: format!("fake-refresh-{access}"), expires_at: time::now_unix() + expires_in }
     }
 

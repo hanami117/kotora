@@ -588,6 +588,7 @@ pub fn fake_hits() -> Vec<AnimeHit> {
         season: season.map(|(y, s)| (y, s.to_string())),
         mean,
         cover_url: None,
+        ..Default::default()
     };
     vec![
         h(9101, "Lanterns of Kirigaoka: Festival Night", Some("Lanterns: Festival Night"), "movie", Some(1), "finished_airing", Some((2026, "summer")), Some(8.31)),
