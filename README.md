@@ -121,11 +121,13 @@ You can also run `kot config client-id ID`.
 `kot` talks to the running app.
 
 ```text
-kot                    what Kotora is doing
+kot                    a dashboard: what plays, your Watching list with what comes next, the sync queue
+kot status [--short]   what Kotora is doing (--short: one line)
 kot list [STATUS|all]  your list (watching, plan, completed, on-hold, dropped)
 kot +1 TITLE           one more episode
 kot set TITLE EP [--status S] [--score N|none]
 kot add QUERY|ID [--status S]
+kot airing | schedule   your anime airing in the next 7 days
 kot now                what plays, and the episode Kotora offers
 kot confirm            record the offered episode
 kot dismiss            not now
