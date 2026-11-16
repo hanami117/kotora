@@ -1,0 +1,274 @@
+# The prebuilt Linux x86_64 tarball (the AUR's kotora-bin) comes from here, not from a hand build.
+#
+# On a pushed tag v<release> (or by hand, see below) it:
+#   1. build   makes kotora-<release>-linux-x86_64.tar.gz (+ .sha256) with `packaging/release.sh --no-dmg
+#              --linux-bin` in an Arch Linux container (the same toolchain as the AUR's `kotora`), checks the
+#              files and runs `kot --version` from the unpacked tarball.
+#   2. upload  adds those two files to the EXISTING GitHub release of the tag. It waits for the release
+#              (release.sh's flow pushes the tag first, then `gh release create`). It never touches another
+#              asset, never overwrites one, and never creates a release.
+#   3. aur     (environment `release`: needs your approval) fills packaging/aur-bin/PKGBUILD from the
+#              published file, checks it with makepkg, and pushes PKGBUILD + .SRCINFO to the AUR's kotora-bin.
+#
+# By hand (Actions > linux-bin > Run workflow, or `gh workflow run linux-bin.yml`):
+#   tag       an existing annotated tag on main, e.g. v0.2.0. The sources are the tag's, not the branch's.
+#   dry_run   true (the default): build and check only. No upload, no AUR. The files stay as the workflow
+#             artifact for 7 days.
+#   aur       false: upload but skip the AUR job. (A tag push always runs it, behind the approval.)
+# A tag made before this file existed cannot trigger it: run it by hand from main.
+#
+# Repository variables: PUSH_DRY_RUN=true makes the AUR push a `git push --dry-run`. Outside
+# hanami117/kotora (a scratch copy) the AUR push is ALWAYS a dry run.
+#
+# Never rebuild a file after its sha256 is pinned (the AUR package pins it): `upload` refuses to replace a
+# release asset that differs. Delete the asset by hand first, if a rebuild is really wanted.
+#
+# Pins: actions by commit SHA; the Arch image by digest (bump both on purpose).
+name: linux-bin
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag on main (e.g. v0.2.0)
+        required: true
+        type: string
+      dry_run:
+        description: Build and check only (no upload, no AUR)
+        required: true
+        type: boolean
+        default: true
+      aur:
+        description: Run the AUR job after the upload (needs approval)
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-bin-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PUBLIC_REPO: hanami117/kotora
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
+  ARCH_IMAGE: archlinux:base-devel@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239
+
+jobs:
+  # 1. Build the tarball from the tag, in a clean container, and check it.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container: archlinux:base-devel@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+      release: ${{ steps.v.outputs.release }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - run: pacman -Syu --noconfirm --needed git rust pkgconf
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is a release tag, annotated, on main, and matches the sources
+        id: v
+        run: |
+          git config --global --add safe.directory "$PWD"
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "::error::'$TAG' is not v<version> or v<version>-<build>"; exit 1; }
+          # checkout may leave a lightweight copy of the tag; fetch the real (annotated) one.
+          git fetch -q -f origin "refs/tags/$TAG:refs/tags/$TAG"
+          [ "$(git cat-file -t "$TAG")" = tag ] || { echo "::error::$TAG is not an annotated tag"; exit 1; }
+          [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "::error::checkout is not the tag"; exit 1; }
+          git fetch -q origin main
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          build=$(tr -d '[:space:]' < BUILD)
+          [[ $build =~ ^[1-9][0-9]*$ ]] || { echo "::error::BUILD is not a number: $build"; exit 1; }
+          if [ "$build" = 1 ]; then release=$version; else release=$version-$build; fi
+          [ "v$release" = "$TAG" ] || { echo "::error::tag $TAG != v$release (Cargo.toml + BUILD)"; exit 1; }
+          grep -q '^## \['"$version"'\]' CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$version] section"; exit 1; }
+          prerelease=false; [[ $version == *-* ]] && prerelease=true
+          {
+            echo "version=$version"; echo "build=$build"; echo "release=$release"; echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $release (version $version, build $build, prerelease $prerelease), dry run: $DRY_RUN" >> "$GITHUB_STEP_SUMMARY"
+      - name: Build (packaging/release.sh --no-dmg --linux-bin)
+        run: |
+          rustc --version; cargo --version
+          packaging/release.sh --no-dmg --linux-bin
+      - name: Check the files and run the unpacked binary
+        env:
+          R: ${{ steps.v.outputs.release }}
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          out=target/release-$R; f=kotora-$R-linux-x86_64.tar.gz
+          # Only these two go to the release; the source tarball (pinned by the AUR's kotora) must not.
+          up=$GITHUB_WORKSPACE/.ci/linux; mkdir -p "$up"
+          cp "$out/$f" "$out/$f.sha256" "$up/"
+          cd "$up"
+          sha256sum -c "$f.sha256"
+          [ "$(wc -l < "$f.sha256")" = 1 ] || { echo "::error::$f.sha256 is not one line"; exit 1; }
+          tar -tzf "$f" > list
+          top=kotora-$V-linux-x86_64
+          for p in bin/kotora bin/kot share/applications/io.github.hanami117.kotora.desktop \
+                   share/icons/hicolor/scalable/apps/io.github.hanami117.kotora.svg LICENSE THIRD_PARTY_NOTICES.md README.md; do
+            grep -qx "$top/$p" list || { echo "::error::$top/$p missing from the tarball"; exit 1; }
+          done
+          grep -q "^$top/share/icons/hicolor/.*x.*/apps/.*\.png$" list || { echo "::error::no PNG icons in the tarball"; exit 1; }
+          mkdir x && tar -xzf "$f" -C x
+          for b in kotora kot; do
+            if ldd "x/$top/bin/$b" | grep 'not found'; then echo "::error::$b has an unresolved library"; exit 1; fi
+          done
+          # `kot --version` only prints. A scratch environment anyway: it must never see a real config.
+          mkdir scratch
+          env -i PATH="$PATH" HOME="$PWD/scratch" XDG_CONFIG_HOME="$PWD/scratch/c" XDG_DATA_HOME="$PWD/scratch/d" \
+            XDG_CACHE_HOME="$PWD/scratch/k" XDG_STATE_HOME="$PWD/scratch/s" KOTORA_OFFLINE=1 \
+            "x/$top/bin/kot" --version | tee ver
+          grep -q "$V" ver || { echo "::error::kot --version does not say $V"; exit 1; }
+          rm -rf x scratch list ver
+          { echo '### Files'; echo '```'; ls -l; cat "$f.sha256"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-bin
+          path: .ci/linux/
+          if-no-files-found: error
+          retention-days: 7
+
+  # 2. Add the two files to the release that already exists. Never overwrite, never create.
+  upload:
+    needs: build
+    if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions: { contents: write }
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ needs.build.outputs.release }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: linux-bin, path: '${{ runner.temp }}/linux' }
+      - name: Wait for the release (the tag is pushed before `gh release create`)
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then found=1; break; fi
+            echo "no release $TAG yet ($i/60)"; sleep 30
+          done
+          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create it, then run this workflow by hand (dry_run false) from main."; exit 1; }
+      - name: Upload the tarball and its checksum
+        run: |
+          cd "$RUNNER_TEMP/linux"
+          f=kotora-$R-linux-x86_64.tar.gz
+          ls
+          [ "$(ls | wc -l)" = 2 ] || { echo "::error::expected exactly 2 files"; exit 1; }
+          have=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          if grep -qxF "$f" <<<"$have"; then
+            # Re-run: fine if it is the very same bytes, an error if not (the AUR pins the sha256).
+            remote=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+                       --jq ".assets[] | select(.name == \"$f\") | .digest | sub(\"^sha256:\"; \"\")")
+            [ "$remote" = "$(sha256sum "$f" | cut -d' ' -f1)" ] ||
+              { echo "::error::$f is already on $TAG with other bytes: never replace a pinned file"; exit 1; }
+            echo "$f is already on $TAG with the same bytes"
+          else
+            # No --clobber: it fails on a name that exists. Only these two names, never a glob.
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "$f" "$f.sha256"
+          fi
+      - name: GitHub's digest = the local file
+        run: |
+          cd "$RUNNER_TEMP/linux"; f=kotora-$R-linux-x86_64.tar.gz
+          remote=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+                     --jq ".assets[] | select(.name == \"$f\") | .digest | sub(\"^sha256:\"; \"\")")
+          [ "$remote" = "$(sha256sum "$f" | cut -d' ' -f1)" ] || { echo "::error::GitHub's digest differs"; exit 1; }
+          { echo '### On the release'; echo '```'; echo "$remote  $f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # 3. The AUR package kotora-bin. Approval: environment `release`.
+  aur:
+    needs: [build, upload]
+    if: github.event_name == 'push' || (github.event.inputs.dry_run != 'true' && github.event.inputs.aur == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    container: archlinux:base-devel@sha256:fa2d4ce3310ddd90a4208e5168be8ad367da5129af1245f38fd2d803bcbe3239
+    env:
+      R: ${{ needs.build.outputs.release }}
+      V: ${{ needs.build.outputs.version }}
+      B: ${{ needs.build.outputs.build }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      PUSH_FLAGS: ${{ (github.repository != 'hanami117/kotora' || vars.PUSH_DRY_RUN == 'true') && '--dry-run' || '' }}
+    steps:
+      - run: '[ "$PRERELEASE" != true ] || { echo "::error::no prereleases on the AUR"; exit 1; }'
+      - run: pacman -Syu --noconfirm --needed git openssh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: linux-bin, path: .ci/linux }
+      - name: The AUR secrets are there, and the known hosts have an ED25519 key
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          [ -n "$AUR_SSH_KEY" ] && [ -n "$AUR_KNOWN_HOSTS" ] || { echo "::error::AUR_SSH_KEY / AUR_KNOWN_HOSTS missing (environment release)"; exit 1; }
+          grep -Eq '^(\S+ )?aur\.archlinux\.org ssh-ed25519 ' <<<"$AUR_KNOWN_HOSTS" ||
+            { echo "::error::AUR_KNOWN_HOSTS has no ssh-ed25519 line for aur.archlinux.org (ssh-keyscan -t ed25519,rsa,ecdsa aur.archlinux.org)"; exit 1; }
+      - name: Fill in the PKGBUILD from the uploaded file
+        run: |
+          git config --global --add safe.directory "$PWD"
+          useradd -m b
+          sha=$(cut -d' ' -f1 ".ci/linux/kotora-$R-linux-x86_64.tar.gz.sha256")
+          [[ $sha =~ ^[0-9a-f]{64}$ ]] || { echo "::error::bad sha256 file"; exit 1; }
+          src=packaging/aur-bin
+          # pkgrel: 1 for a new version; one more than the AUR's for a rebuild of the same version.
+          git clone -q --depth 1 https://aur.archlinux.org/kotora-bin.git "$RUNNER_TEMP/cur"
+          cur=$RUNNER_TEMP/cur/PKGBUILD
+          aver=$(sed -n 's/^pkgver=//p' "$cur"); abuild=$(sed -n 's/^_build=//p' "$cur"); arel=$(sed -n 's/^pkgrel=//p' "$cur")
+          asha=$(sed -n "s/^sha256sums=('\(.*\)')/\1/p" "$cur")
+          if [ "$aver" = "$V" ] && [ "$abuild" = "$B" ]; then
+            [ "$asha" = "$sha" ] || { echo "::error::kotora-bin $V build $B is already on the AUR with another sha256: never rebuild a published file"; exit 1; }
+            rel=$arel
+          elif [ "$aver" = "$V" ]; then rel=$((arel + 1))
+          else rel=1; fi
+          sed -i -e "s/^pkgver=.*/pkgver=$V/" -e "s/^_build=.*/_build=$B/" -e "s/^pkgrel=.*/pkgrel=$rel/" \
+                 -e "s/^sha256sums=(.*)/sha256sums=('$sha')/" "$src/PKGBUILD"
+          grep -q "^sha256sums=('$sha')$" "$src/PKGBUILD" || { echo "::error::sha256 not written in the PKGBUILD"; exit 1; }
+          chown -R b "$src"
+          su b -c "cd '$src' && makepkg --printsrcinfo > .SRCINFO"
+          { echo "### kotora-bin $V-$rel (AUR now: $aver build $abuild rel $arel)"; echo '```diff'; diff -u "$cur" "$src/PKGBUILD" || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "REL=$rel" >> "$GITHUB_ENV"
+      - name: makepkg checks the source against the published file and packs it
+        run: |
+          d=/home/b/kotora-bin; install -d -o b "$d"
+          install -o b -m644 packaging/aur-bin/PKGBUILD "$d/"
+          su b -c "cd '$d' && makepkg --verifysource && makepkg -df --noconfirm"
+          bsdtar -tf "$d"/kotora-bin-*.pkg.tar.zst | grep -qx usr/bin/kotora
+          bsdtar -tf "$d"/kotora-bin-*.pkg.tar.zst | grep -qx usr/bin/kot
+      - name: Push PKGBUILD and .SRCINFO to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          install -d -m700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur; chmod 600 ~/.ssh/aur
+          printf '%s\n' "$AUR_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes'
+          git clone -q ssh://aur@aur.archlinux.org/kotora-bin.git "$RUNNER_TEMP/kotora-bin"
+          cp packaging/aur-bin/PKGBUILD packaging/aur-bin/.SRCINFO "$RUNNER_TEMP/kotora-bin/"
+          cd "$RUNNER_TEMP/kotora-bin"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then echo "kotora-bin: nothing to do"; exit 0; fi
+          git -c user.name=hanami117 -c user.email=140802113+hanami117@users.noreply.github.com \
+            commit -q -m "kotora-bin $V-$REL"
+          git show --stat HEAD
+          git push $PUSH_FLAGS origin master
+      - if: always()
+        run: rm -rf ~/.ssh/aur
