@@ -426,6 +426,8 @@ pub struct State {
     pub tick: Option<(bool, u64)>,
     /// Library folders and "Play next episode" (`library.rs`).
     pub library: crate::library::Library,
+    /// Started airing and New episode notifications (`airnotes.rs`).
+    pub airnotes: crate::airnotes::AirNotes,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -481,6 +483,7 @@ impl State {
             tray: None,
             tick: None,
             library: Default::default(),
+            airnotes: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -974,7 +977,10 @@ impl State {
     /// A worker's message. The tray follows what plays after each one.
     pub fn apply(&mut self, msg: Msg) -> bool {
         match &msg {
-            Msg::Synced { .. } => crate::library::list_changed(self),
+            Msg::Synced { .. } => {
+                crate::library::list_changed(self);
+                self.kick_air_notes();
+            }
             Msg::Now(Some(seen)) => crate::library::saw_player(self, &seen.track.playing.player),
             _ => {}
         }

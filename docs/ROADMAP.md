@@ -50,6 +50,12 @@ v0.1 is MyAnimeList; AniList comes in v0.3 (moved from v0.2 on 2026-11-15, see S
   notification, `osascript` without buttons outside the bundle (`notes/mac.rs`). Now Playing asks once per
   player to turn on precise detection when the followed mpv or IINA is seen by its open file only
   (`[notices] mpv_precise` / `iina_precise`). Waiting for the user's live test on both systems.
+- **Airing notifications (2026-11-16, user-approved):** branch `airing-notes` (off
+  `kotora-next`). Started airing (Plan to watch: `not_yet_aired` → `currently_airing`, seen on the list sync or a
+  details refresh) and New episode (Watching: the estimated slot of an episode past the progress passed in the
+  last two days; Play when the library has the next file), both on, `[notifications] started_airing` /
+  `new_episode`. Decided by a thread from the saved list once a minute (`core/src/airnotes.rs`, store tables
+  `air_seen` and `announced`, migration 8): no requests of its own, each announced once.
 
 ## Stage 0: design
 

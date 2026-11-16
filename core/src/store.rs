@@ -143,6 +143,23 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         grp TEXT
      );
      CREATE INDEX library_file_folder ON library_file (folder);",
+    // 8: airing notifications (`airnotes.rs`). `air_seen`: the airing status last looked at, per
+    // anime on the list (not_yet_aired, then currently_airing, is "Started airing").
+    // `announced`: what was already announced (`started`, `ep7`), so nothing ever repeats.
+    // Service data: sign out deletes both.
+    "CREATE TABLE air_seen (
+        service TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        air_status TEXT NOT NULL,
+        PRIMARY KEY (service, media_id)
+     );
+     CREATE TABLE announced (
+        service TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        what TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        PRIMARY KEY (service, media_id, what)
+     );",
 ];
 
 /// Details of titles not on the list kept at most (the newest).
@@ -239,6 +256,8 @@ impl Store {
             "DELETE FROM recognition WHERE service = ?1",
             "DELETE FROM details WHERE service = ?1",
             "DELETE FROM season WHERE service = ?1",
+            "DELETE FROM air_seen WHERE service = ?1",
+            "DELETE FROM announced WHERE service = ?1",
         ] {
             tx.execute(sql, [service])?;
         }

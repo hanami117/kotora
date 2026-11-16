@@ -1216,7 +1216,7 @@ mod tests {
     #[test]
     fn settings_has_the_notification_switches() {
         let rt = render("settings-notifications", (1280.0, 800.0));
-        for k in ["notifications-card", "set/notify-detected", "set/notify-offer", "set/notify-recorded"] {
+        for k in ["notifications-card", "set/notify-detected", "set/notify-offer", "set/notify-recorded", "set/notify-started", "set/notify-episode"] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         assert!(rt.find("set/notify-support").is_none());

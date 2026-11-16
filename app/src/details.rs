@@ -126,6 +126,10 @@ impl State {
 
     /// The fetch's answer; one for another page is dropped.
     pub fn details_answer(&mut self, a: Answer) -> bool {
+        // A changed airing status was saved: Started airing may be due.
+        if a.item.is_some() {
+            self.kick_air_notes();
+        }
         if let Some(it) = &a.item
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == it.media.id)
         {

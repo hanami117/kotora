@@ -9,6 +9,7 @@
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
 mod airing;
+mod airnotes;
 mod art;
 mod autostart;
 mod clientid;
@@ -234,6 +235,8 @@ fn main() {
         // Players: sources and recognition on their own threads, event driven.
         detect::start(&mut s);
         library::start(&mut s);
+        // Started airing and New episode notifications, from the saved list (no requests).
+        airnotes::start(&mut s);
         // macOS: the old LaunchAgent moves over to the login item, once (a worker thread; never
         // in a test instance, which has its own scratch setup).
         #[cfg(target_os = "macos")]

@@ -2,6 +2,10 @@
 //! - **Episode detected**: a recognised episode starts playing ("Title · Ep 6"). Off by default.
 //! - **Update offered**: "Update Title to episode 6?", with **Update** and **Not now**. On.
 //! - **Episode recorded**: "Recorded · Ep 6", with **Undo**. On.
+//! - **Started airing**: a Plan to watch show started airing ("Title started airing"). On.
+//! - **New episode**: "Title · Ep 7 is out" for a Watching show, by the estimated broadcast
+//!   time, with **Play** when the library has the file. On. A click opens the details page.
+//!   Decided off the UI thread from the saved list (`airnotes.rs`, core `airnotes`), once each.
 //!
 //! The buttons act directly, through the same paths as the banner and `kot confirm` /
 //! `kot dismiss` ([`State::note_action`](crate::model::State)). Never spam: one notification
@@ -36,6 +40,12 @@ pub enum Kind {
     Rewatch,
     /// "Recorded" (Undo).
     Recorded,
+    /// "Title started airing".
+    Started,
+    /// "Title · Ep 7 is out".
+    Aired,
+    /// The same with Play (the library has the next file).
+    AiredPlay,
 }
 
 impl Kind {
@@ -47,16 +57,20 @@ impl Kind {
             Kind::Offer => "offer",
             Kind::Rewatch => "rewatch",
             Kind::Recorded => "recorded",
+            Kind::Started => "started",
+            Kind::Aired => "aired",
+            Kind::AiredPlay => "aired-play",
         }
     }
 
     /// The buttons, in order.
     pub fn actions(self) -> &'static [(Act, &'static str)] {
         match self {
-            Kind::Detected => &[],
+            Kind::Detected | Kind::Started | Kind::Aired => &[],
             Kind::Offer => &[(Act::Update, "Update"), (Act::NotNow, "Not now")],
             Kind::Rewatch => &[(Act::Update, "Start rewatch"), (Act::NotNow, "Not now")],
             Kind::Recorded => &[(Act::Undo, "Undo")],
+            Kind::AiredPlay => &[(Act::Play, "Play")],
         }
     }
 }
@@ -67,6 +81,8 @@ pub enum Act {
     Update,
     NotNow,
     Undo,
+    /// Play the next episode's file (New episode).
+    Play,
     /// The notification was clicked: show Kotora.
     Open,
 }
@@ -78,13 +94,14 @@ impl Act {
             Act::Update => "update",
             Act::NotNow => "not-now",
             Act::Undo => "undo",
+            Act::Play => "play",
             // The freedesktop spec's name for a click on the body.
             Act::Open => "default",
         }
     }
 
     pub fn from_key(key: &str) -> Option<Act> {
-        [Act::Update, Act::NotNow, Act::Undo, Act::Open].into_iter().find(|a| a.key() == key)
+        [Act::Update, Act::NotNow, Act::Undo, Act::Play, Act::Open].into_iter().find(|a| a.key() == key)
     }
 }
 
@@ -251,10 +268,12 @@ impl State {
             Kind::Detected => self.prefs.notify.detected,
             Kind::Offer | Kind::Rewatch => self.prefs.notify.offer,
             Kind::Recorded => self.prefs.notify.recorded,
+            // Not about the playing episode: `air_notes`.
+            Kind::Started | Kind::Aired | Kind::AiredPlay => false,
         };
         let Some(id) = self.note_id().filter(|_| on) else { return };
         let tail = match kind {
-            Kind::Detected => None,
+            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay => None,
             Kind::Offer | Kind::Rewatch => Some(ANSWER.to_string()),
             Kind::Recorded => Some("Undo is in Kotora's banner.".to_string()),
         };
@@ -307,6 +326,11 @@ impl State {
     /// the episode they are about and while it still asks; an old one opens Kotora instead.
     pub fn note_action(&mut self, id: &str, act: Act) -> bool {
         let current = self.note_id().as_deref() == Some(id);
+        // Started airing and New episode: Play, or the click opens the anime's page.
+        if !current && let Some(media) = self.air_note_media(id) {
+            self.air_note_action(media, act);
+            return true;
+        }
         let recorded = self.now.as_ref().is_some_and(|n| n.recorded.is_some());
         let asks = !recorded && (self.offer().is_some() || self.rewatch_offer().is_some());
         match act {
@@ -349,6 +373,14 @@ impl State {
                 self.prefs.notify.recorded = on;
                 "recorded"
             }
+            Kind::Started => {
+                self.prefs.notify.started_airing = on;
+                "started_airing"
+            }
+            Kind::Aired | Kind::AiredPlay => {
+                self.prefs.notify.new_episode = on;
+                "new_episode"
+            }
         };
         crate::detect::save_setting(self, "notifications", key, on.to_string());
         if on {
@@ -378,7 +410,7 @@ mod tests {
 
     #[test]
     fn action_keys_round_trip_and_unknown_keys_are_ignored() {
-        for a in [Act::Update, Act::NotNow, Act::Undo, Act::Open] {
+        for a in [Act::Update, Act::NotNow, Act::Undo, Act::Play, Act::Open] {
             assert_eq!(Act::from_key(a.key()), Some(a));
         }
         assert_eq!(Act::from_key("com.apple.UNNotificationDismissActionIdentifier"), None);

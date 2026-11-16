@@ -2253,6 +2253,16 @@ fn notifications_card(s: &State) -> El {
             "Episode recorded",
             "\u{201c}Recorded \u{b7} Ep 6\u{201d} with Undo.".into(),
             switch("set/notify-recorded".into(), "Episode recorded", p.recorded, |s, v| s.set_notify(Kind::Recorded, v)),
+        ))
+        .child(option(
+            "Started airing",
+            "When a show on Plan to watch starts airing: \u{201c}Title started airing\u{201d}.".into(),
+            switch("set/notify-started".into(), "Started airing", p.started_airing, |s, v| s.set_notify(Kind::Started, v)),
+        ))
+        .child(option(
+            "New episode",
+            "When the next episode of a show you\u{2019}re watching is out, by the estimated broadcast time: \u{201c}Title \u{b7} Ep 7 is out\u{201d}, with Play when the file is in your library.".into(),
+            switch("set/notify-episode".into(), "New episode", p.new_episode, |s, v| s.set_notify(Kind::Aired, v)),
         ));
     let line = match s.notes.support {
         Support::NoButtons => Some("Your notification server shows no buttons: answer in Kotora's banner or with kot confirm."),

@@ -13,6 +13,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   default), Update offered (with Update and Not now) and Episode recorded (with Undo). The buttons act as the
   banner does. A new notification about an episode replaces the last. Linux: where the notification server
   shows buttons (KDE, GNOME, …); macOS: in Kotora.app.
+- **Airing notifications:** two more switches in Settings → Notifications, both on. Started airing: a show on
+  Plan to watch starts airing ("Title started airing"). New episode: the next episode of a show you're watching
+  is out, by the same broadcast-time estimate as the Airing page ("Title · Ep 7 is out"), with Play when the
+  file is in your library folders; a click opens the anime's page. Each is announced once, never for an
+  episode you've watched, and they work while only the tray icon runs. No extra MyAnimeList requests.
 - **Precise detection prompt:** when the player you watch with (mpv, IINA) is seen by its open file only, Now
   Playing offers once to turn on precise detection, with Turn on and Not now.
 - **Library folders and Play next episode:** Settings → Library takes the folders where your anime are (an
