@@ -543,3 +543,88 @@ fn an_anilist_73_goes_to_mal_as_7_and_stays_73_on_anilist() {
     drain(&mut store, &mut mal, 50);
     assert_eq!(mal.values(1).unwrap().score.map(Score::to_ten), Some(8));
 }
+
+// -------------------------------------------------------------------------------- removals
+
+/// Remove from list on the main list goes to the mirror too, through its queue.
+#[test]
+fn a_removal_on_the_main_list_is_mirrored() {
+    let (mut store, mut mal, mut al) = two_lists();
+    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store.remove_from_list("mal", 3, 40).unwrap();
+    let ops = store.queue("anilist", 40).unwrap();
+    assert_eq!(ops.len(), 1);
+    assert!(ops[0].removed && ops[0].media_id == 3 + AL);
+    assert!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL).unwrap().map(|(v, _)| v).is_none(), "off the saved mirror list at once");
+    assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent]);
+    assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Sent]);
+    assert_eq!((mal.values(3), al.values(3)), (None, None));
+    assert!(al.calls.contains(&format!("delete {}", 3 + AL)));
+    // The mirror's next sync doesn't call it a website edit.
+    assert_eq!(sync_mirror(&mut al, &mut store, 60).unwrap().web_edits, 0);
+    assert!(store.web_edits().unwrap().is_empty());
+}
+
+/// Undo (Discard) of the main removal takes back the mirror's waiting one; adding the anime
+/// again does too.
+#[test]
+fn undo_or_add_again_takes_back_the_mirrors_removal() {
+    let (mut store, _mal, mut al) = two_lists();
+    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    let id = store.remove_from_list("mal", 3, 40).unwrap();
+    store.discard("mal", id, 41).unwrap();
+    assert_eq!(store.open_count("anilist").unwrap(), 0, "nothing left for AniList");
+    assert_eq!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL).unwrap().map(|(v, _)| v), Some(v(Status::Completed, 12, ten(9))), "back on the mirror's saved list");
+    // Remove again, then add it again from Search.
+    store.remove_from_list("mal", 3, 50).unwrap();
+    let media = Fake::new(ServiceId::Mal).media(3);
+    store.add_to_list("mal", &media, Status::Completed, None, 51).unwrap();
+    assert!(store.queue("anilist", 51).unwrap().iter().all(|o| !o.removed), "the mirror's removal is gone");
+    drain(&mut store, &mut al, 60);
+    assert_eq!(al.values(3), Some(v(Status::Completed, 12, ten(9))), "never removed on AniList");
+    assert!(!al.calls.iter().any(|c| c.starts_with("delete")));
+}
+
+/// A mirrored removal whose entry changed on the mirror's website stops as a conflict:
+/// "Remove anyway" (keep mine) removes it, "Keep it" (take theirs) puts it back.
+#[test]
+fn a_mirrored_removal_stops_when_the_mirror_changed() {
+    let (mut store, _mal, mut al) = two_lists();
+    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    al.put(3, v(Status::Completed, 12, ten(10)));
+    al.put(2, v(Status::Watching, 8, None));
+    store.remove_from_list("mal", 3, 40).unwrap();
+    store.remove_from_list("mal", 2, 40).unwrap();
+    assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Conflict, Outcome::Conflict]);
+    assert!(al.values(3).is_some() && al.values(2).is_some(), "nothing removed on AniList");
+    let ops = store.queue("anilist", 50).unwrap();
+    let c3 = ops.iter().find(|o| o.media_id == 3 + AL).unwrap();
+    let c2 = ops.iter().find(|o| o.media_id == 2 + AL).unwrap();
+    assert!(c3.removed && c3.state == OpState::Conflict);
+    // Remove anyway.
+    store.keep_mine(c3.id).unwrap();
+    // Keep it: AniList's entry comes back on the saved mirror list; the main list stays without it.
+    store.take_theirs("anilist", c2.id, 55).unwrap();
+    assert_eq!(drain(&mut store, &mut al, 60), [Outcome::Sent]);
+    assert_eq!(al.values(3), None);
+    assert_eq!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 2 + AL).unwrap().map(|(v, _)| v), Some(v(Status::Watching, 8, None)));
+    assert!(entry_values(&store.conn, Scope::new("mal", Kind::Anime), 2).unwrap().map(|(v, _)| v).is_none());
+    assert_eq!(store.open_count("mal").unwrap(), 2, "the main removals still go");
+}
+
+/// Not on the mirror: nothing to remove there, and an add that waited for its AniList id is
+/// dropped. The mirror's own removals and manga are not followed.
+#[test]
+fn a_removal_not_on_the_mirror_only_drops_what_waits() {
+    let (mut store, _mal, mut al) = two_lists();
+    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store.enqueue("mal", 1, Change { progress: Some(4), ..Change::default() }, 30).unwrap();
+    assert_eq!(store.mirror_waits().unwrap().len(), 1);
+    store.remove_from_list("mal", 1, 40).unwrap();
+    assert!(store.mirror_waits().unwrap().is_empty());
+    assert_eq!(store.open_count("anilist").unwrap(), 0);
+    assert_eq!(map_waits(&mut al, &mut store, 50).unwrap(), 0);
+    // The mirror's own removal (from its queue page, say) goes nowhere else.
+    store.remove_from_list("anilist", 4 + AL, 60).unwrap();
+    assert!(store.queue("mal", 60).unwrap().iter().all(|o| o.media_id == 1), "only the main list's own changes of 1");
+}

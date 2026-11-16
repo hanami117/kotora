@@ -3,7 +3,8 @@
 //! the list at once and its removal waits in the sync queue (core `Store::remove_from_list`).
 //! The toast's Undo, or Discard on the queue page, puts it back while the removal hasn't left.
 //! If the entry changed on the service after ours, the queue shows a conflict instead of
-//! deleting it.
+//! deleting it. With the mirror on, the question says the other service loses it too (core's
+//! `mirror::follow_removal` queues it there, with the same conflict check).
 
 use rune::{El, TextStyle, col, el, row, text};
 
@@ -28,7 +29,16 @@ impl State {
     /// The question the bar and `kot remove` ask.
     pub fn remove_question(&self, id: u32) -> Option<String> {
         let e = self.entries.iter().find(|e| e.id == id)?;
-        Some(format!("Remove {} from your list? It goes from your {} list too, with its progress and score.", e.title, self.service.title()))
+        let mut q = format!("Remove {} from your list? It goes from your {} list too, with its progress and score.", e.title, self.service.title());
+        if let Some(other) = self.mirror_target() {
+            q.push_str(&format!(" Also removes it from {other}."));
+        }
+        Some(q)
+    }
+
+    /// With the mirror on: the other service's name (a removal goes there too).
+    pub fn mirror_target(&self) -> Option<&'static str> {
+        self.mirror.link.filter(|l| l.main == self.service).map(|l| l.to.title())
     }
 
     /// Removes the entry now: off the list at once, its removal queued, a toast with Undo.
@@ -127,6 +137,16 @@ mod tests {
         assert_eq!(e.title, title);
         assert!(s.rows.iter().any(|&k| s.entries[k].id == id), "back on the page");
         assert!(s.remove_entry(9_999_999).is_err());
+    }
+
+    #[test]
+    fn with_the_mirror_on_the_question_names_the_other_service() {
+        let mut s = State::fake();
+        let id = s.entries[2].id;
+        assert!(!s.remove_question(id).unwrap().contains("Also removes"));
+        s.mirror.link = Some(kotora_core::mirror::Link::of(s.service));
+        let other = kotora_core::mirror::Link::of(s.service).to.title();
+        assert!(s.remove_question(id).unwrap().ends_with(&format!("Also removes it from {other}.")));
     }
 
     #[test]

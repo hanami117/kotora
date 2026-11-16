@@ -19,8 +19,12 @@
 //!   changed there after Kotora's last look stops as a conflict in the mirror's queue (the
 //!   queue's own check), and the mirror's sync ([`sync_mirror`]) lists entries changed, added or
 //!   removed there as [`WebEdit`]s for the user to settle ([`Store::settle_web_edit`]).
-//! - Nothing is ever removed from the mirror: an entry only on the mirror stays there in every
-//!   choice, and Remove from list on the main list is not mirrored.
+//! - Remove from list on the main list removes the entry from the mirror too ([`follow_removal`]),
+//!   through the mirror's queue with its conflict check; Undo (Discard) of the main removal, or
+//!   adding the anime again, takes back the mirror's waiting removal. Turning the mirror on never
+//!   removes anything: an entry only on the mirror stays there in every choice. A removal made on
+//!   the main service's website is not mirrored (a sync can't tell it from a list that failed to
+//!   load whole); one made on the mirror's website is offered as "Add back".
 //! - A failure on one side never blocks the other: each service has its own queue and its own
 //!   worker, and only the user's own entries and edits are sent.
 //!
@@ -37,7 +41,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::listxml::{self, Action, Plan, StatusConflict, Verdict, XmlEntry, XmlList};
-use crate::queue::{discard_tx, enqueue_tx, entry_values, import_tx, open_ops};
+use crate::queue::{discard_tx, enqueue_tx, entry_values, import_tx, open_ops, remove_tx};
 use crate::service::{ListService, ServiceError, ServiceId};
 use crate::store::{Result, Store, StoreError};
 use crate::{Change, Kind, ListItem, Media, Score, Scope, Status, Values};
@@ -347,6 +351,31 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
             add_to_mirror(tx, to.service, &media, &after, now)?;
         }
         None => push_wait(tx, mal, &title, now)?,
+    }
+    Ok(())
+}
+
+/// Called inside [`Store::remove_from_list`] for a main entry: the mirror's entry is removed
+/// too, through the mirror's own queue (its conflict check stops the removal when the entry
+/// changed on the mirror's website since Kotora's last look). Not on the mirror: an add that
+/// waits for its AniList id is dropped, nothing else happens. Does nothing without a link, for
+/// the mirror itself, and for manga.
+pub(crate) fn follow_removal(tx: &Connection, sc: Scope, media_id: u32, now: i64) -> Result<()> {
+    if sc.kind != Kind::Anime {
+        return Ok(());
+    }
+    let Some(link) = link_of(tx)? else { return Ok(()) };
+    if sc.service != link.main.name() {
+        return Ok(());
+    }
+    let Some(mal) = mal_id_tx(tx, link.main, media_id)? else { return Ok(()) };
+    drop_wait(tx, mal)?;
+    drop_edit(tx, mal)?;
+    let to = Scope::new(link.to.name(), Kind::Anime);
+    if let Some(mid) = id_on(tx, link.to, mal)?
+        && entry_values(tx, to, mid)?.is_some()
+    {
+        remove_tx(tx, to, mid, now)?;
     }
     Ok(())
 }

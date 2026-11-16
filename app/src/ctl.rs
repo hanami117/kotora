@@ -198,8 +198,9 @@ fn remove(s: &mut State, title: &str, yes: bool) -> Result<Reply, String> {
         return Ok(Reply::Error { message, anyway: true });
     }
     let name = s.entries[i].title.clone();
+    let also = s.mirror_target().map(|o| format!(" The mirror removes it from {o} too.")).unwrap_or_default();
     s.remove_entry(id)?;
-    Ok(Reply::Done { message: format!("Removed {name} from your list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the anime.") })
+    Ok(Reply::Done { message: format!("Removed {name} from your list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the anime.{also}") })
 }
 
 /// `kot set --score`: the text in the user's own score format (a new `kot`), else 1-10 (an older

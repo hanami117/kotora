@@ -483,6 +483,16 @@ pub const SCENES: &[Scene] = &[
         details(s, 0, true);
         s.ask_remove(0);
     }),
+    // With the mirror on (0.2.1): the question says the other service loses it too.
+    ("list-remove-confirm-mirror", |s| {
+        crate::mirror::fake_on(s);
+        s.ask_remove(2);
+    }),
+    ("details-remove-confirm-mirror", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 0, true);
+        s.ask_remove(0);
+    }),
     ("list-removed", |s| {
         let _ = s.remove_entry(2);
     }),
@@ -855,6 +865,16 @@ pub const SCENES: &[Scene] = &[
     ("queue-mirror", |s| {
         queue_covers(s);
         crate::mirror::fake_on(s);
+        s.go(Page::Queue);
+    }),
+    // A mirrored removal stopped: the entry changed on the mirror's website after it.
+    ("queue-mirror-removal-conflict", |s| {
+        queue_covers(s);
+        crate::mirror::fake_on(s);
+        if let Some(op) = s.mirror.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
+            op.removed = true;
+            op.change = kotora_core::Change::default();
+        }
         s.go(Page::Queue);
     }),
     // Nothing waits for the main list; the mirror still has things to show.

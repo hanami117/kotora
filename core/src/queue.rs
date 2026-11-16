@@ -558,6 +558,7 @@ impl Store {
         let sc = scope.into();
         let tx = self.conn.transaction()?;
         let id = remove_tx(&tx, sc, media_id, now)?;
+        crate::mirror::follow_removal(&tx, sc, media_id, now)?;
         tx.commit()?;
         Ok(id)
     }

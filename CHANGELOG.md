@@ -24,13 +24,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   its own pace; a failure on one side never holds up the other. Edits made on the mirror's website are never
   overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Scores are compared on
   MyAnimeList's 1 to 10 scale, so a MyAnimeList 7 and an AniList 73 count as the same and neither is rounded.
-  Nothing is ever removed from the other list. Anime only; AniList entries without a MyAnimeList id are listed
+  Turning the mirror on never removes anything. Anime only; AniList entries without a MyAnimeList id are listed
   as not mirrored.
 - **Remove from list:** in an entry's right-click menu, on its details page and as `kot remove TITLE` (or its
   id). Kotora asks first, then the anime leaves your list at once and the removal waits in the sync queue like
   any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
   it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
-  instead of deleting it: Remove anyway, or Keep it.
+  instead of deleting it: Remove anyway, or Keep it. With the mirror on, the anime is removed from the other
+  service too (the confirm says so), through the mirror's queue with the same conflict check.
 - **The list filter searches online when nothing matches:** type a title that isn't on your list in the list's
   filter box (Ctrl F) and, after a short pause, MyAnimeList's or AniList's results show right under "No match in
   your list". Open one for its details, or add it with + Watching. It searches like the Search page does
