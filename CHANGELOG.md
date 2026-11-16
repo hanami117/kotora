@@ -4,6 +4,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-16
+
 ### Added
 - **`kot` with no command is a dashboard:** a now-playing line (player, title, episode, time, and whether an
   update is offered), then your Watching list sorted by what you can watch next: a progress bar with
