@@ -1,8 +1,9 @@
 //! Library folders and "Play next episode" (`kotora_core::library` does the scanning and matching).
 //!
 //! One thread, `kotora-library`, owns its own database connection. It scans every folder at start,
-//! when the folders change, on Rescan, and every [`RESCAN_EVERY`] (a walk that stats the files and
-//! parses only new or changed ones), and matches the files to the list again when the list
+//! when the folders change, on Rescan, and on demand ([`refresh`]: the tray menu opened, the window
+//! shown; at most once per [`REFRESH_AFTER`]). A walk stats the files and parses only new or
+//! changed ones. No timer: at rest the thread sleeps on its channel. It matches the files to the list again when the list
 //! changes (a sync) or a "Wrong anime" pick is made. Its results reach the UI with `update_if`,
 //! which redraws only when something visible changed. Nothing runs headless: scenes fill
 //! [`Library`] with fake data ([`fake`]).
@@ -11,8 +12,8 @@
 //! row's Play button, the details page's block and Now Playing's "Up next" card.
 
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use kotora_core::config::{self, Config};
 use kotora_core::library::{self as lib, Index, Next};
@@ -27,8 +28,11 @@ use crate::play::{self, Player};
 use crate::theme::{self, PAL};
 use crate::ui::{button, card, cell, field_hint, ghost};
 
-/// How often the folders are walked again for changes.
-pub const RESCAN_EVERY: Duration = Duration::from_secs(5 * 60);
+/// An on-demand walk ([`refresh`]) is skipped when the last one is younger than this.
+pub const REFRESH_AFTER: Duration = Duration::from_secs(60);
+
+/// Most anime in the tray's Play next menu.
+pub const PLAY_MENU_MAX: usize = 8;
 
 const SERVICE: &str = "mal";
 
@@ -76,6 +80,8 @@ pub struct Library {
     /// The last Play: "Opening episode 7 in IINA" (shown on Now Playing and the details page).
     pub note: Option<String>,
     tx: Option<Sender<Cmd>>,
+    /// When the last walk was asked for (for [`refresh`]).
+    last_walk: Option<Instant>,
 }
 
 impl Library {
@@ -129,6 +135,7 @@ pub fn start(s: &mut State) {
     l.last_player = c.library.last_player.clone();
     let (tx, rx) = mpsc::channel();
     l.tx = Some(tx);
+    l.last_walk = Some(Instant::now());
     let folders = c.library.folders;
     let _ = std::thread::Builder::new().name("kotora-library".into()).spawn(move || run(&h, &rx, folders));
 }
@@ -148,16 +155,19 @@ fn run(h: &Handle, rx: &Receiver<Cmd>, mut folders: Vec<String>) {
         }
         if let Some(st) = store.as_mut() {
             let (shown, index) = pass(st, &folders, walk);
-            h.update_if(move |s, _| s.library.update(shown, index));
+            h.update_if(move |s, _| {
+                let changed = s.library.update(shown, index);
+                if changed {
+                    // The tray's Play next menu follows the files.
+                    s.sync_tray();
+                }
+                changed
+            });
         }
-        // Several commands at once are one pass.
-        let first = match rx.recv_timeout(RESCAN_EVERY) {
-            Ok(c) => Some(c),
-            Err(RecvTimeoutError::Timeout) => None,
-            Err(RecvTimeoutError::Disconnected) => return,
-        };
-        walk = first.is_none();
-        for c in first.into_iter().chain(rx.try_iter()) {
+        // Several commands at once are one pass. No timeout: nothing runs at rest.
+        let Ok(first) = rx.recv() else { return };
+        walk = false;
+        for c in std::iter::once(first).chain(rx.try_iter()) {
             match c {
                 Cmd::Folders(f) => {
                     folders = f;
@@ -330,8 +340,21 @@ fn pick_folder() -> Result<Option<String>, String> {
 fn rescan(s: &mut State) {
     if s.library.tx.is_some() {
         s.library.scanning = true;
+        s.library.last_walk = Some(Instant::now());
         s.library.send(Cmd::Rescan);
     }
+}
+
+/// A quiet rescan on demand (the tray menu opened, the window shown), unless one ran less than
+/// [`REFRESH_AFTER`] ago or there are no folders. The walk is incremental: unchanged files cost a
+/// stat each.
+pub fn refresh(s: &mut State) {
+    let l = &mut s.library;
+    if l.tx.is_none() || l.folders.is_empty() || l.last_walk.is_some_and(|t| t.elapsed() < REFRESH_AFTER) {
+        return;
+    }
+    l.last_walk = Some(Instant::now());
+    l.send(Cmd::Rescan);
 }
 
 fn set_open_with(s: &mut State, key: &'static str) {
@@ -347,6 +370,25 @@ pub fn next_for(s: &State, e: &Entry) -> Option<Next> {
         return None;
     }
     Some(s.library.index.next(e.id, e.progress, e.episodes, &|f| s.library.online(f)))
+}
+
+/// The tray's Play next menu: the Watching (or rewatching) anime whose next episode is a file in
+/// an online folder, most recently updated first, at most [`PLAY_MENU_MAX`]. Each is (media id,
+/// "Title · Ep N"). Empty without folders.
+pub fn play_menu(s: &State) -> Vec<(u32, String)> {
+    if s.library.folders.is_empty() {
+        return Vec::new();
+    }
+    let mut watching: Vec<&Entry> = s.entries.iter().filter(|e| e.status == Status::Watching || e.rewatching).collect();
+    watching.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
+    watching
+        .into_iter()
+        .filter_map(|e| match next_for(s, e) {
+            Some(Next::Ready { episode, .. }) => Some((e.id, format!("{} \u{b7} Ep {episode}", e.title))),
+            _ => None,
+        })
+        .take(PLAY_MENU_MAX)
+        .collect()
 }
 
 /// Opens the next episode's file in the player. `Ok`: what it does, in a sentence.
@@ -722,6 +764,47 @@ pub fn fake(s: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_play_menu_lists_ready_watching_anime_newest_first() {
+        let mut s = State::fake();
+        assert!(play_menu(&s).is_empty(), "no folders: no menu");
+        fake(&mut s);
+        let menu = play_menu(&s);
+        assert!(!menu.is_empty() && menu.len() <= PLAY_MENU_MAX);
+        let mut last = i64::MAX;
+        for (id, label) in &menu {
+            let e = s.entries.iter().find(|e| e.id == *id).expect("on the list");
+            assert!(e.status == Status::Watching || e.rewatching, "{label}");
+            assert!(matches!(next_for(&s, e), Some(Next::Ready { .. })), "{label}");
+            assert_eq!(*label, format!("{} \u{b7} Ep {}", e.title, e.progress + 1));
+            assert!(e.updated_at <= last, "newest first");
+            last = e.updated_at;
+        }
+        // Watching with a file missing or offline: not in the menu.
+        for e in s.entries.iter().filter(|e| e.status == Status::Watching) {
+            if !matches!(next_for(&s, e), Some(Next::Ready { .. })) {
+                assert!(menu.iter().all(|(id, _)| *id != e.id), "{}", e.title);
+            }
+        }
+    }
+
+    #[test]
+    fn refresh_is_throttled_and_needs_folders() {
+        let mut s = State::fake();
+        let (tx, rx) = mpsc::channel();
+        s.library.tx = Some(tx);
+        refresh(&mut s);
+        assert!(rx.try_recv().is_err(), "no folders: nothing to walk");
+        fake(&mut s);
+        refresh(&mut s);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Rescan)));
+        refresh(&mut s);
+        assert!(rx.try_recv().is_err(), "a second ask right after is skipped");
+        s.library.last_walk = Instant::now().checked_sub(REFRESH_AFTER + Duration::from_secs(1));
+        refresh(&mut s);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Rescan)));
+    }
 
     #[test]
     fn typed_paths_are_tidied() {
