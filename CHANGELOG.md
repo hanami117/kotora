@@ -4,6 +4,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Manga (early, no window yet):** `kot manga on` makes syncs also read your MyAnimeList manga list (read only;
+  off by default, so nobody pays extra requests), `kot list --manga [STATUS|all]` shows it with chapters and
+  volumes, `kot manga off` stops it. AniList stays anime only; the account mirror and list export leave manga out.
+
 ## [0.2.1] - 2026-11-17
 
 ### Added

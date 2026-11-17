@@ -281,6 +281,8 @@ impl Entry {
             waiting: self.waiting.map(Into::into),
             rewatching: self.rewatching,
             times_rewatched: self.times_rewatched,
+            volumes: None,
+            volumes_total: None,
         }
     }
 

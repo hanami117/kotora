@@ -236,6 +236,21 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         yes: bool,
     },
+    /// The saved manga list (MyAnimeList only; Manga must be on): one status as in `List`
+    /// (`watching` is Reading, `plan` Plan to read) or all (`None`). Read only. A separate command,
+    /// not a field of `List`, so an older app says it doesn't know it instead of printing the
+    /// anime list. Replies `List` (`progress` / `episodes`: chapters).
+    MangaList {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// Manga mode: `None` asks whether it is on; `Some` turns it on (the next syncs read the
+    /// manga list too, one sync starts now) or off (syncs stop reading it; the saved copy stays).
+    /// Replies `Done`.
+    Manga {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on: Option<bool>,
+    },
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -396,6 +411,12 @@ pub struct Entry {
     /// Finished rewatches.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub times_rewatched: u32,
+    /// Manga only: volumes read (`None` for anime).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volumes: Option<u32>,
+    /// Manga only: the volume count, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volumes_total: Option<u32>,
 }
 
 fn is_zero(n: &u32) -> bool {

@@ -6,7 +6,10 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use kotora_core::{Change, Status};
+use kotora_core::queue::OpState;
+use kotora_core::score::ScoreFormat;
+use kotora_core::service::ServiceId;
+use kotora_core::{Change, Kind, Status};
 use kotora_ctl::{Reply, Request, Server};
 
 use crate::model::{Handle, State, Want};
@@ -157,6 +160,30 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(message) => Reply::Done { message },
             Err(message) => Reply::Error { message, anyway: false },
         },
+        // Off the UI thread: the window holds only the anime list; this reads the database.
+        Request::MangaList { status: st } => match on_ui(handle, false, |s| s.has_list()) {
+            Ok(true) => match open_store().and_then(|store| manga_list(&store, crate::account::active(), st.as_deref())) {
+                Ok(r) => r,
+                Err(message) => Reply::Error { message, anyway: false },
+            },
+            Ok(false) => Reply::Error { message: "Not signed in.".into(), anyway: false },
+            Err(message) => Reply::Error { message, anyway: false },
+        },
+        Request::Manga { on } => match open_store().and_then(|store| manga_switch(&store, crate::account::active(), on)) {
+            Err(message) => Reply::Error { message, anyway: false },
+            Ok(message) if on != Some(true) => Reply::Done { message },
+            // Turned on: one sync now reads the manga list (after the anime list).
+            Ok(message) => match on_ui(handle, true, |s| {
+                let signed_in = s.has_list();
+                if signed_in {
+                    s.sync_now();
+                }
+                signed_in
+            }) {
+                Ok(true) => Reply::Done { message: format!("{message} Kotora is reading your manga list now: see it in a few seconds with kot list --manga.") },
+                _ => Reply::Done { message: format!("{message} Sign in, then kot sync reads it.") },
+            },
+        },
         Request::Next { title } => reply(on_ui(handle, true, move |s| {
             let i = s.find_for(&title, Want::Next)?;
             let id = s.entries[i].id;
@@ -259,7 +286,9 @@ fn find_online(query: &str) -> Result<kotora_core::Media, String> {
 fn parse_status(name: &str) -> Result<Status, String> {
     let n = name.trim().to_lowercase().replace([' ', '_'], "-");
     let st = match n.as_str() {
-        "plan-to-watch" | "ptw" | "planned" => Some(Status::PlanToWatch),
+        "plan-to-watch" | "ptw" | "planned" | "plan-to-read" | "ptr" => Some(Status::PlanToWatch),
+        // Manga's Reading is the anime Watching.
+        "reading" => Some(Status::Watching),
         "onhold" | "hold" | "paused" => Some(Status::OnHold),
         "complete" | "done" => Some(Status::Completed),
         _ => Status::ALL.into_iter().find(|s| s.slug() == n),
@@ -282,6 +311,74 @@ fn list(s: &State, status: Option<&str>) -> Result<Reply, String> {
     Ok(Reply::List { entries })
 }
 
+fn open_store() -> Result<kotora_core::store::Store, String> {
+    kotora_core::store::Store::open(&kotora_core::paths::db_file()).map_err(|e| format!("Can't open the saved list: {e}"))
+}
+
+/// `kot list --manga`: the saved manga list, read only (what the last sync read; nothing is
+/// asked of the service). One status (sidebar order within it: last updated first) or all.
+fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Option<&str>) -> Result<Reply, String> {
+    if service != ServiceId::Mal {
+        return Err(MAL_ONLY.into());
+    }
+    let only = status.map(parse_status).transpose()?;
+    let scope = (service.name(), Kind::Manga);
+    let err = |e: kotora_core::store::StoreError| format!("Can't read the saved manga list: {e}");
+    if !store.manga_enabled().map_err(err)? {
+        return Err("Manga is off: turn it on with kot manga on (syncs then read your manga list too).".into());
+    }
+    if store.synced_at(scope).map_err(err)?.is_none() {
+        return Err("Your manga list wasn't read yet: run kot sync, then try again.".into());
+    }
+    let items = store.load_list(scope).map_err(err)?;
+    // Open changes (none can be made yet without the UI, but the queue holds both kinds).
+    let ops = store.queue(service.name(), kotora_core::time::now_unix()).map_err(err)?;
+    let waiting = |id: u32| ops.iter().find(|o| o.kind == Kind::Manga && o.media_id == id && o.state != OpState::Done).map(|o| crate::model::waiting_label(o.state).to_string());
+    let mut entries = Vec::new();
+    for st in Status::ALL.into_iter().filter(|st| only.is_none_or(|o| o == *st)) {
+        // `load_list` is newest update first already.
+        entries.extend(items.iter().filter(|it| it.status == st).map(|it| kotora_ctl::Entry {
+            id: it.media.id,
+            title: it.media.title.clone(),
+            status: st.label_in(Kind::Manga).into(),
+            progress: it.progress,
+            episodes: it.media.episodes,
+            score: it.score.map(kotora_core::Score::to_ten),
+            score_text: it.score.map(|s| ScoreFormat::Point10.show(s)),
+            waiting: waiting(it.media.id),
+            rewatching: it.rewatching,
+            times_rewatched: it.times_rewatched,
+            volumes: Some(it.volumes),
+            volumes_total: it.media.volumes,
+        }));
+    }
+    Ok(Reply::List { entries })
+}
+
+const MAL_ONLY: &str = "Manga lists are MyAnimeList only for now (AniList is anime only in Kotora).";
+
+/// `kot manga [on|off]`: the `manga:enabled` switch ([`kotora_core::store::Store::manga_enabled`]).
+/// Off keeps the saved manga list; nothing is ever written to the service.
+fn manga_switch(store: &kotora_core::store::Store, service: ServiceId, on: Option<bool>) -> Result<String, String> {
+    let err = |e: kotora_core::store::StoreError| format!("Can't save the setting: {e}");
+    match on {
+        None => {
+            let state = if store.manga_enabled().map_err(err)? { "on: syncs read your MyAnimeList manga list too" } else { "off (kot manga on turns it on)" };
+            let note = if service == ServiceId::Mal { "" } else { " AniList is anime only in Kotora: nothing is read while AniList is your list service." };
+            Ok(format!("Manga is {state}.{note}"))
+        }
+        Some(true) if service != ServiceId::Mal => Err(MAL_ONLY.into()),
+        Some(true) => {
+            store.set_manga_enabled(true).map_err(err)?;
+            Ok("Manga is on: syncs read your MyAnimeList manga list too (read only).".into())
+        }
+        Some(false) => {
+            store.set_manga_enabled(false).map_err(err)?;
+            Ok("Manga is off: syncs no longer read your manga list (the saved copy stays).".into())
+        }
+    }
+}
+
 fn on_ui<T: Send + 'static>(handle: &Handle, redraw: bool, f: impl FnOnce(&mut State) -> T + Send + 'static) -> Result<T, String> {
     let (tx, rx) = mpsc::sync_channel(1);
     handle.update_if(move |s, _| {
@@ -294,6 +391,61 @@ fn on_ui<T: Send + 'static>(handle: &Handle, redraw: bool, f: impl FnOnce(&mut S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kotora_core::store::Store;
+    use kotora_core::{ListItem, Media, Score};
+
+    fn manga(id: u32, title: &str, status: Status, ch: u32, vol: u32, updated_at: i64) -> ListItem {
+        ListItem {
+            media: Media { kind: Kind::Manga, id, title: title.into(), episodes: Some(120), volumes: Some(12), ..Media::default() },
+            status,
+            progress: ch,
+            score: Score::from_ten(8),
+            rewatching: false,
+            times_rewatched: 0,
+            volumes: vol,
+            updated_at,
+        }
+    }
+
+    fn rows(r: Result<Reply, String>) -> Vec<(String, String, u32, Option<u32>)> {
+        match r {
+            Ok(Reply::List { entries }) => entries.into_iter().map(|e| (e.title, e.status, e.progress, e.volumes)).collect(),
+            other => panic!("not a list: {other:?}"),
+        }
+    }
+
+    /// `kot manga` and `kot list --manga`: off by default, MyAnimeList only, read from the saved
+    /// list (Reading first, newest update first), with chapters and volumes; anime never shows.
+    #[test]
+    fn kot_lists_the_saved_manga() {
+        let mut store = Store::open_memory().unwrap();
+        let mut anime = manga(5, "An anime", Status::Watching, 3, 0, 1);
+        anime.media.kind = Kind::Anime;
+        store.replace_list("mal", &[anime], 1).unwrap();
+        assert!(manga_switch(&store, ServiceId::Mal, None).unwrap().starts_with("Manga is off"));
+        assert!(manga_list(&store, ServiceId::Mal, None).unwrap_err().starts_with("Manga is off"));
+        assert_eq!(manga_switch(&store, ServiceId::AniList, Some(true)).unwrap_err(), MAL_ONLY);
+        assert!(!store.manga_enabled().unwrap(), "AniList: stays off");
+        manga_switch(&store, ServiceId::Mal, Some(true)).unwrap();
+        assert!(store.manga_enabled().unwrap());
+        assert!(manga_list(&store, ServiceId::Mal, None).unwrap_err().contains("kot sync"), "not read yet");
+        let list = [manga(2, "Paper Lanterns", Status::Watching, 21, 3, 50), manga(3, "Iron Garden", Status::Completed, 120, 12, 60), manga(4, "Salt Road", Status::Watching, 7, 1, 70)];
+        store.replace_list(("mal", Kind::Manga), &list, 100).unwrap();
+        assert_eq!(
+            rows(manga_list(&store, ServiceId::Mal, None)),
+            [("Salt Road".into(), "Reading".into(), 7, Some(1)), ("Paper Lanterns".into(), "Reading".into(), 21, Some(3)), ("Iron Garden".into(), "Completed".into(), 120, Some(12))]
+        );
+        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("reading"))).len(), 2);
+        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("completed"))).len(), 1);
+        assert!(rows(manga_list(&store, ServiceId::Mal, Some("plan-to-read"))).is_empty());
+        let Ok(Reply::List { entries }) = manga_list(&store, ServiceId::Mal, Some("completed")) else { panic!() };
+        assert_eq!((entries[0].episodes, entries[0].volumes_total, entries[0].score_text.as_deref()), (Some(120), Some(12), Some("8")));
+        assert_eq!(manga_list(&store, ServiceId::AniList, None).unwrap_err(), MAL_ONLY);
+        // Off: syncs stop reading it, the saved copy stays.
+        assert!(manga_switch(&store, ServiceId::Mal, Some(false)).unwrap().starts_with("Manga is off"));
+        assert_eq!(store.load_list(("mal", Kind::Manga)).unwrap().len(), 3);
+        assert_eq!(store.load_list("mal").unwrap().len(), 1, "the anime list untouched");
+    }
 
     /// `kot +1` and `kot set` hold an episode that hasn't aired yet; `--anyway` marks it.
     #[test]

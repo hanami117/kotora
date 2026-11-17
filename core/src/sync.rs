@@ -81,7 +81,7 @@ pub fn complete_media(service: &mut dyn ListService, store: &Store, only: Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Change, Media, Remote, Status};
+    use crate::{Change, Media, Remote, Score, Status};
 
     /// Counts the list requests; the manga list holds one made-up manga.
     #[derive(Default)]
@@ -150,6 +150,81 @@ mod tests {
         assert!(matches!(sync_manga(&mut svc, &mut s, 200), MangaSync::Failed(ServiceError::Offline(_))));
         assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1);
         assert_eq!(s.synced_at(("mal", Kind::Manga)).unwrap(), Some(100));
+    }
+
+    /// Every row of a database file except Manga mode's own (manga rows, the switch and the
+    /// manga list's sync time), sorted: what turning manga on must leave as it was.
+    fn all_but_manga(path: &std::path::Path) -> Vec<String> {
+        let c = rusqlite::Connection::open(path).unwrap();
+        let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let mut rows = Vec::new();
+        for t in tables {
+            let has_kind = c.prepare(&format!("SELECT 1 FROM pragma_table_info('{t}') WHERE name = 'kind'")).unwrap().exists([]).unwrap();
+            let filter = match t.as_str() {
+                "kv" => " WHERE key NOT IN ('manga:enabled', 'mal:manga:synced_at')",
+                _ if has_kind => " WHERE kind != 'manga'",
+                _ => "",
+            };
+            let mut st = c.prepare(&format!("SELECT * FROM {t}{filter}")).unwrap();
+            let n = st.column_count();
+            let got = st.query_map([], |r| Ok((0..n).map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap())).collect::<Vec<_>>().join("|"))).unwrap();
+            rows.extend(got.map(|r| format!("{t}: {}", r.unwrap())));
+        }
+        rows.sort();
+        rows
+    }
+
+    /// A database as 0.2.1 writes it (schema 12: a scored anime list, a waiting score change, a
+    /// queued removal, the mirror on with its own queued copies) gets Manga mode turned on and a
+    /// manga list read: no migration and no backup copy, the manga beside an anime with the same
+    /// MyAnimeList id, and every other row (list, queue, scores, mirror state) byte for byte the
+    /// same. Turning it off again keeps the saved manga.
+    #[test]
+    fn a_0_2_1_database_gets_manga_without_changing_the_rest() {
+        use crate::mirror::Link;
+        use crate::score::ten;
+        use crate::service::ServiceId;
+        let dir = std::env::temp_dir().join(format!("kotora-manga-021-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("kotora.db");
+        {
+            let mut s = Store::open(&path).unwrap();
+            assert_eq!(s.schema_version().unwrap(), 12, "0.2.1's schema");
+            let mut list = Vec::new();
+            for (id, title, st, p, sc) in [(2001, "Lanterns of Kirigaoka", Status::Watching, 5, ten(8)), (7, "Neon Harbour", Status::Completed, 12, Score::from_points(73)), (9, "Iron Garden", Status::Watching, 1, None)] {
+                let mut it = crate::store::tests::item(id, title, st, p, 10);
+                it.score = sc;
+                list.push(it);
+            }
+            s.replace_list("mal", &list, 10).unwrap();
+            // The mirror's AniList copy of the same anime (AniList ids, their MyAnimeList ids kept).
+            let al: Vec<_> = list.iter().map(|it| ListItem { media: Media { id: it.media.id + 50_000, id_mal: Some(it.media.id), ..it.media.clone() }, ..it.clone() }).collect();
+            s.replace_list("anilist", &al, 10).unwrap();
+            s.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+            s.enqueue("mal", 2001, Change { score: Some(ten(9)), ..Change::default() }, 30).unwrap();
+            s.remove_from_list("mal", 9, 31).unwrap();
+            assert_eq!((s.open_count("mal").unwrap(), s.open_count("anilist").unwrap()), (2, 2), "the queue and the mirror's copies");
+        }
+        let before = all_but_manga(&path);
+        assert!(before.iter().any(|r| r.starts_with("kv: Text(\"mirror:link\")")), "the mirror is on");
+        {
+            let mut s = Store::open(&path).unwrap();
+            assert_eq!(s.schema_version().unwrap(), 12);
+            assert!(!s.manga_enabled().unwrap(), "0.2.1 leaves Manga off");
+            s.set_manga_enabled(true).unwrap();
+            let MangaSync::Synced { items, .. } = sync_manga(&mut Svc::default(), &mut s, 100) else { panic!("not synced") };
+            assert_eq!((items[0].media.id, items[0].media.kind, items[0].progress, items[0].volumes), (2001, Kind::Manga, 21, 3));
+            let anime = s.load_list("mal").unwrap();
+            let lanterns = anime.iter().find(|i| i.media.id == 2001).unwrap();
+            assert_eq!((lanterns.media.kind, lanterns.media.title.as_str(), lanterns.score), (Kind::Anime, "Lanterns of Kirigaoka", ten(9)), "the waiting change laid over");
+            assert_eq!(anime.iter().find(|i| i.media.id == 7).unwrap().score, Score::from_points(73));
+            s.set_manga_enabled(false).unwrap();
+            assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1, "off keeps the saved manga");
+        }
+        assert_eq!(all_but_manga(&path), before, "nothing else changed");
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(!names.iter().any(|n| n.ends_with(".bak")), "no migration, no copy: {names:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Answers details for any id, and counts the requests.

@@ -62,6 +62,12 @@ Commands:
       [--yes]             doesn't). Undo it in Kotora's sync queue
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id
+  list --manga [STATUS|all]
+                        your manga list (MyAnimeList; read only); STATUS:
+                        reading (the default), plan, completed, on-hold,
+                        dropped. Needs manga on
+  manga [on|off]        whether syncs also read your MyAnimeList manga
+                        list (off by default); on syncs now
   export FILE           write your anime list as a MyAnimeList XML file
                         (MyAnimeList lists only)
   config client-id ID   use your own Client ID for your list service
@@ -100,6 +106,16 @@ fn main() -> ExitCode {
         ["airing" | "schedule"] => Request::Airing,
         ["confirm"] => Request::Confirm,
         ["dismiss"] => Request::Dismiss,
+        ["list", "--manga"] | ["--manga", "list"] => Request::MangaList { status: Some("watching".into()) },
+        ["list", "--manga", "all"] | ["list", "all", "--manga"] => Request::MangaList { status: None },
+        ["list", "--manga", st] | ["list", st, "--manga"] => Request::MangaList { status: Some((*st).to_string()) },
+        ["manga"] => Request::Manga { on: None },
+        ["manga", "on"] => Request::Manga { on: Some(true) },
+        ["manga", "off"] => Request::Manga { on: Some(false) },
+        ["manga", ..] => {
+            eprintln!("kot: use kot manga [on|off] (try kot help)");
+            return ExitCode::from(2);
+        }
         ["list"] => Request::List { status: Some("watching".into()) },
         ["list", "all"] => Request::List { status: None },
         ["list", st] => Request::List { status: Some((*st).to_string()) },
@@ -191,7 +207,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Reply::List { entries }) => {
-            print!("{}", list_text(&entries, matches!(req, Request::List { status: None })));
+            print!("{}", list_text(&entries, matches!(req, Request::List { status: None } | Request::MangaList { status: None })));
             ExitCode::SUCCESS
         }
         Ok(Reply::Edited { entry }) => {
@@ -406,7 +422,12 @@ fn parse_add(words: &[&str]) -> Result<Request, String> {
 }
 
 fn progress_text(e: &Entry) -> String {
-    format!("{} / {}", e.progress, e.episodes.map_or("?".to_string(), |n| n.to_string()))
+    let n = |c: Option<u32>| c.map_or("?".to_string(), |n| n.to_string());
+    match e.volumes {
+        // Manga: chapters, then volumes.
+        Some(v) => format!("ch {} / {}  vol {v} / {}", e.progress, n(e.episodes), n(e.volumes_total)),
+        None => format!("{} / {}", e.progress, n(e.episodes)),
+    }
 }
 
 /// One line per entry: progress, score, title, and the queue state. `grouped` adds a heading
@@ -419,6 +440,8 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
     let mut last = "";
     // The score column fits the widest score ("73", "7.3", "★★★★☆").
     let width = entries.iter().filter_map(score_text).map(|t| t.chars().count()).max().unwrap_or(1).max(2);
+    // The progress column: 9 wide for episodes, wider for manga's chapters and volumes.
+    let pw = entries.iter().map(|e| progress_text(e).chars().count()).max().unwrap_or(0).max(9);
     for e in entries {
         if grouped && e.status != last {
             if !last.is_empty() {
@@ -429,7 +452,7 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
             last = &e.status;
         }
         let score = score_text(e).unwrap_or_else(|| "\u{2013}".to_string());
-        let mut line = format!("  {:>9}  {score:>w$}  {}", progress_text(e), e.title, w = width);
+        let mut line = format!("  {:>pw$}  {score:>w$}  {}", progress_text(e), e.title, w = width);
         if e.rewatching {
             line.push_str("  (rewatching)");
         }
@@ -579,7 +602,7 @@ mod tests {
     }
 
     fn e(title: &str, status: &str, progress: u32, score: Option<u8>, waiting: Option<&str>) -> Entry {
-        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, score_text: None, waiting: waiting.map(Into::into), rewatching: false, times_rewatched: 0 }
+        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, score_text: None, waiting: waiting.map(Into::into), rewatching: false, times_rewatched: 0, ..Default::default() }
     }
 
     #[test]
@@ -591,6 +614,12 @@ mod tests {
             "Watching (1)\n     5 / 12   8  Lanterns of Kirigaoka  (waiting to sync)\n\nCompleted (1)\n    12 / 12   \u{2013}  Neon Ronin\n"
         );
         assert_eq!(list_text(&[], false), "Nothing here.\n");
+        // Manga: chapters and volumes, the column as wide as the widest.
+        let m = |title: &str, ch: u32, total: Option<u32>, vol: u32, vols: Option<u32>| Entry { title: title.into(), status: "Reading".into(), progress: ch, episodes: total, volumes: Some(vol), volumes_total: vols, ..Default::default() };
+        assert_eq!(
+            list_text(&[m("Paper Lanterns", 21, None, 3, None), m("Iron Garden", 120, Some(120), 12, Some(12))], false),
+            "       ch 21 / ?  vol 3 / ?   \u{2013}  Paper Lanterns\n  ch 120 / 120  vol 12 / 12   \u{2013}  Iron Garden\n"
+        );
         assert_eq!(edited_text(&entries[0]), "Lanterns of Kirigaoka: 5 / 12 · Watching · score 8 (waiting to sync)");
         assert_eq!(edited_text(&entries[1]), "Neon Ronin: 12 / 12 · Completed · no score (synced)");
         // The app's own text in the user's format wins; the column fits the widest.
