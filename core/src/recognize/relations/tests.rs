@@ -2,7 +2,8 @@
 //! data); the other titles and ids are made up.
 
 use super::*;
-use crate::recognize::{Found, on_list, parse, redirect};
+use crate::recognize::{Cached, Found, from_search_picked, on_list, parse, redirect};
+use crate::service::SearchHit;
 use crate::store::tests::item;
 use crate::{ListItem, Status};
 
@@ -188,6 +189,44 @@ fn a_users_pick_and_a_search_hit_are_redirected_too() {
     // Nothing to redirect.
     let mut p = parse("/v/Rezero.mkv").unwrap();
     assert_eq!(redirect(Found::Nothing, &mut p, &items, &r), Found::Nothing);
+}
+
+/// The file from the live report: "[Anime Time] Re Zero Season 03 - 01.mkv", with only the
+/// first two seasons on the list (season 1 completed) and an old pick of season 1 saved for this
+/// very key ("re zero#3"). MyAnimeList and AniList ids: the same rules, the same answers.
+#[test]
+fn rezero_season_3_beats_an_old_pick_of_season_1() {
+    let file = "/v/[Anime Time] Re Zero Season 03 - 01.mkv";
+    let p = parse(file).unwrap();
+    assert_eq!((p.title.as_str(), p.season, p.episode, p.group.as_deref()), ("Re Zero", Some(3), Some(1), Some("Anime Time")));
+    assert_eq!(p.key(), "re zero#3");
+    let hit = |id, t: &str| SearchHit { id, title: t.into(), other_titles: vec![] };
+    for (anilist, s1, s2, s3) in [(false, 31240, 39587, 54857), (true, 21355, 108632, 163134)] {
+        let mut r = rel(REZERO);
+        r.anilist = anilist;
+        let mut first = rz(s1, "Re:Zero kara Hajimeru Isekai Seikatsu", 25, 25);
+        first.status = Status::Completed;
+        first.media.title_en = Some("Re:ZERO -Starting Life in Another World-".into());
+        first.media.synonyms = vec!["ReZero".into()];
+        let mut items = vec![first, rz(s2, "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season", 13, 13)];
+        let pick: Cached = Some((s1, "user".into(), String::new()));
+        // The file names season 3 and season 1 is not it: the pick doesn't answer for the file.
+        assert_eq!(on_list(&p, &items, &pick, &r), None, "anilist {anilist}");
+        // The search finds season 3 off the list: "not on your list", so it can be added.
+        let hits = [hit(s1, "Re:Zero kara Hajimeru Isekai Seikatsu"), hit(s3, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season")];
+        assert_eq!(from_search_picked(&p, &hits, &items, Some(s1)), Found::NotOnList { media_id: s3, title: "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season".into() });
+        // Nothing found names season 3: the pick stands (the user's call).
+        let hits = [hit(s1, "Re:Zero kara Hajimeru Isekai Seikatsu"), hit(99_999, "Re:Zero Movie")];
+        assert_eq!(from_search_picked(&p, &hits, &items, Some(s1)), Found::List { media_id: s1, sure: true, why: "you picked it".into() });
+        // Season 3 on the list: it wins, sure, and says the pick was passed over.
+        items.push(rz(s3, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", 16, 0));
+        let f = on_list(&p, &items, &pick, &r);
+        assert!(matches!(&f, Some(Found::List { media_id, sure: true, why }) if *media_id == s3 && why.contains("earlier pick")), "{f:?}");
+        // A file without a season keeps its pick (saved under "re zero#1").
+        let plain = parse("/v/[Anime Time] Re Zero - 05.mkv").unwrap();
+        assert_eq!(plain.key(), "re zero#1");
+        assert_eq!(on_list(&plain, &items, &pick, &r), Some(Found::List { media_id: s1, sure: true, why: "you picked it".into() }));
+    }
 }
 
 // ------------------------------------------------------------------------- the downloaded copy

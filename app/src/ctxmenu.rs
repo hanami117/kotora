@@ -1,5 +1,6 @@
 //! The right-click menu of an entry (list rows, Grid and Large posters, Home cards): Move to ▸,
-//! Score ▸, +1 episode, Play next episode, Edit…, Open details, Open on MyAnimeList.
+//! Score ▸, +1 episode, Play next episode, Edit…, Open details, Open on MyAnimeList, Remove from
+//! list… (asks first: `remove.rs`).
 //!
 //! Built like the Sort menu: anchored (at the pointer, or under the selected entry when the
 //! Menu key or Shift+F10 opens it), mounted at the window's root, modal (Escape or a press
@@ -16,7 +17,7 @@ use rune::{Align, El, Side, Tx, col, el, icon, row, spacer, text};
 
 use crate::details::Stub;
 use crate::icons;
-use crate::library::Toast;
+use crate::library::{Toast, Undo};
 use crate::model::{Page, State};
 use crate::theme::{self, PAL};
 
@@ -89,7 +90,7 @@ impl State {
             times_rewatched: Some(old.times_rewatched),
             volumes: None,
         };
-        self.toast = Some(Toast { text: done, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some((id, back)) });
+        self.toast = Some(Toast { text: done, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some(Undo::Edit(id, back)) });
     }
 
     /// Move to: the new status; Completed also sets the last episode, as the editor and MAL do.
@@ -100,10 +101,13 @@ impl State {
         self.ctx_edit(id, change, done);
     }
 
-    pub fn ctx_score(&mut self, id: u32, score: Option<u8>) {
+    /// A score from the menu; one that already shows as the entry's keeps the precise score.
+    pub fn ctx_score(&mut self, id: u32, score: Option<kotora_core::Score>) {
+        let fmt = self.score_format();
         let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
+        let score = fmt.pick(e.score, score);
         let done = match score {
-            Some(n) => format!("Scored {} {n}", e.title),
+            Some(n) => format!("Scored {} {}", e.title, fmt.words(n)),
             None => format!("Removed the score of {}", e.title),
         };
         self.ctx_edit(id, Change { score: Some(score), ..Default::default() }, done);
@@ -122,12 +126,16 @@ impl State {
         }
         let ep = self.entries.iter().find(|e| e.id == id).map_or(0, |e| e.progress);
         let back = Change { status: Some(old.status), progress: Some(old.progress), rewatching: Some(old.rewatching), times_rewatched: Some(old.times_rewatched), ..Default::default() };
-        self.toast = Some(Toast { text: format!("Episode {ep} of {title} recorded"), warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some((id, back)) });
+        self.toast = Some(Toast { text: format!("Episode {ep} of {title} recorded"), warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some(Undo::Edit(id, back)) });
     }
 
-    /// Undo on the toast: the entry's values from before the change.
+    /// Undo on the toast: the entry's values from before the change, or the removed entry back.
     pub fn toast_undo(&mut self) {
-        let Some((id, back)) = self.toast.take().and_then(|t| t.undo) else { return };
+        let (id, back) = match self.toast.take().and_then(|t| t.undo) {
+            Some(Undo::Edit(id, back)) => (id, back),
+            Some(Undo::Remove(e)) => return self.undo_remove(*e),
+            None => return,
+        };
         let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
         let change = back.without_same(&e.values());
         if let Err(m) = self.edit(id, change) {
@@ -262,9 +270,10 @@ fn submenu(s: &State, id: u32, sub: Sub, keys: bool) -> El {
             }
         }
         Sub::Score => {
-            for n in (1..=10u8).rev() {
-                let on = e.is_some_and(|e| e.score == Some(n));
-                m = m.child(item(format!("ctx/score/{n}"), n.to_string(), true, Some(on), move |s, _| s.ctx_score(id, Some(n))));
+            let fmt = s.score_format();
+            for (n, label, choice) in crate::scores::menu_choices(fmt).into_iter().rev() {
+                let on = e.is_some_and(|e| crate::scores::menu_lit(fmt, e.score, choice));
+                m = m.child(item(format!("ctx/score/{n}"), label, true, Some(on), move |s, _| s.ctx_score(id, Some(choice))));
             }
             m = m.child(sep());
             let on = e.is_some_and(|e| e.score.is_none());
@@ -332,7 +341,9 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
         .child(item("ctx/mal".into(), format!("Open on {}", s.service.title()), true, None, move |s, _| {
             s.ctx = None;
             crate::online::open_url(s, url.clone());
-        }));
+        }))
+        .child(sep())
+        .child(item("ctx/remove".into(), "Remove from list\u{2026}".into(), s.has_list(), None, move |s, _| s.ask_remove(id)));
     if let Some((sub, keys)) = c.sub {
         m = m.child(submenu(s, id, sub, keys));
     }
@@ -343,6 +354,7 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kotora_core::score::ten;
 
     fn entry(s: &State, id: u32) -> &crate::model::Entry {
         s.entries.iter().find(|e| e.id == id).unwrap()
@@ -364,12 +376,12 @@ mod tests {
         assert_eq!(entry(&s, id).values(), before, "Undo puts it back");
         assert!(s.toast.is_none());
 
-        s.ctx_score(id, Some(9));
-        assert_eq!(entry(&s, id).score, Some(9));
+        s.ctx_score(id, ten(9));
+        assert_eq!(entry(&s, id).score, ten(9));
         s.ctx_score(id, None);
         assert_eq!(entry(&s, id).score, None);
         s.toast_undo();
-        assert_eq!(entry(&s, id).score, Some(9), "Undo of No score");
+        assert_eq!(entry(&s, id).score, ten(9), "Undo of No score");
 
         let p = entry(&s, id).progress;
         s.ctx_plus(id);

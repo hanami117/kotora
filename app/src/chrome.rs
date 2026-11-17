@@ -136,6 +136,63 @@ pub fn pick_folder(prompt: &str, done: impl Fn(Option<String>) + 'static) -> Res
     Ok(())
 }
 
+/// macOS: a file panel in Kotora's own process, as [`pick_folder`]: `save` with a suggested name
+/// is an `NSSavePanel` (it asks before replacing a file), else an `NSOpenPanel` for one file.
+/// `done` runs on the UI thread with the path, or None when cancelled.
+#[cfg(target_os = "macos")]
+pub fn pick_file(prompt: &str, save: Option<&str>, done: impl Fn(Option<String>) + 'static) -> Result<(), String> {
+    use block2::RcBlock;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{MainThreadMarker, class, msg_send};
+    use objc2_foundation::NSString;
+
+    MainThreadMarker::new().ok_or("This works from the window only.")?;
+    // SAFETY: main thread (checked); the panel is kept alive by the block until it ends.
+    unsafe {
+        let panel: Retained<AnyObject> = match save {
+            Some(name) => {
+                let p: Retained<AnyObject> = msg_send![class!(NSSavePanel), savePanel];
+                let _: () = msg_send![&*p, setNameFieldStringValue: &*NSString::from_str(name)];
+                let _: () = msg_send![&*p, setCanCreateDirectories: Bool::YES];
+                let _: () = msg_send![&*p, setPrompt: &*NSString::from_str("Export")];
+                p
+            }
+            None => {
+                let p: Retained<AnyObject> = msg_send![class!(NSOpenPanel), openPanel];
+                let _: () = msg_send![&*p, setCanChooseDirectories: Bool::NO];
+                let _: () = msg_send![&*p, setCanChooseFiles: Bool::YES];
+                let _: () = msg_send![&*p, setAllowsMultipleSelection: Bool::NO];
+                let _: () = msg_send![&*p, setPrompt: &*NSString::from_str("Open")];
+                p
+            }
+        };
+        let _: () = msg_send![&*panel, setMessage: &*NSString::from_str(prompt)];
+        let kept = panel.clone();
+        let handler = RcBlock::new(move |response: isize| {
+            // NSModalResponseOK
+            let path = (response == 1).then(|| {
+                let url: Option<Retained<AnyObject>> = msg_send![&*kept, URL];
+                let path: Option<Retained<NSString>> = url.and_then(|u| msg_send![&*u, path]);
+                path.map(|p| p.to_string())
+            });
+            done(path.flatten());
+        });
+        let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
+        let window: Option<Retained<AnyObject>> = msg_send![&*app, mainWindow];
+        match window {
+            Some(w) => {
+                let _: () = msg_send![&*panel, beginSheetModalForWindow: &*w, completionHandler: &*handler];
+            }
+            None => {
+                let _: () = msg_send![&*app, activateIgnoringOtherApps: Bool::YES];
+                let _: () = msg_send![&*panel, beginWithCompletionHandler: &*handler];
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,7 @@
 //! kot status     the app's state in two lines (`--short`: one)
 //! kot list       the Watching list (`kot list all`, `kot list completed`, …)
 //! kot +1 TITLE [--anyway]   one more episode
-//! kot set TITLE EP [--status S] [--score N|none] [--anyway]
+//! kot set TITLE EP [--status S] [--score SCORE|none] [--anyway]
 //! kot queue      changes waiting to sync
 //! kot sync       send the queue now, then read the list again
 //! kot airing     your anime airing in the next 7 days (also `kot schedule`)
@@ -13,6 +13,7 @@
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
 //! kot add QUERY|ID [--status S]
+//! kot remove TITLE|ID [--yes]  take it off the list (asks first)
 //! kot next TITLE  play the next episode from the library folders
 //! kot config client-id ID
 //! kot show       shows the window
@@ -43,7 +44,9 @@ Commands:
                         completed, on-hold, dropped
   +1 TITLE              one more episode of TITLE
   set TITLE EP          set the episodes watched
-      [--status STATUS] [--score N|none]
+      [--status STATUS] [--score SCORE|none]
+                        SCORE in your score format: 7 (MyAnimeList),
+                        or on AniList 73, 7.3, *** (stars), :) (smileys)
   --anyway              with +1 and set: mark an episode that hasn't
                         aired yet (by the estimate) without asking
   queue                 changes waiting to sync
@@ -55,8 +58,12 @@ Commands:
   rewatch TITLE|ID      watch a completed anime again from episode 1
   next TITLE            play the next episode of TITLE from your
                         library folders (Settings \u{2192} Library)
+  remove TITLE|ID       take an anime off your list (asks first; --yes
+      [--yes]             doesn't). Undo it in Kotora's sync queue
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id
+  export FILE           write your anime list as a MyAnimeList XML file
+                        (MyAnimeList lists only)
   config client-id ID   use your own Client ID for your list service
                         (MyAnimeList or AniList, as chosen in Kotora; optional)
   show                  show the window
@@ -69,6 +76,15 @@ Changes go to the sync queue first, then to MyAnimeList or AniList.
 Options:
   -V, --version   print the version
 ";
+
+/// `file` as an absolute path: the app runs elsewhere, so a relative path means here.
+fn absolute(file: &str) -> String {
+    let p = std::path::Path::new(file);
+    if p.is_absolute() {
+        return file.to_string();
+    }
+    std::env::current_dir().map(|d| d.join(p).to_string_lossy().into_owned()).unwrap_or_else(|_| file.to_string())
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -95,7 +111,19 @@ fn main() -> ExitCode {
             }
         },
         ["rewatch", title @ ..] if !title.is_empty() => Request::Rewatch { title: title.join(" ") },
+        ["remove", rest @ ..] => match parse_remove(rest) {
+            Ok(r) => r,
+            Err(m) => {
+                eprintln!("kot: {m} (try kot help)");
+                return ExitCode::from(2);
+            }
+        },
         ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
+        ["export", file] => Request::Export { path: absolute(file) },
+        ["export", ..] => {
+            eprintln!("kot: use kot export FILE (try kot help)");
+            return ExitCode::from(2);
+        }
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },
         ["config", ..] => {
             eprintln!("kot: use kot config client-id ID (try kot help)");
@@ -129,12 +157,14 @@ fn main() -> ExitCode {
         }
     };
     let mut reply = ask(&req);
-    // Held: the episode hasn't aired yet by the estimate. Ask on a terminal, else say how.
+    // Held: the episode hasn't aired yet by the estimate, or a removal asks first. Ask on a
+    // terminal, else say how.
     if let Ok(Reply::Error { message, anyway: true }) = &reply {
         eprintln!("kot: {message}");
-        if !confirm("Mark anyway? [y/N] ") {
+        let removing = matches!(req, Request::Remove { .. });
+        if !confirm(if removing { "Remove it? [y/N] " } else { "Mark anyway? [y/N] " }) {
             if !interactive() {
-                eprintln!("kot: run it again with --anyway to mark it.");
+                eprintln!("{}", if removing { "kot: run it again with --yes to remove it." } else { "kot: run it again with --anyway to mark it." });
             }
             return ExitCode::FAILURE;
         }
@@ -265,9 +295,20 @@ fn confirm(question: &str) -> bool {
 fn with_anyway(req: Request) -> Request {
     match req {
         Request::PlusOne { title, .. } => Request::PlusOne { title, anyway: true },
-        Request::Set { title, progress, status, score, .. } => Request::Set { title, progress, status, score, anyway: true },
+        Request::Set { title, progress, status, score, score_text, .. } => Request::Set { title, progress, status, score, score_text, anyway: true },
+        Request::Remove { title, .. } => Request::Remove { title, yes: true },
         other => other,
     }
+}
+
+/// `remove TITLE…|ID [--yes]`.
+fn parse_remove(words: &[&str]) -> Result<Request, String> {
+    let yes = words.iter().any(|w| matches!(*w, "--yes" | "-y"));
+    let title: Vec<&str> = words.iter().copied().filter(|w| !matches!(*w, "--yes" | "-y")).collect();
+    if title.is_empty() {
+        return Err("remove needs a title or an id".into());
+    }
+    Ok(Request::Remove { title: title.join(" "), yes })
 }
 
 /// `+1 TITLE… [--anyway]`.
@@ -307,9 +348,10 @@ fn status_short(st: &Status) -> String {
     line
 }
 
-/// `set TITLE… [EP] [--status S] [--score N|none]`: the last bare number is the episode.
+/// `set TITLE… [EP] [--status S] [--score SCORE|none]`: the last bare number is the episode.
+/// The score goes as typed: the app reads it in the user's score format.
 fn parse_set(words: &[&str]) -> Result<Request, String> {
-    let (mut title, mut progress, mut status, mut score, mut anyway) = (Vec::new(), None, None, None, false);
+    let (mut title, mut progress, mut status, mut score_text, mut anyway) = (Vec::new(), None, None, None, false);
     let mut i = 0;
     while i < words.len() {
         match words[i] {
@@ -318,11 +360,8 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
                 i += 1;
             }
             "--score" => {
-                let v = words.get(i + 1).ok_or("--score needs a number from 1 to 10, or none")?;
-                score = Some(match *v {
-                    "none" | "0" | "-" => 0,
-                    v => v.parse::<u8>().ok().filter(|n| (1..=10).contains(n)).ok_or("the score is a number from 1 to 10, or none")?,
-                });
+                let v = words.get(i + 1).ok_or("--score needs a score (in your score format), or none")?;
+                score_text = Some(v.to_string());
                 i += 1;
             }
             "--anyway" => anyway = true,
@@ -340,10 +379,10 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
     if title.is_empty() {
         return Err("set needs a title".into());
     }
-    if progress.is_none() && status.is_none() && score.is_none() {
+    if progress.is_none() && status.is_none() && score_text.is_none() {
         return Err("set needs an episode number, --status or --score".into());
     }
-    Ok(Request::Set { title: title.join(" "), progress, status, score, anyway })
+    Ok(Request::Set { title: title.join(" "), progress, status, score: None, score_text, anyway })
 }
 
 /// `add QUERY… [--status S]`.
@@ -378,6 +417,8 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
     }
     let mut out = String::new();
     let mut last = "";
+    // The score column fits the widest score ("73", "7.3", "★★★★☆").
+    let width = entries.iter().filter_map(score_text).map(|t| t.chars().count()).max().unwrap_or(1).max(2);
     for e in entries {
         if grouped && e.status != last {
             if !last.is_empty() {
@@ -387,8 +428,8 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
             out.push_str(&format!("{} ({n})\n", e.status));
             last = &e.status;
         }
-        let score = e.score.map_or("\u{2013}".to_string(), |n| n.to_string());
-        let mut line = format!("  {:>9}  {score:>2}  {}", progress_text(e), e.title);
+        let score = score_text(e).unwrap_or_else(|| "\u{2013}".to_string());
+        let mut line = format!("  {:>9}  {score:>w$}  {}", progress_text(e), e.title, w = width);
         if e.rewatching {
             line.push_str("  (rewatching)");
         }
@@ -401,8 +442,13 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
     out
 }
 
+/// The score as the app wrote it in the user's format, else (an older app) its 1-10.
+fn score_text(e: &Entry) -> Option<String> {
+    e.score_text.clone().or_else(|| e.score.map(|n| n.to_string()))
+}
+
 fn edited_text(e: &Entry) -> String {
-    let score = e.score.map_or("no score".to_string(), |n| format!("score {n}"));
+    let score = score_text(e).map_or("no score".to_string(), |t| format!("score {t}"));
     let state = e.waiting.as_deref().map_or("synced".to_string(), str::to_lowercase);
     let status = if e.rewatching { format!("{}, rewatching", e.status) } else { e.status.clone() };
     format!("{}: {} · {status} · {score} ({state})", e.title, progress_text(e))
@@ -484,17 +530,18 @@ mod tests {
     fn set_reads_the_title_and_the_episode() {
         assert_eq!(
             parse_set(&["Lanterns", "of", "Kirigaoka", "6"]),
-            Ok(Request::Set { title: "Lanterns of Kirigaoka".into(), progress: Some(6), status: None, score: None, anyway: false })
+            Ok(Request::Set { title: "Lanterns of Kirigaoka".into(), progress: Some(6), status: None, score: None, score_text: None, anyway: false })
         );
         assert_eq!(
             parse_set(&["Neon", "Ronin", "2099", "--status", "completed", "--score", "9"]),
-            Ok(Request::Set { title: "Neon Ronin".into(), progress: Some(2099), status: Some("completed".into()), score: Some(9), anyway: false }),
+            Ok(Request::Set { title: "Neon Ronin".into(), progress: Some(2099), status: Some("completed".into()), score: None, score_text: Some("9".into()), anyway: false }),
             "a number at the end is the episode; the app refuses one past the end"
         );
-        assert_eq!(parse_set(&["86", "--score", "none"]), Ok(Request::Set { title: "86".into(), progress: None, status: None, score: Some(0), anyway: false }));
+        assert_eq!(parse_set(&["86", "--score", "none"]), Ok(Request::Set { title: "86".into(), progress: None, status: None, score: None, score_text: Some("none".into()), anyway: false }));
+        // Any score goes as typed: the app knows the user's format (73, 7.3, ***, :)).
+        assert_eq!(parse_set(&["Neon", "--score", "7.3"]).map(|r| matches!(r, Request::Set { score_text: Some(t), .. } if t == "7.3")), Ok(true));
         assert!(parse_set(&["Neon"]).is_err());
         assert!(parse_set(&["6"]).is_err(), "a lone number is a title with nothing to set");
-        assert!(parse_set(&["Neon", "--score", "11"]).is_err());
         assert!(parse_set(&["Neon", "--status"]).is_err());
     }
 
@@ -506,11 +553,20 @@ mod tests {
         assert!(parse_plus_one(&[]).is_err());
         assert_eq!(
             parse_set(&["Lanterns", "9", "--anyway"]),
-            Ok(Request::Set { title: "Lanterns".into(), progress: Some(9), status: None, score: None, anyway: true })
+            Ok(Request::Set { title: "Lanterns".into(), progress: Some(9), status: None, score: None, score_text: None, anyway: true })
         );
         // A held request is sent again as it was, plus "anyway".
-        let set = Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, anyway: false };
-        assert_eq!(with_anyway(set), Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, anyway: true });
+        let set = Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, score_text: None, anyway: false };
+        assert_eq!(with_anyway(set), Request::Set { title: "Lanterns".into(), progress: Some(9), status: Some("watching".into()), score: None, score_text: None, anyway: true });
+    }
+
+    #[test]
+    fn remove_reads_the_title_and_yes() {
+        assert_eq!(parse_remove(&["Neon", "Ronin"]), Ok(Request::Remove { title: "Neon Ronin".into(), yes: false }));
+        assert_eq!(parse_remove(&["--yes", "9001"]), Ok(Request::Remove { title: "9001".into(), yes: true }));
+        assert!(parse_remove(&["-y"]).is_err());
+        // Held for the question: sent again with yes.
+        assert_eq!(with_anyway(Request::Remove { title: "Neon".into(), yes: false }), Request::Remove { title: "Neon".into(), yes: true });
     }
 
     #[test]
@@ -523,7 +579,7 @@ mod tests {
     }
 
     fn e(title: &str, status: &str, progress: u32, score: Option<u8>, waiting: Option<&str>) -> Entry {
-        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, waiting: waiting.map(Into::into), rewatching: false, times_rewatched: 0 }
+        Entry { id: 1, title: title.into(), status: status.into(), progress, episodes: Some(12), score, score_text: None, waiting: waiting.map(Into::into), rewatching: false, times_rewatched: 0 }
     }
 
     #[test]
@@ -537,6 +593,15 @@ mod tests {
         assert_eq!(list_text(&[], false), "Nothing here.\n");
         assert_eq!(edited_text(&entries[0]), "Lanterns of Kirigaoka: 5 / 12 · Watching · score 8 (waiting to sync)");
         assert_eq!(edited_text(&entries[1]), "Neon Ronin: 12 / 12 · Completed · no score (synced)");
+        // The app's own text in the user's format wins; the column fits the widest.
+        let stars = |n: usize| "\u{2605}".repeat(n) + &"\u{2606}".repeat(5 - n);
+        let mut a = e("Lanterns", "Watching", 5, Some(7), None);
+        a.score_text = Some(stars(4));
+        let b = e("Neon", "Watching", 2, None, None);
+        assert_eq!(list_text(&[a.clone(), b], false), format!("     5 / 12  {}  Lanterns
+     2 / 12      \u{2013}  Neon
+", stars(4)));
+        assert_eq!(edited_text(&a), format!("Lanterns: 5 / 12 · Watching · score {} (synced)", stars(4)));
     }
 
     #[test]

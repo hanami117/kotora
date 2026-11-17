@@ -1437,7 +1437,9 @@ name = "kotora-core"
 version = "0.2.0"
 dependencies = [
  "anitomy-ng",
+ "flate2",
  "libc",
+ "roxmltree",
  "rusqlite",
  "serde",
  "serde_json",

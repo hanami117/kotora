@@ -451,8 +451,28 @@ pub struct Toast {
     /// The note is an error ("Episode 7 not in your folders").
     pub warn: bool,
     pub until: std::time::Instant,
-    /// Undo: the entry and the change that puts it back (`State::toast_undo`).
-    pub undo: Option<(u32, kotora_core::Change)>,
+    /// Undo (`State::toast_undo`).
+    pub undo: Option<Undo>,
+}
+
+/// What a toast's Undo puts back.
+#[derive(Clone, Debug)]
+pub enum Undo {
+    /// The entry and the change that puts its old values back.
+    Edit(u32, kotora_core::Change),
+    /// Remove from list: the entry as it was (its removal waits in the queue until sent).
+    Remove(Box<crate::model::Entry>),
+}
+
+/// Two undos are the same when they put back the same thing (a removal: the same entry).
+impl PartialEq for Undo {
+    fn eq(&self, other: &Undo) -> bool {
+        match (self, other) {
+            (Undo::Edit(a, c), Undo::Edit(b, d)) => a == b && c == d,
+            (Undo::Remove(a), Undo::Remove(b)) => a.id == b.id && a.updated_at == b.updated_at,
+            _ => false,
+        }
+    }
 }
 
 /// How long a toast stays.

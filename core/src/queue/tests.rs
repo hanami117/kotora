@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use super::*;
 use crate::Scope;
+use crate::score::ten;
 use crate::{Kind, ListItem, Media};
 
 /// A made-up service: its own copy of the list, scripted errors, and a log of every call.
@@ -46,9 +47,17 @@ impl ListService for Fake {
         self.remote.insert(id, r);
         Ok(r)
     }
+    fn delete_entry(&mut self, id: u32) -> std::result::Result<(), ServiceError> {
+        self.calls.push(format!("delete {id}"));
+        if let Some(e) = self.errors.pop_front() {
+            return Err(e);
+        }
+        self.remote.remove(&id);
+        Ok(())
+    }
 }
 
-fn v(status: Status, progress: u32, score: Option<u8>) -> Values {
+fn v(status: Status, progress: u32, score: Option<Score>) -> Values {
     Values::new(status, progress, score)
 }
 
@@ -74,7 +83,7 @@ fn item(id: u32, progress: u32, updated_at: i64) -> ListItem {
         },
         status: Status::Watching,
         progress,
-        score: Some(7),
+        score: ten(7),
         rewatching: false,
         times_rewatched: 0,
         updated_at,
@@ -88,7 +97,7 @@ fn setup() -> (Store, Fake) {
     s.replace_list("mal", &[item(1, 3, 100), item(2, 3, 100)], 100).unwrap();
     let mut f = Fake { clock: 1000, ..Default::default() };
     for id in [1, 2] {
-        f.remote.insert(id, Remote { values: v(Status::Watching, 3, Some(7)), updated_at: 100 });
+        f.remote.insert(id, Remote { values: v(Status::Watching, 3, ten(7)), updated_at: 100 });
     }
     (s, f)
 }
@@ -111,8 +120,8 @@ fn an_edit_shows_at_once_and_waits_in_the_queue() {
     assert_eq!(q.len(), 1);
     let op = &q[0];
     assert_eq!((op.id, op.media_id, op.title.as_str(), op.state, op.base_updated_at), (id, 1, "Show 1", OpState::Queued, 100));
-    assert_eq!(op.old, v(Status::Watching, 3, Some(7)));
-    assert_eq!(op.mine(), v(Status::Watching, 4, Some(7)));
+    assert_eq!(op.old, v(Status::Watching, 3, ten(7)));
+    assert_eq!(op.mine(), v(Status::Watching, 4, ten(7)));
     assert_eq!(s.open_count("mal").unwrap(), 1);
     assert!(s.enqueue("mal", 99, progress(1), 500).is_err(), "not on the list");
 }
@@ -122,16 +131,16 @@ fn edits_merge_and_an_edit_back_cancels() {
     let (mut s, _) = setup();
     s.enqueue("mal", 1, progress(4), 500).unwrap();
     s.enqueue("mal", 1, progress(5), 501).unwrap();
-    s.enqueue("mal", 1, Change { score: Some(Some(9)), ..Default::default() }, 502).unwrap();
+    s.enqueue("mal", 1, Change { score: Some(ten(9)), ..Default::default() }, 502).unwrap();
     let q = s.queue("mal", 502).unwrap();
     assert_eq!(q.len(), 1, "one change for the entry");
-    assert_eq!(q[0].change, Change { progress: Some(5), score: Some(Some(9)), status: None, ..Default::default() });
+    assert_eq!(q[0].change, Change { progress: Some(5), score: Some(ten(9)), status: None, ..Default::default() });
     assert_eq!(q[0].edits, 3);
     // Back to the old values: nothing left to send, and the entry is as before.
-    assert_eq!(s.enqueue("mal", 1, Change { progress: Some(3), score: Some(Some(7)), status: None, ..Default::default() }, 503).unwrap(), None);
+    assert_eq!(s.enqueue("mal", 1, Change { progress: Some(3), score: Some(ten(7)), status: None, ..Default::default() }, 503).unwrap(), None);
     assert_eq!(s.open_count("mal").unwrap(), 0);
     let e = entry(&s, 1);
-    assert_eq!((e.progress, e.score, e.updated_at), (3, Some(7), 100));
+    assert_eq!((e.progress, e.score, e.updated_at), (3, ten(7), 100));
     // An edit to the value it already has queues nothing.
     assert_eq!(s.enqueue("mal", 2, progress(3), 504).unwrap(), None);
 }
@@ -161,22 +170,22 @@ fn the_worker_sends_and_saves_the_services_answer() {
 #[test]
 fn a_change_made_elsewhere_is_a_conflict_and_nothing_is_overwritten() {
     let (mut s, mut f) = setup();
-    s.enqueue("mal", 1, Change { score: Some(Some(9)), ..Default::default() }, 500).unwrap();
+    s.enqueue("mal", 1, Change { score: Some(ten(9)), ..Default::default() }, 500).unwrap();
     // The phone set the score to 6 after our base.
-    f.remote.insert(1, Remote { values: v(Status::Watching, 3, Some(6)), updated_at: 400 });
+    f.remote.insert(1, Remote { values: v(Status::Watching, 3, ten(6)), updated_at: 400 });
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
     assert_eq!(f.calls, ["get 1"], "no PATCH");
     let op = s.queue("mal", 600).unwrap().remove(0);
     assert_eq!(op.state, OpState::Conflict);
-    assert_eq!(op.remote.unwrap().values, v(Status::Watching, 3, Some(6)));
-    assert_eq!(entry(&s, 1).score, Some(9), "the list still shows the user's edit");
+    assert_eq!(op.remote.unwrap().values, v(Status::Watching, 3, ten(6)));
+    assert_eq!(entry(&s, 1).score, ten(9), "the list still shows the user's edit");
     assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Idle, "a conflict waits for the user");
     assert_eq!(s.open_count("mal").unwrap(), 1);
 
     // Keep mine: sent over the service's version.
     s.keep_mine(op.id).unwrap();
     assert_eq!(step(&mut s, &mut f, 602).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
-    assert_eq!(f.remote[&1].values.score, Some(9));
+    assert_eq!(f.remote[&1].values.score, ten(9));
 }
 
 #[test]
@@ -186,7 +195,7 @@ fn take_theirs_drops_the_change_and_shows_the_services_values() {
     f.remote.insert(1, Remote { values: v(Status::Dropped, 4, None), updated_at: 400 });
     step(&mut s, &mut f, 600).unwrap();
     let id = s.queue("mal", 600).unwrap()[0].id;
-    s.take_theirs("mal", id).unwrap();
+    s.take_theirs("mal", id, 1_000).unwrap();
     assert_eq!(s.open_count("mal").unwrap(), 0);
     let e = entry(&s, 1);
     assert_eq!((e.status, e.progress, e.score, e.updated_at), (Status::Dropped, 4, None, 400));
@@ -197,8 +206,8 @@ fn a_higher_progress_wins_on_its_own_and_a_lower_one_asks() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
     s.enqueue("mal", 2, progress(4), 500).unwrap();
-    f.remote.insert(1, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
-    f.remote.insert(2, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
+    f.remote.insert(1, Remote { values: v(Status::Watching, 5, ten(7)), updated_at: 400 });
+    f.remote.insert(2, Remote { values: v(Status::Watching, 5, ten(7)), updated_at: 400 });
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 2, outcome: Outcome::Conflict });
     assert_eq!(f.remote[&1].values.progress, 6);
@@ -208,7 +217,7 @@ fn a_higher_progress_wins_on_its_own_and_a_lower_one_asks() {
 fn with_the_setting_off_a_higher_progress_asks_too() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
-    f.remote.insert(1, Remote { values: v(Status::Watching, 5, Some(7)), updated_at: 400 });
+    f.remote.insert(1, Remote { values: v(Status::Watching, 5, ten(7)), updated_at: 400 });
     assert_eq!(step_with(&mut s, &mut f, 600, false).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
 }
 
@@ -216,7 +225,7 @@ fn with_the_setting_off_a_higher_progress_asks_too() {
 fn values_already_on_the_service_count_as_sent() {
     let (mut s, mut f) = setup();
     s.enqueue("mal", 1, progress(6), 500).unwrap();
-    f.remote.insert(1, Remote { values: v(Status::Watching, 6, Some(7)), updated_at: 450 });
+    f.remote.insert(1, Remote { values: v(Status::Watching, 6, ten(7)), updated_at: 450 });
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::AlreadyThere });
     assert_eq!(f.calls, ["get 1"]);
     assert_eq!(entry(&s, 1).updated_at, 450);
@@ -302,7 +311,7 @@ fn a_refused_change_fails_with_the_services_words_until_edited_or_discarded() {
     let op = s.queue("mal", 602).unwrap().remove(0);
     assert_eq!((op.state, op.error, op.change.progress, op.edits), (OpState::Queued, None, Some(12), 2));
     // Discard: the entry goes back.
-    s.discard("mal", op.id).unwrap();
+    s.discard("mal", op.id, 1_000).unwrap();
     let e = entry(&s, 1);
     assert_eq!((e.progress, e.updated_at), (3, 100));
     assert_eq!(s.open_count("mal").unwrap(), 0);
@@ -337,7 +346,7 @@ fn take_theirs_on_a_removed_entry_drops_it() {
     let mut f = Fake::default();
     step(&mut s, &mut f, 600).unwrap();
     let id = s.queue("mal", 600).unwrap()[0].id;
-    s.take_theirs("mal", id).unwrap();
+    s.take_theirs("mal", id, 1_000).unwrap();
     assert!(s.load_item("mal", 1).unwrap().is_none());
 }
 
@@ -367,7 +376,7 @@ fn a_change_caught_mid_send_goes_again_at_start() {
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Idle);
     s.queue_start("mal", 600).unwrap();
     // It did reach the service before the crash: found there, not sent twice.
-    f.remote.insert(1, Remote { values: v(Status::Watching, 4, Some(7)), updated_at: 550 });
+    f.remote.insert(1, Remote { values: v(Status::Watching, 4, ten(7)), updated_at: 550 });
     assert_eq!(step(&mut s, &mut f, 601).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::AlreadyThere });
 }
 
@@ -397,11 +406,11 @@ fn the_schema_moves_up_from_version_1_and_keeps_the_saved_list() {
 
 #[test]
 fn changes_read_plainly() {
-    let old = v(Status::Watching, 3, Some(7));
+    let old = v(Status::Watching, 3, ten(7));
     assert_eq!(describe(&progress(5), &old), "Progress 3 \u{2192} 5");
-    assert_eq!(describe(&Change { status: Some(Status::Completed), score: Some(Some(8)), progress: None, ..Default::default() }, &old), "Status \u{2192} Completed, score 7 \u{2192} 8");
+    assert_eq!(describe(&Change { status: Some(Status::Completed), score: Some(ten(8)), progress: None, ..Default::default() }, &old), "Status \u{2192} Completed, score 7 \u{2192} 8");
     assert_eq!(describe(&Change { score: Some(None), ..Default::default() }, &old), "Score removed");
-    assert_eq!(describe(&Change { score: Some(Some(6)), ..Default::default() }, &v(Status::Watching, 0, None)), "Score 6");
+    assert_eq!(describe(&Change { score: Some(ten(6)), ..Default::default() }, &v(Status::Watching, 0, None)), "Score 6");
 }
 
 fn new_media(id: u32, episodes: Option<u32>) -> Media {
@@ -474,7 +483,7 @@ fn edits_merge_into_an_add_and_keep_its_status() {
 fn discarding_an_add_takes_it_off_the_list() {
     let (mut s, _) = setup();
     let id = s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap().unwrap();
-    s.discard("mal", id).unwrap();
+    s.discard("mal", id, 1_000).unwrap();
     assert!(s.load_item("mal", 7).unwrap().is_none());
     assert_eq!(s.open_count("mal").unwrap(), 0);
 }
@@ -501,7 +510,7 @@ fn an_add_of_an_anime_on_the_list_changes_its_status() {
 #[test]
 fn an_add_finds_the_anime_already_on_the_service() {
     let (mut s, mut f) = setup();
-    f.remote.insert(7, Remote { values: v(Status::Completed, 12, Some(9)), updated_at: 300 });
+    f.remote.insert(7, Remote { values: v(Status::Completed, 12, ten(9)), updated_at: 300 });
     s.add_to_list("mal", &new_media(7, Some(12)), Status::Watching, None, 500).unwrap();
     assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 7, outcome: Outcome::Conflict }, "nothing overwritten");
     // Same values there: already there.
@@ -537,7 +546,7 @@ fn a_rewatch_is_queued_and_sent() {
     assert_eq!(q[0].change, Change { times_rewatched: Some(2), ..Default::default() }, "back at 12 and not rewatching: only the count is left");
     assert_eq!(describe(&q[0].change, &q[0].old), "Rewatched twice");
     let mut f = Fake::default();
-    f.remote.insert(1, Remote { values: Values { times_rewatched: 1, ..v(Status::Completed, 12, Some(8)) }, updated_at: 300 });
+    f.remote.insert(1, Remote { values: Values { times_rewatched: 1, ..v(Status::Completed, 12, ten(8)) }, updated_at: 300 });
     assert!(matches!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { outcome: Outcome::Sent, .. }));
     assert_eq!(f.remote[&1].values.times_rewatched, 2);
 }
@@ -614,7 +623,7 @@ fn manga_item(id: u32, chapters: u32, volumes: u32, updated_at: i64) -> ListItem
 }
 
 fn read(chapters: u32, volumes: u32) -> Values {
-    Values { volumes, ..v(Status::Watching, chapters, Some(7)) }
+    Values { volumes, ..v(Status::Watching, chapters, ten(7)) }
 }
 
 /// Anime 1 (progress 3) and manga 1 (chapter 21, volume 3), both at updated 100, and a
@@ -624,7 +633,7 @@ fn setup_both() -> (Store, Both) {
     s.replace_list("mal", &[item(1, 3, 100)], 100).unwrap();
     s.replace_list(MANGA, &[manga_item(1, 21, 3, 100)], 100).unwrap();
     let mut f = Both { clock: 1000, ..Default::default() };
-    f.anime.insert(1, Remote { values: v(Status::Watching, 3, Some(7)), updated_at: 100 });
+    f.anime.insert(1, Remote { values: v(Status::Watching, 3, ten(7)), updated_at: 100 });
     f.manga.insert(1, Remote { values: read(21, 3), updated_at: 100 });
     (s, f)
 }
@@ -685,7 +694,7 @@ fn a_manga_conflict_keeps_the_volumes_and_higher_counts_win() {
     let op = s.queue("mal", 800).unwrap().into_iter().find(|o| o.state == OpState::Conflict).unwrap();
     assert_eq!((op.kind, op.remote.unwrap().values), (Kind::Manga, read(40, 6)));
     // Take theirs: the manga entry takes the service's values; the anime 1 is untouched.
-    s.take_theirs("mal", op.id).unwrap();
+    s.take_theirs("mal", op.id, 1_000).unwrap();
     let mi = s.load_item(MANGA, 1).unwrap().unwrap();
     assert_eq!((mi.progress, mi.volumes, mi.updated_at), (40, 6, 5000));
     assert_eq!(entry(&s, 1).progress, 3);
@@ -705,7 +714,7 @@ fn a_manga_conflict_can_keep_mine_or_be_discarded() {
     // Discard puts the manga entry back.
     s.enqueue(MANGA, 1, chapters(23, Some(4)), 700).unwrap();
     let id = s.queue("mal", 700).unwrap()[0].id;
-    s.discard("mal", id).unwrap();
+    s.discard("mal", id, 1_000).unwrap();
     let mi = s.load_item(MANGA, 1).unwrap().unwrap();
     assert_eq!((mi.progress, mi.volumes), (22, 3));
 }
@@ -735,9 +744,122 @@ fn adding_a_manga_and_a_full_manga_sync() {
 
 #[test]
 fn manga_words() {
-    let old = Values { volumes: 2, times_rewatched: 0, ..v(Status::Completed, 48, Some(8)) };
+    let old = Values { volumes: 2, times_rewatched: 0, ..v(Status::Completed, 48, ten(8)) };
     assert_eq!(describe_in(Kind::Manga, &Change { status: Some(Status::Watching), ..Default::default() }, &old), "Status \u{2192} Reading");
     assert_eq!(describe_in(Kind::Manga, &Change { rewatching: Some(true), progress: Some(0), ..Default::default() }, &old), "Chapters 48 \u{2192} 0, reread started");
     assert_eq!(describe_in(Kind::Manga, &Change { times_rewatched: Some(2), ..Default::default() }, &old), "Reread twice");
     assert_eq!(describe(&Change { rewatching: Some(true), progress: Some(0), ..Default::default() }, &old), "Progress 48 \u{2192} 0, rewatch started", "anime words unchanged");
+}
+
+// ------------------------------------------------------------------------------ remove from list
+
+#[test]
+fn a_removal_leaves_the_list_at_once_and_is_sent_as_a_delete() {
+    let (mut s, mut f) = setup();
+    let id = s.remove_from_list("mal", 1, 500).unwrap();
+    assert!(s.load_item("mal", 1).unwrap().is_none(), "gone from the list at once");
+    let q = s.queue("mal", 500).unwrap();
+    assert_eq!((q[0].id, q[0].removed, q[0].old, q[0].base_updated_at), (id, true, v(Status::Watching, 3, ten(7)), 100));
+    assert_eq!(describe_op(&q[0]), "Remove from list");
+    assert_eq!(s.remove_from_list("mal", 1, 501).unwrap(), id, "a second removal is the same change");
+    assert!(s.remove_from_list("mal", 99, 500).is_err(), "not on the list");
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(f.calls, ["get 1", "delete 1"]);
+    assert!(!f.remote.contains_key(&1));
+    assert_eq!(s.open_count("mal").unwrap(), 0);
+    assert_eq!(s.queue("mal", 600).unwrap()[0].state, OpState::Done);
+    // A full sync without it: it stays off, and its media goes (no hoarding).
+    s.replace_list("mal", &[item(2, 3, 100)], 700).unwrap();
+    assert!(s.load_item("mal", 1).unwrap().is_none());
+}
+
+#[test]
+fn discarding_a_removal_puts_the_entry_back_as_it_was() {
+    let (mut s, _) = setup();
+    s.enqueue("mal", 1, Change { score: Some(ten(9)), ..Default::default() }, 400).unwrap();
+    let id = s.remove_from_list("mal", 1, 500).unwrap();
+    // A sync while it waits: the service still has it, the removal still wins.
+    s.replace_list("mal", &[item(1, 3, 100), item(2, 3, 100)], 550).unwrap();
+    assert!(s.load_item("mal", 1).unwrap().is_none());
+    s.discard("mal", id, 0).unwrap();
+    let e = entry(&s, 1);
+    assert_eq!((e.status, e.progress, e.score), (Status::Watching, 3, ten(9)), "with the edit made before it");
+    assert_eq!(s.open_count("mal").unwrap(), 1, "the score change still waits");
+}
+
+#[test]
+fn a_removal_of_an_entry_changed_elsewhere_is_a_conflict() {
+    let (mut s, mut f) = setup();
+    let id = s.remove_from_list("mal", 1, 500).unwrap();
+    f.remote.insert(1, Remote { values: v(Status::Completed, 12, ten(9)), updated_at: 450 });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Conflict });
+    assert_eq!(f.calls, ["get 1"], "nothing deleted without asking");
+    let op = &s.queue("mal", 600).unwrap()[0];
+    assert_eq!((op.state, op.remote.map(|r| r.values.progress)), (OpState::Conflict, Some(12)));
+    // Take theirs: the service's entry comes back.
+    s.take_theirs("mal", id, 0).unwrap();
+    let e = entry(&s, 1);
+    assert_eq!((e.status, e.progress, e.score, e.updated_at), (Status::Completed, 12, ten(9), 450));
+    assert_eq!(s.open_count("mal").unwrap(), 0);
+}
+
+#[test]
+fn keep_mine_removes_it_anyway() {
+    let (mut s, mut f) = setup();
+    let id = s.remove_from_list("mal", 1, 500).unwrap();
+    f.remote.insert(1, Remote { values: v(Status::Completed, 12, None), updated_at: 450 });
+    step(&mut s, &mut f, 600).unwrap();
+    s.keep_mine(id).unwrap();
+    assert_eq!(step(&mut s, &mut f, 700).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert!(!f.remote.contains_key(&1) && s.load_item("mal", 1).unwrap().is_none());
+}
+
+#[test]
+fn a_removal_of_an_entry_already_gone_there_is_done() {
+    let (mut s, mut f) = setup();
+    s.remove_from_list("mal", 1, 500).unwrap();
+    f.remote.remove(&1);
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::AlreadyThere });
+    assert_eq!(f.calls, ["get 1"]);
+    assert_eq!(s.open_count("mal").unwrap(), 0);
+}
+
+#[test]
+fn a_removal_offline_waits_and_edits_before_it_go_first() {
+    let (mut s, mut f) = setup();
+    s.enqueue("mal", 1, progress(4), 400).unwrap();
+    s.remove_from_list("mal", 1, 500).unwrap();
+    // The edit goes first; its answer moves the removal's base, so it is no conflict.
+    step(&mut s, &mut f, 600).unwrap();
+    assert_eq!(f.remote[&1].values.progress, 4);
+    assert!(s.load_item("mal", 1).unwrap().is_none(), "the sent edit doesn't bring it back");
+    f.errors.push_back(ServiceError::Offline("no network".into()));
+    assert!(matches!(step(&mut s, &mut f, 700).unwrap(), Step::Handled { outcome: Outcome::Retry(_), .. }));
+    assert!(s.load_item("mal", 1).unwrap().is_none());
+    assert_eq!(step(&mut s, &mut f, 710).unwrap(), Step::Wait(20), "waits for its retry (30 s)");
+    assert_eq!(step(&mut s, &mut f, 730).unwrap(), Step::Handled { kind: Kind::Anime, media_id: 1, outcome: Outcome::Sent });
+    assert!(!f.remote.contains_key(&1));
+}
+
+#[test]
+fn adding_again_while_the_removal_waits_undoes_it() {
+    let (mut s, _) = setup();
+    s.remove_from_list("mal", 1, 500).unwrap();
+    s.add_to_list("mal", &item(1, 3, 100).media, Status::Watching, None, 600).unwrap();
+    assert_eq!(entry(&s, 1).progress, 3, "back as it was");
+    assert_eq!(s.open_count("mal").unwrap(), 0, "nothing to send");
+}
+
+#[test]
+fn a_removal_of_an_unsent_add_sends_both() {
+    let (mut s, mut f) = setup();
+    s.add_to_list("mal", &new_media(7, Some(12)), Status::PlanToWatch, None, 500).unwrap();
+    s.remove_from_list("mal", 7, 510).unwrap();
+    assert!(s.load_item("mal", 7).unwrap().is_none());
+    s.replace_list("mal", &[item(1, 3, 100), item(2, 3, 100)], 520).unwrap();
+    assert!(s.load_item("mal", 7).unwrap().is_none(), "the waiting add doesn't bring it back");
+    step(&mut s, &mut f, 600).unwrap();
+    step(&mut s, &mut f, 601).unwrap();
+    assert_eq!(f.calls, ["get 7", "patch 7", "get 7", "delete 7"]);
+    assert!(!f.remote.contains_key(&7));
 }

@@ -182,9 +182,13 @@ pub enum Request {
         /// A status name as in `List`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<String>,
-        /// 1-10; 0 removes the score.
+        /// 1-10; 0 removes the score. Older `kot`s send this; a new one sends `score_text`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         score: Option<u8>,
+        /// The score as the user typed it, in their own score format ("73", "7.5", "***",
+        /// ":)"); `none` removes it. The app reads it (it knows the format).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        score_text: Option<String>,
         /// Mark an episode that hasn't aired yet without asking (as `PlusOne`).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         anyway: bool,
@@ -217,9 +221,21 @@ pub enum Request {
     /// Opens the next episode's file (progress + 1) from the library folders in the player of
     /// Settings → Library. Replies `Done`, or `Error` with why not.
     Next { title: String },
+    /// Writes the saved anime list as a MyAnimeList XML file at `path` (absolute; `kot` makes a
+    /// relative path absolute). MyAnimeList lists only: AniList's terms don't allow exporting.
+    /// Replies `Done`.
+    Export { path: String },
     /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
     /// with what comes next, the queue and the last sync. Replies `Dash`.
     Dash,
+    /// Takes an entry off the list (a part of its title, or its id on the service): it goes to
+    /// the sync queue as a removal. Without `yes` it is held: `Error` with `anyway` and the
+    /// question. Replies `Done`.
+    Remove {
+        title: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        yes: bool,
+    },
 }
 
 // ------------------------------------------------------------------------------------- replies
@@ -365,8 +381,12 @@ pub struct Entry {
     pub progress: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episodes: Option<u32>,
+    /// The score rounded to 1-10 (what older `kot`s print).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<u8>,
+    /// The score in the user's own format: "73", "7.3", "★★★★☆", ":)".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_text: Option<String>,
     /// "Waiting to sync", "Conflict in queue", "Sync failed"; `None` when synced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waiting: Option<String>,

@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::score::ten;
 
 /// A made-up JWT whose `exp` is 1800000000 (its signature is not real).
 const JWT: &str = "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJSUzI1NiJ9.eyJhdWQiOiAiOTk5OTkiLCAianRpIjogIm1hZGUtdXAiLCAiaWF0IjogMTcwMDAwMDAwMCwgImV4cCI6IDE4MDAwMDAwMDAsICJzdWIiOiAiNDI0MjQyIiwgInNjb3BlcyI6IFtdfQ.bWFkZS11cC1zaWduYXR1cmUtbm90LXJlYWw";
@@ -108,6 +109,12 @@ fn the_viewer_reads_with_avatar_join_date_and_statistics() {
     let s = u.profile.stats.unwrap();
     assert_eq!((s.watching, s.completed, s.on_hold, s.plan_to_watch, s.dropped, s.episodes), (2, 3, 1, 1, 0, 131), "a rewatch counts as completed");
     assert!((s.days - 2.183).abs() < 0.01 && (s.mean_score - 7.45).abs() < 0.001);
+    assert_eq!(u.profile.score_format, ScoreFormat::Point5);
+    // A mean in the user's own format still shows out of 10.
+    let five = data(&VIEWER_JSON.replace("\"meanScore\":74.5", "\"meanScore\":3.5"));
+    assert!((parse_viewer(five).unwrap().1.profile.stats.unwrap().mean_score - 7.0).abs() < 0.001);
+    let none = data(&VIEWER_JSON.replace("\"mediaListOptions\":{\"scoreFormat\":\"POINT_5\"},", ""));
+    assert_eq!(parse_viewer(none).unwrap().1.profile.score_format, ScoreFormat::Point10, "no format: 1-10");
     assert!(parse_viewer(json!({ "Viewer": null })).is_err());
 }
 
@@ -117,7 +124,7 @@ fn the_list_maps_statuses_scores_formats_and_airing() {
     assert!(more);
     assert_eq!(items.len(), 2, "an entry in a custom list too is read once");
     let lantern = &items[0];
-    assert_eq!((lantern.status, lantern.progress, lantern.score, lantern.rewatching, lantern.updated_at), (Status::Watching, 6, Some(9), false, 1_763_200_000));
+    assert_eq!((lantern.status, lantern.progress, lantern.score, lantern.rewatching, lantern.updated_at), (Status::Watching, 6, Score::from_points(85), false, 1_763_200_000));
     let m = &lantern.media;
     assert_eq!((m.id, m.title.as_str(), m.title_en.as_deref(), m.title_ja.as_deref()), (170001, "Kirigaoka no Lantern", Some("Lanterns of Kirigaoka"), Some("霧ヶ丘のランタン")));
     assert_eq!((m.format.as_str(), m.air_status.as_str(), m.episodes, m.start_date.as_deref()), ("tv", "currently_airing", Some(12), Some("2026-10-03")));
@@ -137,9 +144,9 @@ fn the_list_maps_statuses_scores_formats_and_airing() {
         got,
         [
             (170003, Status::PlanToWatch, None, "movie", "not_yet_aired"),
-            (170004, Status::OnHold, Some(4), "ona", "currently_airing"),
-            (170005, Status::Dropped, Some(1), "ova", "finished_airing"),
-            (170006, Status::Completed, Some(10), "tv", "finished_airing"),
+            (170004, Status::OnHold, Score::from_points(42), "ona", "currently_airing"),
+            (170005, Status::Dropped, Score::from_points(6), "ova", "finished_airing"),
+            (170006, Status::Completed, Score::from_points(100), "tv", "finished_airing"),
         ]
     );
     assert_eq!(items[0].media.start_date.as_deref(), Some("2027"));
@@ -147,8 +154,10 @@ fn the_list_maps_statuses_scores_formats_and_airing() {
 }
 
 #[test]
-fn scores_round_to_ten_points() {
-    assert_eq!([0.0, 4.0, 5.0, 44.0, 45.0, 73.0, 100.0].map(score10), [None, Some(1), Some(1), Some(4), Some(5), Some(7), Some(10)]);
+fn scores_keep_all_100_points() {
+    // The 73 → 7 rounding of 0.2.0 is gone: Kotora keeps what AniList has.
+    let got = [0.0, 4.0, 44.6, 73.0, 100.0, 120.0, f32::NAN].map(|r| score100(r).map(Score::points));
+    assert_eq!(got, [None, Some(4), Some(45), Some(73), Some(100), Some(100), None]);
 }
 
 #[test]
@@ -237,10 +246,10 @@ fn a_change_sends_only_its_fields_with_anilists_names() {
     assert_eq!(vars(Change { progress: Some(5), ..Default::default() }), json!({ "mediaId": 7, "progress": 5 }));
     assert_eq!(vars(Change { status: Some(Status::OnHold), ..Default::default() }), json!({ "mediaId": 7, "status": "PAUSED" }));
     assert_eq!(vars(Change { status: Some(Status::PlanToWatch), ..Default::default() })["status"], "PLANNING");
-    assert_eq!(vars(Change { score: Some(Some(8)), ..Default::default() }), json!({ "mediaId": 7, "scoreRaw": 80 }), "AniList shows it in the user's format");
+    assert_eq!(vars(Change { score: Some(ten(8)), ..Default::default() }), json!({ "mediaId": 7, "scoreRaw": 80 }), "AniList shows it in the user's format");
     assert_eq!(vars(Change { score: Some(None), ..Default::default() }), json!({ "mediaId": 7, "scoreRaw": 0 }), "0 removes the score");
     // A rewatch starts as REPEATING at 0, and the last episode ends it with one more in the count.
-    let done = Values { times_rewatched: 1, ..Values::new(Status::Completed, 12, Some(8)) };
+    let done = Values { times_rewatched: 1, ..Values::new(Status::Completed, 12, ten(8)) };
     let start = Change::start_rewatch(&done).unwrap();
     assert_eq!(vars(start), json!({ "mediaId": 7, "status": "REPEATING", "progress": 0 }));
     let rewatching = start.apply(done);
@@ -259,7 +268,7 @@ fn save_sends_the_mutation_and_returns_the_saved_entry() {
     let saved = r#"{"data":{"SaveMediaListEntry":{"id":9001,"mediaId":170001,"status":"CURRENT","progress":7,"repeat":0,"score":85,"updatedAt":1763300000}}}"#;
     let (mut c, seen, _) = client(vec![ok(saved)]);
     let r = c.save_entry(JWT, 170001, &Change { progress: Some(7), ..Default::default() }).unwrap();
-    assert_eq!((r.values.progress, r.values.score, r.updated_at), (7, Some(9), 1_763_300_000));
+    assert_eq!((r.values.progress, r.values.score, r.updated_at), (7, Score::from_points(85), 1_763_300_000));
     let seen = seen.lock().unwrap();
     assert!(seen[0].2["query"].as_str().unwrap().starts_with("mutation"));
     assert_eq!(seen[0].2["variables"], json!({ "mediaId": 170001, "progress": 7 }));
@@ -315,7 +324,7 @@ fn details_read_every_field_and_the_users_entry() {
     assert_eq!(d.cover_small.as_deref(), Some("https://s4.anilist.example.invalid/media/anime/cover/small/bx170001.jpg"));
     let next = d.media().next_airing;
     let mine = d.mine.unwrap();
-    assert_eq!((mine.status.as_str(), mine.progress, mine.score, mine.start_date.as_deref(), mine.finish_date), ("watching", 6, Some(9), Some("2026-10-04"), None));
+    assert_eq!((mine.status.as_str(), mine.progress, mine.score, mine.start_date.as_deref(), mine.finish_date), ("watching", 6, Score::from_points(85), Some("2026-10-04"), None));
     assert_eq!(next, Some(NextAiring { episode: 8, at: 1_795_271_400 }));
 }
 
@@ -345,4 +354,23 @@ fn sign_in_checks_the_token_before_saving_it() {
     assert_eq!(al.complete_sign_in(&token).unwrap().name, "demo_user");
     assert_eq!(TokenStore::new(path).load_anilist(), Some(token));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mal_ids_map_to_anilist_media_fifty_a_request() {
+    const BY_MAL: &str = include_str!("fixtures/by-mal.json");
+    let empty = r#"{"data":{"Page":{"pageInfo":{"hasNextPage":false},"media":[]}}}"#;
+    // 120 ids: three requests (50, 50, 20); the fixture answers the first.
+    let ids: Vec<u32> = (1001..1121).collect();
+    let (mut c, seen, _) = client(vec![ok(BY_MAL), ok(empty), ok(empty)]);
+    let got = c.media_by_mal("tok", &ids).unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    let sizes: Vec<usize> = seen.iter().map(|(_, _, b)| b["variables"]["ids"].as_array().unwrap().len()).collect();
+    assert_eq!(sizes, vec![50, 50, 20]);
+    assert!(seen[0].2["query"].as_str().unwrap().contains("idMal_in"));
+    // One media per MAL id (the first: not the recap), and none for ids not asked.
+    let pairs: Vec<(u32, Option<u32>)> = got.iter().map(|m| (m.id, m.id_mal)).collect();
+    assert_eq!(pairs, vec![(171001, Some(1001)), (171004, Some(1004))]);
+    assert_eq!(got[1].title, "Shizuka na Niwa");
 }

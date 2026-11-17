@@ -68,14 +68,15 @@ fn answer(handle: &Handle, req: Request) -> Reply {
         }
         Request::List { status: st } => reply(on_ui(handle, false, move |s| list(s, st.as_deref()))),
         Request::PlusOne { title, anyway } => reply(on_ui(handle, true, move |s| plus_one(s, &title, anyway))),
-        Request::Set { title, progress, status: st, score, anyway } => reply(on_ui(handle, true, move |s| {
+        Request::Set { title, progress, status: st, score, score_text, anyway } => reply(on_ui(handle, true, move |s| {
             let status = match st.as_deref() {
                 Some(name) => Some(parse_status(name)?),
                 None => None,
             };
-            let change = Change { status, progress, score: score.map(|n| (n > 0).then_some(n)), ..Default::default() };
+            let change = Change { status, progress, score: score_of(s, score, score_text.as_deref())?, ..Default::default() };
             set(s, &title, change, anyway)
         })),
+        Request::Remove { title, yes } => reply(on_ui(handle, true, move |s| remove(s, &title, yes))),
         Request::Rewatch { title } => reply(on_ui(handle, true, move |s| {
             // A MyAnimeList id, or a part of the title.
             let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
@@ -83,7 +84,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 None => s.find(&title)?,
             };
             let i = s.start_rewatch(s.entries[i].id)?;
-            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+            Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
         Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now() }))),
@@ -113,7 +114,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
         Request::Confirm => reply(on_ui(handle, true, |s| {
             let (title, _) = s.confirm_offer()?;
             let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;
-            Ok(Reply::Edited { entry: s.entries[i].ctl() })
+            Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
         })),
         Request::Dismiss => reply(on_ui(handle, true, |s| {
             if s.now.is_none() {
@@ -146,11 +147,16 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             match find_online(&query) {
                 Ok(media) => reply(on_ui(handle, true, move |s| {
                     let i = s.add_media(media, status)?;
-                    Ok(Reply::Edited { entry: s.entries[i].ctl() })
+                    Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
                 })),
                 Err(message) => Reply::Error { message, anyway: false },
             }
         }
+        // Off the UI thread: reads the database and writes the file.
+        Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path)) {
+            Ok(message) => Reply::Done { message },
+            Err(message) => Reply::Error { message, anyway: false },
+        },
         Request::Next { title } => reply(on_ui(handle, true, move |s| {
             let i = s.find_for(&title, Want::Next)?;
             let id = s.entries[i].id;
@@ -175,18 +181,52 @@ fn plus_one(s: &mut State, title: &str, anyway: bool) -> Result<Reply, String> {
         return Ok(Reply::Error { message, anyway: true });
     }
     let i = s.plus_one(id)?;
-    Ok(Reply::Edited { entry: s.entries[i].ctl() })
+    Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
 }
 
 /// `kot set`: as `kot +1`, an episode not aired yet is held. Past the count is refused.
-fn set(s: &mut State, title: &str, change: Change, anyway: bool) -> Result<Reply, String> {
+/// `kot remove`: held with the question unless `yes`; then off the list, the removal queued
+/// (the app's toast offers Undo too).
+fn remove(s: &mut State, title: &str, yes: bool) -> Result<Reply, String> {
+    if !s.has_list() {
+        return Err("Not signed in.".into());
+    }
+    let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
+        Some(i) => i,
+        None => s.find(title)?,
+    };
+    let id = s.entries[i].id;
+    if !yes {
+        let message = s.remove_question(id).unwrap_or_default();
+        return Ok(Reply::Error { message, anyway: true });
+    }
+    let name = s.entries[i].title.clone();
+    let also = s.mirror_target().map(|o| format!(" The mirror removes it from {o} too.")).unwrap_or_default();
+    s.remove_entry(id)?;
+    Ok(Reply::Done { message: format!("Removed {name} from your list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the anime.{also}") })
+}
+
+/// `kot set --score`: the text in the user's own score format (a new `kot`), else 1-10 (an older
+/// one, 0 removes).
+fn score_of(s: &State, ten: Option<u8>, text: Option<&str>) -> Result<Option<Option<kotora_core::Score>>, String> {
+    Ok(match text {
+        Some(t) => Some(s.score_format().parse(t)?),
+        None => ten.map(|n| kotora_core::Score::from_ten(n.into())),
+    })
+}
+
+fn set(s: &mut State, title: &str, mut change: Change, anyway: bool) -> Result<Reply, String> {
     let i = s.find_for(title, Want::Watching)?;
     let id = s.entries[i].id;
+    // A score that already shows as the entry's keeps the precise one.
+    if let Some(sc) = change.score {
+        change.score = Some(s.score_format().pick(s.entries[i].score, sc));
+    }
     if !anyway && let Some(message) = s.not_aired_text(id, &change) {
         return Ok(Reply::Error { message, anyway: true });
     }
     let i = s.edit(id, change)?;
-    Ok(Reply::Edited { entry: s.entries[i].ctl() })
+    Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
 }
 
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
@@ -237,7 +277,7 @@ fn list(s: &State, status: Option<&str>) -> Result<Reply, String> {
     for st in Status::ALL.into_iter().filter(|st| only.is_none_or(|o| o == *st)) {
         let mut rows: Vec<&crate::model::Entry> = s.entries.iter().filter(|e| e.status == st).collect();
         rows.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
-        entries.extend(rows.into_iter().map(|e| e.ctl()));
+        entries.extend(rows.into_iter().map(|e| e.ctl(s.score_format())));
     }
     Ok(Reply::List { entries })
 }
@@ -279,6 +319,57 @@ mod tests {
         let mut s = State::fake();
         crate::model::airing_entry(&mut s, 0, 8);
         assert!(matches!(plus_one(&mut s, "Kirigaoka", false), Ok(Reply::Edited { .. })));
+    }
+
+    /// `kot remove` asks first (held with the question), then takes it off the list.
+    #[test]
+    fn kot_remove_asks_then_removes() {
+        let mut s = State::fake();
+        let id = s.entries[1].id;
+        let title = s.entries[1].title.clone();
+        match remove(&mut s, &title, false) {
+            Ok(Reply::Error { message, anyway: true }) => assert!(message.starts_with(&format!("Remove {title} from your list?")), "{message}"),
+            other => panic!("not held: {other:?}"),
+        }
+        assert!(s.entries.iter().any(|e| e.id == id));
+        assert!(matches!(remove(&mut s, &id.to_string(), true), Ok(Reply::Done { .. })), "by id");
+        assert!(!s.entries.iter().any(|e| e.id == id));
+        assert!(remove(&mut s, &title, true).is_err(), "no longer on the list");
+    }
+
+    /// `kot set --score` reads the score in the user's format and keeps a precise score that
+    /// already shows as the one typed; `kot list` gets the score written that way.
+    #[test]
+    fn kot_scores_in_the_users_format() {
+        use kotora_core::{Score, ScoreFormat};
+        let mut s = State::fake();
+        s.service = kotora_core::service::ServiceId::AniList;
+        let fmt = |s: &mut State, f: ScoreFormat| s.profile = Some(kotora_core::service::Profile { score_format: f, ..Default::default() });
+        let score = |s: &State| s.entries.iter().find(|e| e.id == 0).unwrap().score;
+        let run = |s: &mut State, text: &str| {
+            let sc = score_of(s, None, Some(text))?;
+            set(s, "Kirigaoka", Change { score: sc, ..Default::default() }, true).map(|r| match r {
+                Reply::Edited { entry } => entry,
+                other => panic!("{other:?}"),
+            })
+        };
+        fmt(&mut s, ScoreFormat::Point10Decimal);
+        let e = run(&mut s, "7.3").unwrap();
+        assert_eq!((score(&s), e.score_text.as_deref(), e.score), (Score::from_points(73), Some("7.3"), Some(7)));
+        fmt(&mut s, ScoreFormat::Point5);
+        let e = run(&mut s, "4").unwrap();
+        assert_eq!((score(&s), e.score_text.as_deref()), (Score::from_points(73), Some("\u{2605}\u{2605}\u{2605}\u{2605}\u{2606}")), "4 stars again: still 73");
+        run(&mut s, "*****").unwrap();
+        assert_eq!(score(&s), Score::from_points(100));
+        fmt(&mut s, ScoreFormat::Point3);
+        assert!(run(&mut s, "5").unwrap_err().contains("1 to 3"));
+        run(&mut s, "none").unwrap();
+        assert_eq!(score(&s), None);
+        // MyAnimeList: 1-10 only; an older `kot`'s number is 1-10 too.
+        s.service = kotora_core::service::ServiceId::Mal;
+        assert!(run(&mut s, "7.5").is_err());
+        assert_eq!(score_of(&s, Some(8), None), Ok(Some(Score::from_ten(8))));
+        assert_eq!(score_of(&s, Some(0), None), Ok(Some(None)));
     }
 
     /// The dashboard gathers a 300-entry list (with a library and a season of airing shows) well

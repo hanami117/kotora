@@ -1,7 +1,7 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
 //! `--list-scenes` lists them. Every view and state gets one.
 
-use kotora_core::Status;
+use kotora_core::{Score, ScoreFormat, Status};
 use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
 
@@ -110,6 +110,20 @@ pub const SCENES: &[Scene] = &[
     ("list-search-none", |s| {
         s.query.replace_text("zzzz");
         s.refresh();
+    }),
+    // No match on the list: the filter searches the service right there (0.2.1): waiting for
+    // the pause, its results (open the details page, + Watching), too short, offline, nothing.
+    ("list-filter-online-searching", |s| filter_online(s, "orchid", None)),
+    ("list-filter-online", |s| filter_online(s, "orchid", Some(crate::search::fake_hits()))),
+    ("list-filter-online-short", |s| filter_online(s, "fz", None)),
+    ("list-filter-online-offline", |s| {
+        s.offline = true;
+        filter_online(s, "orchid", None);
+    }),
+    ("list-filter-online-none", |s| filter_online(s, "zzzz", Some(Vec::new()))),
+    ("list-filter-online-anilist", |s| {
+        anilist(s);
+        filter_online(s, "orchid", Some(crate::search::fake_hits()));
     }),
     ("list-sort-title", |s| s.set_sort(Sort::Title)),
     ("list-sort-score", |s| s.set_sort(Sort::Score)),
@@ -280,7 +294,7 @@ pub const SCENES: &[Scene] = &[
     ("list-editor-changed", |s| {
         s.toggle_editor(4);
         s.editor_status(Status::Completed);
-        s.editor_score(Some(9));
+        s.editor_score(kotora_core::score::ten(9));
     }),
     // `+1` pressed on a synced row: the number moves at once and the row waits to sync.
     ("list-plus-one", |s| {
@@ -460,6 +474,36 @@ pub const SCENES: &[Scene] = &[
         if let Some(op) = s.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
             op.remote = None;
         }
+        s.go(Page::Queue);
+    }),
+    // Remove from list (0.2.1): the question (list and details page), the toast with Undo, the
+    // removal waiting in the queue, and its conflict when the entry changed on the service.
+    ("list-remove-confirm", |s| s.ask_remove(2)),
+    ("details-remove-confirm", |s| {
+        details(s, 0, true);
+        s.ask_remove(0);
+    }),
+    // With the mirror on (0.2.1): the question says the other service loses it too.
+    ("list-remove-confirm-mirror", |s| {
+        crate::mirror::fake_on(s);
+        s.ask_remove(2);
+    }),
+    ("details-remove-confirm-mirror", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 0, true);
+        s.ask_remove(0);
+    }),
+    ("list-removed", |s| {
+        let _ = s.remove_entry(2);
+    }),
+    ("queue-removal", |s| {
+        queue_covers(s);
+        removal(s, OpState::Queued);
+        s.go(Page::Queue);
+    }),
+    ("queue-removal-conflict", |s| {
+        queue_covers(s);
+        removal(s, OpState::Conflict);
         s.go(Page::Queue);
     }),
     // One change on its way, nothing else open.
@@ -716,6 +760,147 @@ pub const SCENES: &[Scene] = &[
         s.client_id.editing = true;
         crate::settings::open(s, Section::Account)
     }),
+    // Settings → Account → Your list (`transfer.rs`). The search brings the rows to the top.
+    ("settings-transfer", |s| {
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-export-done", |s| {
+        s.transfer.export_note = Some(Ok("Exported 14 anime to animelist-2027-01-15.xml.".into()));
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    // AniList: no export (its API terms), import still works.
+    ("settings-export-anilist", |s| {
+        anilist(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-import-preview", |s| {
+        crate::transfer::fake_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    // A status conflict settled for the file's status.
+    ("settings-import-preview-picked", |s| {
+        crate::transfer::fake_preview(s);
+        if let Some(p) = &mut s.transfer.preview
+            && let Some(id) = p.plan.conflicts().next().and_then(|r| r.target)
+        {
+            p.use_file.insert(id);
+        }
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-preview-anilist", |s| {
+        anilist(s);
+        crate::transfer::fake_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-busy", |s| {
+        anilist(s);
+        s.transfer.busy = Some("Looking up 40 MyAnimeList ids on AniList\u{2026}".into());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-error", |s| {
+        s.transfer.error = Some("This is not a MyAnimeList list export (no <myanimelist>).".into());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-done", |s| {
+        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: None });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-import-undone", |s| {
+        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: Some(15) });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    // Settings → Account → Mirror edits (`mirror.rs`). The search brings the row to the top.
+    ("settings-mirror", |s| {
+        s.mirror.other_signed_in = true;
+        mirror_settings(s);
+    }),
+    // The other service isn't signed in: the switch is off and says how.
+    ("settings-mirror-sign-in", mirror_settings),
+    ("settings-mirror-busy", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.busy = Some("Looking up 12 MyAnimeList ids on AniList\u{2026}".into());
+        mirror_settings(s);
+    }),
+    ("settings-mirror-preview", |s| {
+        crate::mirror::fake_preview(s);
+        mirror_settings(s);
+    }),
+    // A status conflict settled for AniList's status.
+    ("settings-mirror-preview-picked", |s| {
+        crate::mirror::fake_preview(s);
+        if let Some(p) = &mut s.mirror.preview
+            && let Some(r) = p.p.merge.iter().find(|r| r.conflict.is_some())
+        {
+            p.mirror_status.insert(r.mal_id);
+        }
+        mirror_settings(s);
+    }),
+    // AniList is the main list, MyAnimeList the mirror.
+    ("settings-mirror-preview-anilist", |s| {
+        anilist(s);
+        crate::mirror::fake_preview(s);
+        mirror_settings(s);
+    }),
+    ("settings-mirror-on", |s| {
+        crate::mirror::fake_on(s);
+        s.mirror.note = Some("On. Queued 14 changes for AniList and 3 for MyAnimeList.".into());
+        mirror_settings(s);
+    }),
+    ("settings-mirror-error", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.error = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        mirror_settings(s);
+    }),
+    // The Queue page with the mirror's part: website edits, a conflict, waiting, failed, sent.
+    ("queue-mirror", |s| {
+        queue_covers(s);
+        crate::mirror::fake_on(s);
+        s.go(Page::Queue);
+    }),
+    // The account chip with the mirror on (0.2.1): "MyAnimeList ⇄ AniList", nothing waiting.
+    ("sidebar-mirror", |s| {
+        s.mirror.other_signed_in = true;
+        s.mirror.link = Some(kotora_core::mirror::Link::of(s.service));
+    }),
+    // Changes wait for the mirror: the dot, and the tooltip as the pointer rests on the chip.
+    ("sidebar-mirror-dot", |s| {
+        crate::mirror::fake_on(s);
+        s.account_tip = true;
+    }),
+    // AniList main, MyAnimeList mirror.
+    ("sidebar-mirror-anilist", |s| {
+        anilist(s);
+        crate::mirror::fake_on(s);
+        s.account_tip = true;
+    }),
+    // A mirrored removal stopped: the entry changed on the mirror's website after it.
+    ("queue-mirror-removal-conflict", |s| {
+        queue_covers(s);
+        crate::mirror::fake_on(s);
+        if let Some(op) = s.mirror.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
+            op.removed = true;
+            op.change = kotora_core::Change::default();
+        }
+        s.go(Page::Queue);
+    }),
+    // Nothing waits for the main list; the mirror still has things to show.
+    ("queue-mirror-only", |s| {
+        s.ops.clear();
+        s.queue = 0;
+        crate::mirror::fake_on(s);
+        s.mirror.trouble = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        s.go(Page::Queue);
+    }),
     ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
     ("settings-library", |s| {
         crate::library::fake(s);
@@ -758,6 +943,62 @@ pub const SCENES: &[Scene] = &[
         crate::library::fake(s);
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    // Scores in each AniList score format (0.2.1): list rows, posters, the row editor (the 100-
+    // point and decimal ones with a fine − / +), the details page and the Score menu.
+    ("list-score-100", |s| scores_in(s, ScoreFormat::Point100)),
+    ("list-score-decimal", |s| scores_in(s, ScoreFormat::Point10Decimal)),
+    ("list-score-stars", |s| scores_in(s, ScoreFormat::Point5)),
+    ("list-score-smileys", |s| scores_in(s, ScoreFormat::Point3)),
+    ("list-grid-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+    }),
+    ("list-large-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        fake_covers(s);
+        s.prefs.views.set(Status::Watching, ListView::Large);
+    }),
+    ("list-editor-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        s.toggle_editor(0);
+        s.editor_score_step(1);
+    }),
+    ("list-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.toggle_editor(0);
+    }),
+    ("list-editor-score-smileys", |s| {
+        scores_in(s, ScoreFormat::Point3);
+        s.toggle_editor(0);
+    }),
+    ("details-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal);
+        details(s, 0, true);
+    }),
+    ("details-editor-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        details(s, 0, true);
+        s.toggle_editor(0);
+    }),
+    ("ctx-menu-score-stars", |s| {
+        scores_in(s, ScoreFormat::Point5);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
+    }),
+    ("ctx-menu-score-100", |s| {
+        scores_in(s, ScoreFormat::Point100);
+        s.open_ctx(0, crate::ctxmenu::At::Point(470.0, 130.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Score, true));
+        }
     }),
     // The right-click menu of an entry: on a list row, with each submenu, on a poster (opened
     // with the Menu key, under it) and on a Home card; and the toast with Undo after a move.
@@ -1169,6 +1410,20 @@ fn iina_by_process(s: &mut State) {
 }
 
 /// The search box holds `q`; `answered`: MyAnimeList's made-up results are in.
+/// The Watching page's filter holding `q` (nothing on the list matches it), and the service's
+/// answer, if it came.
+fn filter_online(s: &mut State, q: &str, hits: Option<Vec<kotora_core::service::AnimeHit>>) {
+    s.covers.fake();
+    s.query.replace_text(q);
+    s.search_changed();
+    if let Some(mut hits) = hits {
+        for h in hits.iter_mut().filter(|h| h.id != 9104) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
+    }
+}
+
 fn search(s: &mut State, q: &str, answered: bool) {
     s.covers.fake();
     for e in s.entries.iter_mut().filter(|e| e.id < 12) {
@@ -1331,9 +1586,53 @@ fn many(s: &mut State) {
 
 /// The wizard at `step`, first run (no Client ID, nobody signed in).
 /// AniList is the active service and signed in (the fake list is the same).
+fn mirror_settings(s: &mut State) {
+    crate::settings::open(s, Section::Account);
+    crate::settings::set_query(s, "mirror");
+}
+
 fn anilist(s: &mut State) {
     s.service = kotora_core::service::ServiceId::AniList;
     s.account = Some(("demo_user".into(), "AniList"));
+}
+
+/// Signed in to AniList with score format `fmt`, the fake scores made finer than 1-10 (73, 88,
+/// 41, …) so each format's rounding shows.
+fn scores_in(s: &mut State, fmt: ScoreFormat) {
+    anilist(s);
+    s.profile = Some(kotora_core::service::Profile { score_format: fmt, ..crate::profile::fake() });
+    const FINE: [u32; 8] = [73, 88, 41, 100, 56, 7, 65, 92];
+    for (i, e) in s.entries.iter_mut().filter(|e| e.score.is_some()).enumerate() {
+        e.score = Score::from_points(FINE[i % FINE.len()]);
+    }
+    s.refresh();
+}
+
+/// A removal of the second fake entry in the queue, the entry gone from the list. A conflict has
+/// the service's newer entry beside it.
+fn removal(s: &mut State, state: OpState) {
+    let Some(i) = s.entries.iter().position(|e| e.id == 2) else { return };
+    let e = s.entries.remove(i);
+    let Some(mut op) = s.ops.first().cloned() else { return };
+    op.id = 90;
+    op.media_id = e.id;
+    op.title = e.title.clone();
+    op.episodes = e.episodes;
+    op.change = kotora_core::Change::default();
+    op.old = e.values();
+    op.removed = true;
+    op.added = false;
+    op.edits = 1;
+    op.state = state;
+    op.error = None;
+    op.remote = (state == OpState::Conflict).then(|| kotora_core::Remote {
+        values: kotora_core::Values { progress: e.progress + 2, ..e.values() },
+        updated_at: s.clock() - 600,
+    });
+    s.ops.retain(|o| o.media_id != e.id);
+    s.ops.insert(0, op);
+    s.queue = s.ops.iter().filter(|o| o.state.is_open()).count() as u32;
+    s.refresh();
 }
 
 fn setup(s: &mut State, step: Step) {
@@ -1488,6 +1787,135 @@ mod tests {
         assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
         let rt = render("settings-account-anilist-own-id", (1280.0, 800.0));
         assert!(rt.find("set/cid/input").is_some());
+    }
+
+    #[test]
+    fn mirror_scenes() {
+        // Off, both signed in: the switch works.
+        let rt = render("settings-mirror", (1280.0, 800.0));
+        assert!(rt.find("set/mirror-switch").is_some() && rt.find("set/mirror-preview").is_none());
+        // The preview: counts, the lists, a status to pick, the three choices and Cancel.
+        let rt = render("settings-mirror-preview", (1280.0, 1800.0));
+        for k in [
+            "set/mirror-preview",
+            "set/mirror-counts",
+            "set/mirror-list-only-main",
+            "set/mirror-list-only-mirror",
+            "set/mirror-list-different",
+            "set/mirror-conflicts",
+            "set/mirror-conflicts-all",
+            "set/mirror-list-unmatched",
+            "set/mirror-main-wins",
+            "set/mirror-merge",
+            "set/mirror-dont-align",
+            "set/mirror-cancel",
+        ] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(render("settings-mirror-preview-picked", (1280.0, 1800.0)).find("set/mirror-conflicts").is_some());
+        assert!(render("settings-mirror-preview-anilist", (1280.0, 1800.0)).find("set/mirror-main-wins").is_some());
+        assert!(render("settings-mirror-busy", (1280.0, 800.0)).find("set/mirror-preview").is_none());
+        assert!(render("settings-mirror-error", (1280.0, 800.0)).find("set/mirror-error").is_some());
+        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-note").is_some());
+        assert!(render("settings-mirror-sign-in", (1280.0, 800.0)).find("set/mirror-switch").is_some());
+        // Labelled Beta, off and on.
+        assert!(render("settings-mirror", (1280.0, 800.0)).find("set/mirror-beta").is_some());
+        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-beta").is_some());
+        // The Queue page: website edits, the conflict, the mirror's list, and the badge.
+        let rt = render("queue-mirror", (1280.0, 1400.0));
+        for k in ["queue-mirror", "mirror-edit/9101/use-mirror", "mirror-edit/9101/leave", "queue-mirror-list", "qmh/waiting", "qmh/failed", "qmh/sent", "qmh/waits"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(rt.find("mirror-conflict/900/keep").is_some() && rt.find("mirror-conflict/900/take").is_some());
+        let rt = render("queue-mirror-only", (1280.0, 1400.0));
+        assert!(rt.find("queue-empty").is_none() && rt.find("queue-mirror/trouble").is_some());
+        // Off: no mirror part.
+        assert!(render("queue-page", (1280.0, 800.0)).find("queue-mirror").is_none());
+    }
+
+    /// The account chip with the mirror on: both services on its second line, the dot only while
+    /// the mirror has something in the Sync queue (counted into the badge too), and the tooltip
+    /// after the pointer rests on it.
+    #[test]
+    fn the_account_chip_shows_the_mirror() {
+        let mut s = State::fake();
+        let plain = crate::ui::account_line(&s, "MyAnimeList");
+        assert_eq!(plain, "MyAnimeList");
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
+        assert_eq!(crate::ui::account_line(&s, "MyAnimeList"), "MyAnimeList \u{21c4} AniList");
+        assert_eq!(crate::ui::account_tip_text(&s, "AniList"), "Changes also go to AniList.");
+        let mut rt = render("sidebar-mirror", (1280.0, 800.0));
+        assert!(rt.find("account/service").is_some() && rt.find("account/dot").is_none() && rt.find("account-tip").is_none());
+        // Resting on the chip shows the tooltip; leaving hides it.
+        let (x, y) = rt.find("account").unwrap();
+        rt.pointer_move(x, y);
+        for _ in 0..60 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.find("account-tip").is_some(), "the tooltip after a rest");
+        rt.pointer_move(700.0, 500.0);
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.find("account-tip").is_none());
+        // Something waits for the mirror: the dot, and the badge counts it.
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-dot").unwrap().1)(&mut s);
+        assert!(s.mirror.badge() > 0);
+        assert!(crate::ui::account_tip_text(&s, "AniList").contains("in the Sync queue for AniList"));
+        let rt = render("sidebar-mirror-dot", (1280.0, 800.0));
+        assert!(rt.find("account/dot").is_some() && rt.find("account-tip").is_some());
+        // AniList main: the other way round.
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-anilist").unwrap().1)(&mut s);
+        assert_eq!(crate::ui::account_line(&s, "AniList"), "AniList \u{21c4} MyAnimeList");
+        // Off: the plain chip, and no dot even with old mirror changes around.
+        let mut s = State::fake();
+        crate::mirror::fake_on(&mut s);
+        s.mirror.link = None;
+        assert_eq!((crate::ui::account_line(&s, "MyAnimeList").as_str(), s.mirror.badge()), ("MyAnimeList", 0));
+        assert!(render("home", (1280.0, 800.0)).find("account/dot").is_none());
+    }
+
+    #[test]
+    fn export_and_import_scenes() {
+        // MyAnimeList: both rows work.
+        let rt = render("settings-transfer", (1280.0, 800.0));
+        assert!(rt.find("set/export-button").is_some() && rt.find("set/import-button").is_some());
+        assert!(rt.find("set/import-preview").is_none());
+        // The preview: counts, the lists, a conflict to pick and the three buttons.
+        let rt = render("settings-import-preview", (1280.0, 1600.0));
+        for k in ["set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update", "set/import-cancel"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        let mut s = State::fake();
+        crate::transfer::fake_preview(&mut s);
+        let p = s.transfer.preview.as_ref().unwrap();
+        let c = p.plan.counts();
+        assert_eq!((c.new, c.unknown), (4, 2), "four new ids, no id and an unknown status");
+        assert!(c.conflicts > 1 && c.different > 0 && c.same > 0);
+        assert_eq!(c.new + c.different + c.same + c.unknown, 40 + 6, "40 of the fake list, six more");
+        assert!(render("settings-import-preview", (1280.0, 1600.0)).find("set/import-conflicts-all").is_some());
+        assert_eq!(p.plan.manga, 1);
+        // AniList: the id it doesn't know is left out, the one it maps is new.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        crate::transfer::fake_preview(&mut s);
+        let c = s.transfer.preview.as_ref().unwrap().plan.counts();
+        assert_eq!((c.new, c.unknown), (1, 5));
+        assert!(render("settings-import-preview-anilist", (1280.0, 1600.0)).find("set/import-list-unknown").is_some());
+        // While matching, after an error, after the import, after Undo.
+        assert!(render("settings-import-busy", (1280.0, 800.0)).find("set/import-preview").is_none());
+        assert!(render("settings-import-error", (1280.0, 800.0)).find("set/import-error").is_some());
+        let rt = render("settings-import-done", (1280.0, 800.0));
+        assert!(rt.find("set/import-undo").is_some() && rt.find("set/import-queue").is_some());
+        let rt = render("settings-import-undone", (1280.0, 800.0));
+        assert!(rt.find("set/import-done").is_some() && rt.find("set/import-undo").is_none());
+        // AniList: Export is off and says why; Import is on.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        assert!(crate::transfer::refusal(&s).is_some_and(|w| w.contains("terms")));
+        assert!(render("settings-export-anilist", (1280.0, 800.0)).find("set/import-button").is_some());
     }
 
     #[test]
@@ -1753,10 +2181,17 @@ mod tests {
 
     #[test]
     fn search_with_no_match_says_so() {
-        // A query searches the whole list (and MyAnimeList): nothing on the list says so in a line.
+        // A query searches the whole list: nothing there says so in the line to the service,
+        // whose results show under it.
         let rt = render("list-search-none", (1280.0, 800.0));
-        assert!(rt.find("sr/list-none").is_some() && rt.find("search").is_some());
+        assert!(rt.find("sr/find").is_some() && rt.find("sr/online-head").is_some() && rt.find("sr/list-none").is_none());
         assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+        let rt = render("list-filter-online", (1280.0, 800.0));
+        assert!(rt.find("hit/9101").is_some() && rt.find("hit/0").is_none(), "results, not the ones on the list");
+        assert!(rt.find("add").is_some());
+        assert!(render("list-filter-online", (960.0, 600.0)).find("add").is_some(), "fits a small window");
+        assert!(render("list-filter-online-searching", (1280.0, 800.0)).find("sr/note").is_some());
+        assert!(render("list-filter-online-short", (1280.0, 800.0)).find("sr/note").is_some());
     }
 
     /// Airing: both views, the filters and the states find their parts, wide and narrow.

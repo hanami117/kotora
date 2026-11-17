@@ -83,7 +83,7 @@ impl Section {
         match self {
             Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList]), (Some("Sign-in"), vec![Row::ClientId, Row::Token])],
+            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::Import])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
                 if kotora_detect::VLC_WEB {
@@ -121,6 +121,12 @@ pub enum Row {
     ClientId,
     Token,
     AniList,
+    /// Mirror edits to the other service, and its preview.
+    Mirror,
+    /// Export list… (MyAnimeList XML).
+    Export,
+    /// Import list… and its preview.
+    Import,
     Player(Switch),
     /// macOS: VLC is read through its web interface.
     VlcWeb,
@@ -158,6 +164,9 @@ impl Row {
             Row::ClientId => "client-id",
             Row::Token => "token",
             Row::AniList => "anilist",
+            Row::Mirror => "mirror",
+            Row::Export => "export",
+            Row::Import => "import",
             Row::VlcWeb => "vlc-web",
             Row::Auto => "auto",
             Row::Threshold => "threshold",
@@ -208,6 +217,9 @@ const SPECS: &[Spec] = &[
     spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
     spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
+    spec(Row::Mirror, Section::Account, "Mirror edits", "Every change also goes to your list on the other service.", "mirror mirroring copy both two accounts sync myanimelist anilist mal al align merge second"),
+    spec(Row::Export, Section::Account, "Export list", "Your anime list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file kitsu taiga move transfer"),
+    spec(Row::Import, Section::Account, "Import list", "Read a MyAnimeList XML export and add it to your list.", "import restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
@@ -833,6 +845,9 @@ fn row_el(s: &State, r: Row) -> El {
                     ),
             ),
         Row::AniList => account_row(s, ServiceId::AniList),
+        Row::Mirror => crate::mirror::settings_row(s),
+        Row::Export => crate::transfer::export_row(s),
+        Row::Import => crate::transfer::import_row(s),
         Row::Player(sw) => player(s, sw),
         Row::VlcWeb if cfg!(windows) => block(
             "VLC web interface",

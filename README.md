@@ -29,6 +29,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 - Edit progress, score and status. Changes go to a visible sync queue, so they work offline and conflicts
   are shown, not hidden.
 - Search your list and MyAnimeList or AniList, add an anime in one click, open a details page.
+- Import a MyAnimeList XML export into either service, with a preview first; export a MyAnimeList list as one.
 - Fast and small: no browser engine, a single binary, nothing running in the background that you didn't start.
 - A command line, `kot`, to control the running app.
 
@@ -148,6 +149,7 @@ kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
+kot export FILE        your anime list as a MyAnimeList XML file (MyAnimeList lists only)
 kot config client-id ID   (optional: your own client ID for the service in use)
 kot show | kot quit
 ```

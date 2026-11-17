@@ -51,7 +51,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children(s.sort_menu.then(|| sort_menu(s)))
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
-        .children(s.toast.as_ref().map(crate::library::toast));
+        .children(s.toast.as_ref().map(crate::library::toast))
+        .children(account_tip(s));
     // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
     // window resize lands every change inside `root` at once, and that must not cut the intro's
     // own tweens short (a window manager that enlarges the window as it opens).
@@ -132,6 +133,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     }
     if k.key == rune::Key::Escape && s.ask.is_some() {
         s.ask = None;
+        return true;
+    }
+    if k.key == rune::Key::Escape && s.confirm_remove.is_some() {
+        s.confirm_remove = None;
         return true;
     }
     if k.key == rune::Key::Escape && s.editor.is_some() {
@@ -237,7 +242,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
             "queue",
             NavMark::Icon(&icons::SYNC),
             "Sync queue",
-            (s.queue > 0).then(|| NavEnd::Badge(s.queue.to_string())),
+            (s.queue + s.mirror.badge() > 0).then(|| NavEnd::Badge((s.queue + s.mirror.badge()).to_string())),
             lit == Page::Queue,
             Page::Queue,
         ))
@@ -392,10 +397,20 @@ fn account(s: &State, name: &str, service: &str, on: bool) -> El {
     if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), 24.0, 24.0) {
         face = face.child(el().key("avatar-img").absolute(0.0, 0.0).size(24.0, 24.0).radius(12.0).pixels(img.pixels()));
     }
-    row()
+    // The mirror (0.2.1): "MyAnimeList ⇄ AniList" (main ⇄ mirror), a tooltip saying where
+    // changes also go, and a dot while the mirror has something in the Sync queue (the badge's
+    // rule).
+    let mirror = s.mirror_target();
+    let line = account_line(s, service);
+    let dot = mirror.is_some() && s.mirror.badge() > 0;
+    let label = match mirror {
+        Some(to) => format!("Profile: {name}. {}", account_tip_text(s, to)),
+        None => format!("Profile: {name}"),
+    };
+    let mut chip = row()
         .key("account")
         .role("button")
-        .label(format!("Profile: {name}"))
+        .label(label)
         .focusable(true)
         .gap(8.0)
         .padding(8.0)
@@ -412,9 +427,56 @@ fn account(s: &State, name: &str, service: &str, on: bool) -> El {
         .child(
             col()
                 .min_w(0.0)
+                .grow(1.0)
                 .child(text(name.to_string()).font(theme::BODY).color(PAL.text).truncate())
-                .child(text(service.to_string()).font(theme::SMALL).color(PAL.faint)),
-        )
+                .child(text(line).key("account/service").font(theme::SMALL).color(PAL.faint).truncate()),
+        );
+    if dot {
+        chip = chip.child(el().key("account/dot").size(8.0, 8.0).mr(2.0).radius(4.0).fill(PAL.accent));
+    }
+    if mirror.is_some() {
+        chip = chip.hover_delays(std::time::Duration::from_millis(450), std::time::Duration::ZERO).on_hover_change(|s: &mut State, inside: bool, _tx: &mut Tx| s.account_tip = inside);
+    }
+    chip
+}
+
+/// The account chip's second line: the service, or "MyAnimeList ⇄ AniList" (main ⇄ mirror)
+/// with the mirror on.
+pub(crate) fn account_line(s: &State, service: &str) -> String {
+    match (s.mirror_target(), s.mirror.link) {
+        (Some(_), Some(l)) => format!("{} \u{21c4} {}", l.main.title(), l.to.title()),
+        _ => service.to_string(),
+    }
+}
+
+/// The account chip's tooltip with the mirror on: where changes also go, and what waits.
+pub(crate) fn account_tip_text(s: &State, to: &str) -> String {
+    let mut t = format!("Changes also go to {to}.");
+    match s.mirror.badge() {
+        0 => {}
+        n => t.push_str(&format!(" {n} in the Sync queue for {to}.")),
+    }
+    t
+}
+
+/// The account chip's tooltip, under the chip (drawn over the page, like the menus).
+fn account_tip(s: &State) -> Option<El> {
+    let to = s.mirror_target().filter(|_| s.account_tip && s.account.is_some())?;
+    Some(
+        text(account_tip_text(s, to))
+            .key("account-tip")
+            .font(theme::LABEL)
+            .color(PAL.text)
+            .px(10.0)
+            .py(6.0)
+            .max_w(240.0)
+            .wrap()
+            .radius(theme::R_SM)
+            .fill(PAL.raised)
+            .border(1.0, PAL.border_strong)
+            .shadow(4.0, 12.0, Color::BLACK.alpha(if PAL.light { 0.12 } else { 0.35 }))
+            .anchored("account", rune::Side::Bottom, rune::Align::Start, 6.0),
+    )
 }
 
 fn nav_heading(label: &str) -> El {
@@ -513,6 +575,9 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     }
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a, s.service));
+    }
+    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, id)) {
+        m = m.child(bar);
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
     if let Some(u) = crate::update::banner(s) {
@@ -1019,7 +1084,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         .children(crate::library::row_button(s, e))
         .child(if plus { plus_button(id) } else { el().size(38.0, 26.0) });
     let score = match e.score {
-        Some(n) => text(n.to_string()).font(theme::NUM_MED).color(PAL.text),
+        Some(n) => crate::scores::mark(s.score_format(), n, theme::NUM_MED, PAL.text),
         None => text("\u{2013}").font(theme::BODY).color(PAL.faint),
     };
     let open = s.editor.filter(|ed| ed.id == id);
@@ -1055,7 +1120,7 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     });
     let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });
     if let Some(ed) = open {
-        c = c.child(editor(e, &ed));
+        c = c.child(editor(e, &ed, s.score_format()));
     }
     c.child(el().w_full().h(1.0).fill(PAL.border.alpha(0.6)))
 }
@@ -1114,7 +1179,7 @@ pub(crate) fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) 
 
 /// Under an open row: status, progress and score, then Cancel / Save. Nothing is queued until
 /// Save, and then as one change.
-pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
+pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> El {
     let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -1142,18 +1207,7 @@ pub(crate) fn editor(e: &Entry, ed: &Editor) -> El {
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
         .child(step_button("ed/plus", "+", 1));
-    let mut scores = row().gap(4.0).child(
-        cell("ed/score/none".into(), "No score".into(), ed.score.is_none(), |s| s.editor_score(None))
-            .child(text("\u{2013}").font(theme::LABEL).color(PAL.dim)),
-    );
-    for n in 1..=10u8 {
-        let on = ed.score == Some(n);
-        scores = scores.child(
-            cell(format!("ed/score/{n}"), format!("Score {n}"), on, move |s| s.editor_score(Some(n)))
-                .px(0.0)
-                .child(text(n.to_string()).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim })),
-        );
-    }
+    let scores = crate::scores::picker(fmt, ed.score);
     col()
         .key("editor")
         .mx(theme::PAGE_PAD)
@@ -1411,7 +1465,7 @@ fn queue_page(s: &State) -> El {
     {
         body = body.child(alert("queue/error", PAL.status(Status::Dropped), e.clone(), None).mb(0.0));
     }
-    if s.ops.is_empty() {
+    if s.ops.is_empty() && !crate::mirror::in_queue(s) {
         return col().key("page/queue").w_full().h_full().child(top).child(body).child(
             col()
                 .key("queue-empty")
@@ -1453,6 +1507,9 @@ fn queue_page(s: &State) -> El {
     if any {
         body = body.child(list);
     }
+    if crate::mirror::in_queue(s) {
+        body = body.child(crate::mirror::queue_section(s));
+    }
     col()
         .key("page/queue")
         .w_full()
@@ -1470,7 +1527,7 @@ fn changes(n: u32) -> String {
 fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
-    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op(op)).font(theme::LABEL_NUM).color(PAL.text));
+    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op_with(op, s.score_format())).font(theme::LABEL_NUM).color(PAL.text));
     if op.edits > 1 && op.state.is_open() {
         line = line.child(text(format!("({} edits merged)", op.edits)).font(theme::LABEL).color(PAL.faint));
     }
@@ -1482,6 +1539,12 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
         _ => {}
     }
     let end = match op.state {
+        // A removal that hasn't left: Undo puts the entry back (Discard).
+        OpState::Queued | OpState::Failed if op.removed => row()
+            .gap(6.0)
+            .center_y()
+            .children((op.state == OpState::Queued).then(|| pill(op.state.label(), PAL.warn())))
+            .child(action(format!("q/{id}/undo"), "Undo", false, move |s, _| s.queue_cmd(Cmd::Discard(id)))),
         OpState::Failed => row()
             .gap(6.0)
             .child(action(format!("q/{id}/edit"), "Edit", false, move |s, tx| {
@@ -1518,7 +1581,7 @@ pub(crate) fn pill(label: &str, c: Color) -> El {
 }
 
 /// The fields of `op`'s change, as `values` has them: "Progress 7 / 24 · Score 8".
-fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
+fn conflict_values(op: &Op, v: &kotora_core::Values, fmt: kotora_core::ScoreFormat) -> String {
     let total = op.episodes.map_or("?".to_string(), |n| n.to_string());
     let mut parts = Vec::new();
     if op.change.status.is_some() {
@@ -1528,7 +1591,7 @@ fn conflict_values(op: &Op, v: &kotora_core::Values) -> String {
         parts.push(format!("Progress {} / {total}", v.progress));
     }
     if op.change.score.is_some() {
-        parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {n}")));
+        parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {}", fmt.words(n))));
     }
     parts.join(" \u{b7} ")
 }
@@ -1551,11 +1614,12 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values), "Take theirs"),
+        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), remote_text(r, op.episodes, s.score_format()), "Keep it"),
+        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
         None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
     let aside = match &op.remote {
-        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes)),
+        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes, s.score_format())),
         None => "removed on another device".into(),
     };
     col()
@@ -1574,20 +1638,20 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
                 .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
                 .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
         )
-        .child(text(format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title())).font(theme::LABEL).color(PAL.dim))
+        .child(text(if op.removed { format!("{} changed after you removed it. Kotora did not delete it. Pick one.", s.service.title()) } else { format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title()) }).font(theme::LABEL).color(PAL.dim))
         .child(
             row()
                 .gap(12.0)
                 .child(side(
                     "mine",
-                    format!("Yours \u{b7} edited here, {}", sync_age(now - op.edited_at)),
-                    conflict_values(op, &op.mine()),
-                    action(format!("conflict/{id}/keep"), "Keep mine", true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
+                    format!("Yours \u{b7} {} here, {}", if op.removed { "removed" } else { "edited" }, sync_age(now - op.edited_at)),
+                    if op.removed { "Remove from list".to_string() } else { conflict_values(op, &op.mine(), s.score_format()) },
+                    action(format!("conflict/{id}/keep"), if op.removed { "Remove anyway" } else { "Keep mine" }, true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
                     true,
                 ))
                 .child(side("theirs", theirs_head, theirs, action(format!("conflict/{id}/take"), take, false, move |s, _| s.queue_cmd(Cmd::TakeTheirs(id))), false)),
         )
-        .child(text("When only the progress differs and yours is higher, Kotora sends yours by itself.").font(theme::LABEL).color(PAL.faint))
+        .children((!op.removed).then(|| text("When only the progress differs and yours is higher, Kotora sends yours by itself.").font(theme::LABEL).color(PAL.faint)))
 }
 
 // ------------------------------------------------------------------- alerts, sign-in, settings
@@ -1986,7 +2050,8 @@ pub(crate) fn kv(label: &str, value: El) -> El {
 fn match_text(s: &State, n: &Now) -> (String, Color) {
     match &n.found {
         Found::List { media_id, sure, why } => {
-            let st = s.entries.iter().find(|e| e.id == *media_id).map_or("", |e| e.status.label());
+            // Never "In your list" without its entry (it left the list: looked up again).
+            let Some(st) = s.entries.iter().find(|e| e.id == *media_id).map(|e| e.status.label()) else { return ("Not on your list now".into(), PAL.faint) };
             if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
         }
         Found::NotOnList { .. } => (format!("Not on your list: {} (found on {})", s.not_on_list_title(n).unwrap_or_default(), s.service.title()), PAL.dim),

@@ -9,7 +9,8 @@ use std::sync::atomic::Ordering;
 use kotora_core::airing::{NotAired, Timetable};
 use kotora_core::config::TitleLang;
 use kotora_core::queue::{Op, OpState};
-use kotora_core::{Change, ListItem, Media, Remote, Status, Values};
+use kotora_core::score::ten;
+use kotora_core::{Change, ListItem, Media, Remote, Score, ScoreFormat, Status, Values};
 use rune::{AppHandle, Image, TextEdit};
 
 use kotora_core::recognize::Found;
@@ -167,8 +168,8 @@ pub struct Entry {
     pub progress: u32,
     /// `None`: unknown (still airing with no count).
     pub episodes: Option<u32>,
-    /// 1-10; `None`: not scored.
-    pub score: Option<u8>,
+    /// On the 100-point scale; `None`: not scored. Shown in `State::score_format`.
+    pub score: Option<Score>,
     pub kind: &'static str,
     /// Unix seconds of the last change (the Updated column shows its age).
     pub updated_at: i64,
@@ -267,15 +268,16 @@ impl Entry {
         Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched, volumes: 0 }
     }
 
-    /// The entry as `kot` prints it.
-    pub fn ctl(&self) -> kotora_ctl::Entry {
+    /// The entry as `kot` prints it, the score in `fmt`.
+    pub fn ctl(&self, fmt: ScoreFormat) -> kotora_ctl::Entry {
         kotora_ctl::Entry {
             id: self.id,
             title: self.title.clone(),
             status: self.status.label().into(),
             progress: self.progress,
             episodes: self.episodes,
-            score: self.score,
+            score: self.score.map(Score::to_ten),
+            score_text: self.score.map(|s| fmt.show(s)),
             waiting: self.waiting.map(Into::into),
             rewatching: self.rewatching,
             times_rewatched: self.times_rewatched,
@@ -307,7 +309,7 @@ pub struct Editor {
     pub id: u32,
     pub status: Status,
     pub progress: u32,
-    pub score: Option<u8>,
+    pub score: Option<Score>,
 }
 
 /// What the queue's "waiting" tag says for an entry with an open change.
@@ -372,6 +374,8 @@ pub struct State {
     pub sort_rev: bool,
     /// The Sort menu is open.
     pub sort_menu: bool,
+    /// The pointer rests on the account chip (its tooltip shows; the mirror only).
+    pub account_tip: bool,
     /// The list page's search box: a quick filter of the list.
     pub query: TextEdit,
     /// The search page's field: the list and MyAnimeList.
@@ -418,6 +422,8 @@ pub struct State {
     pub editor: Option<Editor>,
     /// "Mark anyway?" for an episode that hasn't aired yet (`+1`, the editor).
     pub ask: Option<Ask>,
+    /// "Remove … from your list?" waits for an answer (`remove.rs`).
+    pub confirm_remove: Option<u32>,
     /// The queue's worker thread (`queue.rs`); runs only while there is work.
     pub worker: Arc<Worker>,
     pub offline: bool,
@@ -484,6 +490,10 @@ pub struct State {
     pub intro: Option<crate::intro::Intro>,
     /// The Settings page: its section and search (`settings.rs`).
     pub settings: crate::settings::SettingsUi,
+    /// Settings → Account: export and import (`transfer.rs`).
+    pub transfer: crate::transfer::Transfer,
+    /// Settings → Account → Mirror edits to the other service, and the mirror's queue (`mirror.rs`).
+    pub mirror: crate::mirror::MirrorUi,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -498,6 +508,7 @@ impl State {
             sort: Sort::Updated,
             sort_rev: false,
             sort_menu: false,
+            account_tip: false,
             query: TextEdit::new(""),
             find: TextEdit::new(""),
             search_back: Page::List(Status::Watching),
@@ -520,6 +531,7 @@ impl State {
             ops: fake_ops(),
             editor: None,
             ask: None,
+            confirm_remove: None,
             worker: Arc::default(),
             offline: false,
             synced_at: Some(FAKE_NOW - 120),
@@ -554,6 +566,8 @@ impl State {
             ctx: None,
             intro: None,
             settings: Default::default(),
+            transfer: Default::default(),
+            mirror: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -639,7 +653,7 @@ impl State {
             // Newest first; the sort is stable, so equal times keep the list's order.
             Sort::Updated => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].updated_at)),
             Sort::Title => rows.sort_by_cached_key(|&i| e[i].title.to_lowercase()),
-            Sort::Score => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].score.unwrap_or(0))),
+            Sort::Score => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].score)),
             Sort::Progress => rows.sort_by_key(|&i| std::cmp::Reverse(e[i].progress)),
         }
         if self.sort_rev {
@@ -698,11 +712,6 @@ impl State {
             && p > n
         {
             return Err(format!("{} has {n} episode{}.", e.title, if n == 1 { "" } else { "s" }));
-        }
-        if let Some(Some(sc)) = change.score
-            && !(1..=10).contains(&sc)
-        {
-            return Err("A score goes from 1 to 10.".into());
         }
         // Like the MAL website: the last episode completes the entry, or ends a rewatch (one more
         // in the count), when the total is known and the change doesn't pick it itself.
@@ -927,9 +936,30 @@ impl State {
         }
     }
 
-    pub fn editor_score(&mut self, score: Option<u8>) {
+    /// A score cell: a choice that already shows as the entry's score keeps the precise one
+    /// (an AniList 73 stays 73 when its 4 stars are picked again).
+    pub fn editor_score(&mut self, score: Option<Score>) {
+        let fmt = self.score_format();
+        let saved = self.editor.and_then(|ed| self.entries.iter().find(|e| e.id == ed.id)).map(|e| e.score);
         if let Some(ed) = &mut self.editor {
-            ed.score = score;
+            ed.score = saved.map_or(score, |cur| fmt.pick(cur, score));
+        }
+    }
+
+    /// The fine − / + of the 100-point and decimal formats.
+    pub fn editor_score_step(&mut self, delta: i32) {
+        let fmt = self.score_format();
+        if let Some(ed) = &mut self.editor {
+            ed.score = fmt.step(ed.score, delta);
+        }
+    }
+
+    /// How the user scores: AniList's list setting (from the profile, read with each sync);
+    /// MyAnimeList is always 1-10.
+    pub fn score_format(&self) -> ScoreFormat {
+        match self.service {
+            kotora_core::service::ServiceId::Mal => ScoreFormat::Point10,
+            kotora_core::service::ServiceId::AniList => self.profile.as_ref().map(|p| p.score_format).unwrap_or_default(),
         }
     }
 
@@ -1025,11 +1055,11 @@ impl State {
             .iter()
             .map(|o| kotora_ctl::QueueItem {
                 title: self.op_title(o).to_string(),
-                change: kotora_core::queue::describe_op(o),
+                change: kotora_core::queue::describe_op_with(o, self.score_format()),
                 state: o.state.label().into(),
                 note: match o.state {
                     OpState::Conflict => Some(match &o.remote {
-                        Some(r) => format!("{service} has {}", remote_text(r, o.episodes)),
+                        Some(r) => format!("{service} has {}", remote_text(r, o.episodes, self.score_format())),
                         None => format!("removed from your list on {service}"),
                     }),
                     OpState::Done => None,
@@ -1055,7 +1085,9 @@ impl State {
 
     fn set_items(&mut self, items: &[ListItem]) {
         let lang = self.prefs.titles;
+        let before = self.entry_ids();
         self.entries = items.iter().map(|it| Entry::from_item(it, lang)).collect();
+        self.list_changed_under_now(&before);
         self.queue_changed();
         self.recheck_now();
         self.refresh();
@@ -1133,6 +1165,7 @@ impl State {
                 true
             }
             Msg::Queue { ops, items, gone, offline } => {
+                let before = self.entry_ids();
                 for it in &items {
                     let e = Entry::from_item(it, self.prefs.titles);
                     match self.entries.iter_mut().find(|x| x.id == e.id) {
@@ -1145,6 +1178,7 @@ impl State {
                     self.editor = None;
                 }
                 self.ops = ops;
+                self.list_changed_under_now(&before);
                 self.recheck_now();
                 if let Some(off) = offline {
                     self.offline = off;
@@ -1231,6 +1265,7 @@ impl State {
     /// the list, the queue, the user, and the service's answers (search results, the open page,
     /// the seasons). Nothing on disk is touched here.
     pub fn forget_account(&mut self) {
+        self.mirror = crate::mirror::MirrorUi { worker: self.mirror.worker.clone(), ..Default::default() };
         self.covers.clear();
         self.online = Default::default();
         self.airing.cancel();
@@ -1316,10 +1351,10 @@ pub fn fake_players() -> Vec<PlayerState> {
     }
 }
 
-/// The service's side of a conflict: "Progress 8 / 24, Watching, score 7".
-pub fn remote_text(r: &Remote, episodes: Option<u32>) -> String {
+/// The service's side of a conflict: "Progress 8 / 24, Watching, score 7", the score in `fmt`.
+pub fn remote_text(r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
     let total = episodes.map_or("?".to_string(), |n| n.to_string());
-    let score = r.values.score.map_or("no score".to_string(), |n| format!("score {n}"));
+    let score = r.values.score.map_or("no score".to_string(), |n| format!("score {}", fmt.words(n)));
     format!("{} / {total}, {}, {score}", r.values.progress, r.values.status.label())
 }
 
@@ -1345,6 +1380,7 @@ fn fake_ops() -> Vec<Op> {
         sent_at: (state == OpState::Done).then_some(FAKE_NOW - ago),
         remote: None,
         added: false,
+        removed: false,
     };
     let w = |progress, score| Values::new(Status::Watching, progress, score);
     let progress = |p| Change { progress: Some(p), ..Default::default() };
@@ -1353,14 +1389,14 @@ fn fake_ops() -> Vec<Op> {
             remote: Some(Remote { values: w(8, None), updated_at: FAKE_NOW - 3_000 }),
             ..op(1, 2, progress(7), w(6, None), OpState::Conflict, 4_500)
         },
-        Op { edits: 2, ..op(2, 0, progress(5), w(3, Some(8)), OpState::Queued, 900) },
-        op(3, 8, Change { progress: Some(1), score: Some(Some(8)), ..Default::default() }, w(0, None), OpState::Queued, 1_900),
+        Op { edits: 2, ..op(2, 0, progress(5), w(3, ten(8)), OpState::Queued, 900) },
+        op(3, 8, Change { progress: Some(1), score: Some(ten(8)), ..Default::default() }, w(0, None), OpState::Queued, 1_900),
         Op {
             error: Some("MyAnimeList answered HTTP 400 (invalid_content: num_watched_episodes)".into()),
-            ..op(4, 7, progress(11), w(10, Some(7)), OpState::Failed, 6_000)
+            ..op(4, 7, progress(11), w(10, ten(7)), OpState::Failed, 6_000)
         },
-        op(5, 1, progress(8), w(7, Some(9)), OpState::Done, 7_200),
-        op(6, 3, Change { score: Some(Some(7)), ..Default::default() }, w(3, Some(6)), OpState::Done, 12_600),
+        op(5, 1, progress(8), w(7, ten(9)), OpState::Done, 7_200),
+        op(6, 3, Change { score: Some(ten(7)), ..Default::default() }, w(3, ten(6)), OpState::Done, 12_600),
     ]
 }
 
@@ -1446,7 +1482,7 @@ fn fake_entries() -> Vec<Entry> {
             status: if f.rewatching { Status::Completed } else { Status::Watching },
             progress: f.progress,
             episodes: Some(f.episodes),
-            score: f.score,
+            score: f.score.and_then(|n| Score::from_ten(n.into())),
             search: [Some(f.title), FAKE_ALT.get(i).and_then(|a| a.0), FAKE_ALT.get(i).and_then(|a| a.1)]
                 .into_iter()
                 .flatten()
@@ -1490,7 +1526,7 @@ fn fake_entries() -> Vec<Entry> {
                 status,
                 progress,
                 episodes: Some(episodes),
-                score: (status == Status::Completed && k % 5 != 4).then_some(5 + (h % 6) as u8),
+                score: Score::from_ten(5 + (h % 6)).filter(|_| status == Status::Completed && k % 5 != 4),
                 search,
                 kind: if movie { "Movie" } else { "TV" },
                 updated_at: FAKE_NOW - fake_age(UPDATED[(k as usize * 6 / n as usize).min(5)]),
@@ -1572,7 +1608,7 @@ mod tests {
 
     use super::*;
 
-    fn item(id: u32, title: &str, status: Status, progress: u32, score: Option<u8>, updated_at: i64) -> ListItem {
+    fn item(id: u32, title: &str, status: Status, progress: u32, score: Option<Score>, updated_at: i64) -> ListItem {
         ListItem {
             media: Media {
                 id,
@@ -1606,14 +1642,43 @@ mod tests {
         let mut s = State::fake();
         s.apply(Msg::Synced {
             items: vec![
-                item(1, "Bravo", Status::Watching, 3, Some(7), 100),
+                item(1, "Bravo", Status::Watching, 3, ten(7), 100),
                 item(2, "alpha", Status::Watching, 9, None, 300),
-                item(3, "Charlie", Status::Watching, 1, Some(9), 200),
-                item(4, "Delta", Status::Completed, 12, Some(10), 50),
+                item(3, "Charlie", Status::Watching, 1, ten(9), 200),
+                item(4, "Delta", Status::Completed, 12, ten(10), 50),
             ],
             synced_at: 999,
         });
         s
+    }
+
+    /// The editor in AniList's formats: a cell that shows as the saved score keeps it (no
+    /// change to send), another cell or the fine − / + changes it.
+    #[test]
+    fn the_editor_keeps_a_precise_score_and_steps_finely() {
+        let mut s = loaded();
+        s.service = kotora_core::service::ServiceId::AniList;
+        s.profile = Some(kotora_core::service::Profile { score_format: ScoreFormat::Point5, ..Default::default() });
+        s.entries.iter_mut().find(|e| e.id == 1).unwrap().score = Score::from_points(73);
+        let before = s.entries.iter().find(|e| e.id == 1).unwrap().updated_at;
+        s.toggle_editor(1);
+        s.editor_score(ScoreFormat::Point5.score_of(4));
+        assert_eq!(s.editor.unwrap().score, Score::from_points(73), "4 stars is what 73 shows");
+        s.save_editor().unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().updated_at, before, "nothing changed, nothing to send");
+        s.toggle_editor(1);
+        s.editor_score(ScoreFormat::Point5.score_of(2));
+        assert_eq!(s.editor.unwrap().score, Score::from_points(40));
+        s.profile = Some(kotora_core::service::Profile { score_format: ScoreFormat::Point100, ..Default::default() });
+        s.toggle_editor(1);
+        s.toggle_editor(1);
+        s.editor_score_step(1);
+        assert_eq!(s.editor.unwrap().score, Score::from_points(74));
+        s.save_editor().unwrap();
+        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().score, Score::from_points(74));
+        // MyAnimeList is 1-10 whatever the saved profile says.
+        s.service = kotora_core::service::ServiceId::Mal;
+        assert_eq!(s.score_format(), ScoreFormat::Point10);
     }
 
     fn titles(s: &State) -> Vec<&str> {
@@ -1636,7 +1701,6 @@ mod tests {
         assert_eq!(s.entries[i].updated_at, FAKE_NOW);
         assert_eq!(titles(&s)[0], "Bravo", "the edited row moves to the top of Last updated");
         assert!(s.edit(1, Change { progress: Some(13), ..Default::default() }).unwrap_err().contains("12 episodes"));
-        assert!(s.edit(1, Change { score: Some(Some(11)), ..Default::default() }).is_err());
         assert!(s.edit(99, Change::default()).is_err());
         s.edit(4, Change { progress: Some(12), ..Default::default() }).unwrap();
         assert!(s.plus_one(4).unwrap_err().contains("last episode"));
@@ -1788,7 +1852,7 @@ mod tests {
         let lanterns = s.entries.iter().find(|e| e.id == 0).unwrap();
         assert_eq!(lanterns.note(), "Ep 7 on Sat", "a plain wait says so in the tag only");
         // The worker reports: everything sent, one entry updated, one removed.
-        let mut it = item(0, "Lanterns of Kirigaoka", Status::Watching, 6, Some(8), 5);
+        let mut it = item(0, "Lanterns of Kirigaoka", Status::Watching, 6, ten(8), 5);
         it.media.episodes = Some(12);
         let done: Vec<Op> = s.ops.iter().filter(|o| o.state == OpState::Done).cloned().collect();
         assert!(s.apply(Msg::Queue { ops: done, items: vec![it], gone: vec![2], offline: Some(false) }));
@@ -1926,6 +1990,31 @@ mod tests {
         assert_eq!((s.auth, s.error.as_deref()), (Auth::SignedOut, Some("busy")));
     }
 
+    /// The live report: the file matched season 3 on the list, then season 3 was removed on the
+    /// website. The next sync drops it: the match is looked up again, never "In your list ()".
+    #[test]
+    fn a_match_that_left_the_list_is_looked_up_again() {
+        use kotora_core::recognize::Found;
+        let s1 = || item(1, "Re:Zero kara Hajimeru Isekai Seikatsu", Status::Completed, 12, None, 1);
+        let s3 = || item(3, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", Status::Watching, 0, None, 1);
+        let mut s = State::start(Auth::SignedIn);
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 10 });
+        s.now = State::fake().now;
+        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 15 });
+        assert_eq!(s.now.as_ref().unwrap().media_id(), Some(3), "still on the list: kept");
+        s.apply(Msg::Synced { items: vec![s1()], synced_at: 20 });
+        let n = s.now.as_ref().unwrap();
+        assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
+        // The same when the queue says it left (removed in Kotora).
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 30 });
+        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
+        s.now.as_mut().unwrap().recognizing = false;
+        s.apply(Msg::Queue { ops: vec![], items: vec![], gone: vec![3], offline: None });
+        let n = s.now.as_ref().unwrap();
+        assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
+    }
+
     #[test]
     fn an_old_cache_never_replaces_a_newer_sync() {
         let mut s = State::start(Auth::SignedIn);
@@ -1976,7 +2065,7 @@ mod tests {
         assert!(s.editor.is_none() && p(&s) == 8);
         // A score or a status alone never asks.
         s.toggle_editor(0);
-        s.editor_score(Some(7));
+        s.editor_score(ten(7));
         s.save_editor().unwrap();
         assert!(s.ask.is_none() && s.editor.is_none());
         // Past the count: refused, not asked.

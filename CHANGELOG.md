@@ -4,6 +4,66 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Export your list:** Settings → Account → Export list… writes your anime list as a MyAnimeList XML file (the
+  format MyAnimeList's own export uses, which MyAnimeList, AniList, Kitsu and Taiga import): status, episodes,
+  score, rewatches, and start and finish dates where Kotora has them. Also `kot export FILE`. MyAnimeList lists
+  only: AniList's API terms don't allow exporting list data from AniList, and Kotora says so instead.
+- **Import a list:** Settings → Account → Import list… reads a MyAnimeList XML export (`.xml`, or `.xml.gz` as
+  MyAnimeList ships it) and compares it with your list first: new, different, same, and entries it can't use.
+  Pick "Add new only" or "Add new and update": a higher episode count wins, a score fills an empty one, and you
+  choose when the statuses disagree (say Dropped against Completed). Everything goes through the sync queue at
+  the service's pace, works offline, and "Undo import" takes back what hasn't been sent. Into AniList, the file's
+  MyAnimeList ids are matched to AniList's anime first. Anime only for now; dates and notes are not imported.
+- **Mirror your list to the other service:** signed in to both MyAnimeList and AniList, turn on Settings → Account
+  → "Mirror edits to AniList" (or MyAnimeList). Kotora first compares the two lists by MyAnimeList id and shows
+  what differs: only on one side, different values, the same, and anime it can't match. Then pick once: your main
+  list wins (the other becomes a copy), merge (what is missing is added on each side, the one further along wins,
+  and you choose when statuses disagree), or don't align (only new edits). From then on every change you make in
+  Kotora, and every edit made on the main service's website, also goes to the other list through its own queue at
+  its own pace; a failure on one side never holds up the other. Edits made on the mirror's website are never
+  overwritten: they show in the Sync queue with "Use …'s" and "Leave both as they are". Scores are compared on
+  MyAnimeList's 1 to 10 scale, so a MyAnimeList 7 and an AniList 73 count as the same and neither is rounded.
+  Turning the mirror on never removes anything. Anime only; AniList entries without a MyAnimeList id are listed
+  as not mirrored. The mirror is marked Beta in Settings for now.
+- **Remove from list:** in an entry's right-click menu, on its details page and as `kot remove TITLE` (or its
+  id). Kotora asks first, then the anime leaves your list at once and the removal waits in the sync queue like
+  any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
+  it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
+  instead of deleting it: Remove anyway, or Keep it. With the mirror on, the anime is removed from the other
+  service too (the confirm says so), through the mirror's queue with the same conflict check.
+- **The list filter searches online when nothing matches:** type a title that isn't on your list in the list's
+  filter box (Ctrl F) and, after a short pause, MyAnimeList's or AniList's results show right under "No match in
+  your list". Open one for its details, or add it with + Watching. It searches like the Search page does
+  (3 letters or more, the same pause and rate limit, answers kept for a while), and not at all while something on
+  your list matches.
+
+### Changed
+- **Scores in your AniList score format:** the list, the posters, the editor, the details page, the Score menu
+  and `kot` show and set scores the way you score on AniList: 100 points (73), 10 points with a decimal (7.3),
+  10 points, 5 stars or 3 smileys. Kotora reads the format from your AniList settings with each sync.
+  `kot set TITLE --score 7.3` (or `73`, `***`, `:)`) takes it the same way. MyAnimeList stays 1 to 10.
+- **The account chip shows the mirror:** with the mirror on, the sidebar's account chip reads "MyAnimeList ⇄
+  AniList" (main ⇄ mirror), says where changes also go when you rest the pointer on it, and shows a dot while the
+  mirror has changes waiting, in conflict or failed, or website edits to settle. The Sync queue badge counts the
+  mirror's waiting changes the same way as the main list's.
+- **kotora-bin is built by the release workflow:** a tag push builds the Linux tarball in an Arch container,
+  adds it and its checksum to the release, and (after approval) updates kotora-bin on the AUR.
+
+### Fixed
+- **AniList scores keep their precision.** A 73 was saved as 7 and could go back to AniList as 70. Kotora now
+  keeps every score on AniList's 100-point scale, and picking the score that already shows (4 stars for a 73)
+  changes nothing. The saved list is upgraded on first start (a copy, `kotora.db.schema-11.bak`, is kept beside it).
+- **A file's season beats an old pick.** A file naming season 3 no longer matches the season 1 you once picked for
+  the same title: the list's season 3 wins, else a search hit for that season ("not on your list: add?"). Files
+  without a season keep their picks.
+- **The Linux tray's Play next works on KDE Plasma.** Episodes showed as bold section headers or greyed out, the
+  long ones lost their episode number, and picking one didn't play it. Every episode is now a plain item that
+  plays like the Up next button, long titles are shortened with "…" and keep " · Ep N", and Show and Quit sit
+  above the Play next list.
+- **Now Playing follows list changes.** When an entry is added or removed (a sync, the queue) while a file plays,
+  Kotora recognises the file again instead of showing "In your list ()" with no status or cover.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added
