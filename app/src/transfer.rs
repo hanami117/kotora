@@ -257,10 +257,13 @@ pub fn import(s: &mut State, kind: Kind) {
         let h2 = h.clone();
         let _ = std::thread::Builder::new().name("kotora-import".into()).spawn(move || {
             let r = read_and_plan(&path, kind, &h2);
-            h2.update_if(move |s, _| {
+            h2.update_if(move |s, tx| {
                 s.transfer.busy = None;
                 match r {
-                    Ok(p) => s.transfer.preview = Some(p),
+                    Ok(p) => {
+                        s.transfer.preview = Some(p);
+                        tx.scroll_into_view("set/import-preview");
+                    }
                     Err(e) => s.transfer.error = Some(e),
                 }
                 true

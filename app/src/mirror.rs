@@ -455,10 +455,13 @@ fn begin(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let _ = std::thread::Builder::new().name("kotora-mirror-compare".into()).spawn(move || {
         let r = compare(&h, link);
-        h.update_if(move |s, _| {
+        h.update_if(move |s, tx| {
             s.mirror.busy = None;
             match r {
-                Ok(p) => s.mirror.preview = Some(p),
+                Ok(p) => {
+                    s.mirror.preview = Some(p);
+                    tx.scroll_into_view("set/mirror-preview");
+                }
                 Err(e) => s.mirror.error = Some(e),
             }
             true
@@ -519,10 +522,13 @@ fn begin_manga(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let _ = std::thread::Builder::new().name("kotora-mirror-compare".into()).spawn(move || {
         let r = compare_kind(&h, link, Kind::Manga).map(|p| Prev { extend: true, ..p });
-        h.update_if(move |s, _| {
+        h.update_if(move |s, tx| {
             s.mirror.busy = None;
             match r {
-                Ok(p) => s.mirror.preview = Some(p),
+                Ok(p) => {
+                    s.mirror.preview = Some(p);
+                    tx.scroll_into_view("set/mirror-preview");
+                }
                 Err(e) => s.mirror.error = Some(e),
             }
             true

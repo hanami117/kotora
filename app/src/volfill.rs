@@ -110,7 +110,7 @@ fn start(s: &mut State) {
         let found: Vec<(u32, Lookup)> = rows.iter().filter_map(|(it, l)| Some((it.media.id, l.clone()?))).collect();
         let plan = mangadex::plan_fill(&rows);
         let stopped = cancel.load(Ordering::Relaxed);
-        h.update_if(move |s, _| {
+        h.update_if(move |s, tx| {
             let v = &mut s.volfill;
             v.busy = None;
             for (id, l) in found {
@@ -119,7 +119,10 @@ fn start(s: &mut State) {
             match (error, stopped) {
                 (Some(e), _) => v.error = Some(e),
                 (None, true) => {}
-                (None, false) => v.preview = Some(plan),
+                (None, false) => {
+                    v.preview = Some(plan);
+                    tx.scroll_into_view("set/fill-volumes-preview");
+                }
             }
             true
         });

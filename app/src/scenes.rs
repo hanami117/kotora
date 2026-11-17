@@ -3243,3 +3243,69 @@ mod mirror_links {
         }
     }
 }
+/// Settings in a wide window: a section taller than the window scrolls, so the previews that open
+/// under their rows (fill volumes, import, the mirror's) can be reached; the scroll area keeps the
+/// window's height instead of growing with its content.
+#[cfg(test)]
+mod settings_scroll {
+    use super::*;
+
+    fn rect(rt: &rune::Runtime<State>, key: &str) -> [f32; 4] {
+        rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.rect).unwrap_or_else(|| panic!("{key}"))
+    }
+
+    fn reachable(setup: fn(&mut State), preview: &str, button: &str) {
+        let (w, h) = (1360.0, 860.0);
+        let mut s = State::fake();
+        setup(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (w, h), rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        let area = rect(&rt, "settings-scroll");
+        assert!(area[1] + area[3] <= h + 0.5, "{preview}: the scroll area fits the window: {area:?}");
+        let b = rect(&rt, button);
+        assert!(b[1] + b[3] > h, "{preview}: the case is real: the button starts below the window ({b:?})");
+        // Scroll down with the wheel over the area until the button shows.
+        for _ in 0..40 {
+            rt.wheel(area[0] + 40.0, area[1] + 40.0, -120.0);
+            rt.frame(1.0 / 60.0);
+        }
+        for _ in 0..30 {
+            rt.frame(1.0 / 60.0);
+        }
+        let b = rect(&rt, button);
+        assert!(b[1] >= area[1] - 0.5 && b[1] + b[3] <= h + 0.5, "{preview}: scrolled into reach: {b:?}");
+        let p = rect(&rt, preview);
+        assert!(p[1] + p[3] <= h + 0.5, "{preview}: the whole card can be seen: {p:?}");
+    }
+
+    #[test]
+    fn previews_under_their_rows_can_be_scrolled_to() {
+        reachable(
+            |s| {
+                crate::manga::fake(s);
+                crate::volfill::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/fill-volumes-preview",
+            "set/fill-volumes-apply",
+        );
+        reachable(
+            |s| {
+                crate::transfer::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/import-preview",
+            "set/import-cancel",
+        );
+        reachable(
+            |s| {
+                crate::mirror::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/mirror-preview",
+            "set/mirror-cancel",
+        );
+    }
+}

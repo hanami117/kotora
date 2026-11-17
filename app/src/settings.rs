@@ -468,10 +468,14 @@ pub fn page(s: &State, width: f32) -> El {
     let narrow = width < TABS_W;
     let searching = searching(s);
     let content = if searching { search_results(s) } else { section_view(s, s.settings.section) };
+    // The scroll area takes the page's height in both layouts: in the wide one it sits in a row
+    // whose items start at the top, so it is stretched on purpose (else it grows with its content,
+    // a tall section or a preview is cut at the window's edge and nothing scrolls).
     let scroll = col()
         .key("settings-scroll")
         .scroll(ScrollSpec { stick_bottom: false })
         .grow(1.0)
+        .self_stretch()
         .min_h(0.0)
         .min_w(0.0)
         .child(col().w_full().px(if narrow { theme::PAGE_PAD } else { 8.0 }).pr(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(820.0).child(content));

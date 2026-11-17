@@ -1733,7 +1733,12 @@ pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut S
         .fill(fill)
         .center()
         .child(text(label.to_string()).font(theme::LABEL_BTN).color(fg));
-    let b = if primary || on.is_none() { b } else { b.border(1.0, PAL.border_strong) };
+    // Off, it still reads as a button (outlined, dimmer), not as plain text.
+    let b = match (primary, on.is_some()) {
+        (_, false) => b.border(1.0, PAL.border),
+        (false, true) => b.border(1.0, PAL.border_strong),
+        (true, true) => b,
+    };
     match on {
         Some(f) => b
             .focusable(true)
