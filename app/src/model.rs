@@ -612,6 +612,8 @@ impl State {
         s.loading = matches!(auth, Auth::SignedIn);
         s.handle = None;
         s.client_id.hint = None;
+        // The app opens on Home (in Manga mode too: `detect::start` only sets the mode).
+        s.page = Page::Home;
         // First run: the setup wizard.
         if auth == Auth::NoClientId {
             s.page = Page::Setup;
@@ -1796,6 +1798,14 @@ mod tests {
         assert!(s.plus_one(4).unwrap_err().contains("last episode"));
         let mut out = State::start(Auth::SignedOut);
         assert_eq!(out.edit(1, Change::default()).unwrap_err(), "Not signed in.");
+    }
+
+    #[test]
+    fn the_app_starts_on_home() {
+        assert_eq!(State::start(Auth::SignedIn).page, Page::Home);
+        let out = State::start(Auth::SignedOut);
+        assert_eq!(out.page, Page::Home, "signed out: Home shows the welcome screen");
+        assert_eq!(State::start(Auth::NoClientId).page, Page::Setup, "first run: the wizard");
     }
 
     #[test]

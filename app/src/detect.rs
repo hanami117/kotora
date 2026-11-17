@@ -69,7 +69,7 @@ pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
-    // The switch as it was left: Manga, on the list page it opens.
+    // The switch as it was left: Manga (the start page, Home, serves both modes).
     if c.display.list_kind == kotora_core::Kind::Manga && s.has_list() {
         s.manga.mode = true;
         if let crate::model::Page::List(st) = s.page {

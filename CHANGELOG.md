@@ -4,6 +4,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+- Kotora opens on Home.
+
 ## [0.3.1] - 2026-11-17
 
 Release data for manga, and episodes to watch. In Manga mode, Publishing (in Airing's place) shows each Reading
