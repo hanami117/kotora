@@ -2,6 +2,7 @@
 # Usage: scripts/linux-check/run.sh [SOURCE_DIR] [STEP...]
 #   SOURCE_DIR  a checkout of the repo (default: the one this script is in)
 #   STEP        build test clippy snap release bloat  (default: build test clippy snap)
+# SNAP_SCENES (env): the scenes the snap step takes (default: a few list, queue and Now Playing ones).
 # The source is mounted read-only and copied (no .git, target) into the container. Cargo's registry and
 # the target dir live in docker volumes (kot-linux-cargo, kot-linux-target), never on the host.
 # Logs: /tmp/linux-check/<label>/<step>.log, label = the folder's name.
@@ -17,6 +18,7 @@ mkdir -p "$out"
 docker build -q -t kot-linux-check "$here" >/dev/null
 docker run --rm -v "$src":/src:ro -v "$out":/out \
   -v kot-linux-cargo:/cargo -v kot-linux-target:/target \
+  -e SNAP_SCENES="${SNAP_SCENES:-list list-covers loading list-dropped settings-page list-editor queue-page now-playing-page now-playing-offer}" \
   -e STEPS="$steps" -e WGPU_BACKEND="${WGPU_BACKEND:-gl}" -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}" kot-linux-check sh -c '
 set -u
 fail=0
@@ -32,7 +34,7 @@ for s in $STEPS; do
     build)   cmd="cargo build --workspace" ;;
     test)    cmd="sh -c \"cargo test --workspace && KOTORA_PRIVATE_BUS=1 dbus-run-session -- cargo test -p kotora-detect --test mpris_bus -- --nocapture\"" ;;
     clippy)  cmd="cargo clippy --workspace --all-targets" ;;
-    snap)    cmd="sh -c \"for sc in list list-covers loading list-dropped settings-page list-editor queue-page now-playing-page now-playing-offer; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
+    snap)    cmd="sh -c \"for sc in $SNAP_SCENES; do cargo run -q -p kotora -- --snap /out/\\\$sc.png --scene \\\$sc --size 1280x800 --scale 1 || exit 1; done\"" ;;
     release) cmd="sh -c \"cargo build --release -p kotora -p kotora-ctl && strip -o /tmp/kotora.stripped /target/release/kotora && strip -o /tmp/kot.stripped /target/release/kot && ls -l /target/release/kotora /tmp/kotora.stripped /tmp/kot.stripped\"" ;;
     bloat)   cmd="sh -c \"cargo install -q --locked cargo-bloat && cargo bloat --release -p kotora --crates -n 25\"" ;;
     *) echo "unknown step $s"; continue ;;
