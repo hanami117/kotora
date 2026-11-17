@@ -164,6 +164,11 @@ say "Writing release notes from CHANGELOG.md"
 - **macOS** (Apple silicon, macOS 13 or later): download \`Kotora-$release.dmg\` and drag Kotora to Applications.
   Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
   and click **Open Anyway** (or run \`xattr -dr com.apple.quarantine /Applications/Kotora.app\`).
+- **Windows** (preview; Windows 10 or 11, 64-bit): download \`Kotora-$release-windows-x64-setup.exe\` and run it.
+  It installs for your account only (no administrator rights) and puts \`kot\` on your PATH; a zip without an
+  installer is here too. Kotora is not signed yet, so Windows SmartScreen says "Windows protected your PC":
+  click **More info**, then **Run anyway**. The Windows files are added by the release workflow a little
+  after the others.
 - **Other Linux**: download \`$src\`, unpack it and run \`./install.sh\` (needs Rust, pkgconf and a Vulkan
   driver; see the README). On x86_64 you can instead unpack the prebuilt \`$bin\` and copy its
   \`bin/\` and \`share/\` folders to \`/usr/local\` (or \`~/.local\`).

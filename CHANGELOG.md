@@ -4,7 +4,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-17
+
 ### Added
+- **Windows (preview):** Kotora now runs on Windows 10 and 11 (x64). An installer for your account only (no
+  admin rights, Start menu entry, `kot` on your PATH) and a zip. Players are found with no setup (mpv, mpv.net,
+  MPC-HC, MPC-BE, VLC, PotPlayer), with one-click precise detection for mpv and MPC; notifications with Yes /
+  Not now, start at login, the tray icon and the daily update check work as on Linux and macOS. Not signed yet:
+  Windows SmartScreen asks once ("More info", "Run anyway").
 - **Export your list:** Settings → Account → Export list… writes your anime list as a MyAnimeList XML file (the
   format MyAnimeList's own export uses, which MyAnimeList, AniList, Kitsu and Taiga import): status, episodes,
   score, rewatches, and start and finish dates where Kotora has them. Also `kot export FILE`. MyAnimeList lists
@@ -31,7 +38,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   any change, so it works offline. Undo on the note that shows, or on the Sync queue page, puts it back until
   it is sent. If the entry changed on MyAnimeList or AniList after you removed it, the queue shows a conflict
   instead of deleting it: Remove anyway, or Keep it. With the mirror on, the anime is removed from the other
-  service too (the confirm says so), through the mirror's queue with the same conflict check.
+  service too (the confirm says so), through the mirror's queue with the same conflict check. An anime removed
+  on the service's website is not removed from the mirror: only removals made in Kotora are mirrored, so a
+  list that loads short can never delete anything on the other service.
 - **The list filter searches online when nothing matches:** type a title that isn't on your list in the list's
   filter box (Ctrl F) and, after a short pause, MyAnimeList's or AniList's results show right under "No match in
   your list". Open one for its details, or add it with + Watching. It searches like the Search page does
