@@ -1084,6 +1084,12 @@ pub const SCENES: &[Scene] = &[
         s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
         crate::settings::open(s, Section::General)
     }),
+    // Settings → General → On startup with Last page and Manga picked.
+    ("settings-on-startup", |s| {
+        s.prefs.open_on = kotora_core::config::OpenOn::Last;
+        s.prefs.start_mode = kotora_core::config::StartMode::Manga;
+        crate::settings::open(s, Section::General)
+    }),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
     ("settings-account", |s| crate::settings::open(s, Section::Account)),
     // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
@@ -3051,6 +3057,34 @@ mod tests {
         }
         // Narrow: one column, still there.
         assert!(render("settings-startup-on", (960.0, 700.0)).find("set/login").is_some());
+    }
+
+    #[test]
+    fn settings_has_the_on_startup_choices() {
+        use kotora_core::config::{OpenOn, StartMode};
+        let mut rt = render("settings-general", (1360.0, 860.0));
+        for k in ["set/row/open-on", "set/open-on/home", "set/open-on/last", "set/row/start-mode", "set/start-mode/last", "set/start-mode/anime", "set/start-mode/manga"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert_eq!((rt.state.prefs.open_on, rt.state.prefs.start_mode), (OpenOn::Home, StartMode::Last), "today's behaviour");
+        for (k, check) in [("set/open-on/last", 0), ("set/start-mode/manga", 1), ("set/start-mode/anime", 2), ("set/open-on/home", 3)] {
+            let (x, y) = rt.find(k).unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.frame(1.0 / 60.0);
+            let p = &rt.state.prefs;
+            match check {
+                0 => assert_eq!(p.open_on, OpenOn::Last),
+                1 => assert_eq!(p.start_mode, StartMode::Manga),
+                2 => assert_eq!(p.start_mode, StartMode::Anime),
+                _ => assert_eq!(p.open_on, OpenOn::Home),
+            }
+        }
+        let rt = render("settings-on-startup", (960.0, 700.0));
+        assert!(rt.find("set/open-on/last").is_some(), "narrow too");
+        // Search finds both.
+        let rt = render("settings-search", (1360.0, 860.0));
+        assert!(rt.find("set/results").is_some());
     }
 
     #[test]

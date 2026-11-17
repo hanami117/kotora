@@ -65,7 +65,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             let handle = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(QUIT_DELAY);
-                handle.quit();
+                crate::tray::quit(&handle);
             });
             status(r)
         }

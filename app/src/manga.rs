@@ -617,7 +617,9 @@ impl State {
                     if let Page::Manga(st) = self.page {
                         self.go(Page::List(st));
                     }
+                    self.startup_manga_off();
                 }
+                self.settle_start_detail(false);
                 self.publishing_start();
             }
             MangaMsg::Synced { items, synced_at } => {
@@ -625,12 +627,14 @@ impl State {
                 self.manga.synced_at = Some(synced_at);
                 self.manga.loading = false;
                 self.manga.error = None;
+                self.settle_start_detail(true);
                 // New Reading manga, or progress from the website: the notifier looks again.
                 self.publishing_start();
             }
             MangaMsg::Failed(m) => {
                 self.manga.loading = false;
                 self.manga.error = Some(m);
+                self.settle_start_detail(true);
             }
             MangaMsg::Items { items, gone } => {
                 let lang = self.prefs.titles;

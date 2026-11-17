@@ -38,6 +38,12 @@ pub fn show_window(handle: &Handle) {
     });
 }
 
+/// Quit (the tray, `kot quit`): the page left open is kept first.
+pub fn quit(handle: &Handle) {
+    handle.update(|s: &mut State, _| s.remember_page());
+    handle.quit();
+}
+
 /// A tray Play next item was picked: play that anime's next episode (Settings' Open with).
 pub fn play(handle: &Handle, id: u32) {
     handle.update(move |s: &mut State, _| s.play_entry(id));

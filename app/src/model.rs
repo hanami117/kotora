@@ -472,6 +472,8 @@ pub struct State {
     pub covers: Covers,
     /// The open details page.
     pub detail: Option<crate::details::Detail>,
+    /// A details page the start asked for, opened once the list has the entry (`startup.rs`).
+    pub startup_detail: Option<(kotora_core::Kind, u32)>,
     /// The MyAnimeList half of the search (`search.rs`).
     pub online: crate::search::Online,
     /// The Airing page (`airing.rs`).
@@ -569,6 +571,7 @@ impl State {
             logo_big: None,
             covers: Covers::default(),
             detail: None,
+            startup_detail: None,
             online: Default::default(),
             airing: Default::default(),
             client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
@@ -1207,6 +1210,7 @@ impl State {
                     self.avatar = self.avatar.take().or(picture);
                 }
                 self.loading = self.loading && items.is_empty() && self.syncing;
+                self.settle_start_detail(false);
                 true
             }
             Msg::Synced { items, synced_at } => {
@@ -1219,6 +1223,7 @@ impl State {
                 if self.auth == Auth::Expired {
                     self.auth = Auth::SignedIn;
                 }
+                self.settle_start_detail(true);
                 true
             }
             Msg::SyncFailed(f) => {
@@ -1237,6 +1242,7 @@ impl State {
                     }
                     Fail::Other(m) => self.error = Some(m),
                 }
+                self.settle_start_detail(true);
                 true
             }
             Msg::Queue { ops, items, gone, offline } => {
@@ -1273,6 +1279,7 @@ impl State {
                 self.syncing = false;
                 self.loading = false;
                 self.manga.loading = false;
+                self.settle_start_detail(true);
                 true
             }
             Msg::SignedIn { user, picture } => {

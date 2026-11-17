@@ -5,6 +5,10 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [Unreleased]
 
 - Kotora opens on Home.
+- Settings → General → On startup: **Open on** (Home, or the last page: the one shown when Kotora was last
+  closed or hidden) and **Mode** (Last used, Anime or Manga). A page that no longer makes sense (a removed
+  entry's details, a Manga page with Manga off) opens Home. In `config.toml`: `[startup] open_on`, `mode`
+  (and `last_page`, kept by Kotora); a value that isn't a choice is a warning on stderr, never an error.
 
 ## [0.3.1] - 2026-11-17
 

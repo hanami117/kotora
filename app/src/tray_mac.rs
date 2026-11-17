@@ -46,7 +46,7 @@ define_class!(
             let handle = &self.ivars().handle;
             match item.tag() {
                 SHOW => super::show_window(handle),
-                QUIT => handle.quit(),
+                QUIT => super::quit(handle),
                 t if t >= PLAY => {
                     if let Ok(id) = u32::try_from(t - PLAY) {
                         super::play(handle, id);

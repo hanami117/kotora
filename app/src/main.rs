@@ -57,6 +57,7 @@ mod theme;
 mod transfer;
 mod tray;
 mod ui;
+mod startup;
 mod update;
 #[cfg(windows)]
 mod win;
@@ -99,6 +100,7 @@ fn setup(s: &mut State, wake: Waker) {
 /// The tray's Quit, ⌘Q and `kot quit` quit. On macOS Rune also runs this when the app ends
 /// (⌘Q, the Dock's Quit); the loop is already exiting then, so hiding still quits.
 fn on_close(s: &mut State, tx: &mut Tx) {
+    s.remember_page();
     if !s.hide_on_close() {
         tx.quit();
     }

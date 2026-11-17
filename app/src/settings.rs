@@ -85,7 +85,7 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
             Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
             Section::Detection => {
@@ -116,6 +116,10 @@ impl Section {
 pub enum Row {
     StartAtLogin,
     StartHidden,
+    /// Open on Home or the last page.
+    OpenOn,
+    /// The Anime | Manga switch at start.
+    StartMode,
     CheckUpdates,
     CheckNow,
     /// The modifier with 1 to 5 for the list pages.
@@ -169,6 +173,8 @@ impl Row {
             Row::Player(sw) => return format!("set/row/player-{}", sw.config_key()),
             Row::StartAtLogin => "start-at-login",
             Row::StartHidden => "start-hidden",
+            Row::OpenOn => "open-on",
+            Row::StartMode => "start-mode",
             Row::CheckUpdates => "check-updates",
             Row::CheckNow => "check-now",
             Row::PageKeys => "page-keys",
@@ -228,6 +234,8 @@ const fn spec(row: Row, section: Section, title: &'static str, note: &'static st
 const SPECS: &[Spec] = &[
     spec(Row::StartAtLogin, Section::General, "Start Kotora when I log in", "Kotora keeps detecting episodes from the moment you log in.", "login log in logon autostart auto start startup boot launch open at login login items session automatically"),
     spec(Row::StartHidden, Section::General, "Start in the background", "At login, show only the tray icon, no window.", "background hidden minimised minimized tray menu bar silent quiet no window autostart startup login"),
+    spec(Row::OpenOn, Section::General, "Open on", "Home, or the page Kotora was on when it was last closed or hidden.", "on startup start launch open opens home last page remember restore resume where screen first page"),
+    spec(Row::StartMode, Section::General, "Mode", "Last used, Anime or Manga. Manga only when Manga is on.", "on startup start launch open mode anime manga switch last used remember kind"),
     spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
     spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
     spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
@@ -838,6 +846,16 @@ fn row_el(s: &State, r: Row) -> El {
             format!("At login, show only the {tray} icon, no window. Closing the window always keeps Kotora in the {tray}."),
             switch("set/background".into(), "Start in the background", p.background, State::set_background),
         ),
+        Row::OpenOn => line(
+            "Open on",
+            "Home, or the page Kotora was on when it was last closed or hidden. A page that is gone (a removed entry) opens Home.",
+            choice("set/open-on", &config::OpenOn::ALL, p.open_on, config::OpenOn::label, config::OpenOn::key, State::set_open_on),
+        ),
+        Row::StartMode => line(
+            "Mode",
+            "Anime or Manga at start, or as you left it. Manga only when Manga is on; otherwise Anime.",
+            choice("set/start-mode", &config::StartMode::ALL, p.start_mode, config::StartMode::label, config::StartMode::key, State::set_start_mode),
+        ),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
         Row::PageKeys => line(
@@ -1205,6 +1223,14 @@ mod tests {
         assert_eq!(title(Row::ImportManga), Some("Import manga list\u{2026}"));
         assert!(finds("export anime", Row::Export) && finds("import anime list", Row::Import));
         assert!(finds("export", Row::ExportManga), "export finds both");
+    }
+
+    #[test]
+    fn search_finds_the_startup_rows() {
+        assert!(finds("open on", Row::OpenOn) && finds("last page", Row::OpenOn) && finds("home", Row::OpenOn));
+        assert!(finds("on startup", Row::OpenOn) && finds("on startup", Row::StartMode));
+        assert!(finds("mode", Row::StartMode) && finds("manga", Row::StartMode) && finds("last used", Row::StartMode));
+        assert_eq!(rows("startup animation"), vec![Row::Intro], "the animation stays alone");
     }
 
     #[test]

@@ -69,13 +69,11 @@ pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
-    // The switch as it was left: Manga (the start page, Home, serves both modes).
-    if c.display.list_kind == kotora_core::Kind::Manga && s.has_list() {
-        s.manga.mode = true;
-        if let crate::model::Page::List(st) = s.page {
-            s.go(crate::model::Page::Manga(st));
-        }
+    for w in c.warnings() {
+        eprintln!("kotora: {w}");
     }
+    // Home or the last page, in the switch's mode (`[startup]`).
+    s.apply_startup(&c);
     crate::settings::load(s, &c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);

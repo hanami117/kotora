@@ -59,6 +59,9 @@
 //!
 //! [startup]
 //! background = false           # the login start shows only the tray icon (no window)
+//! open_on = "home"             # or "last": the page shown when Kotora was last closed or hidden
+//! mode = "last"                # or "anime", "manga" (Anime when Manga is off): the Anime | Manga switch
+//! last_page = "home"           # the page left open (written by the app; used by open_on = "last")
 //!
 //! [app]
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
@@ -407,6 +410,118 @@ impl Views {
 pub struct Startup {
     /// The login start passes `--hidden`: the tray or menu bar icon only, no window.
     pub background: bool,
+    /// `open_on` as written. Read with [`Startup::open_on`]: a bad value is a warning, never an error.
+    #[serde(deserialize_with = "lenient_string")]
+    pub open_on: String,
+    /// `mode` as written. Read with [`Startup::mode`].
+    #[serde(deserialize_with = "lenient_string")]
+    pub mode: String,
+    /// The page Kotora was left on (`"home"`, `"list:watching"`, `"details:manga:30013"`, …),
+    /// written by the app when the window closes or hides.
+    #[serde(deserialize_with = "lenient_string")]
+    pub last_page: String,
+}
+
+/// Any TOML value as text, so a wrong type is a value to warn about, not a parse error.
+fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let v = toml::Value::deserialize(d)?;
+    Ok(match v {
+        toml::Value::String(s) => s,
+        other => format!("{other:?}"),
+    })
+}
+
+/// `[startup] open_on`: the page Kotora opens on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenOn {
+    #[default]
+    Home,
+    /// The page shown when Kotora was last closed or hidden.
+    Last,
+}
+
+impl OpenOn {
+    pub const ALL: [OpenOn; 2] = [OpenOn::Home, OpenOn::Last];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            OpenOn::Home => "home",
+            OpenOn::Last => "last",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OpenOn::Home => "Home",
+            OpenOn::Last => "Last page",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<OpenOn> {
+        OpenOn::ALL.into_iter().find(|o| o.key() == s.trim().to_lowercase())
+    }
+}
+
+/// `[startup] mode`: the Anime | Manga switch at start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartMode {
+    /// As it was left (`[display] list_kind`).
+    #[default]
+    Last,
+    Anime,
+    /// Manga when Manga is on, else Anime.
+    Manga,
+}
+
+impl StartMode {
+    pub const ALL: [StartMode; 3] = [StartMode::Last, StartMode::Anime, StartMode::Manga];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            StartMode::Last => "last",
+            StartMode::Anime => "anime",
+            StartMode::Manga => "manga",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StartMode::Last => "Last used",
+            StartMode::Anime => "Anime",
+            StartMode::Manga => "Manga",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<StartMode> {
+        StartMode::ALL.into_iter().find(|m| m.key() == s.trim().to_lowercase())
+    }
+}
+
+impl Startup {
+    /// Where to open; Home when the key is absent or not a choice.
+    pub fn open_on(&self) -> OpenOn {
+        OpenOn::from_key(&self.open_on).unwrap_or_default()
+    }
+
+    /// The switch at start; Last used when the key is absent or not a choice.
+    pub fn mode(&self) -> StartMode {
+        StartMode::from_key(&self.mode).unwrap_or_default()
+    }
+}
+
+impl Config {
+    /// What in the file is ignored and why (a value that is not a choice): shown on stderr at
+    /// start, never an error.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut w = Vec::new();
+        if !self.startup.open_on.is_empty() && OpenOn::from_key(&self.startup.open_on).is_none() {
+            w.push(format!("config.toml: [startup] open_on = {:?} is not \"home\" or \"last\"; opening on Home", self.startup.open_on));
+        }
+        if !self.startup.mode.is_empty() && StartMode::from_key(&self.startup.mode).is_none() {
+            w.push(format!("config.toml: [startup] mode = {:?} is not \"last\", \"anime\" or \"manga\"; using the last used", self.startup.mode));
+        }
+        w
+    }
 }
 
 /// Settings → Library: the folders where the anime files are, and the player "Play next
@@ -982,6 +1097,16 @@ mod tests {
         assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
         assert!(!c.startup.background, "the login start opens the window by default");
         assert!(Config::parse("[startup]\nbackground = true\n").unwrap().startup.background);
+        let s = Config::parse("").unwrap();
+        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Home, StartMode::Last), "today's behaviour");
+        assert!(s.warnings().is_empty());
+        let s = Config::parse("[startup]\nopen_on = \"last\"\nmode = \"Manga\"\n").unwrap();
+        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Last, StartMode::Manga));
+        let s = Config::parse("[startup]\nopen_on = \"anywhere\"\nmode = \"both\"\n").unwrap();
+        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Home, StartMode::Last), "a bad value is not an error");
+        assert_eq!(s.warnings().len(), 2);
+        let s = Config::parse("[startup]\nopen_on = 3\nmode = true\n").unwrap();
+        assert_eq!((s.startup.open_on(), s.startup.mode(), s.warnings().len()), (OpenOn::Home, StartMode::Last, 2), "a wrong type too");
         assert!(c.app.check_updates, "the update check is on by default (the site says so)");
         let off = set_line("[updates]\nauto = true\n", "app", "check_updates", "false");
         let off = Config::parse(&off).unwrap();

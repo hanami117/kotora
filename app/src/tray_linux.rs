@@ -69,7 +69,7 @@ impl TrayCtl {
             }
             TrayEvent::Menu(id) => match action_for(&id) {
                 Some(Action::Show) => super::show_window(&handle),
-                Some(Action::Quit) => handle.quit(),
+                Some(Action::Quit) => super::quit(&handle),
                 // The same as the Up next ▶ button (`library::play_next`), with a toast.
                 Some(Action::Play(media)) => super::play(&handle, media),
                 None => {}
