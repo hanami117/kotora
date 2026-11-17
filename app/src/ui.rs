@@ -220,7 +220,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     if let Some((name, service)) = &s.account {
         side = side.child(account(s, name, service, s.lit_page() == Page::Profile));
     }
-    // Anime | Manga (MyAnimeList only for now).
+    // Anime | Manga.
     if s.has_list() {
         side = side.child(crate::manga::switch(s));
     }

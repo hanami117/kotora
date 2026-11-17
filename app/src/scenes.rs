@@ -247,8 +247,22 @@ pub const SCENES: &[Scene] = &[
         crate::manga::fake(s);
         s.set_kind(kotora_core::Kind::Anime);
     }),
-    // AniList: the switch stays on Anime, with a note.
-    ("manga-anilist", anilist),
+    // AniList: the same manga pages, scores in the user's AniList format (here 100-point).
+    ("manga-list-anilist", |s| {
+        anilist(s);
+        manga(s);
+        if let Some(p) = &mut s.profile {
+            p.score_format = ScoreFormat::Point100;
+        }
+    }),
+    ("manga-list-anilist-stars", |s| {
+        anilist(s);
+        manga(s);
+        if let Some(p) = &mut s.profile {
+            p.score_format = ScoreFormat::Point5;
+        }
+        s.manga_toggle_editor(2);
+    }),
     // Home: continue watching, airing this week, plan to watch.
     ("home", home),
     ("home-covers", |s| {
@@ -1019,7 +1033,7 @@ pub const SCENES: &[Scene] = &[
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "xml");
     }),
-    // AniList: no export (its API terms), and no manga import yet.
+    // AniList: no export (its API terms); the manga import works (MyAnimeList ids looked up on AniList).
     ("settings-manga-anilist", |s| {
         anilist(s);
         s.manga.enabled = true;
@@ -2222,12 +2236,11 @@ mod tests {
         assert!(rt.find("set/import-error").is_some());
         assert!(rt.find("set/import-manga").is_some());
         assert!(render("settings-manga-import-done", (1280.0, 900.0)).find("set/import-undo").is_some());
-        // AniList: no export, and importing manga says it comes later.
+        // AniList: no export (terms); the manga import is offered as on MyAnimeList.
         let mut s = State::fake();
         super::anilist(&mut s);
         assert!(crate::transfer::refusal(&s).is_some());
-        assert!(crate::transfer::manga_import_refusal(s.service).is_some_and(|w| w.contains("later")));
-        assert!(crate::transfer::manga_import_refusal(kotora_core::service::ServiceId::Mal).is_none());
+        assert!(render("settings-manga-anilist", (1280.0, 900.0)).find("set/import-manga").is_some());
     }
 
     #[test]

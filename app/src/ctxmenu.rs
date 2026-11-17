@@ -290,7 +290,7 @@ fn submenu(s: &State, id: u32, kind: kotora_core::Kind, sub: Sub, keys: bool) ->
             }
         }
         Sub::Score => {
-            let fmt = if manga { kotora_core::ScoreFormat::Point10 } else { s.score_format() };
+            let fmt = s.score_format();
             for (n, label, choice) in crate::scores::menu_choices(fmt).into_iter().rev() {
                 let on = e.is_some_and(|e| crate::scores::menu_lit(fmt, e.1, choice));
                 m = m.child(item(format!("ctx/score/{n}"), label, true, Some(on), move |s, _| if manga { s.manga_ctx_score(id, Some(choice)) } else { s.ctx_score(id, Some(choice)) }));

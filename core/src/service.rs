@@ -391,6 +391,18 @@ pub trait ListService {
     fn media_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
         Err(ServiceError::Other(format!("{} can't look up MyAnimeList ids", self.title())))
     }
+    /// The service's manga for MyAnimeList manga ids (an import or the mirror into a service keyed
+    /// by its own ids), as [`ListService::media_by_mal_ids`].
+    fn manga_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        Err(ServiceError::Other(format!("{} can't look up MyAnimeList manga ids", self.title())))
+    }
+    /// [`ListService::media_by_mal_ids`] or [`ListService::manga_by_mal_ids`].
+    fn media_by_mal_ids_of(&mut self, kind: Kind, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        match kind {
+            Kind::Anime => self.media_by_mal_ids(ids),
+            Kind::Manga => self.manga_by_mal_ids(ids),
+        }
+    }
     /// The whole manga list (only asked once the user turned Manga on: see `Store::manga_enabled`).
     fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
         Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))

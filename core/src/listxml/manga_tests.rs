@@ -327,3 +327,27 @@ fn an_imported_manga_is_sent_with_its_chapters_and_volumes() {
     while let Step::Handled { .. } = queue::step(&mut s, &mut f, 800).unwrap() {}
     assert_eq!(f.manga[&2011].values, Values { volumes: 5, ..Values::new(Status::Completed, 40, None) });
 }
+
+/// A manga file into AniList: matched by `idMal`, the others looked up on AniList as manga
+/// (`ListService::manga_by_mal_ids`), adds land on the AniList manga list with their MAL id.
+#[test]
+fn a_manga_import_into_anilist_matches_by_mal_id() {
+    let f = parse_manga(FILE.as_bytes()).unwrap();
+    // On the AniList manga list: MAL 2001 as AniList 192001.
+    let on_list = item(Media { id_mal: Some(2001), ..manga(192001, "Lantern Road", Some(40), Some(5)) }, Status::Watching, 3, 3, None);
+    let list = vec![on_list];
+    let ids = Plan::ids_to_map(&f, &list, "anilist");
+    assert!(!ids.contains(&2001) && ids.contains(&2003), "only the ids not on the list are looked up: {ids:?}");
+    let mut mapped = HashMap::new();
+    mapped.insert(2003, Media { id_mal: Some(2003), ..manga(192003, "Ink Harbor", Some(30), Some(4)) });
+    let p = plan(&f, "anilist", &list, &mapped);
+    assert_eq!((row(&p, 2001).verdict.clone(), row(&p, 2001).target), (Verdict::Different, Some(192001)));
+    assert_eq!((row(&p, 2003).verdict.clone(), row(&p, 2003).target), (Verdict::New, Some(192003)));
+    assert_eq!(row(&p, 2003).media.as_ref().map(|m| m.kind), Some(Kind::Manga));
+    let add = actions(&p, Mode::NewOnly, &HashSet::new());
+    let mut s = Store::open_memory().unwrap();
+    s.import("anilist", &add, 500).unwrap();
+    let it = s.load_item(Scope::new("anilist", Kind::Manga), 192003).unwrap().unwrap();
+    assert_eq!((it.media.id_mal, it.media.kind), (Some(2003), Kind::Manga));
+    assert!(s.load_item(Scope::new("anilist", Kind::Anime), 192003).unwrap().is_none(), "never an anime");
+}

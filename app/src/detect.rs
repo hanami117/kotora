@@ -69,8 +69,8 @@ pub fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let c = Config::load(&paths::config_file()).unwrap_or_default();
     s.prefs = Prefs::from_config(&c);
-    // The switch as it was left: Manga (MyAnimeList only), on the list page it opens.
-    if c.display.list_kind == kotora_core::Kind::Manga && s.manga_possible() && s.has_list() {
+    // The switch as it was left: Manga, on the list page it opens.
+    if c.display.list_kind == kotora_core::Kind::Manga && s.has_list() {
         s.manga.mode = true;
         if let crate::model::Page::List(st) = s.page {
             s.go(crate::model::Page::Manga(st));

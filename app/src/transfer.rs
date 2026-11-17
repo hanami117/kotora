@@ -232,21 +232,12 @@ fn import_manga(s: &mut State) {
     import(s, Kind::Manga);
 }
 
-/// Why a manga list can't be imported into the active service (yet).
-pub fn manga_import_refusal(service: ServiceId) -> Option<&'static str> {
-    (service != ServiceId::Mal).then_some("Importing a manga list into AniList comes later: switch to MyAnimeList to import one.")
-}
-
 /// Import…: the open dialog, then a thread reads and compares the file.
 pub fn import(s: &mut State, kind: Kind) {
     if s.transfer.busy.is_some() || s.transfer.applying {
         return;
     }
     s.transfer.import_kind = kind;
-    if kind == Kind::Manga && let Some(why) = manga_import_refusal(s.service) {
-        s.transfer.error = Some(why.into());
-        return;
-    }
     let Some(h) = s.handle.clone() else { return };
     let on_path = move |picked: Option<String>| {
         let Some(path) = picked else { return };
@@ -287,9 +278,6 @@ fn read_and_plan(path: &str, kind: Kind, h: &crate::model::Handle) -> Result<Pre
     let bytes = std::fs::read(path).map_err(|e| format!("Can't read the file: {e}"))?;
     let file = listxml::parse_kind(&bytes, kind)?;
     let service = crate::account::active();
-    if kind == Kind::Manga && let Some(why) = manga_import_refusal(service) {
-        return Err(why.into());
-    }
     let store = Store::open(&paths::db_file()).map_err(|e| format!("Can't open the saved list: {e}"))?;
     let list = store.load_list((service.name(), kind)).map_err(|e| format!("Can't read the saved list: {e}"))?;
     let mut mapped = HashMap::new();
@@ -302,7 +290,7 @@ fn read_and_plan(path: &str, kind: Kind, h: &crate::model::Handle) -> Result<Pre
                 true
             });
             let mut svc = crate::account::open_for(service).ok_or_else(|| format!("{} is needed to match MyAnimeList ids: sign in, and check you are online.", service.title()))?;
-            let media = svc.media_by_mal_ids(&ids).map_err(|e| format!("Can't look the ids up on {}: {e}", service.title()))?;
+            let media = svc.media_by_mal_ids_of(kind, &ids).map_err(|e| format!("Can't look the ids up on {}: {e}", service.title()))?;
             mapped = media.into_iter().filter_map(|m| Some((m.id_mal?, m))).collect();
         }
     }
@@ -433,16 +421,14 @@ pub fn import_row(s: &State, kind: Kind) -> El {
     let idle = t.busy.is_none() && !t.applying;
     // The panel belongs to the kind the last import was started for.
     let mine = t.import_kind == kind;
-    let refusal = if manga { manga_import_refusal(s.service) } else { None };
     let note = match (&t.busy, signed_in) {
         (Some(b), _) if mine => b.clone(),
         (_, false) => "Sign in first: the file is compared with your list.".into(),
-        _ if refusal.is_some() => refusal.unwrap_or_default().into(),
         _ if manga => format!("Read a MyAnimeList manga XML export (.xml or .xml.gz) and add it to your {service} list. You see what changes before anything is sent."),
         _ => format!("Read a MyAnimeList XML export (.xml or .xml.gz) and add it to your {service} list. You see what changes before anything is sent."),
     };
     let go: fn(&mut State) = if manga { import_manga } else { import_anime };
-    let on: Option<fn(&mut State)> = if idle && signed_in && t.preview.is_none() && refusal.is_none() { Some(go) } else { None };
+    let on: Option<fn(&mut State)> = if idle && signed_in && t.preview.is_none() { Some(go) } else { None };
     let (key, line_key, title, button) = if manga { ("set/import-manga", "set/import-manga-line", "Import manga list", "set/import-manga-button") } else { ("set/import", "set/import-line", "Import list", "set/import-button") };
     let mut c = col().key(key).w_full().child(line(line_key, title, note, small_button(button, "Import\u{2026}", false, on)));
     if !mine {

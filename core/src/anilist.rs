@@ -1130,6 +1130,10 @@ impl<T: Transport> ListService for AniList<T> {
         self.client.media_by_mal(&access, ids)
     }
 
+    fn manga_by_mal_ids(&mut self, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        AniList::manga_by_mal_ids(self, ids)
+    }
+
     fn browse(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         let access = self.access()?;
         self.client.browse(&access, query, limit)

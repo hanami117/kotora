@@ -56,6 +56,11 @@ fn search_query() -> String {
     format!("query ($q: String, $n: Int) {{ Page(perPage: $n) {{ media(search: $q, type: MANGA, isAdult: false) {{ {MEDIA} {STAFF} }} }} }}")
 }
 
+/// AniList's manga for MyAnimeList manga ids (an import or the mirror): 50 ids a page.
+fn by_mal_query() -> String {
+    format!("query ($ids: [Int], $page: Int) {{ Page(page: $page, perPage: 50) {{ pageInfo {{ hasNextPage }} media(idMal_in: $ids, type: MANGA) {{ {MEDIA} }} }} }}")
+}
+
 fn details_query() -> String {
     format!(
         "query ($id: Int) {{ Media(id: $id, type: MANGA) {{ {MEDIA} {STAFF} description(asHtml: false) genres rankings {{ rank type allTime }} \
@@ -318,6 +323,29 @@ pub fn parse_hits(data: Value) -> Result<Vec<AnimeHit>, ServiceError> {
     Ok(d.page.unwrap_or_default().media.iter().filter(|m| m.id != 0).map(RawManga::hit).collect())
 }
 
+/// A by-MAL-id page: the manga and whether more pages follow.
+fn parse_page(data: Value) -> Result<(Vec<RawManga>, bool), ServiceError> {
+    #[derive(Deserialize)]
+    struct Data {
+        #[serde(rename = "Page")]
+        page: Option<Pg>,
+    }
+    #[derive(Deserialize, Default)]
+    #[serde(default, rename_all = "camelCase")]
+    struct Pg {
+        page_info: Option<Info>,
+        media: Vec<RawManga>,
+    }
+    #[derive(Deserialize, Default)]
+    #[serde(default, rename_all = "camelCase")]
+    struct Info {
+        has_next_page: bool,
+    }
+    let d: Data = read(data, "manga lookup answer")?;
+    let p = d.page.unwrap_or_default();
+    Ok((p.media, p.page_info.is_some_and(|i| i.has_next_page)))
+}
+
 /// The manga details answer (`Media` with its description, staff, rankings and the user's entry).
 pub fn parse_details(data: Value) -> Result<Details, ServiceError> {
     #[derive(Deserialize)]
@@ -480,6 +508,27 @@ impl<T: Transport> Client<T> {
         parse_hits(self.query(access, &search_query(), json!({ "q": q, "n": limit.clamp(1, 25) }))?)
     }
 
+    /// The AniList manga of these MyAnimeList manga ids, 50 ids a request (the first AniList
+    /// manga of an id is kept). Ids AniList doesn't know are left out.
+    pub fn manga_by_mal(&mut self, access: &str, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        let mut out: Vec<Media> = Vec::new();
+        for chunk in ids.chunks(super::MAL_IDS_PER_REQUEST) {
+            for page in 1..=3 {
+                let (media, more) = parse_page(self.query(access, &by_mal_query(), json!({ "ids": chunk, "page": page }))?)?;
+                for m in media.iter().filter(|m| m.id != 0) {
+                    let m = m.media();
+                    if m.id_mal.is_some_and(|id| chunk.contains(&id)) && !out.iter().any(|o| o.id_mal == m.id_mal) {
+                        out.push(m);
+                    }
+                }
+                if !more {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// One manga's information page, with the user's entry.
     pub fn manga_details(&mut self, access: &str, media_id: u32) -> Result<Details, ServiceError> {
         parse_details(self.query(access, &details_query(), json!({ "id": media_id }))?)
@@ -487,6 +536,11 @@ impl<T: Transport> Client<T> {
 }
 
 impl<T: Transport> AniList<T> {
+    pub(super) fn manga_by_mal_ids(&mut self, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        let access = self.access()?;
+        self.client.manga_by_mal(&access, ids)
+    }
+
     pub(super) fn manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
         // A fresh Viewer when the last one is old (the manga list follows the anime sync, which
         // has just read it: no extra request then).

@@ -11,7 +11,6 @@
 //! shows chapters. The editor always has both.
 
 use kotora_core::queue::OpState;
-use kotora_core::service::ServiceId;
 use kotora_core::{Change, Kind, ListItem, Score, ScoreFormat, Status, Values};
 use rune::{El, GrowthSpec, ScrollSpec, TextEdit, Tx, col, el, icon, row, spacer, text, text_input};
 
@@ -293,18 +292,10 @@ impl State {
         if self.manga.mode { Page::Manga(st) } else { Page::List(st) }
     }
 
-    /// Manga needs MyAnimeList (AniList manga comes later).
-    pub fn manga_possible(&self) -> bool {
-        self.service == ServiceId::Mal
-    }
-
     /// The switch: Anime or Manga. The first move to Manga turns Manga on (syncs read the
     /// manga list from then on) and reads it now. The choice is kept (`[display] list_kind`).
     pub fn set_kind(&mut self, kind: Kind) {
         let manga = kind == Kind::Manga;
-        if manga && !self.manga_possible() {
-            return;
-        }
         let st = match self.lit_page() {
             Page::List(st) | Page::Manga(st) => st,
             _ => Status::Watching,
@@ -676,9 +667,6 @@ impl State {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
-        if !self.manga_possible() {
-            return Err(format!("Manga lists are {} only for now.", ServiceId::Mal.title()));
-        }
         media.kind = Kind::Manga;
         if let Some(i) = self.manga.entries.iter().position(|e| e.id == media.id) {
             self.manga_edit(media.id, Change { status: Some(status), ..Default::default() })?;
@@ -781,7 +769,7 @@ impl State {
     pub fn manga_ctx_score(&mut self, id: u32, score: Option<Score>) {
         let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
         let done = match score {
-            Some(n) => format!("Scored {} {}", e.title, ScoreFormat::Point10.words(n)),
+            Some(n) => format!("Scored {} {}", e.title, self.score_format().words(n)),
             None => format!("Removed the score of {}", e.title),
         };
         self.manga_ctx_edit(id, Change { score: Some(score), ..Default::default() }, done);
@@ -828,7 +816,7 @@ impl State {
             progress: e.chapters,
             episodes: e.chapters_total,
             score: e.score.map(Score::to_ten),
-            score_text: e.score.map(|s| ScoreFormat::Point10.show(s)),
+            score_text: e.score.map(|n| self.score_format().show(n)),
             waiting: e.waiting.map(Into::into),
             rewatching: e.rereading,
             times_rewatched: e.times_reread,
@@ -876,13 +864,10 @@ pub fn manga_msg(r: kotora_core::sync::MangaSync, svc: &str) -> Option<MangaMsg>
 
 // --------------------------------------------------------------------------------------- view
 
-/// The sidebar's Anime | Manga switch, under the account chip. AniList: Manga is off, with a
-/// note (AniList manga comes later).
+/// The sidebar's Anime | Manga switch, under the account chip (MyAnimeList and AniList).
 pub fn switch(s: &State) -> El {
-    let possible = s.manga_possible();
     let seg = |kind: Kind, on: bool| {
-        let enabled = kind == Kind::Anime || possible;
-        let fg = if on { PAL.text } else if enabled { PAL.dim } else { PAL.faint.alpha(0.6) };
+        let fg = if on { PAL.text } else { PAL.dim };
         let mut c = el()
             .key(format!("kind/{}", kind.name()))
             .role("button")
@@ -896,7 +881,7 @@ pub fn switch(s: &State) -> El {
         if on {
             c = c.fill(PAL.raised).shadow(1.0, 2.0, rune::Color::BLACK.alpha(if PAL.light { 0.10 } else { 0.35 }));
         }
-        if enabled && !on {
+        if !on {
             c = c.focusable(true).hover(PAL.hover()).press(PAL.press()).cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut State, tx: &mut Tx| {
                 tx.instant();
                 s.set_kind(kind);
@@ -905,7 +890,7 @@ pub fn switch(s: &State) -> El {
         c
     };
     let manga = s.manga.mode;
-    let mut c = col().key("kind-switch").mb(12.0).gap(4.0).child(
+    col().key("kind-switch").mb(12.0).gap(4.0).child(
         row()
             .key("kind-seg")
             .w_full()
@@ -916,11 +901,7 @@ pub fn switch(s: &State) -> El {
             .border(1.0, PAL.border_strong)
             .child(seg(Kind::Anime, !manga))
             .child(seg(Kind::Manga, manga)),
-    );
-    if !possible {
-        c = c.child(text(format!("Manga lists are {} only for now.", ServiceId::Mal.title())).key("kind-note").font(theme::SMALL).color(PAL.faint).wrap().px(4.0));
-    }
-    c
+    )
 }
 
 fn filter_box(s: &State) -> El {
@@ -1188,7 +1169,7 @@ pub fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
     let name = text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).group_color(PAL.accent_hi).truncate();
     let title = col().gap(2.0).child(crate::details::title_link(name, stub(e))).child(sub);
     let score = match e.score {
-        Some(n) => crate::scores::mark(ScoreFormat::Point10, n, theme::NUM_MED, PAL.text),
+        Some(n) => crate::scores::mark(s.score_format(), n, theme::NUM_MED, PAL.text),
         None => text("\u{2013}").font(theme::BODY).color(PAL.faint),
     };
     let open = s.manga.editor.filter(|ed| ed.id == id);
@@ -1218,7 +1199,7 @@ pub fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
     });
     let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });
     if let Some(ed) = open {
-        c = c.child(editor(e, &ed, false));
+        c = c.child(editor(e, &ed, false, s.score_format()));
     }
     c.child(el().w_full().h(1.0).fill(PAL.border.alpha(0.6)))
 }
@@ -1282,7 +1263,7 @@ fn reread_cell(e: &MEntry) -> El {
 
 /// The manga editor: status, chapters, volumes and score, then Cancel / Save (one change).
 /// `compact`: the details page's narrow column.
-pub fn editor(e: &MEntry, ed: &MEditor, compact: bool) -> El {
+pub fn editor(e: &MEntry, ed: &MEditor, compact: bool, fmt: ScoreFormat) -> El {
     let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -1296,7 +1277,7 @@ pub fn editor(e: &MEntry, ed: &MEditor, compact: bool) -> El {
     if !compact {
         statuses = statuses.child(reread_cell(e));
     }
-    let scores = crate::scores::picker(ScoreFormat::Point10, ed.score);
+    let scores = crate::scores::picker(fmt, ed.score);
     let buttons = row()
         .grow(1.0)
         .gap(8.0)
@@ -1389,7 +1370,7 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     let mine = d.info.as_ref().and_then(|i| i.mine.as_ref());
     let date = |v: Option<&String>| text(v.map_or("\u{2013}".into(), |d| crate::details::date_text(d))).font(theme::LABEL_NUM).color(PAL.text);
     let score = match e.score {
-        Some(n) => crate::scores::mark(ScoreFormat::Point10, n, theme::LABEL_NUM, PAL.text),
+        Some(n) => crate::scores::mark(s.score_format(), n, theme::LABEL_NUM, PAL.text),
         None => text("No score").font(theme::LABEL_NUM).color(PAL.text),
     };
     let mut facts = col().pt(8.0).child(crate::ui::kv("Score", score.key("det/my-score")));
@@ -1400,7 +1381,7 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     }
     c = c.child(facts);
     match s.manga.editor.filter(|ed| ed.id == id) {
-        Some(ed) => c.child(editor(e, &ed, true)),
+        Some(ed) => c.child(editor(e, &ed, true, s.score_format())),
         None => {
             let mut actions = row().pt(10.0).gap(8.0).child(crate::ui::action("det/edit".into(), "Edit", false, move |s, _| s.manga_toggle_editor(id)).h(32.0).px(12.0));
             if e.status == Status::Completed && !e.rereading {
@@ -1580,7 +1561,7 @@ mod tests {
     }
 
     #[test]
-    fn the_switch_swaps_the_list_pages_and_anilist_has_no_manga() {
+    fn the_switch_swaps_the_list_pages() {
         let mut s = State::fake();
         assert!(!s.manga.mode && !s.manga.enabled, "off by default");
         s.go(Page::List(Status::Completed));
@@ -1591,10 +1572,11 @@ mod tests {
         s.set_kind(Kind::Anime);
         assert_eq!(s.page, Page::List(Status::Completed));
         assert!(s.manga.enabled, "back to Anime keeps Manga on (kot manga off turns it off)");
+        // AniList has manga too.
         let mut a = State::fake();
-        a.service = ServiceId::AniList;
+        a.service = kotora_core::service::ServiceId::AniList;
         a.set_kind(Kind::Manga);
-        assert!(!a.manga.mode && !a.manga.enabled, "AniList: no manga yet");
+        assert!(a.manga.mode && a.manga.enabled, "AniList: the switch works the same");
     }
 
     #[test]
@@ -1766,6 +1748,12 @@ mod more_tests {
         assert_eq!(mal_id_in("https://myanimelist.net/anime/41590", Kind::Manga), None, "an anime link is not a manga");
         assert_eq!(mal_id("https://myanimelist.net/manga/2001"), None);
         assert_eq!(mal_id_in("2001", Kind::Manga), Some((2001, false)));
+        // AniList manga links, on AniList.
+        use crate::search::link_id_of;
+        use kotora_core::service::ServiceId;
+        assert_eq!(link_id_of("https://anilist.co/manga/30013/Paper-Lanterns", ServiceId::AniList, Kind::Manga), Some((30013, true)));
+        assert_eq!(link_id_of("https://anilist.co/anime/30013", ServiceId::AniList, Kind::Manga), None);
+        assert_eq!(link_id_of("https://anilist.co/manga/30013", ServiceId::Mal, Kind::Manga), None, "each service its own links");
     }
 
     /// The details page of a manga not on the list adds it to the manga list.

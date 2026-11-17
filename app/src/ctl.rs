@@ -305,13 +305,10 @@ fn set(s: &mut State, title: &str, mut change: Change, anyway: bool) -> Result<R
 
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
 /// a title that matches one result exactly, or a single result. Runs on the connection's thread.
-/// `kot add --manga` and `kot remove --manga` need a signed-in MyAnimeList with Manga on.
+/// `kot add --manga` and `kot remove --manga` need a signed-in list service with Manga on.
 fn manga_ready(s: &mut State) -> Result<(), String> {
     if !s.has_list() {
         return Err("Not signed in.".into());
-    }
-    if !s.manga_possible() {
-        return Err(MAL_ONLY.into());
     }
     if !s.manga.enabled {
         return Err("Manga is off: turn it on with kot manga on (or the Anime | Manga switch).".into());
@@ -430,9 +427,6 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
     Ok(Reply::List { entries, note })
 }
 
-/// `kot add --manga` / `kot remove --manga` on AniList: they go through the window's manga list,
-/// which is MyAnimeList only until the window's switch works on AniList (`State::manga_possible`).
-const MAL_ONLY: &str = "Adding and removing manga is MyAnimeList only for now (on AniList, kot manga and kot list --manga work).";
 
 /// `kot manga [on|off]`: the `manga:enabled` switch ([`kotora_core::store::Store::manga_enabled`]).
 /// Off keeps the saved manga list; nothing is ever written to the service.
@@ -492,14 +486,14 @@ mod tests {
 
     /// `kot manga` and `kot list --manga`: off by default, read from the saved
     /// list (Reading first, newest update first), with chapters and volumes; anime never shows.
-    /// `kot add --manga` / `kot remove --manga`: MyAnimeList, Manga on; remove asks first, then
+    /// `kot add --manga` / `kot remove --manga`: Manga on (MyAnimeList or AniList); remove asks first, then
     /// takes it off the manga list (the anime with the same id stays).
     #[test]
     fn kot_adds_and_removes_manga_only_with_manga_on() {
         let mut s = State::fake();
         assert!(manga_ready(&mut s).unwrap_err().starts_with("Manga is off"));
         s.service = ServiceId::AniList;
-        assert_eq!(manga_ready(&mut s).unwrap_err(), MAL_ONLY);
+        assert!(manga_ready(&mut s).unwrap_err().starts_with("Manga is off"), "AniList too: only Manga must be on");
         let mut s = State::fake();
         crate::manga::fake(&mut s);
         assert!(manga_ready(&mut s).is_ok());

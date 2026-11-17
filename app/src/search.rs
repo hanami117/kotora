@@ -102,25 +102,25 @@ pub fn mal_id_in(q: &str, kind: Kind) -> Option<(u32, bool)> {
 
 /// An AniList anime id in the search box: a pasted `anilist.co/anime/170001[/slug]` link, or a
 /// bare number (as [`mal_id`]).
-pub fn anilist_id(q: &str) -> Option<(u32, bool)> {
+/// For manga, `anilist.co/manga/30013[/slug]`.
+pub fn anilist_id_in(q: &str, kind: Kind) -> Option<(u32, bool)> {
     let q = q.trim();
     if let Some(bare) = mal_id(q).filter(|(_, link)| !link) {
         return Some(bare);
     }
     let rest = q.strip_prefix("https://").or_else(|| q.strip_prefix("http://")).unwrap_or(q);
-    let t = rest.strip_prefix("www.").unwrap_or(rest).strip_prefix("anilist.co/anime/")?;
+    let t = rest.strip_prefix("www.").unwrap_or(rest).strip_prefix(&format!("anilist.co/{}/", kind.name()))?;
     let end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
     let ok = end > 0 && matches!(t[end..].chars().next(), None | Some('/' | '?' | '#'));
     t[..end].parse::<u32>().ok().filter(|n| ok && *n > 0).map(|id| (id, true))
 }
 
 /// The active service's id in the search box (a link of that service, or a number), for a
-/// list of `kind` (manga: MyAnimeList only).
+/// list of `kind`.
 pub fn link_id_of(q: &str, svc: kotora_core::service::ServiceId, kind: Kind) -> Option<(u32, bool)> {
     match (svc, kind) {
         (kotora_core::service::ServiceId::Mal, k) => mal_id_in(q, k),
-        (kotora_core::service::ServiceId::AniList, Kind::Anime) => anilist_id(q),
-        (kotora_core::service::ServiceId::AniList, Kind::Manga) => None,
+        (kotora_core::service::ServiceId::AniList, k) => anilist_id_in(q, k),
     }
 }
 

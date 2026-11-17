@@ -952,9 +952,13 @@ impl State {
     /// A score cell: a choice that already shows as the entry's score keeps the precise one
     /// (an AniList 73 stays 73 when its 4 stars are picked again).
     pub fn editor_score(&mut self, score: Option<Score>) {
-        // The manga editor (MyAnimeList: whole points, nothing finer to keep).
-        if let Some(ed) = &mut self.manga.editor {
-            ed.score = score;
+        // The manga editor: the same rule, against the manga's saved score.
+        if let Some(med) = self.manga.editor {
+            let fmt = self.score_format();
+            let saved = self.manga.entries.iter().find(|e| e.id == med.id).map(|e| e.score);
+            if let Some(ed) = &mut self.manga.editor {
+                ed.score = saved.map_or(score, |cur| fmt.pick(cur, score));
+            }
             return;
         }
         let fmt = self.score_format();
@@ -968,7 +972,7 @@ impl State {
     pub fn editor_score_step(&mut self, delta: i32) {
         let fmt = self.score_format();
         if let Some(ed) = &mut self.manga.editor {
-            ed.score = ScoreFormat::Point10.step(ed.score, delta);
+            ed.score = fmt.step(ed.score, delta);
             return;
         }
         if let Some(ed) = &mut self.editor {
@@ -1314,7 +1318,7 @@ impl State {
         self.ops.clear();
         self.queue = 0;
         self.editor = None;
-        // The manga list goes too; the switch goes back to Anime (AniList has no manga yet).
+        // The manga list goes too (the other service has its own); the switch goes back to Anime.
         self.manga = crate::manga::MangaUi::default();
         if let Page::Manga(st) = self.page {
             self.page = Page::List(st);

@@ -11,8 +11,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   Publishing, Finished and On hiatus), a details page (authors, serialization, published dates, chapters and
   volumes) and an editor for status, chapters, volumes, score and rereads. Edits go through the same sync queue
   as anime. Progress shows chapters, volumes or both, whichever you have read; `+1` steps chapters (volumes for
-  a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing, Airing and Search
-  stay anime only. AniList has no manga in Kotora yet: there the switch stays on Anime, with a note.
+  a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing and Airing
+  stay anime only.
 - **Manga: posters, search, add and remove.** The manga pages have the List / Grid / Large views, kept
   apart from the anime pages' (`[manga_views]`); posters show what you read (Ch and/or Vol) with `+1` on
   hover (always on Reading). With the switch on Manga, Search (Ctrl/⌘ K) searches your manga and

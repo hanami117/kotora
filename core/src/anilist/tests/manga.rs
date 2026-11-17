@@ -313,3 +313,20 @@ fn manga_calls_share_the_rate_budget_and_the_429_rule() {
     assert_eq!(seen.lock().unwrap().len(), 2);
     assert!(waits.lock().unwrap().iter().any(|w| *w >= Duration::from_secs(8)), "waited for Retry-After");
 }
+
+/// MyAnimeList manga ids to AniList manga (an import or the mirror): type MANGA, the asked ids
+/// only, the first match of an id kept.
+#[test]
+fn manga_by_mal_ids_asks_type_manga() {
+    let page = r#"{"data":{"Page":{"pageInfo":{"hasNextPage":false},"media":[
+        {"id":190001,"idMal":79001,"title":{"romaji":"Kami Chouchin","english":"Paper Lanterns"},"format":"MANGA","status":"RELEASING","countryOfOrigin":"JP","chapters":null,"volumes":null},
+        {"id":190099,"idMal":79001,"title":{"romaji":"Kami Chouchin (one-shot)"},"format":"ONE_SHOT"},
+        {"id":190007,"idMal":12345,"title":{"romaji":"Not asked"}}]}}}"#;
+    let (mut c, seen, _) = client(vec![ok(page)]);
+    let found = c.manga_by_mal(JWT, &[79001, 79002]).unwrap();
+    assert_eq!(found.iter().map(|m| (m.id, m.id_mal, m.kind)).collect::<Vec<_>>(), [(190001, Some(79001), Kind::Manga)]);
+    assert_eq!(found[0].format, "manga");
+    let q = query_of(&seen, 0);
+    assert!(q.contains("idMal_in") && q.contains("type: MANGA"));
+    assert_eq!(seen.lock().unwrap()[0].2["variables"], json!({ "ids": [79001, 79002], "page": 1 }));
+}
