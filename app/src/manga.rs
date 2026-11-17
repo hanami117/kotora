@@ -92,6 +92,8 @@ pub struct MEntry {
     pub updated_at: i64,
     pub waiting: Option<&'static str>,
     pub cover_url: Option<String>,
+    /// AniList `idMal` (the MyAnimeList link with the mirror on); `None` on MyAnimeList.
+    pub id_mal: Option<u32>,
 }
 
 impl MEntry {
@@ -117,6 +119,7 @@ impl MEntry {
             updated_at: it.updated_at,
             waiting: None,
             cover_url: m.cover_url.clone(),
+            id_mal: m.id_mal,
         }
     }
 

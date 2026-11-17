@@ -59,6 +59,9 @@ pub struct MirrorUi {
     pub trouble: Option<String>,
     /// The manga lists were compared (turned on with Manga on, or "Align manga" since).
     pub manga_aligned: bool,
+    /// The mirror service's ids by MyAnimeList id, per kind (AniList mirror: from its saved
+    /// media), for its "Open on …" links.
+    pub ids: HashMap<(Kind, u32), u32>,
     pub worker: Arc<Worker>,
 }
 
@@ -185,6 +188,7 @@ struct Snapshot {
     synced_at: Option<i64>,
     fmt: ScoreFormat,
     manga_aligned: bool,
+    ids: HashMap<(Kind, u32), u32>,
 }
 
 fn snapshot(store: &Store) -> Snapshot {
@@ -201,6 +205,13 @@ fn snapshot(store: &Store) -> Snapshot {
             _ => ScoreFormat::Point10,
         },
         manga_aligned: store.mirror_manga_aligned().unwrap_or(false),
+        ids: match link {
+            Some(l) if l.to == ServiceId::AniList => Kind::ALL
+                .into_iter()
+                .flat_map(|k| store.mal_id_pairs((l.to.name(), k)).unwrap_or_default().into_iter().map(move |(id, mal)| ((k, mal), id)))
+                .collect(),
+            _ => HashMap::new(),
+        },
     }
 }
 
@@ -213,6 +224,7 @@ fn report(h: &Handle, snap: Snapshot, trouble: Option<Option<String>>) {
         s.mirror.synced_at = snap.synced_at;
         s.mirror.fmt = snap.fmt;
         s.mirror.manga_aligned = snap.manga_aligned;
+        s.mirror.ids = snap.ids;
         if let Some(t) = trouble {
             s.mirror.trouble = t;
         }
@@ -403,6 +415,7 @@ pub fn load(s: &mut State) {
             s.mirror.waits = snap.waits;
             s.mirror.synced_at = snap.synced_at;
             s.mirror.manga_aligned = snap.manga_aligned;
+            s.mirror.ids = snap.ids;
             if on {
                 send(s, Cmd::Kick { sync: false });
             }
@@ -614,6 +627,35 @@ fn pick_status(s: &mut State, kind: Kind, mal: u32, mirror_status: bool) {
 fn pick_all(s: &mut State, kind: Kind, mirror_status: bool) {
     if let Some(p) = s.mirror.preview.as_mut().and_then(|p| p.part_mut(kind)) {
         p.mirror_status = if mirror_status { p.p.merge.iter().filter(|r| r.conflict.is_some()).map(|r| r.mal_id).collect() } else { HashSet::new() };
+    }
+}
+
+// ------------------------------------------------------------------------------------ links
+
+impl State {
+    /// The "Open on …" links of an anime or a manga (`id`: the active service's): the active
+    /// service's, and with the mirror on the other service's too when its id can be told:
+    /// MyAnimeList by the MyAnimeList id (an AniList entry's `idMal`), AniList by the id its
+    /// saved list (or a lookup) gave. Not known yet: the active service's link only.
+    pub fn service_links(&self, kind: Kind, id: u32) -> Vec<(ServiceId, String)> {
+        let main = self.service;
+        let mut out = vec![(main, main.media_url(kind, id))];
+        let Some(link) = self.mirror.link.filter(|l| l.main == main) else { return out };
+        let mal = match main {
+            ServiceId::Mal => Some(id),
+            ServiceId::AniList => match kind {
+                Kind::Anime => self.entries.iter().find(|e| e.id == id).and_then(|e| e.id_mal),
+                Kind::Manga => self.manga.entries.iter().find(|e| e.id == id).and_then(|e| e.id_mal),
+            },
+        };
+        let other = match link.to {
+            ServiceId::Mal => mal,
+            ServiceId::AniList => mal.and_then(|m| self.mirror.ids.get(&(kind, m)).copied()),
+        };
+        if let Some(oid) = other.filter(|i| *i > 0) {
+            out.push((link.to, link.to.media_url(kind, oid)));
+        }
+        out
     }
 }
 
@@ -1216,6 +1258,13 @@ pub fn fake_on(s: &mut State) {
         edits.push(WebEdit { kind: Kind::Anime, mal_id: e.id, title: e.main_title.clone(), main_id: Some(e.id), main: saved(&e, e.progress), mirror_id: None, mirror: None, at: now - 200 });
     }
     s.mirror.edits = edits;
+    // The AniList ids of the fake lists (`fake_item`: id + 100000; manga: + 300000), but not
+    // of anime 3: its AniList id isn't known yet.
+    if link.to == ServiceId::AniList {
+        let anime = s.entries.iter().filter(|e| e.id > 0 && e.id != 3).map(|e| ((Kind::Anime, e.id), e.id + 100_000));
+        let manga = s.manga.entries.iter().map(|e| ((Kind::Manga, e.id), e.id + 300_000));
+        s.mirror.ids = anime.chain(manga).collect();
+    }
     s.mirror.waits = vec![Wait { kind: Kind::Anime, mal_id: 9200, title: "Rust & Rain".into(), at: now - 100, error: Some(format!("Not on {}", link.to.title())) }];
     s.mirror.note = None;
 }
@@ -1377,6 +1426,29 @@ mod tests {
     fn fake_edit_text() -> String {
         let v = Values { volumes: 4, ..Values::new(Status::Watching, 68, None) };
         values_text_of(Kind::Manga, &v, ScoreFormat::Point10)
+    }
+
+    /// Without the mirror: the active service's link. With it: the other service's too when its
+    /// id is known (MyAnimeList: the MAL id or `idMal`; AniList: its saved id), else not.
+    #[test]
+    fn open_links_follow_the_mirror() {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        let titles = |s: &State, kind: Kind, id: u32| s.service_links(kind, id).into_iter().map(|(_, url)| url).collect::<Vec<_>>();
+        assert_eq!(titles(&s, Kind::Anime, 1), ["https://myanimelist.net/anime/1"]);
+        fake_on(&mut s);
+        assert_eq!(titles(&s, Kind::Anime, 1), ["https://myanimelist.net/anime/1", "https://anilist.co/anime/100001"]);
+        assert_eq!(titles(&s, Kind::Manga, 2), ["https://myanimelist.net/manga/2", "https://anilist.co/manga/300002"]);
+        assert_eq!(titles(&s, Kind::Anime, 3), ["https://myanimelist.net/anime/3"], "AniList id not known yet: hidden");
+        // AniList main, MyAnimeList mirror: the MAL link from the entry's idMal.
+        let mut a = State::fake();
+        a.service = ServiceId::AniList;
+        a.mirror.link = Some(Link::of(ServiceId::AniList));
+        a.entries[1].id_mal = Some(4242);
+        let id = a.entries[1].id;
+        assert_eq!(titles(&a, Kind::Anime, id), [format!("https://anilist.co/anime/{id}"), "https://myanimelist.net/anime/4242".to_string()]);
+        let other = a.entries[2].id;
+        assert_eq!(titles(&a, Kind::Anime, other).len(), 1, "no idMal: AniList's only");
     }
 
     #[test]

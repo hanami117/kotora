@@ -596,6 +596,15 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// The saved media of a list with a MyAnimeList id: (the service's id, the MyAnimeList id).
+    /// The account mirror's links ("Open on AniList" from a MyAnimeList entry).
+    pub fn mal_id_pairs<'a>(&self, scope: impl Into<Scope<'a>>) -> Result<Vec<(u32, u32)>> {
+        let Scope { service, kind } = scope.into();
+        let mut st = self.conn.prepare("SELECT id, id_mal FROM media WHERE service = ?1 AND kind = ?2 AND id_mal IS NOT NULL AND id_mal > 0 ORDER BY id")?;
+        let rows = st.query_map(params![service, kind.name()], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, u32>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// The anime on `service`'s list whose saved media is about only a title: no format, and no
     /// cover or no episode count.
     /// Now Playing's "Add as Watching" knows little more than the title, and a change still

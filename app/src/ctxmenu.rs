@@ -341,7 +341,6 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
     let Some(e) = s.entries.iter().find(|e| e.id == id) else { return Vec::new() };
     let has_next = e.episodes.is_none_or(|n| e.progress < n);
     let next = e.progress + 1;
-    let url = s.service.media_url(kotora_core::Kind::Anime, id);
     let open = |k: Sub| c.sub.is_some_and(|(o, _)| o == k);
     let mut m = surface("ctx-menu", 230.0)
         .label(format!("{}: actions", e.title))
@@ -363,10 +362,7 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
                 s.open_details(stub);
             }
         }))
-        .child(item("ctx/mal".into(), format!("Open on {}", s.service.title()), true, None, move |s, _| {
-            s.ctx = None;
-            crate::online::open_url(s, url.clone());
-        }))
+        .children(open_items(s, kotora_core::Kind::Anime, id))
         .child(sep())
         .child(item("ctx/remove".into(), "Remove from list\u{2026}".into(), s.has_list(), None, move |s, _| s.ask_remove(id)));
     if let Some((sub, keys)) = c.sub {
@@ -376,12 +372,26 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
     out
 }
 
+/// "Open on MyAnimeList" (`ctx/mal`), and with the mirror on "Open on AniList" (`ctx/other`)
+/// too, when its id is known ([`State::service_links`]).
+fn open_items(s: &State, kind: kotora_core::Kind, id: u32) -> Vec<El> {
+    s.service_links(kind, id)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (svc, url))| {
+            item(if i == 0 { "ctx/mal".into() } else { "ctx/other".into() }, format!("Open on {}", svc.title()), true, None, move |s, _| {
+                s.ctx = None;
+                crate::online::open_url(s, url.clone());
+            })
+        })
+        .collect()
+}
+
 /// A manga's menu: Move to ▸, Score ▸, +1 chapter (or volume), Edit…, Open details, Open on
 /// MyAnimeList, Remove from list… (asks first). No Play: manga have no player.
 fn manga_menu(s: &State, c: &Ctx) -> Option<El> {
     let id = c.id;
     let e = s.manga.entries.iter().find(|e| e.id == id)?;
-    let url = s.service.media_url(kotora_core::Kind::Manga, id);
     let open = |k: Sub| c.sub.is_some_and(|(o, _)| o == k);
     let (unit, next) = match e.plus_unit() {
         crate::manga::Unit::Chapters => ("chapter", e.chapters + 1),
@@ -407,10 +417,7 @@ fn manga_menu(s: &State, c: &Ctx) -> Option<El> {
                 s.open_details(stub);
             }
         }))
-        .child(item("ctx/mal".into(), format!("Open on {}", s.service.title()), true, None, move |s, _| {
-            s.ctx = None;
-            crate::online::open_url(s, url.clone());
-        }))
+        .children(open_items(s, kotora_core::Kind::Manga, id))
         .child(sep())
         .child(item("ctx/remove".into(), "Remove from list\u{2026}".into(), s.has_list(), None, move |s, _| s.ask_remove_manga(id)));
     if let Some((sub, keys)) = c.sub {

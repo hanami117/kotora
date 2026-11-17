@@ -747,16 +747,13 @@ pub fn page(s: &State, wide: bool) -> El {
         page = page.child(crate::ui::alert("det/alert", PAL.status(Status::Dropped), e.clone(), None));
     }
     let scroll = col().key(format!("details-scroll/{}", d.id())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0);
-    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(d, s.service)).child(scroll.child(header_narrow(s, d))) }
+    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(s, d)).child(scroll.child(header_narrow(s, d))) }
 }
 
 fn updating(d: &Detail) -> El {
     if d.loading && d.info.is_some() { text("Updating\u{2026}").font(theme::LABEL).color(PAL.dim) } else { el() }
 }
 
-fn mal_url(d: &Detail, svc: kotora_core::service::ServiceId) -> String {
-    svc.media_url(d.kind(), d.id())
-}
 
 /// A: the banner, then two columns (cover, title and the information; the entry on the right).
 fn header_wide(s: &State, d: &Detail) -> El {
@@ -777,7 +774,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
                 .child(back_button(true))
                 .child(spacer())
                 .child(updating(d))
-                .child(link_button("det/open-mal", s.service.title(), mal_url(d, s.service), true)),
+                .children(links(s, d, true)),
         );
     let title = text(shown_title(s, d).to_string()).key("det-title").font(crate::look::HERO_TITLE).color(PAL.text).wrap().max_lines(3).selectable(true);
     let head = row()
@@ -795,7 +792,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
 }
 
 /// The narrow page's top bar: Back, the page's name, the link to MyAnimeList.
-fn top_bar(d: &Detail, svc: kotora_core::service::ServiceId) -> El {
+fn top_bar(s: &State, d: &Detail) -> El {
     row()
         .key("top")
         .gap(12.0)
@@ -807,7 +804,21 @@ fn top_bar(d: &Detail, svc: kotora_core::service::ServiceId) -> El {
         .child(text(if d.is_manga() { "Manga information" } else { "Anime information" }).font(theme::SECTION).color(PAL.dim))
         .child(spacer())
         .child(updating(d))
-        .child(link_button("det/open-mal", &format!("Open on {}", svc.title()), mal_url(d, svc), false))
+        .children(links(s, d, false))
+}
+
+/// "Open on …": the active service's link (`det/open-mal`), and with the mirror on the other
+/// service's (`det/open-other`) when its id is known. The narrow bar says "Open on" with one.
+fn links(s: &State, d: &Detail, glass: bool) -> Vec<El> {
+    let all = s.service_links(d.kind(), d.id());
+    let one = all.len() == 1;
+    all.into_iter()
+        .enumerate()
+        .map(|(i, (svc, url))| {
+            let label = if glass || !one { svc.title().to_string() } else { format!("Open on {}", svc.title()) };
+            link_button(if i == 0 { "det/open-mal" } else { "det/open-other" }, &label, url, glass)
+        })
+        .collect()
 }
 
 /// B: one banner card (cover, tags, titles, numbers and the glass entry panel), then the rest.

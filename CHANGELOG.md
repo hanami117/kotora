@@ -46,6 +46,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   1-10 scale, edits made on the other service's website never overwritten (they show in the Queue to settle), and
   a removal stops as a conflict if the manga changed there. Turning the mirror on compares the manga lists too, in
   the same preview; with the mirror already on, Settings → Account offers "Align manga lists" once.
+- **With the mirror on, both "Open on" links:** details pages (anime and manga) and the right-click menus link to
+  MyAnimeList and to AniList, whenever the other service's id is known (MyAnimeList's from the MyAnimeList id;
+  AniList's from its saved list). Without the mirror, the one link of your service, as before.
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list

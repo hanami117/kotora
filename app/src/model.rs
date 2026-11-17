@@ -187,6 +187,8 @@ pub struct Entry {
     /// A change for this entry waits in the queue.
     pub waiting: Option<&'static str>,
     /// The service's cover image (`None` in the fake list, and for shows without one).
+    /// AniList `idMal` (the MyAnimeList link with the mirror on); `None` on MyAnimeList.
+    pub id_mal: Option<u32>,
     pub cover_url: Option<String>,
     /// When its episodes air, estimated (start date and weekly slot); `None` when unknown.
     pub timetable: Option<Timetable>,
@@ -237,6 +239,7 @@ impl Entry {
             times_rewatched: it.times_rewatched,
             waiting: None,
             cover_url: m.cover_url.clone(),
+            id_mal: m.id_mal,
             timetable: Timetable::of_media(m),
         }
     }
@@ -1544,6 +1547,7 @@ fn fake_entries() -> Vec<Entry> {
             times_rewatched: u32::from(f.rewatching),
             waiting: None,
             cover_url: None,
+            id_mal: None,
             timetable: None,
         })
         .collect();
@@ -1583,6 +1587,7 @@ fn fake_entries() -> Vec<Entry> {
                 times_rewatched: 0,
                 waiting: None,
                 cover_url: None,
+                id_mal: None,
                 timetable: None,
             });
             id += 1;

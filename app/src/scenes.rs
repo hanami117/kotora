@@ -1122,6 +1122,29 @@ pub const SCENES: &[Scene] = &[
         crate::mirror::fake_on(s);
         s.go(Page::Queue);
     }),
+    // The mirror on: details pages and menus link to both services.
+    ("details-mirror", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 1, true);
+    }),
+    ("details-mirror-narrow", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 1, true);
+    }),
+    ("manga-details-mirror", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        manga_details(s, 1);
+    }),
+    ("manga-ctx-mirror", |s| {
+        manga(s);
+        crate::mirror::fake_on(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
+    ("ctx-menu-mirror", |s| {
+        crate::mirror::fake_on(s);
+        s.open_ctx(1, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
     // Manga in the mirror's queue: a website edit (chapters, volumes) and a conflict.
     ("queue-mirror-manga", |s| {
         queue_covers(s);
@@ -3150,5 +3173,38 @@ mod row_presses {
     fn a_title_pressed_with_an_editor_open_moves_the_editor() {
         check("list", "Lanterns of Kirigaoka", "Starfall Delivery Service", |s| s.editor.map(|e| e.id), |s, t| s.entries.iter().find(|e| e.title == t).unwrap().id);
         check("manga-list", "Inkwell Cartographers", "Salt & Gears", |s| s.manga.editor.map(|e| e.id), |s, t| s.manga.entries.iter().find(|e| e.title == t).unwrap().id);
+    }
+}
+
+/// With the mirror on, details pages and menus link to both services (anime and manga); without
+/// it, to the active one only.
+#[cfg(test)]
+mod mirror_links {
+    use super::*;
+
+    fn keys(name: &str, size: (f32, f32)) -> rune::Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, size, rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    #[test]
+    fn both_links_with_the_mirror_one_without() {
+        for (name, size) in [("details-mirror", (1280.0, 800.0)), ("details-mirror-narrow", (1000.0, 760.0)), ("manga-details-mirror", (1280.0, 800.0))] {
+            let rt = keys(name, size);
+            assert!(rt.find("det/open-mal").is_some() && rt.find("det/open-other").is_some(), "{name}");
+        }
+        for name in ["ctx-menu-mirror", "manga-ctx-mirror"] {
+            let rt = keys(name, (1280.0, 800.0));
+            assert!(rt.find("ctx/mal").is_some() && rt.find("ctx/other").is_some(), "{name}");
+        }
+        for name in ["details-on-list", "manga-details", "ctx-menu", "manga-ctx"] {
+            let rt = keys(name, (1280.0, 800.0));
+            assert!(rt.find("det/open-other").is_none() && rt.find("ctx/other").is_none(), "{name}: one link without the mirror");
+        }
     }
 }
