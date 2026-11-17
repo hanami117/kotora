@@ -1077,6 +1077,19 @@ pub const SCENES: &[Scene] = &[
         crate::mirror::fake_preview(s);
         mirror_settings(s);
     }),
+    // With Manga on: the manga lists compared too, one choice for both.
+    ("settings-mirror-preview-manga", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_preview_with_manga(s);
+        mirror_settings(s);
+    }),
+    // The mirror on, Manga turned on since: "Align manga lists" waits for one comparison.
+    ("settings-mirror-align-manga", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        s.mirror.manga_aligned = false;
+        mirror_settings(s);
+    }),
     // A status conflict settled for AniList's status.
     ("settings-mirror-preview-picked", |s| {
         crate::mirror::fake_preview(s);
@@ -1107,6 +1120,14 @@ pub const SCENES: &[Scene] = &[
     ("queue-mirror", |s| {
         queue_covers(s);
         crate::mirror::fake_on(s);
+        s.go(Page::Queue);
+    }),
+    // Manga in the mirror's queue: a website edit (chapters, volumes) and a conflict.
+    ("queue-mirror-manga", |s| {
+        queue_covers(s);
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        crate::mirror::fake_manga_on(s);
         s.go(Page::Queue);
     }),
     // The account chip with the mirror on (0.2.1): "MyAnimeList ⇄ AniList", nothing waiting.

@@ -51,6 +51,9 @@ const WAITS: &str = "mirror:waits";
 const EDITS: &str = "mirror:edits";
 /// When the mirror was turned on: website edits on the main list before it are not mirrored.
 const SINCE: &str = "mirror:since";
+/// The manga lists were compared (and aligned as the user chose): set when the mirror was
+/// turned on with Manga on, or by "Align manga" later.
+const MANGA: &str = "mirror:manga";
 
 /// Which service is the main list and which one mirrors it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,26 +84,37 @@ impl Link {
 
 /// Every list field of `v` as a change (status, progress, score, rewatch).
 pub fn full(v: &Values) -> Change {
-    Change { status: Some(v.status), progress: Some(v.progress), score: Some(v.score), rewatching: Some(v.rewatching), times_rewatched: Some(v.times_rewatched), volumes: None }
+    full_of(Kind::Anime, v)
 }
 
-/// The change an add makes: status and progress, and the score and rewatch only when set (an
-/// add never removes a score the other list has).
-fn add_change(v: &Values) -> Change {
+/// [`full`] for an entry of `kind`: a manga's volumes too.
+pub fn full_of(kind: Kind, v: &Values) -> Change {
+    let volumes = (kind == Kind::Manga).then_some(v.volumes);
+    Change { status: Some(v.status), progress: Some(v.progress), score: Some(v.score), rewatching: Some(v.rewatching), times_rewatched: Some(v.times_rewatched), volumes }
+}
+
+/// The change an add makes: status and progress (a manga's volumes), and the score and rewatch
+/// only when set (an add never removes a score the other list has).
+fn add_change(kind: Kind, v: &Values) -> Change {
     Change {
         status: Some(v.status),
         progress: Some(v.progress),
         score: v.score.map(Some),
         rewatching: v.rewatching.then_some(true),
         times_rewatched: (v.times_rewatched > 0).then_some(v.times_rewatched),
-        volumes: None,
+        volumes: (kind == Kind::Manga && v.volumes > 0).then_some(v.volumes),
     }
 }
 
 /// The same list values (anime: volumes don't count; scores compared on the 1-10 scale, so a
 /// MyAnimeList 7 and an AniList 73 are the same).
 pub fn same(a: &Values, b: &Values) -> bool {
-    full(a).without_same_ten(b).is_empty()
+    same_of(Kind::Anime, a, b)
+}
+
+/// [`same`] for an entry of `kind`: a manga's volumes count.
+pub fn same_of(kind: Kind, a: &Values, b: &Values) -> bool {
+    full_of(kind, a).without_same_ten(b).is_empty()
 }
 
 /// Values as the `kv` lists keep them.
@@ -112,11 +126,14 @@ pub struct Saved {
     pub score: Option<Score>,
     pub rewatching: bool,
     pub times: u32,
+    /// A manga's volumes read (0 for anime; older saved lists have none).
+    #[serde(default)]
+    pub volumes: u32,
 }
 
 impl From<Values> for Saved {
     fn from(v: Values) -> Saved {
-        Saved { status: v.status.mal_name().to_string(), progress: v.progress, score: v.score, rewatching: v.rewatching, times: v.times_rewatched }
+        Saved { status: v.status.mal_name().to_string(), progress: v.progress, score: v.score, rewatching: v.rewatching, times: v.times_rewatched, volumes: v.volumes }
     }
 }
 
@@ -128,7 +145,7 @@ impl Saved {
             score: self.score,
             rewatching: self.rewatching,
             times_rewatched: self.times,
-            volumes: 0,
+            volumes: self.volumes,
         }
     }
 }
@@ -139,6 +156,9 @@ impl Saved {
 /// mirror's worker looks it up ([`map_waits`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wait {
+    /// Anime or manga (older saved waits: anime).
+    #[serde(default)]
+    pub kind: Kind,
     pub mal_id: u32,
     pub title: String,
     pub at: i64,
@@ -151,6 +171,9 @@ pub struct Wait {
 /// different from the main list. Nothing was overwritten; the user settles it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebEdit {
+    /// Anime or manga (older saved edits: anime).
+    #[serde(default)]
+    pub kind: Kind,
     pub mal_id: u32,
     pub title: String,
     /// The main entry (`None`: not on the main list: added on the mirror).
@@ -199,27 +222,27 @@ fn set_list<T: Serialize>(c: &Connection, key: &str, list: &[T]) -> Result<()> {
     kv_set(c, key, &serde_json::to_string(list).map_err(|e| StoreError(e.to_string()))?)
 }
 
-fn drop_wait(c: &Connection, mal_id: u32) -> Result<()> {
+fn drop_wait(c: &Connection, kind: Kind, mal_id: u32) -> Result<()> {
     let mut w: Vec<Wait> = list_of(c, WAITS)?;
     let n = w.len();
-    w.retain(|x| x.mal_id != mal_id);
+    w.retain(|x| !(x.kind == kind && x.mal_id == mal_id));
     if w.len() != n { set_list(c, WAITS, &w) } else { Ok(()) }
 }
 
-fn push_wait(c: &Connection, mal_id: u32, title: &str, now: i64) -> Result<()> {
+fn push_wait(c: &Connection, kind: Kind, mal_id: u32, title: &str, now: i64) -> Result<()> {
     let mut w: Vec<Wait> = list_of(c, WAITS)?;
-    match w.iter_mut().find(|x| x.mal_id == mal_id) {
+    match w.iter_mut().find(|x| x.kind == kind && x.mal_id == mal_id) {
         // A new change asks again, even after a lookup that found nothing.
         Some(x) => x.error = None,
-        None => w.push(Wait { mal_id, title: title.to_string(), at: now, error: None }),
+        None => w.push(Wait { kind, mal_id, title: title.to_string(), at: now, error: None }),
     }
     set_list(c, WAITS, &w)
 }
 
-fn drop_edit(c: &Connection, mal_id: u32) -> Result<()> {
+fn drop_edit(c: &Connection, kind: Kind, mal_id: u32) -> Result<()> {
     let mut e: Vec<WebEdit> = list_of(c, EDITS)?;
     let n = e.len();
-    e.retain(|x| x.mal_id != mal_id);
+    e.retain(|x| !(x.kind == kind && x.mal_id == mal_id));
     if e.len() != n { set_list(c, EDITS, &e) } else { Ok(()) }
 }
 
@@ -233,39 +256,39 @@ pub fn mal_id_of(service: ServiceId, m: &Media) -> Option<u32> {
     }
 }
 
-/// The MyAnimeList id of a saved anime of `service`.
-fn mal_id_tx(c: &Connection, service: ServiceId, id: u32) -> Result<Option<u32>> {
+/// The MyAnimeList id of a saved anime (or manga) of `service`.
+fn mal_id_tx(c: &Connection, service: ServiceId, kind: Kind, id: u32) -> Result<Option<u32>> {
     if service == ServiceId::Mal {
         return Ok(Some(id));
     }
-    Ok(c.query_row("SELECT id_mal FROM media WHERE service = ?1 AND kind = 'anime' AND id = ?2", params![service.name(), id], |r| r.get::<_, Option<u32>>(0))
+    Ok(c.query_row("SELECT id_mal FROM media WHERE service = ?1 AND kind = ?3 AND id = ?2", params![service.name(), id, kind.name()], |r| r.get::<_, Option<u32>>(0))
         .optional()?
         .flatten()
         .filter(|id| *id > 0))
 }
 
 /// The id on `service` of the anime with MyAnimeList id `mal`, when known (an entry first).
-fn id_on(c: &Connection, service: ServiceId, mal: u32) -> Result<Option<u32>> {
+fn id_on(c: &Connection, service: ServiceId, kind: Kind, mal: u32) -> Result<Option<u32>> {
     if service == ServiceId::Mal {
         return Ok(Some(mal));
     }
     Ok(c.query_row(
-        "SELECT m.id FROM media m WHERE m.service = ?1 AND m.kind = 'anime' AND m.id_mal = ?2
+        "SELECT m.id FROM media m WHERE m.service = ?1 AND m.kind = ?3 AND m.id_mal = ?2
          ORDER BY EXISTS (SELECT 1 FROM entry e WHERE e.service = m.service AND e.kind = m.kind AND e.media_id = m.id) DESC, m.id LIMIT 1",
-        params![service.name(), mal],
+        params![service.name(), mal, kind.name()],
         |r| r.get(0),
     )
     .optional()?)
 }
 
 /// The saved media row (the fields an add needs).
-fn media_row(c: &Connection, service: ServiceId, id: u32) -> Result<Option<Media>> {
+fn media_row(c: &Connection, service: ServiceId, kind: Kind, id: u32) -> Result<Option<Media>> {
     Ok(c.query_row(
-        "SELECT title, episodes, format, air_status, cover_url, id_mal FROM media WHERE service = ?1 AND kind = 'anime' AND id = ?2",
-        params![service.name(), id],
+        "SELECT title, episodes, format, air_status, cover_url, id_mal, volumes FROM media WHERE service = ?1 AND kind = ?3 AND id = ?2",
+        params![service.name(), id, kind.name()],
         |r| {
             Ok(Media {
-                kind: Kind::Anime,
+                kind,
                 id,
                 title: r.get(0)?,
                 episodes: r.get(1)?,
@@ -273,6 +296,7 @@ fn media_row(c: &Connection, service: ServiceId, id: u32) -> Result<Option<Media
                 air_status: r.get(3)?,
                 cover_url: r.get(4)?,
                 id_mal: r.get(5)?,
+                volumes: r.get(6)?,
                 ..Media::default()
             })
         },
@@ -282,34 +306,33 @@ fn media_row(c: &Connection, service: ServiceId, id: u32) -> Result<Option<Media
 
 /// A MyAnimeList media row for an anime known from the other service: its id and title only
 /// (the next MyAnimeList sync, or `sync::complete_media`, fills in the rest from MyAnimeList).
-fn mal_media(mal: u32, title: &str, episodes: Option<u32>) -> Media {
-    Media { kind: Kind::Anime, id: mal, title: title.to_string(), episodes, ..Media::default() }
+fn mal_media(kind: Kind, mal: u32, title: &str, episodes: Option<u32>) -> Media {
+    Media { kind, id: mal, title: title.to_string(), episodes, ..Media::default() }
 }
 
 // ------------------------------------------------------------------------------------ follow
 
 /// Called inside every store call that changes a main entry (`queue.rs`): the same change is
 /// queued for the mirror. `before`: the main entry before the call (`None`: it wasn't on the
-/// list). Does nothing without a link, for the mirror itself, and for manga.
+/// list). Does nothing without a link and for the mirror itself. Anime and manga alike, each
+/// to the mirror's list of its kind.
 pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>, now: i64) -> Result<()> {
-    if sc.kind != Kind::Anime {
-        return Ok(());
-    }
+    let kind = sc.kind;
     let Some(link) = link_of(tx)? else { return Ok(()) };
     if sc.service != link.main.name() {
         return Ok(());
     }
-    let Some(mal) = mal_id_tx(tx, link.main, media_id)? else { return Ok(()) };
+    let Some(mal) = mal_id_tx(tx, link.main, kind, media_id)? else { return Ok(()) };
     let after = entry_values(tx, sc, media_id)?.map(|(v, _)| v);
     if before.is_none() && after.is_none() {
         return Ok(());
     }
-    let to = Scope::new(link.to.name(), Kind::Anime);
+    let to = Scope::new(link.to.name(), kind);
     let Some(after) = after else {
         // The entry left the main list (a discarded add): what it queued for the mirror and
         // that still waits goes with it (only the main list's changes queue there).
-        drop_wait(tx, mal)?;
-        if let Some(mid) = id_on(tx, link.to, mal)? {
+        drop_wait(tx, kind, mal)?;
+        if let Some(mid) = id_on(tx, link.to, kind, mal)? {
             for op in open_ops(tx, to, mid)? {
                 if op.state != crate::queue::OpState::Sending {
                     discard_tx(tx, to.service, &op)?;
@@ -319,15 +342,15 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
         return Ok(());
     };
     let change = match before {
-        Some(b) => full(&after).without_same(&b),
-        None => add_change(&after),
+        Some(b) => full_of(kind, &after).without_same(&b),
+        None => add_change(kind, &after),
     };
     if change.is_empty() {
         return Ok(());
     }
-    let title: String = tx.query_row("SELECT title FROM media WHERE service = ?1 AND kind = 'anime' AND id = ?2", params![sc.service, media_id], |r| r.get(0)).optional()?.unwrap_or_default();
-    let episodes: Option<u32> = tx.query_row("SELECT episodes FROM media WHERE service = ?1 AND kind = 'anime' AND id = ?2", params![sc.service, media_id], |r| r.get(0)).optional()?.flatten();
-    match id_on(tx, link.to, mal)? {
+    let title: String = tx.query_row("SELECT title FROM media WHERE service = ?1 AND kind = ?3 AND id = ?2", params![sc.service, media_id, kind.name()], |r| r.get(0)).optional()?.unwrap_or_default();
+    let episodes: Option<u32> = tx.query_row("SELECT episodes FROM media WHERE service = ?1 AND kind = ?3 AND id = ?2", params![sc.service, media_id, kind.name()], |r| r.get(0)).optional()?.flatten();
+    match id_on(tx, link.to, kind, mal)? {
         Some(mid) if entry_values(tx, to, mid)?.is_some() => {
             // A score that is the same on the mirror's scale doesn't go (a MyAnimeList 7 and an
             // AniList 73).
@@ -342,15 +365,15 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
         Some(mid) => {
             // Not on the mirror: added there with the main entry's values.
             let media = match link.to {
-                ServiceId::Mal => media_row(tx, link.to, mid)?.unwrap_or_else(|| mal_media(mal, &title, episodes)),
-                ServiceId::AniList => match media_row(tx, link.to, mid)? {
+                ServiceId::Mal => media_row(tx, link.to, kind, mid)?.unwrap_or_else(|| mal_media(kind, mal, &title, episodes)),
+                ServiceId::AniList => match media_row(tx, link.to, kind, mid)? {
                     Some(m) => m,
-                    None => return push_wait(tx, mal, &title, now),
+                    None => return push_wait(tx, kind, mal, &title, now),
                 },
             };
             add_to_mirror(tx, to.service, &media, &after, now)?;
         }
-        None => push_wait(tx, mal, &title, now)?,
+        None => push_wait(tx, kind, mal, &title, now)?,
     }
     Ok(())
 }
@@ -358,21 +381,19 @@ pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<V
 /// Called inside [`Store::remove_from_list`] for a main entry: the mirror's entry is removed
 /// too, through the mirror's own queue (its conflict check stops the removal when the entry
 /// changed on the mirror's website since Kotora's last look). Not on the mirror: an add that
-/// waits for its AniList id is dropped, nothing else happens. Does nothing without a link, for
-/// the mirror itself, and for manga.
+/// waits for its AniList id is dropped, nothing else happens. Does nothing without a link and
+/// for the mirror itself. Anime and manga alike.
 pub(crate) fn follow_removal(tx: &Connection, sc: Scope, media_id: u32, now: i64) -> Result<()> {
-    if sc.kind != Kind::Anime {
-        return Ok(());
-    }
+    let kind = sc.kind;
     let Some(link) = link_of(tx)? else { return Ok(()) };
     if sc.service != link.main.name() {
         return Ok(());
     }
-    let Some(mal) = mal_id_tx(tx, link.main, media_id)? else { return Ok(()) };
-    drop_wait(tx, mal)?;
-    drop_edit(tx, mal)?;
-    let to = Scope::new(link.to.name(), Kind::Anime);
-    if let Some(mid) = id_on(tx, link.to, mal)?
+    let Some(mal) = mal_id_tx(tx, link.main, kind, media_id)? else { return Ok(()) };
+    drop_wait(tx, kind, mal)?;
+    drop_edit(tx, kind, mal)?;
+    let to = Scope::new(link.to.name(), kind);
+    if let Some(mid) = id_on(tx, link.to, kind, mal)?
         && entry_values(tx, to, mid)?.is_some()
     {
         remove_tx(tx, to, mid, now)?;
@@ -387,9 +408,9 @@ fn add_to_mirror(tx: &Connection, service: &str, media: &Media, v: &Values, now:
 }
 
 /// The main entry with MyAnimeList id `mal`: its id and values.
-fn main_entry(tx: &Connection, link: Link, mal: u32) -> Result<Option<(u32, Values)>> {
-    let Some(id) = id_on(tx, link.main, mal)? else { return Ok(None) };
-    Ok(entry_values(tx, Scope::new(link.main.name(), Kind::Anime), id)?.map(|(v, _)| (id, v)))
+fn main_entry(tx: &Connection, link: Link, kind: Kind, mal: u32) -> Result<Option<(u32, Values)>> {
+    let Some(id) = id_on(tx, link.main, kind, mal)? else { return Ok(None) };
+    Ok(entry_values(tx, Scope::new(link.main.name(), kind), id)?.map(|(v, _)| (id, v)))
 }
 
 // ----------------------------------------------------------------------------------- store
@@ -425,6 +446,30 @@ impl Store {
         Ok((a, b))
     }
 
+    /// Aligns more lists of a mirror that is on (the manga lists, when Manga was turned on after
+    /// the mirror): the changes go into each service's queue as [`Store::start_mirror`]'s do,
+    /// and the manga lists count as compared. The link, its waits and its website edits stay.
+    pub fn align_mirror(&mut self, mirror: &[Action], main: &[Action], now: i64) -> Result<(Vec<i64>, Vec<i64>)> {
+        let tx = self.conn.transaction()?;
+        let Some(link) = link_of(&tx)? else { return Err(StoreError("the mirror is off".into())) };
+        let a = import_tx(&tx, link.to.name(), mirror, now, false)?;
+        kv_set(&tx, MANGA, "1")?;
+        let b = import_tx(&tx, link.main.name(), main, now, true)?;
+        tx.commit()?;
+        Ok((a, b))
+    }
+
+    /// Whether the mirror's manga lists were compared ([`Store::align_mirror`], or turned on
+    /// with Manga on).
+    pub fn mirror_manga_aligned(&self) -> Result<bool> {
+        Ok(kv_get(&self.conn, MANGA)?.is_some())
+    }
+
+    /// Marks the manga lists as compared (the mirror was turned on with Manga on).
+    pub fn set_mirror_manga_aligned(&self) -> Result<()> {
+        kv_set(&self.conn, MANGA, "1")
+    }
+
     /// Turns the mirror off: nothing more is queued for it, and its changes that still wait
     /// (not one being sent) are dropped, their entries back as they were. Its saved list stays,
     /// as after a switch of services (signing out deletes it). Returns how many were dropped.
@@ -442,7 +487,7 @@ impl Store {
             discard_tx(&tx, link.to.name(), &op)?;
             n += 1;
         }
-        for key in [LINK, WAITS, EDITS, SINCE] {
+        for key in [LINK, WAITS, EDITS, SINCE, MANGA] {
             tx.execute("DELETE FROM kv WHERE key = ?1", [key])?;
         }
         tx.commit()?;
@@ -452,7 +497,7 @@ impl Store {
     /// The link goes, and nothing else (a switch of services: the old mirror's waiting
     /// changes are the now active list's own and go out with it).
     pub fn unlink_mirror(&self) -> Result<()> {
-        for key in [LINK, WAITS, EDITS, SINCE] {
+        for key in [LINK, WAITS, EDITS, SINCE, MANGA] {
             self.conn.execute("DELETE FROM kv WHERE key = ?1", [key])?;
         }
         Ok(())
@@ -460,73 +505,74 @@ impl Store {
 
     /// Settles a website edit. `main_media`: for "use the mirror's" on an anime not on the main
     /// list when the main list is AniList, its AniList media (looked up by the caller).
-    pub fn settle_web_edit(&mut self, mal_id: u32, how: Settle, main_media: Option<&Media>, now: i64) -> Result<()> {
+    pub fn settle_web_edit(&mut self, kind: Kind, mal_id: u32, how: Settle, main_media: Option<&Media>, now: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         let Some(link) = link_of(&tx)? else { return Err(StoreError("the mirror is off".into())) };
         let edits: Vec<WebEdit> = list_of(&tx, EDITS)?;
-        let Some(e) = edits.into_iter().find(|e| e.mal_id == mal_id) else { return Err(StoreError("that difference is settled already".into())) };
-        let to = Scope::new(link.to.name(), Kind::Anime);
-        let main_sc = Scope::new(link.main.name(), Kind::Anime);
+        let Some(e) = edits.into_iter().find(|e| e.kind == kind && e.mal_id == mal_id) else { return Err(StoreError("that difference is settled already".into())) };
+        let to = Scope::new(link.to.name(), kind);
+        let main_sc = Scope::new(link.main.name(), kind);
         match how {
             Settle::Leave => {}
             Settle::UseMain => {
-                let Some((_, main)) = main_entry(&tx, link, mal_id)? else {
+                let Some((_, main)) = main_entry(&tx, link, kind, mal_id)? else {
                     return Err(StoreError(format!("it isn\u{2019}t on your {} list; Kotora can\u{2019}t remove it from {}", link.main.title(), link.to.title())));
                 };
-                match id_on(&tx, link.to, mal_id)? {
+                match id_on(&tx, link.to, kind, mal_id)? {
                     Some(mid) if entry_values(&tx, to, mid)?.is_some() => {
                         let (cur, _) = entry_values(&tx, to, mid)?.unwrap_or((main, 0));
-                        enqueue_tx(&tx, to, mid, full(&main).without_same(&cur), now)?;
+                        enqueue_tx(&tx, to, mid, full_of(kind, &main).without_same(&cur), now)?;
                     }
-                    Some(mid) if link.to == ServiceId::Mal || media_row(&tx, link.to, mid)?.is_some() => {
-                        let media = media_row(&tx, link.to, mid)?.unwrap_or_else(|| mal_media(mal_id, &e.title, None));
+                    Some(mid) if link.to == ServiceId::Mal || media_row(&tx, link.to, kind, mid)?.is_some() => {
+                        let media = media_row(&tx, link.to, kind, mid)?.unwrap_or_else(|| mal_media(kind, mal_id, &e.title, None));
                         add_to_mirror(&tx, to.service, &media, &main, now)?;
                     }
-                    _ => push_wait(&tx, mal_id, &e.title, now)?,
+                    _ => push_wait(&tx, kind, mal_id, &e.title, now)?,
                 }
             }
             Settle::UseMirror => {
                 let Some(theirs) = e.mirror.as_ref().map(Saved::values) else {
                     return Err(StoreError(format!("it was removed from {}; Kotora can\u{2019}t remove it from {}", link.to.title(), link.main.title())));
                 };
-                match main_entry(&tx, link, mal_id)? {
+                match main_entry(&tx, link, kind, mal_id)? {
                     Some((id, cur)) => {
-                        enqueue_tx(&tx, main_sc, id, full(&theirs).without_same(&cur), now)?;
+                        enqueue_tx(&tx, main_sc, id, full_of(kind, &theirs).without_same(&cur), now)?;
                     }
                     None => {
                         let media = match (link.main, main_media) {
-                            (_, Some(m)) => m.clone(),
-                            (ServiceId::Mal, None) => mal_media(mal_id, &e.title, None),
-                            (ServiceId::AniList, None) => return Err(StoreError(format!("{} doesn\u{2019}t know this anime", link.main.title()))),
+                            (_, Some(m)) => Media { kind, ..m.clone() },
+                            (ServiceId::Mal, None) => mal_media(kind, mal_id, &e.title, None),
+                            (ServiceId::AniList, None) => return Err(StoreError(format!("{} doesn\u{2019}t know this {}", link.main.title(), kind.name()))),
                         };
                         import_tx(&tx, main_sc.service, &[Action::Add { media: Box::new(media), values: theirs }], now, false)?;
                     }
                 }
             }
         }
-        drop_edit(&tx, mal_id)?;
+        drop_edit(&tx, kind, mal_id)?;
         tx.commit()?;
         Ok(())
     }
 
-    /// The mirror's anime for waiting MyAnimeList ids, as the mirror's worker found them: each
+    /// The mirror's anime (or manga) for waiting MyAnimeList ids, as the mirror's worker found them: each
     /// goes on the mirror's list with the main entry's values; ids it doesn't know are marked.
     /// Returns how many were queued.
-    pub fn mirror_mapped(&mut self, asked: &[u32], found: &[Media], now: i64) -> Result<usize> {
+    pub fn mirror_mapped(&mut self, kind: Kind, asked: &[u32], found: &[Media], now: i64) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let Some(link) = link_of(&tx)? else { return Ok(0) };
         let mut waits: Vec<Wait> = list_of(&tx, WAITS)?;
         let mut n = 0;
-        for w in waits.iter_mut().filter(|w| asked.contains(&w.mal_id)) {
+        for w in waits.iter_mut().filter(|w| w.kind == kind && asked.contains(&w.mal_id)) {
             match found.iter().find(|m| m.id_mal == Some(w.mal_id)) {
                 Some(m) => {
-                    if let Some((_, v)) = main_entry(&tx, link, w.mal_id)? {
-                        let to = Scope::new(link.to.name(), Kind::Anime);
+                    if let Some((_, v)) = main_entry(&tx, link, kind, w.mal_id)? {
+                        let to = Scope::new(link.to.name(), kind);
+                        let m = Media { kind, ..m.clone() };
                         match entry_values(&tx, to, m.id)? {
                             Some((cur, _)) => {
-                                enqueue_tx(&tx, to, m.id, add_change(&v).without_same_ten(&cur), now)?;
+                                enqueue_tx(&tx, to, m.id, add_change(kind, &v).without_same_ten(&cur), now)?;
                             }
-                            None => add_to_mirror(&tx, to.service, m, &v, now)?,
+                            None => add_to_mirror(&tx, to.service, &m, &v, now)?,
                         }
                         n += 1;
                     }
@@ -543,17 +589,17 @@ impl Store {
 
     /// One main entry changed outside the queue (its website, at a sync): the change is
     /// mirrored like an edit made here.
-    pub fn mirror_follow(&mut self, main_id: u32, before: Option<Values>, now: i64) -> Result<()> {
+    pub fn mirror_follow(&mut self, kind: Kind, main_id: u32, before: Option<Values>, now: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         let Some(link) = link_of(&tx)? else { return Ok(()) };
-        follow(&tx, Scope::new(link.main.name(), Kind::Anime), main_id, before, now)?;
+        follow(&tx, Scope::new(link.main.name(), kind), main_id, before, now)?;
         tx.commit()?;
         Ok(())
     }
 
-    fn save_web_edits(&self, add: Vec<WebEdit>, clear: &HashSet<u32>) -> Result<usize> {
+    fn save_web_edits(&self, kind: Kind, add: Vec<WebEdit>, clear: &HashSet<u32>) -> Result<usize> {
         let mut all: Vec<WebEdit> = list_of(&self.conn, EDITS)?;
-        all.retain(|e| !clear.contains(&e.mal_id) && !add.iter().any(|a| a.mal_id == e.mal_id));
+        all.retain(|e| e.kind != kind || (!clear.contains(&e.mal_id) && !add.iter().any(|a| a.mal_id == e.mal_id)));
         let n = add.len();
         all.extend(add);
         all.sort_by_key(|e| std::cmp::Reverse(e.at));
@@ -569,15 +615,16 @@ impl Store {
 /// Entries with a change still waiting are left alone (the queue's own conflict check covers
 /// them). A sync with no saved list before it mirrors nothing (it would be the whole list).
 /// Returns how many were followed.
-pub fn after_main_sync(store: &mut Store, service: &str, old: &[ListItem], now: i64) -> Result<usize> {
+pub fn after_main_sync<'a>(store: &mut Store, scope: impl Into<Scope<'a>>, old: &[ListItem], now: i64) -> Result<usize> {
+    let Scope { service, kind } = scope.into();
     let Some(link) = store.mirror_link()?.filter(|l| l.main.name() == service) else { return Ok(0) };
     if old.is_empty() {
         return Ok(0);
     }
     let since: i64 = store.kv_get(SINCE)?.and_then(|v| v.parse().ok()).unwrap_or(0);
-    let sc = Scope::new(link.main.name(), Kind::Anime);
+    let sc = Scope::new(link.main.name(), kind);
     let before: HashMap<u32, &ListItem> = old.iter().map(|it| (it.media.id, it)).collect();
-    let open: HashSet<u32> = store.queue(sc.service, now)?.into_iter().filter(|o| o.state.is_open()).map(|o| o.media_id).collect();
+    let open: HashSet<u32> = store.queue(sc.service, now)?.into_iter().filter(|o| o.kind == kind && o.state.is_open()).map(|o| o.media_id).collect();
     let mut n = 0;
     for it in store.load_list(sc)? {
         if open.contains(&it.media.id) {
@@ -587,7 +634,7 @@ pub fn after_main_sync(store: &mut Store, service: &str, old: &[ListItem], now: 
         if it.updated_at <= since || was.is_some_and(|w| it.updated_at <= w.updated_at) {
             continue;
         }
-        store.mirror_follow(it.media.id, was.map(|w| w.values()), now)?;
+        store.mirror_follow(kind, it.media.id, was.map(|w| w.values()), now)?;
         n += 1;
     }
     Ok(n)
@@ -603,26 +650,34 @@ pub struct MirrorSync {
 }
 
 /// Reads the mirror's list, saves it, and lists what changed on the mirror's website since the
-/// last look and now differs from the main list ([`WebEdit`]). The first sync only saves.
+/// last look and now differs from the main list ([`WebEdit`]). The first sync only saves. With
+/// Manga on, the mirror's manga list too (the first read of it only saves, as well).
 pub fn sync_mirror(service: &mut dyn ListService, store: &mut Store, now: i64) -> std::result::Result<MirrorSync, ServiceError> {
     let other = |e: StoreError| ServiceError::Other(format!("can\u{2019}t save the mirror\u{2019}s list: {e}"));
     let Some(link) = store.mirror_link().map_err(other)? else { return Ok(MirrorSync { items: 0, web_edits: 0 }) };
     if service.name() != link.to.name() {
         return Err(ServiceError::Other(format!("{} is not the mirror", service.title())));
     }
-    let to = Scope::new(link.to.name(), Kind::Anime);
-    let had = store.synced_at(to).map_err(other)?.is_some();
-    let old = store.load_list(to).map_err(other)?;
-    let fetched = service.fetch_list()?;
-    store.replace_list(to, &fetched, now).map_err(other)?;
-    let web_edits = if had { find_web_edits(store, link, &old, &fetched, now).map_err(other)? } else { 0 };
-    Ok(MirrorSync { items: fetched.len(), web_edits })
+    let mut out = MirrorSync { items: 0, web_edits: 0 };
+    let manga = store.manga_enabled().map_err(other)?;
+    for kind in Kind::ALL.into_iter().filter(|k| *k == Kind::Anime || manga) {
+        let to = Scope::new(link.to.name(), kind);
+        let had = store.synced_at(to).map_err(other)?.is_some();
+        let old = store.load_list(to).map_err(other)?;
+        let fetched = service.fetch_list_of(kind)?;
+        store.replace_list(to, &fetched, now).map_err(other)?;
+        out.items += fetched.len();
+        if had {
+            out.web_edits += find_web_edits(store, link, kind, &old, &fetched, now).map_err(other)?;
+        }
+    }
+    Ok(out)
 }
 
-fn find_web_edits(store: &Store, link: Link, old: &[ListItem], fetched: &[ListItem], now: i64) -> Result<usize> {
-    let open = |service: ServiceId| -> Result<HashSet<u32>> { Ok(store.queue(service.name(), now)?.into_iter().filter(|o| o.state.is_open()).map(|o| o.media_id).collect()) };
+fn find_web_edits(store: &Store, link: Link, kind: Kind, old: &[ListItem], fetched: &[ListItem], now: i64) -> Result<usize> {
+    let open = |service: ServiceId| -> Result<HashSet<u32>> { Ok(store.queue(service.name(), now)?.into_iter().filter(|o| o.kind == kind && o.state.is_open()).map(|o| o.media_id).collect()) };
     let (open_main, open_mirror) = (open(link.main)?, open(link.to)?);
-    let main: HashMap<u32, ListItem> = store.load_list(link.main.name())?.into_iter().filter_map(|it| Some((mal_id_of(link.main, &it.media)?, it))).collect();
+    let main: HashMap<u32, ListItem> = store.load_list((link.main.name(), kind))?.into_iter().filter_map(|it| Some((mal_id_of(link.main, &it.media)?, it))).collect();
     let was: HashMap<u32, &ListItem> = old.iter().map(|it| (it.media.id, it)).collect();
     let now_ids: HashSet<u32> = fetched.iter().map(|it| it.media.id).collect();
     let mut found = Vec::new();
@@ -633,7 +688,7 @@ fn find_web_edits(store: &Store, link: Link, old: &[ListItem], fetched: &[ListIt
         if open_mirror.contains(&f.media.id) || m.is_some_and(|m| open_main.contains(&m.media.id)) {
             continue;
         }
-        if m.is_some_and(|m| same(&m.values(), &f.values())) {
+        if m.is_some_and(|m| same_of(kind, &m.values(), &f.values())) {
             // Equal again (changed the same way on both sites): nothing left to settle.
             settled.insert(mal);
             continue;
@@ -642,6 +697,7 @@ fn find_web_edits(store: &Store, link: Link, old: &[ListItem], fetched: &[ListIt
             continue;
         }
         found.push(WebEdit {
+            kind,
             mal_id: mal,
             title: m.map_or_else(|| f.media.title.clone(), |m| m.media.title.clone()),
             main_id: m.map(|m| m.media.id),
@@ -657,9 +713,9 @@ fn find_web_edits(store: &Store, link: Link, old: &[ListItem], fetched: &[ListIt
         if open_main.contains(&m.media.id) {
             continue;
         }
-        found.push(WebEdit { mal_id: mal, title: m.media.title.clone(), main_id: Some(m.media.id), main: Some(m.values().into()), mirror_id: None, mirror: None, at: now });
+        found.push(WebEdit { kind, mal_id: mal, title: m.media.title.clone(), main_id: Some(m.media.id), main: Some(m.values().into()), mirror_id: None, mirror: None, at: now });
     }
-    store.save_web_edits(found, &settled)
+    store.save_web_edits(kind, found, &settled)
 }
 
 /// The most ids one [`map_waits`] call looks up (one AniList request holds 50).
@@ -669,12 +725,18 @@ pub const MAP_MAX: usize = 50;
 /// request) and queues them. Returns how many were queued.
 pub fn map_waits(service: &mut dyn ListService, store: &mut Store, now: i64) -> std::result::Result<usize, ServiceError> {
     let other = |e: StoreError| ServiceError::Other(e.to_string());
-    let ids: Vec<u32> = store.mirror_waits().map_err(other)?.into_iter().filter(|w| w.error.is_none()).map(|w| w.mal_id).take(MAP_MAX).collect();
-    if ids.is_empty() {
-        return Ok(0);
+    let waits = store.mirror_waits().map_err(other)?;
+    let mut n = 0;
+    // Anime and manga apart: AniList looks each kind up with its own request.
+    for kind in Kind::ALL {
+        let ids: Vec<u32> = waits.iter().filter(|w| w.kind == kind && w.error.is_none()).map(|w| w.mal_id).take(MAP_MAX).collect();
+        if ids.is_empty() {
+            continue;
+        }
+        let found = service.media_by_mal_ids_of(kind, &ids)?;
+        n += store.mirror_mapped(kind, &ids, &found, now).map_err(other)?;
     }
-    let found = service.media_by_mal_ids(&ids)?;
-    store.mirror_mapped(&ids, &found, now).map_err(other)
+    Ok(n)
 }
 
 // --------------------------------------------------------------------------------- preview
@@ -731,6 +793,8 @@ pub struct OnlyMirror {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preview {
     pub link: Link,
+    /// The anime lists or the manga lists.
+    pub kind: Kind,
     /// The main list against the mirror's, as an import would see it: New = only on the main
     /// list, Different, Same, Unknown = can't be mirrored (and why).
     pub plan: Plan,
@@ -767,13 +831,13 @@ impl Preview {
 }
 
 /// The main list as an import file: each entry under its MyAnimeList id (0: none).
-fn as_file(link: Link, main: &[ListItem]) -> XmlList {
+fn as_file(link: Link, kind: Kind, main: &[ListItem]) -> XmlList {
     let entries = main
         .iter()
         .map(|it| XmlEntry {
-            kind: Kind::Anime,
-            volumes_read: 0,
-            volumes: None,
+            kind,
+            volumes_read: it.volumes,
+            volumes: it.media.volumes,
             mal_id: mal_id_of(link.main, &it.media).unwrap_or(0),
             title: it.media.title.clone(),
             series_type: String::new(),
@@ -790,12 +854,17 @@ fn as_file(link: Link, main: &[ListItem]) -> XmlList {
             update_on_import: true,
         })
         .collect();
-    XmlList { kind: Kind::Anime, user_name: None, entries, other: 0 }
+    XmlList { kind, user_name: None, entries, other: 0 }
 }
 
 /// MyAnimeList ids only on the main list (the mirror must look them up when it is AniList).
 pub fn ids_only_on_main(link: Link, main: &[ListItem], mirror: &[ListItem]) -> Vec<u32> {
-    Plan::ids_to_map(&as_file(link, main), mirror, link.to.name())
+    ids_only_on_main_of(link, Kind::Anime, main, mirror)
+}
+
+/// [`ids_only_on_main`] for the lists of `kind`.
+pub fn ids_only_on_main_of(link: Link, kind: Kind, main: &[ListItem], mirror: &[ListItem]) -> Vec<u32> {
+    Plan::ids_to_map(&as_file(link, kind, main), mirror, link.to.name())
 }
 
 /// MyAnimeList ids only on the mirror (the main service must look them up when it is AniList).
@@ -809,7 +878,12 @@ pub fn ids_only_on_mirror(link: Link, main: &[ListItem], mirror: &[ListItem]) ->
 /// ids only on the main list (AniList mirror); `main_media`: the main service's media for ids
 /// only on the mirror (AniList main). Pure: tests drive it.
 pub fn compare(link: Link, main: &[ListItem], mirror: &[ListItem], mirror_media: &HashMap<u32, Media>, main_media: &HashMap<u32, Media>) -> Preview {
-    let file = as_file(link, main);
+    compare_of(link, Kind::Anime, main, mirror, mirror_media, main_media)
+}
+
+/// [`compare`] for the lists of `kind` (manga: volumes count, the merge's higher counts win).
+pub fn compare_of(link: Link, kind: Kind, main: &[ListItem], mirror: &[ListItem], mirror_media: &HashMap<u32, Media>, main_media: &HashMap<u32, Media>) -> Preview {
+    let file = as_file(link, kind, main);
     let mut plan = listxml::plan(&file, link.to.name(), mirror, mirror_media);
     plan.service = link.to.name().to_string();
     let main_by_mal: HashMap<u32, &ListItem> = main.iter().filter_map(|it| Some((mal_id_of(link.main, &it.media)?, it))).collect();
@@ -818,7 +892,10 @@ pub fn compare(link: Link, main: &[ListItem], mirror: &[ListItem], mirror_media:
         let (Some(mirror_id), Some(theirs), Some(m)) = (r.target, r.current, main_by_mal.get(&r.entry.mal_id)) else { continue };
         let mine = m.values();
         let episodes = m.media.episodes.or(r.media.as_ref().and_then(|x| x.episodes));
-        let (update, conflict, with_mirror_status) = listxml::resolve(&mine, &theirs, episodes);
+        let (update, conflict, with_mirror_status) = match kind {
+            Kind::Anime => listxml::resolve(&mine, &theirs, episodes),
+            Kind::Manga => listxml::resolve_counts(&mine, &theirs, episodes, m.media.volumes.or(r.media.as_ref().and_then(|x| x.volumes))),
+        };
         merge.push(MergeRow { mal_id: r.entry.mal_id, title: m.media.title.clone(), main_id: m.media.id, mirror_id, main: mine, mirror: theirs, episodes, update, conflict, with_mirror_status });
     }
     let mut only_mirror = Vec::new();
@@ -829,7 +906,7 @@ pub fn compare(link: Link, main: &[ListItem], mirror: &[ListItem], mirror_media:
             None => unmatched_mirror.push(it.media.title.clone()),
             Some(mal) if !main_by_mal.contains_key(&mal) && seen.insert(mal) => {
                 let main_media = match link.main {
-                    ServiceId::Mal => Some(mal_media(mal, &it.media.title, it.media.episodes)),
+                    ServiceId::Mal => Some(Media { volumes: it.media.volumes, ..mal_media(kind, mal, &it.media.title, it.media.episodes) }),
                     ServiceId::AniList => main_media.get(&mal).cloned(),
                 };
                 only_mirror.push(OnlyMirror { mal_id: mal, item: it.clone(), main_media });
@@ -837,7 +914,7 @@ pub fn compare(link: Link, main: &[ListItem], mirror: &[ListItem], mirror_media:
             Some(_) => {}
         }
     }
-    Preview { link, plan, merge, only_mirror, unmatched_mirror }
+    Preview { link, kind, plan, merge, only_mirror, unmatched_mirror }
 }
 
 /// The changes `align` makes: (for the mirror, for the main list). `mirror_status`: MyAnimeList
@@ -855,14 +932,14 @@ pub fn align_actions(p: &Preview, align: Align, mirror_status: &HashSet<u32>) ->
             Align::MainWins => r.main,
             _ => r.merged(mirror_status.contains(&r.mal_id)),
         };
-        let c = full(&target).without_same_ten(&r.mirror);
+        let c = full_of(p.kind, &target).without_same_ten(&r.mirror);
         if !c.is_empty() {
-            to.push(Action::Update { kind: Kind::Anime, media_id: r.mirror_id, change: c });
+            to.push(Action::Update { kind: p.kind, media_id: r.mirror_id, change: c });
         }
         if align == Align::Merge {
-            let c = full(&target).without_same_ten(&r.main);
+            let c = full_of(p.kind, &target).without_same_ten(&r.main);
             if !c.is_empty() {
-                main.push(Action::Update { kind: Kind::Anime, media_id: r.main_id, change: c });
+                main.push(Action::Update { kind: p.kind, media_id: r.main_id, change: c });
             }
         }
     }

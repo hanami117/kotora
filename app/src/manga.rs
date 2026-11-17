@@ -344,6 +344,9 @@ impl State {
             let msg = match (kotora_core::store::Store::open(&kotora_core::paths::db_file()), crate::account::open()) {
                 (Ok(mut store), Some(mut service)) => {
                     let r = kotora_core::sync::sync_manga(service.as_mut(), &mut store, kotora_core::time::now_unix());
+                    if matches!(r, kotora_core::sync::MangaSync::Synced { .. }) {
+                        crate::mirror::kick(&h, false);
+                    }
                     manga_msg(r, svc.title())
                 }
                 (Err(e), _) => Some(MangaMsg::Failed(format!("Can't open the saved list: {e}"))),

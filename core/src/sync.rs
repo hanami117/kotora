@@ -33,9 +33,12 @@ pub fn sync_manga(service: &mut dyn ListService, store: &mut Store, now: i64) ->
         Err(e) => return MangaSync::Failed(e),
     };
     let scope = Scope::new(service.name(), Kind::Manga);
+    let old = store.load_list(scope).unwrap_or_default();
     if let Err(e) = store.replace_list(scope, &items, now) {
         return MangaSync::NotSaved(format!("can't save the manga list: {e}"));
     }
+    // Manga changed on the service's website since the last sync go to the mirror, if it is on.
+    let _ = crate::mirror::after_main_sync(store, scope, &old, now);
     match store.load_list(scope) {
         Ok(items) => MangaSync::Synced { items, synced_at: now },
         Err(e) => MangaSync::NotSaved(format!("can't read the saved manga list: {e}")),

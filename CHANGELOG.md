@@ -23,14 +23,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   Score, +1 chapter, Edit and Open on MyAnimeList. `kot add --manga QUERY|ID` and `kot remove --manga
   TITLE|ID` do the same from the terminal (Manga must be on).
 - **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
-  manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror and list
-  export leave manga out.
-- **AniList manga (core and `kot`):** with AniList as your list service, `kot manga on` now works and syncs read
-  your AniList manga list (`kot list --manga`, scores in your AniList score format). Chapters, volumes, status,
+  manga list in aligned columns, by the same rule (chapters, volumes or both).
+- **AniList manga:** with AniList as your list service, the Anime | Manga switch and `kot manga on` work too and
+  syncs read your AniList manga list (`kot list --manga`; scores everywhere in your AniList score format; search
+  takes anilist.co/manga links). Chapters, volumes, status,
   score, rereads (AniList's Rereading) and removal go through the sync queue as on MyAnimeList; manga search and
   details read authors from AniList's staff (AniList has no magazine, so no serialization). Manga, manhwa,
   manhua, light novel and one-shot get MyAnimeList's labels. Same rate budget as anime (25 requests a minute);
-  AniList data is still never exported. The window's switch on AniList comes with the manga UI.
+  AniList data is still never exported.
 - **Export and import your manga list:** with Manga on, Settings → Account has Export manga list… and Import
   manga list… beside the anime ones, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
   export format (status, chapters and volumes read, score, times read, rereading, start and finish dates where
@@ -38,8 +38,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   use) and works as the anime one: "Add new only" or "Add new and update", a higher chapter or volume count wins,
   a score fills an empty one, you choose when the statuses disagree, everything goes through the sync queue, and
   "Undo import" takes back what hasn't been sent. An anime file given to the manga import (or the other way round)
-  is refused with a message saying which list it is. MyAnimeList only: AniList's API terms don't allow exporting
-  from AniList, and importing a manga list into AniList comes with AniList manga.
+  is refused with a message saying which list it is. Export is MyAnimeList only (AniList's API terms don't allow
+  exporting from AniList); importing a manga file into AniList works, its MyAnimeList ids looked up on AniList.
+- **The account mirror covers manga:** with Manga on, every manga change you make (chapters, volumes, status,
+  score, rereads, adds and Remove from list) also goes to the other service, through its own queue, with the same
+  rules as anime: matched by MyAnimeList id (manga not yet on AniList are looked up there), scores compared on the
+  1-10 scale, edits made on the other service's website never overwritten (they show in the Queue to settle), and
+  a removal stops as a conflict if the manga changed there. Turning the mirror on compares the manga lists too, in
+  the same preview; with the mirror already on, Settings → Account offers "Align manga lists" once.
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list

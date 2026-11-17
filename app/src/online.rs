@@ -136,6 +136,10 @@ fn sync_now(h: &Handle, mut store: Store) {
         // pages and by `kot list --manga`.
         {
             let r = kotora_core::sync::sync_manga(service.as_mut(), &mut store, now_unix());
+            // Manga edited on the service's website may wait for the mirror now.
+            if matches!(r, kotora_core::sync::MangaSync::Synced { .. }) {
+                crate::mirror::kick(h, false);
+            }
             if let Some(m) = crate::manga::manga_msg(r, active.title())
                 && account::active() == active
             {

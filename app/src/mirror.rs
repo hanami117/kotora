@@ -26,7 +26,7 @@ use kotora_core::queue::{self, Op, OpState, Step};
 use kotora_core::service::{ListService, ServiceError, ServiceId};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::{ListItem, ScoreFormat, Status, Values, paths};
+use kotora_core::{Kind, ListItem, ScoreFormat, Status, Values, paths};
 use rune::{El, col, el, row, text};
 
 use crate::model::{Handle, State};
@@ -57,6 +57,8 @@ pub struct MirrorUi {
     pub fmt: ScoreFormat,
     /// The mirror service's last problem (offline, sign in again), in plain words.
     pub trouble: Option<String>,
+    /// The manga lists were compared (turned on with Manga on, or "Align manga" since).
+    pub manga_aligned: bool,
     pub worker: Arc<Worker>,
 }
 
@@ -67,6 +69,36 @@ pub struct Prev {
     pub fetched: Vec<ListItem>,
     /// Merge: MyAnimeList ids whose status conflict takes the mirror's status.
     pub mirror_status: HashSet<u32>,
+    /// With Manga on: the manga lists, compared too (one choice covers both).
+    pub manga: Option<Box<Prev>>,
+    /// The mirror is on already: these lists (the manga ones) are aligned now, nothing else.
+    pub extend: bool,
+}
+
+impl Prev {
+    /// The part comparing the lists of `kind`.
+    fn part_mut(&mut self, kind: Kind) -> Option<&mut Prev> {
+        if self.p.kind == kind {
+            return Some(self);
+        }
+        self.manga.as_deref_mut().filter(|m| m.p.kind == kind)
+    }
+
+    /// Every part, anime first.
+    fn parts(&self) -> Vec<&Prev> {
+        std::iter::once(self).chain(self.manga.as_deref()).collect()
+    }
+
+    /// What a choice queues, all parts together: (for the mirror, for the main list).
+    fn actions(&self, align: Align) -> (Vec<kotora_core::listxml::Action>, Vec<kotora_core::listxml::Action>) {
+        let (mut to, mut main) = (Vec::new(), Vec::new());
+        for part in self.parts() {
+            let (t, m) = mirror::align_actions(&part.p, align, &part.mirror_status);
+            to.extend(t);
+            main.extend(m);
+        }
+        (to, main)
+    }
 }
 
 impl MirrorUi {
@@ -101,7 +133,7 @@ impl MirrorUi {
 pub enum Cmd {
     /// Send what waits now; `sync`: then read the mirror's list (after a main sync).
     Kick { sync: bool },
-    Settle(u32, Settle),
+    Settle(Kind, u32, Settle),
     KeepMine(i64),
     TakeTheirs(i64),
     Discard(i64),
@@ -152,6 +184,7 @@ struct Snapshot {
     waits: Vec<Wait>,
     synced_at: Option<i64>,
     fmt: ScoreFormat,
+    manga_aligned: bool,
 }
 
 fn snapshot(store: &Store) -> Snapshot {
@@ -167,6 +200,7 @@ fn snapshot(store: &Store) -> Snapshot {
             Some(ServiceId::AniList) => store.profile(ServiceId::AniList.name()).ok().flatten().map(|p| p.score_format).unwrap_or_default(),
             _ => ScoreFormat::Point10,
         },
+        manga_aligned: store.mirror_manga_aligned().unwrap_or(false),
     }
 }
 
@@ -178,6 +212,7 @@ fn report(h: &Handle, snap: Snapshot, trouble: Option<Option<String>>) {
         s.mirror.waits = snap.waits;
         s.mirror.synced_at = snap.synced_at;
         s.mirror.fmt = snap.fmt;
+        s.mirror.manga_aligned = snap.manga_aligned;
         if let Some(t) = trouble {
             s.mirror.trouble = t;
         }
@@ -207,14 +242,14 @@ fn apply(store: &mut Store, link: Link, cmd: Cmd, want_sync: &mut bool) -> Resul
         Cmd::KeepMine(id) => store.keep_mine(id),
         Cmd::TakeTheirs(id) => store.take_theirs(to, id, now),
         Cmd::Discard(id) => store.discard(to, id, now),
-        Cmd::Settle(mal, how) => {
+        Cmd::Settle(kind, mal, how) => {
             let mut media = None;
-            let missing = store.web_edits().unwrap_or_default().iter().any(|e| e.mal_id == mal && e.main_id.is_none());
+            let missing = store.web_edits().unwrap_or_default().iter().any(|e| e.kind == kind && e.mal_id == mal && e.main_id.is_none());
             if how == Settle::UseMirror && missing && link.main == ServiceId::AniList {
                 let mut svc = crate::account::open_for(link.main).ok_or_else(|| format!("{} is needed to add it: sign in, and check you are online.", link.main.title()))?;
-                media = svc.media_by_mal_ids(&[mal]).map_err(|e| trouble_text(link.main, &e))?.into_iter().next();
+                media = svc.media_by_mal_ids_of(kind, &[mal]).map_err(|e| trouble_text(link.main, &e))?.into_iter().next();
             }
-            store.settle_web_edit(mal, how, media.as_ref(), now)
+            store.settle_web_edit(kind, mal, how, media.as_ref(), now)
         }
     };
     r.map_err(|e| e.to_string())
@@ -367,6 +402,7 @@ pub fn load(s: &mut State) {
             s.mirror.edits = snap.edits;
             s.mirror.waits = snap.waits;
             s.mirror.synced_at = snap.synced_at;
+            s.mirror.manga_aligned = snap.manga_aligned;
             if on {
                 send(s, Cmd::Kick { sync: false });
             }
@@ -424,47 +460,96 @@ fn busy(h: &Handle, msg: String) {
     });
 }
 
-/// Reads the mirror's list and compares it with the saved main list (a thread).
+/// Reads the mirror's anime list (and its manga list, with Manga on) and compares each with
+/// the saved main list (a thread).
 fn compare(h: &Handle, link: Link) -> Result<Prev, String> {
+    let manga = Store::open(&paths::db_file()).ok().and_then(|st| st.manga_enabled().ok()).unwrap_or(false);
+    let mut p = compare_kind(h, link, Kind::Anime)?;
+    if manga {
+        busy(h, format!("Reading your {} manga list\u{2026}", link.to.title()));
+        p.manga = Some(Box::new(compare_kind(h, link, Kind::Manga)?));
+    }
+    Ok(p)
+}
+
+/// Reads the mirror's list of `kind` and compares it with the saved main list of that kind.
+fn compare_kind(h: &Handle, link: Link, kind: Kind) -> Result<Prev, String> {
     let open = |id: ServiceId| crate::account::open_for(id).ok_or_else(|| format!("Sign in to {} first, and check you are online.", id.title()));
     let mut to = open(link.to)?;
-    let fetched = to.fetch_list().map_err(|e| trouble_text(link.to, &e))?;
+    let fetched = to.fetch_list_of(kind).map_err(|e| trouble_text(link.to, &e))?;
     let store = Store::open(&paths::db_file()).map_err(|e| format!("Can\u{2019}t open the saved list: {e}"))?;
-    let main = store.load_list(link.main.name()).map_err(|e| format!("Can\u{2019}t read the saved list: {e}"))?;
+    let main = store.load_list((link.main.name(), kind)).map_err(|e| format!("Can\u{2019}t read the saved list: {e}"))?;
     let lookup = |svc: &mut dyn ListService, ids: Vec<u32>| -> Result<HashMap<u32, kotora_core::Media>, String> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         busy(h, format!("Looking up {} on {}\u{2026}", plural(ids.len(), "MyAnimeList id", "MyAnimeList ids"), svc.title()));
-        let found = svc.media_by_mal_ids(&ids).map_err(|e| format!("Can\u{2019}t look the ids up on {}: {e}", svc.title()))?;
+        let found = svc.media_by_mal_ids_of(kind, &ids).map_err(|e| format!("Can\u{2019}t look the ids up on {}: {e}", svc.title()))?;
         Ok(found.into_iter().filter_map(|m| Some((m.id_mal?, m))).collect())
     };
-    let mirror_media = if link.to == ServiceId::AniList { lookup(to.as_mut(), mirror::ids_only_on_main(link, &main, &fetched))? } else { HashMap::new() };
+    let mirror_media = if link.to == ServiceId::AniList { lookup(to.as_mut(), mirror::ids_only_on_main_of(link, kind, &main, &fetched))? } else { HashMap::new() };
     let main_media = if link.main == ServiceId::AniList { lookup(open(link.main)?.as_mut(), mirror::ids_only_on_mirror(link, &main, &fetched))? } else { HashMap::new() };
-    let p = mirror::compare(link, &main, &fetched, &mirror_media, &main_media);
-    Ok(Prev { p, fetched, mirror_status: HashSet::new() })
+    let p = mirror::compare_of(link, kind, &main, &fetched, &mirror_media, &main_media);
+    Ok(Prev { p, fetched, mirror_status: HashSet::new(), manga: None, extend: false })
+}
+
+/// "Align manga…": a mirror that is on, Manga turned on since: compare the manga lists now
+/// (a thread), with the same three choices. Nothing is saved yet.
+fn begin_manga(s: &mut State) {
+    if s.mirror.busy.is_some() || s.mirror.preview.is_some() {
+        return;
+    }
+    let Some(link) = s.mirror.link else { return };
+    s.mirror.error = None;
+    s.mirror.note = None;
+    s.mirror.busy = Some(format!("Reading your {} manga list\u{2026}", link.to.title()));
+    let Some(h) = s.handle.clone() else { return };
+    let _ = std::thread::Builder::new().name("kotora-mirror-compare".into()).spawn(move || {
+        let r = compare_kind(&h, link, Kind::Manga).map(|p| Prev { extend: true, ..p });
+        h.update_if(move |s, _| {
+            s.mirror.busy = None;
+            match r {
+                Ok(p) => s.mirror.preview = Some(p),
+                Err(e) => s.mirror.error = Some(e),
+            }
+            true
+        });
+    });
 }
 
 /// A choice in the preview: the mirror's list is saved, the alignment queued, the link saved.
 fn choose(s: &mut State, align: Align) {
     let Some(prev) = s.mirror.preview.take() else { return };
-    let (to, main) = mirror::align_actions(&prev.p, align, &prev.mirror_status);
+    let (to, main) = prev.actions(align);
     let link = prev.p.link;
+    let extend = prev.extend;
     s.mirror.busy = Some("Saving\u{2026}".into());
     let Some(h) = s.handle.clone() else { return };
-    let fetched = prev.fetched;
+    // The mirror's lists as read, each saved under its kind.
+    let fetched: Vec<(Kind, Vec<ListItem>)> = prev.parts().into_iter().map(|p| (p.p.kind, p.fetched.clone())).collect();
+    let with_manga = fetched.iter().any(|(k, _)| *k == Kind::Manga);
     let _ = std::thread::Builder::new().name("kotora-mirror-start".into()).spawn(move || {
         let r = (|| {
             let mut store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
             let now = now_unix();
-            store.replace_list(link.to.name(), &fetched, now).map_err(|e| e.to_string())?;
-            store.start_mirror(link, &to, &main, now).map_err(|e| e.to_string())
+            for (kind, list) in &fetched {
+                store.replace_list((link.to.name(), *kind), list, now).map_err(|e| e.to_string())?;
+            }
+            if extend {
+                return store.align_mirror(&to, &main, now).map_err(|e| e.to_string());
+            }
+            let r = store.start_mirror(link, &to, &main, now).map_err(|e| e.to_string())?;
+            if with_manga {
+                store.set_mirror_manga_aligned().map_err(|e| e.to_string())?;
+            }
+            Ok(r)
         })();
         h.update_if(move |s, _| {
             s.mirror.busy = None;
             match r {
                 Ok((a, b)) => {
                     s.mirror.link = Some(link);
+                    s.mirror.manga_aligned |= with_manga;
                     s.mirror.note = Some(match (a.len(), b.len()) {
                         (0, 0) => format!("On. Edits you make here from now on also go to {}.", link.to.title()),
                         (a, 0) => format!("On. Queued {} for {}.", plural(a, "change", "changes"), link.to.title()),
@@ -516,8 +601,8 @@ fn stop(s: &mut State) {
     });
 }
 
-fn pick_status(s: &mut State, mal: u32, mirror_status: bool) {
-    if let Some(p) = &mut s.mirror.preview {
+fn pick_status(s: &mut State, kind: Kind, mal: u32, mirror_status: bool) {
+    if let Some(p) = s.mirror.preview.as_mut().and_then(|p| p.part_mut(kind)) {
         if mirror_status {
             p.mirror_status.insert(mal);
         } else {
@@ -526,8 +611,8 @@ fn pick_status(s: &mut State, mal: u32, mirror_status: bool) {
     }
 }
 
-fn pick_all(s: &mut State, mirror_status: bool) {
-    if let Some(p) = &mut s.mirror.preview {
+fn pick_all(s: &mut State, kind: Kind, mirror_status: bool) {
+    if let Some(p) = s.mirror.preview.as_mut().and_then(|p| p.part_mut(kind)) {
         p.mirror_status = if mirror_status { p.p.merge.iter().filter(|r| r.conflict.is_some()).map(|r| r.mal_id).collect() } else { HashSet::new() };
     }
 }
@@ -558,6 +643,11 @@ pub fn settings_row(s: &State) -> El {
     }
     if let Some(e) = &m.error {
         c = c.child(text(e.clone()).key("set/mirror-error").font(theme::LABEL).color(PAL.status(Status::Dropped)).wrap().pb(12.0));
+    }
+    // Manga turned on after the mirror: its lists wait for one comparison.
+    if m.link.is_some() && s.manga.enabled && !m.manga_aligned && m.preview.is_none() && m.busy.is_none() {
+        let note = "Manga edits are mirrored too. Your two manga lists weren\u{2019}t compared yet: align them once, with the same choices.".to_string();
+        c = c.child(crate::transfer::line("set/mirror-align-manga", "Align manga lists", note, small_button("set/mirror-align-manga-button", "Compare\u{2026}", false, Some(begin_manga as fn(&mut State)))));
     }
     if let Some(p) = &m.preview {
         c = c.child(preview(p, (fmt_of(s, p.p.link.main), fmt_of(s, p.p.link.to))));
@@ -592,13 +682,18 @@ fn fmt_of(s: &State, svc: ServiceId) -> ScoreFormat {
     }
 }
 
-fn values_text(v: &Values, fmt: ScoreFormat) -> String {
-    let mut t = v.status.label().to_string();
+/// An entry's values in words; a manga's: Reading, chapter and volume, rereading.
+fn values_text_of(kind: Kind, v: &Values, fmt: ScoreFormat) -> String {
+    let manga = kind == Kind::Manga;
+    let mut t = v.status.label_in(kind).to_string();
     if v.rewatching {
-        t.push_str(", rewatching");
+        t.push_str(if manga { ", rereading" } else { ", rewatching" });
     }
     if v.progress > 0 {
-        t.push_str(&format!(", episode {}", v.progress));
+        t.push_str(&format!(", {} {}", kind.unit(), v.progress));
+    }
+    if manga && v.volumes > 0 {
+        t.push_str(&format!(", volume {}", v.volumes));
     }
     if let Some(sc) = v.score {
         t.push_str(&format!(", score {}", fmt.words(sc)));
@@ -606,94 +701,30 @@ fn values_text(v: &Values, fmt: ScoreFormat) -> String {
     t
 }
 
-fn preview(prev: &Prev, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
-    use kotora_core::listxml::Verdict;
+/// The preview of the lists compared: one section per kind (anime, then manga with Manga on),
+/// then what each choice would queue, and the choices.
+fn preview(prev: &Prev, fmts: (ScoreFormat, ScoreFormat)) -> El {
     let p = &prev.p;
     let (main, to) = (p.link.main.title(), p.link.to.title());
-    let c = p.counts();
+    let parts = prev.parts();
     let mut box_ = col().key("set/mirror-preview").w_full().gap(12.0).padding(14.0).mb(12.0).radius(theme::R_MD).fill(PAL.field).border(1.0, PAL.border);
-    box_ = box_.child(text(format!("Your {main} list and your {to} list, matched by MyAnimeList id")).font(theme::BODY_MED).color(PAL.text).wrap());
-    box_ = box_.child(
-        row()
-            .key("set/mirror-counts")
-            .gap(6.0)
-            .flex_wrap()
-            .child(count_pill("set/mirror-only-main", c.only_main, &format!("only on {main}"), PAL.status(Status::Watching)))
-            .child(count_pill("set/mirror-only-mirror", c.only_mirror, &format!("only on {to}"), PAL.status(Status::PlanToWatch)))
-            .child(count_pill("set/mirror-different", c.different, "different", PAL.status(Status::OnHold)))
-            .child(count_pill("set/mirror-same", c.same, "the same", PAL.status(Status::Completed)))
-            .child(count_pill("set/mirror-unmatched", c.unmatched, "not mirrored", PAL.faint)),
-    );
-    let only_main: Vec<String> = p.plan.rows.iter().filter(|r| r.verdict == Verdict::New).map(|r| format!("{}: {}", r.title(), r.entry.values().map(|v| values_text(&v, fm)).unwrap_or_default())).collect();
-    if !only_main.is_empty() {
-        box_ = box_.child(group("set/mirror-list-only-main", format!("Only on {main}"), only_main));
-    }
-    let only_mirror: Vec<String> = p.only_mirror.iter().map(|o| format!("{}: {}", o.item.media.title, values_text(&o.item.values(), ft))).collect();
-    if !only_mirror.is_empty() {
-        box_ = box_.child(group("set/mirror-list-only-mirror", format!("Only on {to}"), only_mirror));
-    }
-    let diff: Vec<String> = p.merge.iter().map(|r| format!("{}: {main} {} \u{b7} {to} {}", r.title, values_text(&r.main, fm), values_text(&r.mirror, ft))).collect();
-    if !diff.is_empty() {
-        box_ = box_.child(group("set/mirror-list-different", "On both, different".into(), diff));
-    }
-    let conflicts: Vec<_> = p.merge.iter().filter(|r| r.conflict.is_some()).collect();
-    if !conflicts.is_empty() {
-        let mut g = col().key("set/mirror-conflicts").gap(6.0).child(text("STATUS TO PICK (WITH \u{201c}MERGE\u{201d})").font(theme::CAPTION).color(PAL.faint).pb(2.0));
-        let n = conflicts.len();
-        for r in conflicts.into_iter().take(CONFLICTS_SHOWN) {
-            let Some(k) = r.conflict else { continue };
-            let mal = r.mal_id;
-            let theirs = prev.mirror_status.contains(&mal);
-            let (a, b) = (format!("{main}: {}", k.mine.label()), format!("{to}: {}", k.file.label()));
-            g = g.child(
-                row()
-                    .key(format!("set/mirror-conflict/{mal}"))
-                    .gap(8.0)
-                    .center_y()
-                    .child(text(r.title.clone()).font(theme::LABEL).color(PAL.text).truncate().grow(1.0).min_w(0.0))
-                    .child(cell(format!("set/mirror-conflict/{mal}/main"), a.clone(), !theirs, move |s: &mut State| pick_status(s, mal, false)).child(text(a).font(theme::LABEL).color(PAL.text)))
-                    .child(cell(format!("set/mirror-conflict/{mal}/mirror"), b.clone(), theirs, move |s: &mut State| pick_status(s, mal, true)).child(text(b).font(theme::LABEL).color(PAL.text))),
-            );
-        }
-        if n > 1 {
-            let all_theirs = p.merge.iter().filter(|r| r.conflict.is_some()).all(|r| prev.mirror_status.contains(&r.mal_id));
-            let more = if n > CONFLICTS_SHOWN { format!("and {} more. ", n - CONFLICTS_SHOWN) } else { String::new() };
-            let (a, b) = (format!("All {main}\u{2019}s"), format!("All {to}\u{2019}s"));
-            g = g.child(
-                row()
-                    .key("set/mirror-conflicts-all")
-                    .gap(8.0)
-                    .center_y()
-                    .child(text(format!("{more}All of them:")).font(theme::LABEL).color(PAL.faint).grow(1.0).min_w(0.0))
-                    .child(cell("set/mirror-conflicts-all/main".into(), a.clone(), prev.mirror_status.is_empty(), |s: &mut State| pick_all(s, false)).child(text(a).font(theme::LABEL).color(PAL.text)))
-                    .child(cell("set/mirror-conflicts-all/mirror".into(), b.clone(), all_theirs, |s: &mut State| pick_all(s, true)).child(text(b).font(theme::LABEL).color(PAL.text))),
-            );
-        }
-        box_ = box_.child(g);
-    }
-    let mut unmatched: Vec<String> = p
-        .plan
-        .rows
-        .iter()
-        .filter_map(|r| match &r.verdict {
-            Verdict::Unknown(why) => Some(format!("{}: {why}", r.entry.title)),
-            _ => None,
-        })
-        .collect();
-    unmatched.extend(p.unmatched_mirror.iter().map(|t| format!("{t}: on {to}, no MyAnimeList id")));
-    unmatched.extend(p.only_mirror.iter().filter(|o| o.main_media.is_none()).map(|o| format!("{}: not on {main}, can\u{2019}t be added there", o.item.media.title)));
-    if !unmatched.is_empty() {
-        box_ = box_.child(group("set/mirror-list-unmatched", "Not mirrored".into(), unmatched));
+    for part in &parts {
+        box_ = box_.child(preview_part(part, parts.len() > 1, fmts));
     }
     // What each choice would queue.
     let n = |a: Align| {
-        let (t, m) = mirror::align_actions(p, a, &prev.mirror_status);
+        let (t, m) = prev.actions(a);
         (t.len(), m.len())
     };
     let (wins_to, _) = n(Align::MainWins);
     let (merge_to, merge_main) = n(Align::Merge);
+    let what = match (parts.len(), p.kind) {
+        (1, Kind::Manga) => "Manga",
+        (1, _) => "Anime",
+        _ => "Entries",
+    };
     let explain = [
-        format!("{main} wins: {to} becomes a copy of your {main} list ({}). Anime only on {to} stay there.", plural(wins_to, "change", "changes")),
+        format!("{main} wins: {to} becomes a copy of your {main} list ({}). {what} only on {to} stay there.", plural(wins_to, "change", "changes")),
         format!("Merge: what is missing on each side is added; where they differ, the one further along wins and an empty score is filled ({} for {to}, {} for {main}).", plural(merge_to, "change", "changes"), plural(merge_main, "change", "changes")),
         "Don\u{2019}t align: nothing changes now; only edits you make from now on are mirrored.".to_string(),
         "Nothing is removed from either list, and every change goes through the Queue at each service\u{2019}s pace.".to_string(),
@@ -716,6 +747,98 @@ fn preview(prev: &Prev, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
     )
 }
 
+/// One kind's comparison: counts, the lists, the status conflicts to pick, what can't be
+/// mirrored. `heading`: with both kinds shown, a heading per kind. Keys: `set/mirror-…` for
+/// anime, `set/mirror-manga-…` for manga.
+fn preview_part(prev: &Prev, heading: bool, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
+    use kotora_core::listxml::Verdict;
+    let p = &prev.p;
+    let kind = p.kind;
+    let k = if kind == Kind::Manga { "set/mirror-manga" } else { "set/mirror" };
+    let (main, to) = (p.link.main.title(), p.link.to.title());
+    let c = p.counts();
+    let vt = |v: &Values, f: ScoreFormat| values_text_of(kind, v, f);
+    let mut box_ = col().key(format!("{k}-part")).w_full().gap(12.0);
+    if heading {
+        box_ = box_.child(text(format!("{} lists", kind.label()).to_uppercase()).key(format!("{k}-heading")).font(theme::CAPTION).color(PAL.faint));
+    }
+    let what = if kind == Kind::Manga { "manga list" } else { "list" };
+    box_ = box_.child(text(format!("Your {main} {what} and your {to} {what}, matched by MyAnimeList id")).font(theme::BODY_MED).color(PAL.text).wrap());
+    box_ = box_.child(
+        row()
+            .key(format!("{k}-counts"))
+            .gap(6.0)
+            .flex_wrap()
+            .child(count_pill(&format!("{k}-only-main"), c.only_main, &format!("only on {main}"), PAL.status(Status::Watching)))
+            .child(count_pill(&format!("{k}-only-mirror"), c.only_mirror, &format!("only on {to}"), PAL.status(Status::PlanToWatch)))
+            .child(count_pill(&format!("{k}-different"), c.different, "different", PAL.status(Status::OnHold)))
+            .child(count_pill(&format!("{k}-same"), c.same, "the same", PAL.status(Status::Completed)))
+            .child(count_pill(&format!("{k}-unmatched"), c.unmatched, "not mirrored", PAL.faint)),
+    );
+    let only_main: Vec<String> = p.plan.rows.iter().filter(|r| r.verdict == Verdict::New).map(|r| format!("{}: {}", r.title(), r.entry.values().map(|v| vt(&v, fm)).unwrap_or_default())).collect();
+    if !only_main.is_empty() {
+        box_ = box_.child(group(&format!("{k}-list-only-main"), format!("Only on {main}"), only_main));
+    }
+    let only_mirror: Vec<String> = p.only_mirror.iter().map(|o| format!("{}: {}", o.item.media.title, vt(&o.item.values(), ft))).collect();
+    if !only_mirror.is_empty() {
+        box_ = box_.child(group(&format!("{k}-list-only-mirror"), format!("Only on {to}"), only_mirror));
+    }
+    let diff: Vec<String> = p.merge.iter().map(|r| format!("{}: {main} {} \u{b7} {to} {}", r.title, vt(&r.main, fm), vt(&r.mirror, ft))).collect();
+    if !diff.is_empty() {
+        box_ = box_.child(group(&format!("{k}-list-different"), "On both, different".into(), diff));
+    }
+    let conflicts: Vec<_> = p.merge.iter().filter(|r| r.conflict.is_some()).collect();
+    if !conflicts.is_empty() {
+        let mut g = col().key(format!("{k}-conflicts")).gap(6.0).child(text("STATUS TO PICK (WITH \u{201c}MERGE\u{201d})").font(theme::CAPTION).color(PAL.faint).pb(2.0));
+        let n = conflicts.len();
+        for r in conflicts.into_iter().take(CONFLICTS_SHOWN) {
+            let Some(c) = r.conflict else { continue };
+            let mal = r.mal_id;
+            let theirs = prev.mirror_status.contains(&mal);
+            let (a, b) = (format!("{main}: {}", c.mine.label_in(kind)), format!("{to}: {}", c.file.label_in(kind)));
+            g = g.child(
+                row()
+                    .key(format!("{k}-conflict/{mal}"))
+                    .gap(8.0)
+                    .center_y()
+                    .child(text(r.title.clone()).font(theme::LABEL).color(PAL.text).truncate().grow(1.0).min_w(0.0))
+                    .child(cell(format!("{k}-conflict/{mal}/main"), a.clone(), !theirs, move |s: &mut State| pick_status(s, kind, mal, false)).child(text(a).font(theme::LABEL).color(PAL.text)))
+                    .child(cell(format!("{k}-conflict/{mal}/mirror"), b.clone(), theirs, move |s: &mut State| pick_status(s, kind, mal, true)).child(text(b).font(theme::LABEL).color(PAL.text))),
+            );
+        }
+        if n > 1 {
+            let all_theirs = p.merge.iter().filter(|r| r.conflict.is_some()).all(|r| prev.mirror_status.contains(&r.mal_id));
+            let more = if n > CONFLICTS_SHOWN { format!("and {} more. ", n - CONFLICTS_SHOWN) } else { String::new() };
+            let (a, b) = (format!("All {main}\u{2019}s"), format!("All {to}\u{2019}s"));
+            g = g.child(
+                row()
+                    .key(format!("{k}-conflicts-all"))
+                    .gap(8.0)
+                    .center_y()
+                    .child(text(format!("{more}All of them:")).font(theme::LABEL).color(PAL.faint).grow(1.0).min_w(0.0))
+                    .child(cell(format!("{k}-conflicts-all/main"), a.clone(), prev.mirror_status.is_empty(), move |s: &mut State| pick_all(s, kind, false)).child(text(a).font(theme::LABEL).color(PAL.text)))
+                    .child(cell(format!("{k}-conflicts-all/mirror"), b.clone(), all_theirs, move |s: &mut State| pick_all(s, kind, true)).child(text(b).font(theme::LABEL).color(PAL.text))),
+            );
+        }
+        box_ = box_.child(g);
+    }
+    let mut unmatched: Vec<String> = p
+        .plan
+        .rows
+        .iter()
+        .filter_map(|r| match &r.verdict {
+            Verdict::Unknown(why) => Some(format!("{}: {why}", r.entry.title)),
+            _ => None,
+        })
+        .collect();
+    unmatched.extend(p.unmatched_mirror.iter().map(|t| format!("{t}: on {to}, no MyAnimeList id")));
+    unmatched.extend(p.only_mirror.iter().filter(|o| o.main_media.is_none()).map(|o| format!("{}: not on {main}, can\u{2019}t be added there", o.item.media.title)));
+    if !unmatched.is_empty() {
+        box_ = box_.child(group(&format!("{k}-list-unmatched"), "Not mirrored".into(), unmatched));
+    }
+    box_
+}
+
 /// Status conflicts listed one by one; the rest go by "All …".
 const CONFLICTS_SHOWN: usize = 8;
 
@@ -726,8 +849,8 @@ pub fn in_queue(s: &State) -> bool {
     s.mirror.has_queue_items()
 }
 
-fn saved_text(v: Option<&mirror::Saved>, removed: &str, fmt: ScoreFormat) -> String {
-    v.map_or_else(|| removed.to_string(), |v| values_text(&v.values(), fmt))
+fn saved_text(kind: Kind, v: Option<&mirror::Saved>, removed: &str, fmt: ScoreFormat) -> String {
+    v.map_or_else(|| removed.to_string(), |v| values_text_of(kind, &v.values(), fmt))
 }
 
 /// The Queue page's mirror part: website edits, conflicts, then waiting, failed and sent.
@@ -776,9 +899,10 @@ pub fn queue_section(s: &State) -> El {
         list = list.child(text(format!("NOT ON {} YET", to.to_uppercase())).key("qmh/waits").font(theme::CAPTION).color(PAL.faint).pt(12.0).pb(4.0));
         for w in &m.waits {
             let why = w.error.clone().unwrap_or_else(|| format!("Looking up its {to} id"));
+            let wk = if w.kind == Kind::Manga { format!("qm/wait/m{}", w.mal_id) } else { format!("qm/wait/{}", w.mal_id) };
             list = list.child(
                 row()
-                    .key(format!("qm/wait/{}", w.mal_id))
+                    .key(wk)
                     .h(40.0)
                     .gap(14.0)
                     .center_y()
@@ -855,9 +979,9 @@ fn card(key: String, title: String, why: String, sides: El, foot: Option<El>) ->
 
 /// An entry changed, added or removed on the mirror's website.
 fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
-    let mal = e.mal_id;
-    let k = format!("mirror-edit/{mal}");
-    let settle = |how: Settle| move |s: &mut State, _: &mut rune::Tx| send(s, Cmd::Settle(mal, how));
+    let (mal, kind) = (e.mal_id, e.kind);
+    let k = if kind == Kind::Manga { format!("mirror-edit/m{mal}") } else { format!("mirror-edit/{mal}") };
+    let settle = |how: Settle| move |s: &mut State, _: &mut rune::Tx| send(s, Cmd::Settle(kind, mal, how));
     let (why, use_main, use_mirror) = match (&e.main, &e.mirror) {
         (Some(_), Some(_)) => (format!("Changed on {to} {}. Kotora didn\u{2019}t overwrite it. Pick one, or leave both as they are.", crate::ui::sync_age(now - e.at)), Some(format!("Use {main}\u{2019}s")), Some(format!("Use {to}\u{2019}s"))),
         (None, Some(_)) => (format!("Added on {to}; it isn\u{2019}t on your {main} list."), None, Some(format!("Add to {main}"))),
@@ -866,8 +990,8 @@ fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64, (fm, ft): (ScoreFo
     };
     let sides = row()
         .gap(12.0)
-        .child(side(format!("{k}/main"), main.to_string(), saved_text(e.main.as_ref(), "Not on the list", fm), use_main.map(|l| action(format!("{k}/use-main"), &l, true, settle(Settle::UseMain))), true))
-        .child(side(format!("{k}/mirror"), to.to_string(), saved_text(e.mirror.as_ref(), "Removed", ft), use_mirror.map(|l| action(format!("{k}/use-mirror"), &l, false, settle(Settle::UseMirror))), false));
+        .child(side(format!("{k}/main"), main.to_string(), saved_text(kind, e.main.as_ref(), "Not on the list", fm), use_main.map(|l| action(format!("{k}/use-main"), &l, true, settle(Settle::UseMain))), true))
+        .child(side(format!("{k}/mirror"), to.to_string(), saved_text(kind, e.mirror.as_ref(), "Removed", ft), use_mirror.map(|l| action(format!("{k}/use-mirror"), &l, false, settle(Settle::UseMirror))), false));
     let foot = row().child(action(format!("{k}/leave"), "Leave both as they are", false, settle(Settle::Leave)));
     card(k, format!("{to}: {}", e.title), why, sides, Some(foot))
 }
@@ -875,6 +999,7 @@ fn web_edit_card(e: &WebEdit, main: &str, to: &str, now: i64, (fm, ft): (ScoreFo
 /// A mirrored change whose entry changed on the mirror's website after Kotora's last look.
 fn conflict_card(op: &Op, main: &str, to: &str, (fm, ft): (ScoreFormat, ScoreFormat)) -> El {
     let id = op.id;
+    let values_text = |v: &Values, f: ScoreFormat| values_text_of(op.kind, v, f);
     let k = format!("mirror-conflict/{id}");
     if op.removed {
         // A mirrored Remove from list, and the entry changed on the mirror's website since.
@@ -911,7 +1036,71 @@ pub fn fake_preview(s: &mut State) {
         HashMap::new()
     };
     let p = mirror::compare(link, &main, &other, &mirror_media, &HashMap::new());
-    s.mirror.preview = Some(Prev { p, fetched: other, mirror_status: HashSet::new() });
+    s.mirror.preview = Some(Prev { p, fetched: other, mirror_status: HashSet::new(), manga: None, extend: false });
+}
+
+/// The fake preview with the manga lists too (Manga on): the fake manga list against a
+/// made-up mirror manga list.
+pub fn fake_preview_with_manga(s: &mut State) {
+    fake_preview(s);
+    let link = Link::of(s.service);
+    let (main, other) = fake_manga_lists(s, link);
+    let mirror_media: HashMap<u32, kotora_core::Media> = if link.to == ServiceId::AniList {
+        mirror::ids_only_on_main_of(link, Kind::Manga, &main, &other).into_iter().map(|id| (id, kotora_core::Media { kind: Kind::Manga, id: id + 300_000, id_mal: Some(id), title: format!("Manga {id}"), ..Default::default() })).collect()
+    } else {
+        HashMap::new()
+    };
+    let p = mirror::compare_of(link, Kind::Manga, &main, &other, &mirror_media, &HashMap::new());
+    if let Some(prev) = &mut s.mirror.preview {
+        prev.manga = Some(Box::new(Prev { p, fetched: other, mirror_status: HashSet::new(), manga: None, extend: false }));
+    }
+}
+
+/// The fake manga list as the main manga list, and a made-up mirror manga list: some further
+/// along (chapters or volumes), one dropped there, one only there.
+fn fake_manga_lists(s: &State, link: Link) -> (Vec<ListItem>, Vec<ListItem>) {
+    let item = |e: &crate::manga::MEntry, svc: ServiceId| ListItem {
+        media: kotora_core::Media {
+            kind: Kind::Manga,
+            id: if svc == ServiceId::AniList { e.id + 300_000 } else { e.id },
+            title: e.main_title.clone(),
+            episodes: e.chapters_total,
+            volumes: e.volumes_total,
+            id_mal: (svc == ServiceId::AniList).then_some(e.id),
+            ..Default::default()
+        },
+        status: e.status,
+        progress: e.chapters,
+        score: e.score,
+        rewatching: e.rereading,
+        times_rewatched: e.times_reread,
+        volumes: e.volumes,
+        updated_at: e.updated_at,
+    };
+    let main: Vec<ListItem> = s.manga.entries.iter().map(|e| item(e, link.main)).collect();
+    let mut other = Vec::new();
+    for (i, e) in s.manga.entries.iter().enumerate() {
+        let mut it = item(e, link.to);
+        match i % 4 {
+            0 => it.progress += 3,
+            1 => it.volumes += 1,
+            2 if it.status != Status::Completed => it.status = Status::Dropped,
+            3 => continue,
+            _ => {}
+        }
+        other.push(it);
+    }
+    other.push(ListItem {
+        media: kotora_core::Media { kind: Kind::Manga, id: if link.to == ServiceId::AniList { 309_301 } else { 9301 }, title: "Lantern Post Office".into(), episodes: Some(30), id_mal: (link.to == ServiceId::AniList).then_some(9301), ..Default::default() },
+        status: Status::PlanToWatch,
+        progress: 0,
+        score: None,
+        rewatching: false,
+        times_rewatched: 0,
+        volumes: 0,
+        updated_at: 1,
+    });
+    (main, other)
 }
 
 fn fake_item(e: &crate::model::Entry, svc: ServiceId) -> ListItem {
@@ -1017,18 +1206,52 @@ pub fn fake_on(s: &mut State) {
         });
     }
     s.mirror.ops = ops;
-    let saved = |e: &crate::model::Entry, progress: u32| Some(mirror::Saved { status: e.status.mal_name().into(), progress, score: e.score, rewatching: false, times: 0 });
+    let saved = |e: &crate::model::Entry, progress: u32| Some(mirror::Saved { status: e.status.mal_name().into(), progress, score: e.score, rewatching: false, times: 0, volumes: 0 });
     let mut edits = Vec::new();
     if let Some(e) = pick(4) {
-        edits.push(WebEdit { mal_id: e.id, title: e.main_title.clone(), main_id: Some(e.id), main: saved(&e, e.progress), mirror_id: Some(e.id + 100_000), mirror: saved(&e, e.progress + 2), at: now - 3600 });
+        edits.push(WebEdit { kind: Kind::Anime, mal_id: e.id, title: e.main_title.clone(), main_id: Some(e.id), main: saved(&e, e.progress), mirror_id: Some(e.id + 100_000), mirror: saved(&e, e.progress + 2), at: now - 3600 });
     }
-    edits.push(WebEdit { mal_id: 9101, title: "Moonlit Harbor".into(), main_id: None, main: None, mirror_id: Some(109_101), mirror: Some(mirror::Saved { status: "plan_to_watch".into(), progress: 0, score: None, rewatching: false, times: 0 }), at: now - 7200 });
+    edits.push(WebEdit { kind: Kind::Anime, mal_id: 9101, title: "Moonlit Harbor".into(), main_id: None, main: None, mirror_id: Some(109_101), mirror: Some(mirror::Saved { status: "plan_to_watch".into(), progress: 0, score: None, rewatching: false, times: 0, volumes: 0 }), at: now - 7200 });
     if let Some(e) = pick(5) {
-        edits.push(WebEdit { mal_id: e.id, title: e.main_title.clone(), main_id: Some(e.id), main: saved(&e, e.progress), mirror_id: None, mirror: None, at: now - 200 });
+        edits.push(WebEdit { kind: Kind::Anime, mal_id: e.id, title: e.main_title.clone(), main_id: Some(e.id), main: saved(&e, e.progress), mirror_id: None, mirror: None, at: now - 200 });
     }
     s.mirror.edits = edits;
-    s.mirror.waits = vec![Wait { mal_id: 9200, title: "Rust & Rain".into(), at: now - 100, error: Some(format!("Not on {}", link.to.title())) }];
+    s.mirror.waits = vec![Wait { kind: Kind::Anime, mal_id: 9200, title: "Rust & Rain".into(), at: now - 100, error: Some(format!("Not on {}", link.to.title())) }];
     s.mirror.note = None;
+}
+
+/// Manga in the fake mirror's queue: a website edit of a manga and a mirrored manga change in
+/// conflict.
+pub fn fake_manga_on(s: &mut State) {
+    let now = s.clock();
+    let Some(e) = s.manga.entries.iter().find(|e| e.id == 2).cloned() else { return };
+    let v = |ch: u32, vol: u32| mirror::Saved { status: "watching".into(), progress: ch, score: e.score, rewatching: false, times: 0, volumes: vol };
+    s.mirror.edits.insert(0, WebEdit { kind: Kind::Manga, mal_id: 2, title: e.main_title.clone(), main_id: Some(2), main: Some(v(e.chapters, e.volumes)), mirror_id: Some(300_002), mirror: Some(v(e.chapters + 4, e.volumes + 1)), at: now - 1800 });
+    s.mirror.ops.insert(
+        0,
+        Op {
+            id: 950,
+            kind: Kind::Manga,
+            media_id: 300_001,
+            title: "Inkwell Cartographers".into(),
+            episodes: None,
+            change: kotora_core::Change { progress: Some(120), ..Default::default() },
+            old: Values { volumes: 11, ..Values::new(Status::Watching, 119, kotora_core::score::ten(9)) },
+            base_updated_at: now - 4000,
+            created_at: now - 600,
+            edited_at: now - 600,
+            edits: 1,
+            state: OpState::Conflict,
+            attempts: 0,
+            next_try: 0,
+            error: None,
+            sent_at: None,
+            remote: Some(kotora_core::Remote { values: Values { volumes: 12, ..Values::new(Status::Watching, 125, kotora_core::score::ten(9)) }, updated_at: now - 900 }),
+            added: false,
+            removed: false,
+        },
+    );
+    s.mirror.manga_aligned = true;
 }
 
 #[cfg(test)]
@@ -1051,12 +1274,12 @@ mod tests {
         fake_preview(&mut s);
         let mal = s.mirror.preview.as_ref().unwrap().p.merge.iter().find(|r| r.conflict.is_some()).unwrap().mal_id;
         let before = mirror::align_actions(&s.mirror.preview.as_ref().unwrap().p, Align::Merge, &HashSet::new());
-        pick_status(&mut s, mal, true);
+        pick_status(&mut s, Kind::Anime, mal, true);
         let p = s.mirror.preview.as_ref().unwrap();
         assert!(p.mirror_status.contains(&mal));
         let after = mirror::align_actions(&p.p, Align::Merge, &p.mirror_status);
         assert_ne!(before, after);
-        pick_all(&mut s, false);
+        pick_all(&mut s, Kind::Anime, false);
         assert!(s.mirror.preview.as_ref().unwrap().mirror_status.is_empty());
     }
 
@@ -1071,6 +1294,89 @@ mod tests {
         send(&mut s, Cmd::Kick { sync: true });
         stop(&mut s);
         assert!(s.mirror.link.is_none());
+    }
+
+    /// With Manga on, the preview compares both kinds; a status picked in the manga part
+    /// changes only the manga alignment; one choice queues both.
+    #[test]
+    fn the_preview_covers_manga_too() {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        fake_preview_with_manga(&mut s);
+        let prev = s.mirror.preview.as_ref().unwrap();
+        let m = prev.manga.as_deref().unwrap();
+        assert_eq!((prev.p.kind, m.p.kind), (Kind::Anime, Kind::Manga));
+        let c = m.p.counts();
+        assert!(c.only_main > 0 && c.only_mirror == 1 && c.different > 0, "{c:?}");
+        let (to, _) = prev.actions(Align::MainWins);
+        let kinds: HashSet<Kind> = to
+            .iter()
+            .map(|a| match a {
+                kotora_core::listxml::Action::Add { media, .. } => media.kind,
+                kotora_core::listxml::Action::Update { kind, .. } => *kind,
+            })
+            .collect();
+        assert_eq!(kinds, HashSet::from([Kind::Anime, Kind::Manga]), "one choice, both lists");
+        if let Some(mal) = m.p.merge.iter().find(|r| r.conflict.is_some()).map(|r| r.mal_id) {
+            pick_status(&mut s, Kind::Manga, mal, true);
+            let prev = s.mirror.preview.as_ref().unwrap();
+            assert!(prev.manga.as_ref().unwrap().mirror_status.contains(&mal));
+            assert!(prev.mirror_status.is_empty(), "the anime part untouched");
+        }
+        // The view shows both parts, the manga one under its own keys.
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 2400.0), rune::Env { system_dark: true, scale: 1.0 });
+        crate::settings::open(&mut rt.state, crate::settings::Section::Account);
+        rt.frame(1.0 / 60.0);
+        for k in ["set/mirror-part", "set/mirror-manga-part", "set/mirror-manga-counts", "set/mirror-manga-heading", "set/mirror-actions"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+    }
+
+    /// Manga turned on with the mirror already on: one "Compare…" for the manga lists, until
+    /// they are aligned. Manga in the mirror's queue read as manga.
+    #[test]
+    fn align_manga_later_and_manga_in_the_mirror_queue() {
+        let render = |f: fn(&mut State)| {
+            let mut s = State::fake();
+            f(&mut s);
+            let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 1600.0), rune::Env { system_dark: true, scale: 1.0 });
+            rt.frame(1.0 / 60.0);
+            rt
+        };
+        let rt = render(|s| {
+            crate::manga::fake(s);
+            fake_on(s);
+            crate::settings::open(s, crate::settings::Section::Account);
+        });
+        assert!(rt.find("set/mirror-align-manga-button").is_some());
+        let rt = render(|s| {
+            crate::manga::fake(s);
+            fake_on(s);
+            s.mirror.manga_aligned = true;
+            crate::settings::open(s, crate::settings::Section::Account);
+        });
+        assert!(rt.find("set/mirror-align-manga-button").is_none(), "aligned: nothing to ask");
+        let rt = render(|s| {
+            fake_on(s);
+            crate::settings::open(s, crate::settings::Section::Account);
+        });
+        assert!(rt.find("set/mirror-align-manga-button").is_none(), "Manga off: nothing to ask");
+        let rt = render(|s| {
+            crate::manga::fake(s);
+            fake_on(s);
+            fake_manga_on(s);
+            s.go(crate::model::Page::Queue);
+        });
+        for k in ["mirror-edit/m2/use-mirror", "mirror-edit/m2/leave", "mirror-conflict/950/keep"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        let edit = fake_edit_text();
+        assert!(edit.contains("chapter") && edit.contains("volume") && edit.starts_with("Reading"), "{edit}");
+    }
+
+    fn fake_edit_text() -> String {
+        let v = Values { volumes: 4, ..Values::new(Status::Watching, 68, None) };
+        values_text_of(Kind::Manga, &v, ScoreFormat::Point10)
     }
 
     #[test]
