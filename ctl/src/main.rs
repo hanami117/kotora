@@ -71,7 +71,7 @@ Commands:
                           sync queue
   add QUERY|ID          put an anime on your list: a title to search
       [--status STATUS]   your list service for (it must find one), or its id;
-      [--manga]           --manga: a manga (MyAnimeList; Manga must be on)
+      [--manga]           --manga: a manga (Manga must be on)
   list --manga [STATUS|all]
                         your manga list (read only); STATUS:
                         reading (the default), plan, completed, on-hold,

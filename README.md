@@ -5,8 +5,8 @@
 A native anime tracker for Linux and macOS, with a Windows preview, written in Rust.
 
 Kotora ("little tiger") keeps your [MyAnimeList](https://myanimelist.net) or [AniList](https://anilist.co) list
-up to date. It sees which episode is playing in your media player, and asks before it records it. Your list
-stays on MyAnimeList or AniList; Kotora is only a client for your own account.
+up to date, anime and manga. It sees which episode is playing in your media player, and asks before it records
+it. Your list stays on MyAnimeList or AniList; Kotora is only a client for your own account.
 
 Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
@@ -18,7 +18,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 *The screenshots show made-up data.*
 
-**Status:** version 0.2.1 is out (MyAnimeList or AniList).
+**Status:** version 0.3.0 is out (MyAnimeList or AniList, anime and manga).
 
 ## Features
 
@@ -29,6 +29,12 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 - Edit progress, score and status. Changes go to a visible sync queue, so they work offline and conflicts
   are shown, not hidden.
 - Search your list and MyAnimeList or AniList, add an anime in one click, open a details page.
+- Manga (from 0.3, off until you turn it on): an Anime | Manga switch in the sidebar gives your MyAnimeList or
+  AniList manga list its own pages (Reading, Plan to read, …), with chapters, volumes, score and rereads,
+  search, add and remove, and Continue reading on Home. "Fill volumes from chapters" sets volumes read from
+  chapters read with [MangaDex](https://mangadex.org/)'s volume tables, after a preview.
+- Signed in to both services, the mirror (Beta) sends every change you make to the other list too, anime and
+  manga, and never overwrites an edit made on the other website (Settings → Account → Mirror edits to …).
 - Import a MyAnimeList XML export (anime or manga) into either service, with a preview first; export a MyAnimeList anime or manga list as one (Settings → Account → Import anime list… / Import manga list…, Export anime list… / Export manga list…).
 - Fast and small: no browser engine, a single binary, nothing running in the background that you didn't start.
 - A command line, `kot`, to control the running app.
@@ -59,12 +65,12 @@ Both install `kotora`, `kot`, the menu entry and the icons, and they conflict wi
 Updates come with your AUR helper. AUR pages: [kotora](https://aur.archlinux.org/packages/kotora) and
 [kotora-bin](https://aur.archlinux.org/packages/kotora-bin).
 
-The release page has a Linux x86_64 tarball (`kotora-0.2.1-linux-x86_64.tar.gz`). It is built on Arch
+The release page has a Linux x86_64 tarball (`kotora-0.3.0-linux-x86_64.tar.gz`). It is built on Arch
 Linux, so it needs a recent glibc; on other distros, building from source is the safer way.
 
 ### macOS
 
-Apple silicon, macOS 13 or later. Download `Kotora-0.2.1.dmg` from the
+Apple silicon, macOS 13 or later. Download `Kotora-0.3.0.dmg` from the
 [release page](https://github.com/hanami117/kotora/releases/latest) and drag Kotora to Applications.
 
 Kotora is not notarized, so macOS refuses it at the first start: open **System Settings → Privacy & Security**
@@ -99,7 +105,7 @@ cd kotora
 This builds a release binary and installs `kotora` and `kot` into `~/.local/bin`, with the menu entry and
 icons. Run `./install.sh` again after `git pull` to update. `./install.sh --uninstall` removes the program and
 keeps your list, sign-in and settings. `PREFIX=/usr/local ./install.sh` installs elsewhere. The release's source
-tarball (`kotora-0.2.1.tar.gz`) works the same way.
+tarball (`kotora-0.3.0.tar.gz`) works the same way.
 
 ### From source (macOS)
 
@@ -131,7 +137,7 @@ also set `KOTORA_MAL_CLIENT_ID` or `KOTORA_ANILIST_CLIENT_ID`, which win over bo
   can delete. Kotora talks to AniList only for your own account, within AniList's rate limit, and never exports
   or collects AniList's data.
 - **Update check:** once a day, a plain GET of `https://updates.kotora.moe/latest.json` with the User-Agent
-  `Kotora/<version>` and four values: the Kotora version, the OS (Linux or macOS), the processor type
+  `Kotora/<version>` and four values: the Kotora version, the OS (Linux, macOS or Windows), the processor type
   (x86_64 or arm64) and how it was installed (AUR, install.sh, Homebrew, DMG, …), plus a flag on the first
   check of a week and of a month. No id, no account, no list, file or anime names. The server adds one to a
   counter for that day and that combination; those daily counts are all it keeps: no IP address, no install
@@ -154,6 +160,12 @@ kot list [STATUS|all]  your list (watching, plan, completed, on-hold, dropped)
 kot +1 TITLE           one more episode
 kot set TITLE EP [--status S] [--score N|none]
 kot add QUERY|ID [--status S]
+kot remove TITLE|ID [--yes]
+kot manga [on|off]     whether syncs also read your manga list
+kot list --manga [STATUS|all]   your manga list (reading, plan, completed, on-hold, dropped)
+kot set --manga TITLE|ID [CH] [--volumes N] [--status S] [--score N|none]
+kot add --manga QUERY|ID | kot remove --manga TITLE|ID
+kot fill-volumes [--yes]   volumes read from chapters read (MangaDex), after a preview
 kot airing | schedule   your anime airing in the next 7 days
 kot now                what plays, and the episode Kotora offers
 kot confirm            record the offered episode

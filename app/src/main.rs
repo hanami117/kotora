@@ -1,4 +1,4 @@
-//! Kotora: a native anime tracker for Linux and macOS (Rune UI).
+//! Kotora: a native anime and manga tracker for Linux, macOS and Windows (Rune UI).
 //!
 //! Stages 1–3: the window with the sidebar and the list page, the saved list in SQLite, MyAnimeList
 //! sign-in and sync, edits (inline editor, `+1`, `kot`) through the sync queue, the queue page, the
