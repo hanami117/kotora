@@ -4,6 +4,88 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Manga (MyAnimeList):** an Anime | Manga switch under the account in the sidebar. Its first press turns
+  Manga on (off by default, so nobody pays extra requests): syncs then read your MyAnimeList manga list too.
+  Manga mode has its own Reading, Plan to read, Completed, On hold and Dropped pages (filter box, sort, chips for
+  Publishing, Finished and On hiatus), a details page (authors, serialization, published dates, chapters and
+  volumes) and an editor for status, chapters, volumes, score and rereads. Edits go through the same sync queue
+  as anime. Progress shows chapters, volumes or both, whichever you have read; `+1` steps chapters (volumes for
+  a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing and Airing
+  stay anime only.
+- **Manga: posters, search, add and remove.** The manga pages have the List / Grid / Large views, kept
+  apart from the anime pages' (`[manga_views]`); posters show what you read (Ch and/or Vol) with `+1` on
+  hover (always on Reading). With the switch on Manga, Search (Ctrl/⌘ K) searches your manga and
+  MyAnimeList's (a MyAnimeList manga link opens its page); results add as Reading or another status, as does
+  a manga's details page. Remove from list on a manga's right-click menu and its details page works like the
+  anime one: it asks first, leaves at once, waits in the sync queue with Undo, and a manga changed on
+  MyAnimeList meanwhile becomes a conflict instead of being deleted. The right-click menu also has Move to,
+  Score, +1 chapter, Edit and Open on MyAnimeList. `kot add --manga QUERY|ID` and `kot remove --manga
+  TITLE|ID` do the same from the terminal (Manga must be on).
+- **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
+  manga list in aligned columns, by the same rule (chapters, volumes or both).
+- **AniList manga:** with AniList as your list service, the Anime | Manga switch and `kot manga on` work too and
+  syncs read your AniList manga list (`kot list --manga`; scores everywhere in your AniList score format; search
+  takes anilist.co/manga links). Chapters, volumes, status,
+  score, rereads (AniList's Rereading) and removal go through the sync queue as on MyAnimeList; manga search and
+  details read authors from AniList's staff (AniList has no magazine, so no serialization). Manga, manhwa,
+  manhua, light novel and one-shot get MyAnimeList's labels. Same rate budget as anime (25 requests a minute);
+  AniList data is still never exported.
+- **Export and import your manga list:** with Manga on, Settings → Account has Export manga list… and Import
+  manga list… beside Export anime list… and Import anime list…, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
+  export format (status, chapters and volumes read, score, times read, rereading, start and finish dates where
+  Kotora has them). The import reads `.xml` or `.xml.gz`, compares first (new, different, same, entries it can't
+  use) and works as the anime one: "Add new only" or "Add new and update", a higher chapter or volume count wins,
+  a score fills an empty one, you choose when the statuses disagree, everything goes through the sync queue, and
+  "Undo import" takes back what hasn't been sent. An anime file given to the manga import (or the other way round)
+  is refused with a message saying which list it is. Export is MyAnimeList only (AniList's API terms don't allow
+  exporting from AniList); importing a manga file into AniList works, its MyAnimeList ids looked up on AniList.
+- **The account mirror covers manga:** with Manga on, every manga change you make (chapters, volumes, status,
+  score, rereads, adds and Remove from list) also goes to the other service, through its own queue, with the same
+  rules as anime: matched by MyAnimeList id (manga not yet on AniList are looked up there), scores compared on the
+  1-10 scale, edits made on the other service's website never overwritten (they show in the Queue to settle), and
+  a removal stops as a conflict if the manga changed there. Turning the mirror on compares the manga lists too, in
+  the same preview; with the mirror already on, Settings → Account offers "Align manga lists" once.
+- **With the mirror on, both "Open on" links:** details pages (anime and manga) and the right-click menus link to
+  MyAnimeList and to AniList, whenever the other service's id is known (MyAnimeList's from the MyAnimeList id;
+  AniList's from its saved list). Without the mirror, the one link of your service, as before.
+
+- **Volumes from chapters (MangaDex):** with Manga on, Settings → Account → Fill volumes from chapters… looks
+  up your manga on MangaDex (matched by MyAnimeList id, or AniList id) and sets volumes read from chapters read,
+  by MangaDex's volume tables. A preview first ("Ch 171 → Vol 0 → 19", plus what MangaDex doesn't have and what
+  is already right or higher); volumes are never lowered; changes go through the sync queue with Undo, and to
+  the mirror too when it is on. The manga editor has a "Vol from chapters" button that fills its Volumes field
+  (you still save). Only when you ask: no background requests, under 3 a second, each series saved for 30
+  days. Volume data: MangaDex.
+
+- **Manga polish:** the Search page has its own Anime | Manga toggle (Tab in the box switches; Ctrl/⌘ K opens it on
+  the sidebar's kind). Home shows Continue reading under Continue watching when Manga is on (+1 is the next
+  chapter, or volume). The manga Grid and Large views take the arrow keys, Enter, and + / − like the anime ones
+  (which gain + / − too). `kot fill-volumes [--yes]` prints the volume preview and fills only after a yes, and
+  the preview has "Look up again" to ask MangaDex anew instead of using its saved answers.
+- **`kot set --manga TITLE|ID [CH] [--volumes N] [--status S] [--score SCORE|none]`**: a manga's chapters,
+  volumes, status or score from the terminal, as the manga editor does (sync queue, mirror). A TITLE made only of
+  digits is the manga's id (`kot set --manga 24 258`: manga 24, chapter 258).
+- **`kot status` shows the mirror** when it is on, like the sidebar's account chip: `demo_user on MyAnimeList ⇄
+  AniList · 329 entries · synced · mirror: 2 waiting` (and conflicts, failed changes and website edits to settle,
+  if any).
+
+### Changed
+- Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import
+  anime list…**, beside Export manga list… and Import manga list…; the messages, file dialogs and `kot help` say
+  so too (`kot export FILE` still writes the anime list; `--manga` the manga list).
+
+### Fixed
+- If Kotora stops by itself, the reason is now kept in `~/.local/state/kotora/crash.log` (Linux and macOS):
+  started hidden or at login, with no terminal, the message was lost.
+- Settings in a wide window scrolls again when a section is taller than the window: the import, mirror and
+  volume previews that open under their rows were cut at the window's bottom with no way to reach them. A
+  preview now scrolls into view when it opens, and a button that is off still looks like a button.
+- With the mirror on, "Queued N changes" after a fill or an import says they are mirrored to the other service
+  too (they always were), and the import preview says where changes go.
+- A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list
+  --manga` says why instead of "wasn't read yet".
+
 ## [0.2.1] - 2026-11-17
 
 ### Added

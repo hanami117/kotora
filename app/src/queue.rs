@@ -16,14 +16,15 @@ use std::time::Duration;
 use kotora_core::queue::{self, Outcome, Step};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::{Change, Media, Status, paths};
+use kotora_core::{Change, Kind, Media, Status, paths};
 
 use crate::model::{Fail, Handle, Msg, State};
 
 
 #[derive(Clone, Debug)]
 pub enum Cmd {
-    Edit { media_id: u32, change: Change },
+    /// An edit of an anime or a manga (the queue is shared by both kinds).
+    Edit { kind: Kind, media_id: u32, change: Change },
     /// Put an anime on the list (search and add), at `progress` when given.
     Add { media: Box<Media>, status: Status, progress: Option<u32> },
     /// Send what waits now (no backoff wait); `refresh`: read the whole list afterwards.
@@ -35,10 +36,14 @@ pub enum Cmd {
     Import(Vec<kotora_core::listxml::Action>),
     /// Takes back an import's changes that still wait.
     UndoImport(Vec<i64>),
+    /// "Fill volumes from chapters": the volume changes, queued as one import (`volfill.rs`).
+    FillVolumes(Vec<kotora_core::listxml::Action>),
+    /// Takes them back while they wait.
+    UndoFillVolumes(Vec<i64>),
     /// Remove from list: off the saved list, the removal queued.
-    Remove { media_id: u32 },
+    Remove { kind: Kind, media_id: u32 },
     /// Undo of a removal that hasn't left: its queued removal is discarded.
-    UndoRemove { media_id: u32 },
+    UndoRemove { kind: Kind, media_id: u32 },
 }
 
 /// The worker's mailbox. `slot` holds the sender while a worker thread runs.
@@ -78,7 +83,8 @@ fn report(h: &Handle, msg: Msg) {
     h.update_if(move |s, _| s.apply(msg));
 }
 
-/// The queue and the touched entries, as the UI shows them.
+/// The queue and the touched anime, as the UI shows them; the touched manga follow in their
+/// own message ([`report_touched`]).
 fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
     let now = now_unix();
     let ops = store.queue(crate::account::name(), now).unwrap_or_default();
@@ -94,18 +100,42 @@ fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
     Msg::Queue { ops, items, gone, offline }
 }
 
+/// The touched manga as the UI shows them (their rows and editor).
+fn manga_snapshot(store: &Store, touched: &[u32]) -> Msg {
+    let mut items = Vec::new();
+    let mut gone = Vec::new();
+    for &id in touched {
+        match store.load_item((crate::account::name(), Kind::Manga), id) {
+            Ok(Some(it)) => items.push(it),
+            Ok(None) => gone.push(id),
+            Err(_) => {}
+        }
+    }
+    Msg::Manga(crate::manga::MangaMsg::Items { items, gone })
+}
+
+/// The queue and the touched entries of both kinds.
+fn report_touched(h: &Handle, store: &Store, touched: &[(Kind, u32)], offline: Option<bool>) {
+    let of = |k: Kind| touched.iter().filter(|(kind, _)| *kind == k).map(|(_, id)| *id).collect::<Vec<u32>>();
+    let manga = of(Kind::Manga);
+    report(h, snapshot(store, &of(Kind::Anime), offline));
+    if !manga.is_empty() {
+        report(h, manga_snapshot(store, &manga));
+    }
+}
+
 /// An import or its undo: applied, then the result goes to the import panel. Returns the entries
 /// touched.
-fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
+fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
     use kotora_core::listxml::Action;
     let service = crate::account::name();
     match cmd {
         Cmd::Import(actions) => {
-            let touched: Vec<u32> = actions
+            let touched: Vec<(Kind, u32)> = actions
                 .iter()
                 .map(|a| match a {
-                    Action::Add { media, .. } => media.id,
-                    Action::Update { media_id, .. } => *media_id,
+                    Action::Add { media, .. } => (media.kind, media.id),
+                    Action::Update { kind, media_id, .. } => (*kind, *media_id),
                 })
                 .collect();
             let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The import can't be saved: {e}"));
@@ -115,9 +145,29 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
         }
         Cmd::UndoImport(ids) => {
             let now = now_unix();
-            let touched: Vec<u32> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| o.media_id).collect();
+            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
             let r = store.undo_import(service, &ids, now).map_err(|e| format!("The import can't be taken back: {e}"));
             h.update_if(move |s, _| crate::transfer::undone(s, r));
+            touched
+        }
+        Cmd::FillVolumes(actions) => {
+            let touched: Vec<(Kind, u32)> = actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::Update { kind, media_id, .. } => Some((*kind, *media_id)),
+                    Action::Add { .. } => None,
+                })
+                .collect();
+            let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The volumes can't be saved: {e}"));
+            let ok = r.is_ok();
+            h.update_if(move |s, _| crate::volfill::applied(s, r));
+            if ok { touched } else { Vec::new() }
+        }
+        Cmd::UndoFillVolumes(ids) => {
+            let now = now_unix();
+            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
+            let r = store.undo_import(service, &ids, now).map_err(|e| format!("The volumes can't be taken back: {e}"));
+            h.update_if(move |s, _| crate::volfill::undone(s, r));
             touched
         }
         _ => Vec::new(),
@@ -125,12 +175,12 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
 }
 
 /// Applies one command to the store; returns the entry it touched.
-fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>, String> {
+fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind, u32)>, String> {
     let now = now_unix();
-    let media = |store: &Store, id: i64| store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| o.media_id);
+    let media = |store: &Store, id: i64| store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| (o.kind, o.media_id));
     let r = match cmd {
-        Cmd::Edit { media_id, change } => store.enqueue(crate::account::name(), media_id, change, now).map(|_| Some(media_id)),
-        Cmd::Add { media, status, progress } => store.add_to_list(crate::account::name(), &media, status, progress, now).map(|_| Some(media.id)),
+        Cmd::Edit { kind, media_id, change } => store.enqueue((crate::account::name(), kind), media_id, change, now).map(|_| Some((kind, media_id))),
+        Cmd::Add { media, status, progress } => store.add_to_list(crate::account::name(), &media, status, progress, now).map(|_| Some((media.kind, media.id))),
         Cmd::Kick { refresh: r } => {
             *refresh |= r;
             store.retry_now(crate::account::name()).map(|_| None)
@@ -148,12 +198,12 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<u32>,
             store.discard(crate::account::name(), id, now).map(|_| m)
         }
         // Handled by `transfer`.
-        Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
-        Cmd::Remove { media_id } => store.remove_from_list(crate::account::name(), media_id, now).map(|_| Some(media_id)),
-        Cmd::UndoRemove { media_id } => {
-            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kotora_core::Kind::Anime && o.state.is_open()));
+        Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_) => Ok(None),
+        Cmd::Remove { kind, media_id } => store.remove_from_list((crate::account::name(), kind), media_id, now).map(|_| Some((kind, media_id))),
+        Cmd::UndoRemove { kind, media_id } => {
+            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kind && o.state.is_open()));
             match waiting {
-                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| Some(media_id)),
+                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| Some((kind, media_id))),
                 // Too late: the run loop's snapshot of the entry takes it off the list again.
                 _ => {
                     return Err(format!("It was already removed on {}. Add it again from Search.", crate::account::active().title()));
@@ -186,22 +236,22 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
     let mut next: Option<Cmd> = None;
     loop {
         // Commands first: edits made while sending merge before the next send.
-        let mut touched = Vec::new();
+        let mut touched: Vec<(Kind, u32)> = Vec::new();
         let mut added = Vec::new();
         while let Some(cmd) = next.take().or_else(|| rx.try_recv().ok()) {
             if let Cmd::Add { media, .. } = &cmd {
                 added.push(media.id);
             }
-            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_)) {
+            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_)) {
                 // Read the whole list once the queue is empty: the imported adds get their
                 // covers and episodes from the service.
                 refresh |= matches!(cmd, Cmd::Import(_));
                 touched.extend(transfer(h, &mut store, cmd));
                 continue;
             }
-            let undo = if let Cmd::UndoRemove { media_id } = &cmd { Some(*media_id) } else { None };
+            let undo = if let Cmd::UndoRemove { kind, media_id } = &cmd { Some((*kind, *media_id)) } else { None };
             match apply(&mut store, cmd, &mut refresh) {
-                Ok(Some(id)) => touched.push(id),
+                Ok(Some(t)) => touched.push(t),
                 Ok(None) => {}
                 Err(m) => {
                     // An Undo too late: the entry the UI put back goes again.
@@ -211,7 +261,7 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             }
         }
         if !touched.is_empty() {
-            report(h, snapshot(&store, &touched, None));
+            report_touched(h, &store, &touched, None);
             // The same changes may wait for the mirror now.
             crate::mirror::kick(h, false);
         }
@@ -240,10 +290,7 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                         Outcome::Sent | Outcome::AlreadyThere => Some(false),
                         _ => None,
                     };
-                    // The list page shows anime only until Manga mode has a UI: a manga
-                    // change refreshes the queue and the badge, no anime row.
-                    let ids: &[u32] = if kind == kotora_core::Kind::Anime { &[media_id] } else { &[] };
-                    report(h, snapshot(&store, ids, offline));
+                    report_touched(h, &store, &[(kind, media_id)], offline);
                     continue;
                 }
                 Ok(Step::Wait(secs)) => Some(Duration::from_secs(secs.clamp(1, queue::MAX_BACKOFF) as u64)),

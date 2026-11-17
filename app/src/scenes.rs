@@ -61,8 +61,233 @@ pub const SCENES: &[Scene] = &[
         s.prefs.views.set(Status::Watching, ListView::Grid);
         s.set_filter(Filter::Airing);
     }),
+    // Manga mode (MyAnimeList): the switch on Manga, the Reading page, made-up titles. Progress
+    // shows chapters, volumes or both, whichever was read.
+    ("manga-list", manga),
+    ("manga-list-tiles", |s| {
+        crate::manga::fake(s);
+    }),
+    ("manga-list-editor", |s| {
+        manga(s);
+        s.manga_toggle_editor(1);
+    }),
+    // A completed manga's editor: Reread beside the statuses.
+    ("manga-list-editor-completed", |s| {
+        manga(s);
+        s.go(Page::Manga(Status::Completed));
+        s.manga_toggle_editor(9);
+    }),
+    ("manga-list-completed", |s| {
+        manga(s);
+        s.go(Page::Manga(Status::Completed));
+    }),
+    ("manga-list-publishing", |s| {
+        manga(s);
+        s.set_manga_filter(crate::manga::MFilter::Publishing);
+    }),
+    // The filter box looks at every status.
+    ("manga-list-filter", |s| {
+        manga(s);
+        s.manga.query.replace_text("a");
+        s.refresh_manga();
+    }),
+    // Edits waiting in the queue: tags on the rows, the badge.
+    ("manga-list-waiting", |s| {
+        manga(s);
+        let _ = s.manga_plus_one(2);
+        let _ = s.manga_plus_one(6);
+    }),
+    // Manga just turned on: the first read runs.
+    ("manga-loading", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.manga.synced_at = None;
+        s.manga.loading = true;
+        s.refresh_manga();
+    }),
+    // Read, but nothing on the list.
+    ("manga-empty", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.refresh_manga();
+    }),
+    // The last manga sync failed: said over the saved list, and in the sidebar.
+    ("manga-sync-failed", |s| {
+        manga(s);
+        s.manga.error = Some("Your manga list wasn't read: can't reach MyAnimeList.".into());
+    }),
+    // It failed before anything was read.
+    ("manga-sync-failed-first", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.manga.synced_at = None;
+        s.manga.error = Some("Your manga list wasn't read: MyAnimeList asked Kotora to slow down. Try again in a minute.".into());
+        s.refresh_manga();
+    }),
+    // Poster views on the manga pages (kept apart from the anime pages' views).
+    ("manga-grid", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+    }),
+    ("manga-large", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Large);
+    }),
+    ("manga-grid-completed", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Completed, ListView::Grid);
+        s.go(Page::Manga(Status::Completed));
+    }),
+    // Search in Manga mode: the manga list's matches, then MyAnimeList's manga.
+    ("manga-search", |s| manga_search(s, "salt", true)),
+    ("manga-search-menu", |s| {
+        manga_search(s, "salt", true);
+        s.online.menu = Some(501);
+    }),
+    ("manga-search-added", |s| {
+        manga_search(s, "salt", true);
+        s.add_hit(501, Status::PlanToWatch);
+    }),
+    ("manga-search-empty", |s| {
+        manga(s);
+        s.open_search();
+        s.find.focused = false;
+    }),
+    // A manga not on the list (from a result): Add as Reading and the other statuses.
+    ("manga-details-not-on-list", |s| {
+        manga_search(s, "salt", true);
+        s.open_mal_id(501);
+        let mut d = crate::manga::fake_details(501, "Salt Road Couriers");
+        d.mine = None;
+        d.title_en = Some("Couriers of the Salt Road".into());
+        d.title_ja = None;
+        d.synonyms.clear();
+        d.air_status = "finished".into();
+        d.episodes = Some(64);
+        d.volumes = Some(8);
+        s.details_answer(crate::details::Answer { id: 501, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
+    }),
+    // Remove from list: asks first, then a toast with Undo; the right-click menu.
+    ("manga-remove-confirm", |s| {
+        manga(s);
+        s.ask_remove_manga(2);
+    }),
+    ("manga-removed", |s| {
+        manga(s);
+        let _ = s.remove_manga(2);
+    }),
+    ("manga-details-remove-confirm", |s| {
+        manga_details(s, 1);
+        s.ask_remove_manga(1);
+    }),
+    ("manga-ctx", |s| {
+        manga(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
+    ("manga-ctx-move", |s| {
+        manga(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Move, false));
+        }
+    }),
+    ("manga-ctx-grid", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 300.0));
+    }),
+    // A manga removal that MyAnimeList changed meanwhile: the conflict card.
+    ("manga-queue-removal-conflict", |s| {
+        manga(s);
+        let _ = s.remove_manga(2);
+        let mut op = s.ops[0].clone();
+        op.id = 98;
+        op.kind = kotora_core::Kind::Manga;
+        op.media_id = 2;
+        op.title = "Salt & Gears".into();
+        op.episodes = Some(88);
+        op.removed = true;
+        op.change = kotora_core::Change::default();
+        op.old = kotora_core::Values { volumes: 0, ..kotora_core::Values::new(Status::Watching, 64, kotora_core::score::ten(8)) };
+        op.state = OpState::Conflict;
+        op.remote = Some(kotora_core::Remote { values: kotora_core::Values { volumes: 9, ..kotora_core::Values::new(Status::Watching, 70, kotora_core::score::ten(8)) }, updated_at: crate::model::FAKE_NOW - 1800 });
+        s.ops.retain(|o| o.state != OpState::Conflict);
+        s.ops.insert(0, op);
+        s.toast = None;
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.go(Page::Queue);
+    }),
+    // A manga's page: the information, the "Your list" card with chapters and volumes.
+    ("manga-details", |s| manga_details(s, 1)),
+    ("manga-details-editor", |s| {
+        manga_details(s, 1);
+        s.manga_toggle_editor(1);
+    }),
+    // Finished, both counts known, reread once.
+    ("manga-details-completed", |s| manga_details(s, 3)),
+    // The sync queue with a manga change beside the anime ones.
+    ("manga-queue", |s| {
+        manga(s);
+        let _ = s.manga_plus_one(2);
+        let mut op = s.ops[1].clone();
+        op.id = 99;
+        op.kind = kotora_core::Kind::Manga;
+        op.media_id = 2;
+        op.title = "Salt & Gears".into();
+        op.episodes = Some(88);
+        op.change = kotora_core::Change { progress: Some(65), volumes: Some(8), ..Default::default() };
+        op.old = kotora_core::Values { volumes: 7, ..kotora_core::Values::new(Status::Watching, 64, None) };
+        op.state = OpState::Queued;
+        s.ops.insert(0, op);
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.go(Page::Queue);
+    }),
+    // Back on Anime: the anime list, Airing back in the sidebar.
+    ("manga-switch-anime", |s| {
+        crate::manga::fake(s);
+        s.set_kind(kotora_core::Kind::Anime);
+    }),
+    // AniList: the same manga pages, scores in the user's AniList format (here 100-point).
+    ("manga-list-anilist", |s| {
+        anilist(s);
+        manga(s);
+        if let Some(p) = &mut s.profile {
+            p.score_format = ScoreFormat::Point100;
+        }
+    }),
+    ("manga-list-anilist-stars", |s| {
+        anilist(s);
+        manga(s);
+        if let Some(p) = &mut s.profile {
+            p.score_format = ScoreFormat::Point5;
+        }
+        s.manga_toggle_editor(2);
+    }),
     // Home: continue watching, airing this week, plan to watch.
     ("home", home),
+    // Manga on: Continue reading under Continue watching (+1 is the next chapter or volume).
+    ("home-manga", |s| {
+        manga(s);
+        s.set_kind(kotora_core::Kind::Anime);
+        home(s);
+    }),
+    // The search page's own kind: the switch is on Anime, Tab (or the toggle) looks for manga.
+    ("search-kind-manga", |s| {
+        manga(s);
+        s.set_kind(kotora_core::Kind::Anime);
+        s.find.replace_text("salt");
+        s.open_search();
+        s.find.focused = false;
+        s.toggle_search_kind();
+        s.online.pending = false;
+        s.online.show("salt", crate::manga::fake_hits());
+    }),
+    // The manga grid with a card picked by the arrow keys.
+    ("manga-grid-selected", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.manga.grid_sel = Some(2);
+    }),
     ("home-covers", |s| {
         fake_covers(s);
         home(s);
@@ -819,6 +1044,46 @@ pub const SCENES: &[Scene] = &[
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
+    // Manga export and import (the rows show only while manga is on).
+    ("settings-transfer-manga", |s| {
+        s.manga.enabled = true;
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-manga-export-done", |s| {
+        s.manga.enabled = true;
+        s.transfer.manga_export_note = Some(Ok("Exported 12 manga to mangalist-2027-01-15.xml.".into()));
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    // AniList: no export (its API terms); the manga import works (MyAnimeList ids looked up on AniList).
+    ("settings-manga-anilist", |s| {
+        anilist(s);
+        s.manga.enabled = true;
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-manga-import-preview", |s| {
+        s.manga.enabled = true;
+        crate::transfer::fake_manga_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    // An anime file given to the manga import.
+    ("settings-manga-import-error", |s| {
+        s.manga.enabled = true;
+        s.transfer.import_kind = kotora_core::Kind::Manga;
+        s.transfer.error = Some(kotora_core::listxml::parse_kind(b"<myanimelist><anime/></myanimelist>", kotora_core::Kind::Manga).unwrap_err());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-manga-import-done", |s| {
+        s.manga.enabled = true;
+        s.transfer.import_kind = kotora_core::Kind::Manga;
+        s.transfer.done = Some(crate::transfer::Done { queued: 9, ids: (1..=9).collect(), undone: None });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
     // Settings → Account → Mirror edits (`mirror.rs`). The search brings the row to the top.
     ("settings-mirror", |s| {
         s.mirror.other_signed_in = true;
@@ -834,6 +1099,56 @@ pub const SCENES: &[Scene] = &[
     ("settings-mirror-preview", |s| {
         crate::mirror::fake_preview(s);
         mirror_settings(s);
+    }),
+    // With Manga on: the manga lists compared too, one choice for both.
+    ("settings-mirror-preview-manga", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_preview_with_manga(s);
+        mirror_settings(s);
+    }),
+    // The mirror on, Manga turned on since: "Align manga lists" waits for one comparison.
+    ("settings-mirror-align-manga", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        s.mirror.manga_aligned = false;
+        mirror_settings(s);
+    }),
+    // Fill volumes from chapters (MangaDex): the row, looking up, the preview, done, offline.
+    ("settings-fill-volumes", |s| fill_volumes(s, |_| {})),
+    ("settings-fill-volumes-busy", |s| fill_volumes(s, |s| s.volfill.busy = Some((7, 18)))),
+    ("settings-fill-volumes-preview", |s| fill_volumes(s, crate::volfill::fake_preview)),
+    // Nothing goes up: "Nothing to change." and Close only (one already right, one higher).
+    ("settings-fill-volumes-nothing", |s| {
+        fill_volumes(s, |s| {
+            crate::volfill::fake_preview(s);
+            if let Some(p) = &mut s.volfill.preview {
+                p.fill.clear();
+                p.not_found.clear();
+            }
+        })
+    }),
+    ("settings-fill-volumes-done", |s| fill_volumes(s, |s| s.volfill.done = Some((4, vec![1, 2, 3, 4])))),
+    ("settings-fill-volumes-offline", |s| {
+        fill_volumes(s, |s| s.volfill.error = Some("Can\u{2019}t reach MangaDex: volumes from chapters need the network. Nothing was changed.".into()))
+    }),
+    // The manga editor's "Vol from chapters": ready, looking up, and not on MangaDex (hover note).
+    ("manga-editor-vol-fill", |s| {
+        manga(s);
+        s.manga_toggle_editor(2);
+        s.volfill.tables.insert(2, Some(kotora_core::mangadex::Lookup::Found(crate::volfill::fake_table())));
+        crate::volfill::fill_editor(s);
+        s.toast = None;
+    }),
+    ("manga-editor-vol-fill-looking", |s| {
+        manga(s);
+        s.manga_toggle_editor(2);
+        s.volfill.tables.insert(2, None);
+    }),
+    ("manga-editor-vol-fill-missing", |s| {
+        manga(s);
+        s.manga_toggle_editor(4);
+        s.volfill.tables.insert(4, Some(kotora_core::mangadex::Lookup::NotFound));
+        s.volfill.tip = true;
     }),
     // A status conflict settled for AniList's status.
     ("settings-mirror-preview-picked", |s| {
@@ -865,6 +1180,37 @@ pub const SCENES: &[Scene] = &[
     ("queue-mirror", |s| {
         queue_covers(s);
         crate::mirror::fake_on(s);
+        s.go(Page::Queue);
+    }),
+    // The mirror on: details pages and menus link to both services.
+    ("details-mirror", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 1, true);
+    }),
+    ("details-mirror-narrow", |s| {
+        crate::mirror::fake_on(s);
+        details(s, 1, true);
+    }),
+    ("manga-details-mirror", |s| {
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        manga_details(s, 1);
+    }),
+    ("manga-ctx-mirror", |s| {
+        manga(s);
+        crate::mirror::fake_on(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
+    ("ctx-menu-mirror", |s| {
+        crate::mirror::fake_on(s);
+        s.open_ctx(1, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
+    // Manga in the mirror's queue: a website edit (chapters, volumes) and a conflict.
+    ("queue-mirror-manga", |s| {
+        queue_covers(s);
+        crate::manga::fake(s);
+        crate::mirror::fake_on(s);
+        crate::mirror::fake_manga_on(s);
         s.go(Page::Queue);
     }),
     // The account chip with the mirror on (0.2.1): "MyAnimeList ⇄ AniList", nothing waiting.
@@ -1477,7 +1823,61 @@ fn details(s: &mut State, id: u32, on_list: bool) {
         d.mean = Some(8.05);
         d.rank = None;
     }
-    s.details_answer(crate::details::Answer { id, result: Ok(d), item: None, done: true });
+    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Anime, result: Ok(d), item: None, done: true });
+}
+
+/// The fake manga list with covers (two keep their tiles), on Reading.
+fn manga(s: &mut State) {
+    crate::manga::fake(s);
+    s.covers.fake();
+    for e in s.manga.entries.iter_mut().filter(|e| e.id % 5 != 2) {
+        e.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", e.id));
+    }
+}
+
+/// Settings → Account with Manga on, searched for the volumes row, `f` setting its state.
+fn fill_volumes(s: &mut State, f: fn(&mut State)) {
+    crate::manga::fake(s);
+    f(s);
+    crate::settings::open(s, Section::Account);
+    crate::settings::set_query(s, "volumes");
+}
+
+/// The search page in Manga mode for `q`, MyAnimeList's manga results in when `answered`.
+fn manga_search(s: &mut State, q: &str, answered: bool) {
+    manga(s);
+    s.find.replace_text(q);
+    s.open_search();
+    s.find.focused = false;
+    s.online.pending = false;
+    if answered {
+        let mut hits = crate::manga::fake_hits();
+        for h in hits.iter_mut().filter(|h| h.id != 503) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
+    }
+}
+
+/// The details page of the fake manga `id`, answered.
+fn manga_details(s: &mut State, id: u32) {
+    manga(s);
+    let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else { return };
+    let (stub, title) = (crate::manga::stub(e), e.title.clone());
+    let finished = e.run == crate::manga::Run::Finished;
+    s.open_details(stub);
+    let mut d = crate::manga::fake_details(id, &title);
+    d.cover_url = Some(format!("https://cdn.example.invalid/m{id}l.jpg"));
+    if finished {
+        d.air_status = "finished".into();
+        d.episodes = Some(40);
+        d.volumes = Some(5);
+        d.end_date = Some("2024-11".into());
+        d.title_en = None;
+        d.title_ja = None;
+        d.synonyms.clear();
+    }
+    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
 }
 
 /// A completed anime on the list (not rewatched now), the first by id.
@@ -1877,6 +2277,22 @@ mod tests {
         assert!(render("home", (1280.0, 800.0)).find("account/dot").is_none());
     }
 
+    /// `kot status` names the mirror and splits the chip's badge by state; nothing while it is off.
+    #[test]
+    fn kot_status_shows_the_mirror() {
+        let mut s = State::fake();
+        assert_eq!(s.ctl_status().mirror, None);
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
+        let m = s.ctl_status().mirror.expect("the mirror is on");
+        assert_eq!((m.to.as_str(), m.waiting, m.conflicts, m.failed, m.web_edits), ("AniList", 0, 0, 0, 0));
+        let mut s = State::fake();
+        crate::mirror::fake_on(&mut s);
+        let m = s.ctl_status().mirror.expect("the mirror is on");
+        assert_eq!(m.waiting + m.conflicts + m.failed + m.web_edits, s.mirror.badge(), "the same count as the chip's dot");
+        s.mirror.link = None;
+        assert_eq!(s.ctl_status().mirror, None);
+    }
+
     #[test]
     fn export_and_import_scenes() {
         // MyAnimeList: both rows work.
@@ -1896,7 +2312,7 @@ mod tests {
         assert!(c.conflicts > 1 && c.different > 0 && c.same > 0);
         assert_eq!(c.new + c.different + c.same + c.unknown, 40 + 6, "40 of the fake list, six more");
         assert!(render("settings-import-preview", (1280.0, 1600.0)).find("set/import-conflicts-all").is_some());
-        assert_eq!(p.plan.manga, 1);
+        assert_eq!((p.plan.other, p.plan.kind), (1, kotora_core::Kind::Anime));
         // AniList: the id it doesn't know is left out, the one it maps is new.
         let mut s = State::fake();
         super::anilist(&mut s);
@@ -1916,6 +2332,43 @@ mod tests {
         super::anilist(&mut s);
         assert!(crate::transfer::refusal(&s).is_some_and(|w| w.contains("terms")));
         assert!(render("settings-export-anilist", (1280.0, 800.0)).find("set/import-button").is_some());
+    }
+
+    #[test]
+    fn manga_export_and_import_scenes() {
+        use kotora_core::Kind;
+        // Manga off: the anime rows only.
+        let rt = render("settings-transfer", (1280.0, 800.0));
+        assert!(rt.find("set/export-manga-button").is_none() && rt.find("set/import-manga-button").is_none());
+        // Manga on: the manga rows beside them.
+        let rt = render("settings-transfer-manga", (1280.0, 900.0));
+        for k in ["set/export-button", "set/export-manga-button", "set/import-button", "set/import-manga-button"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(render("settings-manga-export-done", (1280.0, 900.0)).find("set/export-manga").is_some());
+        // The preview sits under the manga row and counts chapters and volumes.
+        let rt = render("settings-manga-import-preview", (1280.0, 1700.0));
+        for k in ["set/import-manga", "set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        let mut s = State::fake();
+        crate::transfer::fake_manga_preview(&mut s);
+        let p = s.transfer.preview.as_ref().unwrap();
+        assert_eq!((p.plan.kind, p.plan.other), (Kind::Manga, 1));
+        let c = p.plan.counts();
+        assert_eq!((c.new, c.unknown), (3, 2), "three new ids, no id and an unknown status");
+        assert!(c.conflicts >= 2 && c.different > 0 && c.same > 0);
+        assert!(p.plan.rows.iter().any(|r| r.verdict == kotora_core::listxml::Verdict::New && r.media.as_ref().is_some_and(|m| m.kind == Kind::Manga)));
+        // An anime file given to the manga import says so.
+        let rt = render("settings-manga-import-error", (1280.0, 900.0));
+        assert!(rt.find("set/import-error").is_some());
+        assert!(rt.find("set/import-manga").is_some());
+        assert!(render("settings-manga-import-done", (1280.0, 900.0)).find("set/import-undo").is_some());
+        // AniList: no export (terms); the manga import is offered as on MyAnimeList.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        assert!(crate::transfer::refusal(&s).is_some());
+        assert!(render("settings-manga-anilist", (1280.0, 900.0)).find("set/import-manga").is_some());
     }
 
     #[test]
@@ -2722,5 +3175,215 @@ mod tests {
         let narrow = render("list", (1000.0, 700.0));
         assert!(wide.find("thead/type").is_some());
         assert!(narrow.find("thead/type").is_none());
+    }
+}
+
+/// A press on a row opens its editor; with an editor open, a press on another row's title moves
+/// the editor there (no details page), in the anime list and the manga list alike. The blank
+/// part of the title column is the row's, not the title link's.
+#[cfg(test)]
+mod row_presses {
+    use super::*;
+    use rune::{Env, Runtime};
+
+    fn rt(name: &str) -> Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    fn tap(rt: &mut Runtime<State>, x: f32, y: f32) {
+        rt.pointer_move(x, y);
+        rt.frame(1.0 / 60.0);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+    }
+
+    /// The middle of the title link of `title` (its label is "About TITLE").
+    fn title_at(rt: &Runtime<State>, title: &str) -> (f32, f32) {
+        let label = format!("About {title}");
+        let e = rt.elements().into_iter().find(|e| e.label.as_deref() == Some(label.as_str()) && !e.exiting).unwrap_or_else(|| panic!("{title}"));
+        let [x, y, w, h] = e.rect;
+        (x + w / 2.0, y + h / 2.0)
+    }
+
+    /// Row A by its title (editor), then row B by its title: the editor moves to B.
+    fn check(scene: &str, a: &str, b: &str, editor: fn(&State) -> Option<u32>, id: fn(&State, &str) -> u32) {
+        let mut r = rt(scene);
+        // Row A: the blank part of its title column opens the editor.
+        let (_, ya) = title_at(&r, a);
+        tap(&mut r, 600.0, ya);
+        assert_eq!(editor(&r.state), Some(id(&r.state, a)), "{scene}: the row's editor");
+        assert_ne!(r.state.page, Page::Details);
+        // Row B's title: the editor moves, no details page.
+        let (xb, yb) = title_at(&r, b);
+        tap(&mut r, xb, yb);
+        assert_ne!(r.state.page, Page::Details, "{scene}: no details page with an editor open");
+        assert_eq!(editor(&r.state), Some(id(&r.state, b)), "{scene}: the editor moved to B");
+        // With no editor open, the title opens the details page as before.
+        let mut r = rt(scene);
+        let (xa, ya) = title_at(&r, a);
+        tap(&mut r, xa, ya);
+        assert_eq!(r.state.page, Page::Details, "{scene}: the title opens the details page");
+    }
+
+    /// The link hugs a short title and still stops at its column with a long one (truncated).
+    #[test]
+    fn the_title_link_is_as_wide_as_the_title_within_its_column() {
+        let mut s = State::fake();
+        s.entries[0].title = "An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill".into();
+        s.refresh();
+        let mut rt = Runtime::new(s, crate::ui::view, (1000.0, 760.0), Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        let els = rt.elements();
+        let link = |t: &str| els.iter().find(|e| e.label.as_deref() == Some(&format!("About {t}"))).map(|e| e.rect).unwrap();
+        let plus = els.iter().find(|e| e.key.as_deref() == Some("plus")).map(|e| e.rect).unwrap();
+        let long = link("An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill");
+        assert!(long[0] + long[2] < plus[0], "the long title stays in its column: {long:?}");
+        let short = link("Neon Ronin 2099");
+        assert!(short[2] < long[2] / 2.0, "a short title's link is about as wide as its text: {short:?}");
+    }
+
+    #[test]
+    fn a_title_pressed_with_an_editor_open_moves_the_editor() {
+        check("list", "Lanterns of Kirigaoka", "Starfall Delivery Service", |s| s.editor.map(|e| e.id), |s, t| s.entries.iter().find(|e| e.title == t).unwrap().id);
+        check("manga-list", "Inkwell Cartographers", "Salt & Gears", |s| s.manga.editor.map(|e| e.id), |s, t| s.manga.entries.iter().find(|e| e.title == t).unwrap().id);
+    }
+}
+
+/// With the mirror on, details pages and menus link to both services (anime and manga); without
+/// it, to the active one only.
+#[cfg(test)]
+mod mirror_links {
+    use super::*;
+
+    fn keys(name: &str, size: (f32, f32)) -> rune::Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, size, rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    #[test]
+    fn both_links_with_the_mirror_one_without() {
+        for (name, size) in [("details-mirror", (1280.0, 800.0)), ("details-mirror-narrow", (1000.0, 760.0)), ("manga-details-mirror", (1280.0, 800.0))] {
+            let rt = keys(name, size);
+            assert!(rt.find("det/open-mal").is_some() && rt.find("det/open-other").is_some(), "{name}");
+        }
+        for name in ["ctx-menu-mirror", "manga-ctx-mirror"] {
+            let rt = keys(name, (1280.0, 800.0));
+            assert!(rt.find("ctx/mal").is_some() && rt.find("ctx/other").is_some(), "{name}");
+        }
+        for name in ["details-on-list", "manga-details", "ctx-menu", "manga-ctx"] {
+            let rt = keys(name, (1280.0, 800.0));
+            assert!(rt.find("det/open-other").is_none() && rt.find("ctx/other").is_none(), "{name}: one link without the mirror");
+        }
+    }
+}
+/// Settings in a wide window: a section taller than the window scrolls, so the previews that open
+/// under their rows (fill volumes, import, the mirror's) can be reached; the scroll area keeps the
+/// window's height instead of growing with its content.
+#[cfg(test)]
+mod settings_scroll {
+    use super::*;
+
+    fn rect(rt: &rune::Runtime<State>, key: &str) -> [f32; 4] {
+        rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.rect).unwrap_or_else(|| panic!("{key}"))
+    }
+
+    fn reachable(setup: fn(&mut State), preview: &str, button: &str) {
+        let (w, h) = (1360.0, 860.0);
+        let mut s = State::fake();
+        setup(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (w, h), rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        let area = rect(&rt, "settings-scroll");
+        assert!(area[1] + area[3] <= h + 0.5, "{preview}: the scroll area fits the window: {area:?}");
+        let b = rect(&rt, button);
+        assert!(b[1] + b[3] > h, "{preview}: the case is real: the button starts below the window ({b:?})");
+        // Scroll down with the wheel over the area until the button shows.
+        for _ in 0..40 {
+            rt.wheel(area[0] + 40.0, area[1] + 40.0, -120.0);
+            rt.frame(1.0 / 60.0);
+        }
+        for _ in 0..30 {
+            rt.frame(1.0 / 60.0);
+        }
+        let b = rect(&rt, button);
+        assert!(b[1] >= area[1] - 0.5 && b[1] + b[3] <= h + 0.5, "{preview}: scrolled into reach: {b:?}");
+        let p = rect(&rt, preview);
+        assert!(p[1] + p[3] <= h + 0.5, "{preview}: the whole card can be seen: {p:?}");
+    }
+
+    #[test]
+    fn previews_under_their_rows_can_be_scrolled_to() {
+        reachable(
+            |s| {
+                crate::manga::fake(s);
+                crate::volfill::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/fill-volumes-preview",
+            "set/fill-volumes-apply",
+        );
+        reachable(
+            |s| {
+                crate::transfer::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/import-preview",
+            "set/import-cancel",
+        );
+        reachable(
+            |s| {
+                crate::mirror::fake_preview(s);
+                crate::settings::open(s, Section::Account);
+            },
+            "set/mirror-preview",
+            "set/mirror-cancel",
+        );
+    }
+}
+
+/// Home with Manga on shows Continue reading (and nothing of manga when it is off); the search
+/// page shows its kind toggle with Manga on.
+#[cfg(test)]
+mod manga_polish {
+    use super::*;
+
+    fn rt(name: &str) -> rune::Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 900.0), rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    #[test]
+    fn home_search_and_grid_show_their_manga_parts() {
+        let r = rt("home-manga");
+        assert!(r.find("home/reading").is_some() && r.find("read/2").is_some(), "Continue reading with Salt & Gears");
+        assert!(r.find("read/3").is_some(), "a reread shows");
+        assert!(r.find("read/4").is_some(), "On hiatus still reads on");
+        assert!(rt("home").find("home/reading").is_none(), "Manga off: no manga on Home");
+        let r = rt("search-kind-manga");
+        assert!(r.find("search/kind/manga").is_some() && r.find("hit/501").is_some());
+        assert!(rt("manga-grid-selected").find("msel/2").is_some());
     }
 }

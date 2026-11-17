@@ -1,0 +1,10 @@
+{"result":"ok","volumes":{
+ "none":{"volume":"none","count":2,"chapters":{"51":{"chapter":"51","id":"c51","others":[],"count":1},"52":{"chapter":"52","id":"c52","others":[],"count":1}}},
+ "1":{"volume":"1","count":5,"chapters":{"1":{"chapter":"1","id":"c1","others":[],"count":1},"2":{"chapter":"2","id":"c2","others":[],"count":1},"3":{"chapter":"3","id":"c3","others":[],"count":1},"4":{"chapter":"4","id":"c4","others":[],"count":1},"5":{"chapter":"5","id":"c5","others":[],"count":1}}},
+ "2":{"volume":"2","count":5,"chapters":{"6":{"chapter":"6","id":"c6","others":[],"count":1},"7":{"chapter":"7","id":"c7","others":[],"count":1},"10":{"chapter":"10","id":"c10","others":[],"count":1},"none":{"chapter":"none","id":"cx","others":[],"count":1}}},
+ "3":{"volume":"3","count":3,"chapters":{"10.5":{"chapter":"10.5","id":"c105","others":[],"count":1},"11":{"chapter":"11","id":"c11","others":[],"count":1},"12":{"chapter":"12","id":"c12","others":[],"count":1}}},
+ "5":{"volume":"5","count":2,"chapters":[{"chapter":"20","id":"c20","others":[],"count":1},{"chapter":"24","id":"c24","others":[],"count":1}]},
+ "5.5":{"volume":"5.5","count":1,"chapters":{"24.5":{"chapter":"24.5","id":"c245","others":[],"count":1}}},
+ "Extra":{"volume":"Extra","count":1,"chapters":{"1":{"chapter":"1","id":"ce","others":[],"count":1}}},
+ "6":{"volume":"6","count":1,"chapters":{"Bonus":{"chapter":"Bonus","id":"cb","others":[],"count":1}}}
+}}

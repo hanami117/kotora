@@ -1,7 +1,7 @@
 Linux check in Docker (native arm64 on Apple silicon). Needs a running Docker.
 Run: scripts/linux-check/run.sh [SOURCE_DIR] [build test clippy snap release bloat]   (default: this checkout, build test clippy snap).
 It mounts the source read-only and copies it in; cargo's cache and target live in docker volumes kot-linux-cargo and kot-linux-target.
-Logs and snaps go to /tmp/linux-check/<folder name>/. `release` also builds the release binaries and reports the stripped size; `bloat` installs cargo-bloat in the cargo volume and lists the biggest crates of the release build.
+Logs and snaps go to /tmp/linux-check/<folder name>/. SNAP_SCENES="a b" picks the scenes the snap step takes. `release` also builds the release binaries and reports the stripped size; `bloat` installs cargo-bloat in the cargo volume and lists the biggest crates of the release build.
 Release builds with one codegen unit need memory: the check runs 6 cargo jobs (CARGO_BUILD_JOBS overrides), since 18 jobs ran out of an 8 GB Docker VM.
 Remove the volumes with: docker volume rm kot-linux-cargo kot-linux-target
 Headless snaps need a software GL renderer that supports f16 shaders: Debian trixie's Mesa does (WGPU_BACKEND=gl, the default here).

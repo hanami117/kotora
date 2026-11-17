@@ -231,6 +231,9 @@ fn the_status_further_along_wins_without_asking() {
 
 fn blank() -> XmlEntry {
     XmlEntry {
+        kind: Kind::Anime,
+        volumes_read: 0,
+        volumes: None,
         mal_id: 0,
         title: String::new(),
         series_type: String::new(),

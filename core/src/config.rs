@@ -47,6 +47,7 @@
 //! theme = "system"             # or "light", "dark"; system follows the desktop (dark when unknown)
 //! intro = true                 # the startup animation when Kotora opens with its window
 //! settings_section = "general" # the Settings section opened last (written by the app)
+//! list_kind = "anime"          # the sidebar's Anime | Manga switch as it was left (written by the app)
 //!
 //! [keys]
 //! pages = "ctrl"               # with 1 to 5, opens the list pages: "ctrl" ("cmd" on macOS) or "alt"
@@ -58,6 +59,9 @@
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
 //! [views]                      # each list page's view: "list", "grid" (posters) or "large"
 //! watching = "grid"            # also plan_to_watch, completed, on_hold, dropped
+//!
+//! [manga_views]                # the same for the manga list pages (watching = Reading)
+//! watching = "large"
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -85,6 +89,8 @@ pub struct Config {
     pub display: Display,
     pub startup: Startup,
     pub views: Views,
+    /// `[manga_views]`: the manga list pages' views (each kind keeps its own).
+    pub manga_views: Views,
     pub notifications: Notifications,
     pub library: Library,
     pub app: AppSection,
@@ -285,11 +291,13 @@ pub struct Display {
     pub intro: bool,
     /// The Settings section opened last ("general", "detection", …; the app reads it).
     pub settings_section: String,
+    /// The sidebar's Anime | Manga switch, as it was left (`"anime"` or `"manga"`).
+    pub list_kind: crate::Kind,
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new() }
+        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new(), list_kind: crate::Kind::Anime }
     }
 }
 
@@ -574,6 +582,8 @@ struct File {
     #[serde(default)]
     views: Views,
     #[serde(default)]
+    manga_views: Views,
+    #[serde(default)]
     notifications: Notifications,
     #[serde(default)]
     library: Library,
@@ -613,6 +623,7 @@ impl Config {
             display: f.display,
             startup: f.startup,
             views: f.views,
+            manga_views: f.manga_views,
             notifications: f.notifications,
             library: f.library,
             app: f.app,
@@ -983,6 +994,10 @@ mod tests {
         v.set(Status::Dropped, ListView::Large);
         assert_eq!(v.get(Status::Dropped), ListView::Large);
         assert!(Config::parse("[views]\nwatching = \"mosaic\"\n").is_err(), "an unknown value is refused");
+        // The manga pages keep their own views.
+        let c = Config::parse("[views]\nwatching = \"grid\"\n[manga_views]\nwatching = \"large\"\n").unwrap();
+        assert_eq!((c.views.get(Status::Watching), c.manga_views.get(Status::Watching)), (ListView::Grid, ListView::Large));
+        assert_eq!(c.manga_views.get(Status::Completed), ListView::List);
     }
 
     #[test]
@@ -997,6 +1012,8 @@ mod tests {
         assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
         assert!(Config::parse("").unwrap().display.intro, "the startup animation is on by default");
         assert!(!Config::parse("[display]\nintro = false\n").unwrap().display.intro);
+        assert_eq!(Config::parse("").unwrap().display.list_kind, crate::Kind::Anime, "Anime unless the switch was left on Manga");
+        assert_eq!(Config::parse("[display]\nlist_kind = \"manga\"\n").unwrap().display.list_kind, crate::Kind::Manga);
         assert_eq!(Config::parse("").unwrap().display.settings_section, "");
         assert_eq!(Config::parse("[display]\nsettings_section = \"detection\"\n").unwrap().display.settings_section, "detection");
         assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");

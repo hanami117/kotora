@@ -608,6 +608,16 @@ impl ListService for Both {
     fn update_manga_entry(&mut self, id: u32, change: &Change) -> std::result::Result<Remote, ServiceError> {
         Ok(self.patch(Kind::Manga, id, change))
     }
+    fn delete_entry(&mut self, id: u32) -> std::result::Result<(), ServiceError> {
+        self.calls.push(format!("delete anime {id}"));
+        self.anime.remove(&id);
+        Ok(())
+    }
+    fn delete_manga_entry(&mut self, id: u32) -> std::result::Result<(), ServiceError> {
+        self.calls.push(format!("delete manga {id}"));
+        self.manga.remove(&id);
+        Ok(())
+    }
 }
 
 const MANGA: Scope = Scope::new("mal", Kind::Manga);
@@ -740,6 +750,35 @@ fn adding_a_manga_and_a_full_manga_sync() {
     assert!(matches!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 5, outcome: Outcome::Sent }));
     assert_eq!(f.manga[&5].values, Values { volumes: 6, ..v(Status::Completed, 48, None) });
     assert!(!f.anime.contains_key(&5));
+}
+
+/// Remove a manga: off its list at once (the anime with the same id stays), sent as a manga
+/// delete; Discard (Undo) puts it back; changed on the service: a conflict, nothing deleted.
+#[test]
+fn removing_a_manga() {
+    let (mut s, mut f) = setup_both();
+    let id = s.remove_from_list(MANGA, 1, 500).unwrap();
+    assert!(s.load_item(MANGA, 1).unwrap().is_none());
+    assert!(s.load_item("mal", 1).unwrap().is_some(), "the anime 1 stays");
+    s.discard("mal", id, 0).unwrap();
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes), (21, 3), "Undo: back as it was");
+    s.remove_from_list(MANGA, 1, 510).unwrap();
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 1, outcome: Outcome::Sent });
+    assert_eq!(f.calls, ["get manga 1", "delete manga 1"]);
+    assert!(!f.manga.contains_key(&1) && f.anime.contains_key(&1));
+    // A sync without it: it stays off.
+    s.replace_list(MANGA, &[], 700).unwrap();
+    assert!(s.load_item(MANGA, 1).unwrap().is_none());
+
+    let (mut s, mut f) = setup_both();
+    let id = s.remove_from_list(MANGA, 1, 500).unwrap();
+    f.manga.insert(1, Remote { values: read(30, 4), updated_at: 450 });
+    assert_eq!(step(&mut s, &mut f, 600).unwrap(), Step::Handled { kind: Kind::Manga, media_id: 1, outcome: Outcome::Conflict });
+    assert_eq!(f.calls, ["get manga 1"], "nothing deleted without asking");
+    s.take_theirs("mal", id, 0).unwrap();
+    let mi = s.load_item(MANGA, 1).unwrap().unwrap();
+    assert_eq!((mi.progress, mi.volumes), (30, 4), "Take theirs: MAL's entry comes back");
 }
 
 #[test]

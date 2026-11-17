@@ -18,6 +18,7 @@ mod art;
 mod chrome;
 mod autostart;
 mod clientid;
+mod crashlog;
 mod ctl;
 mod ctxmenu;
 mod detect;
@@ -28,6 +29,9 @@ mod icons;
 mod intro;
 mod kanji;
 mod library;
+mod manga;
+mod mgrid;
+mod volfill;
 mod look;
 #[cfg(target_os = "macos")]
 mod iina;
@@ -214,6 +218,8 @@ fn main() {
         app.run();
         return;
     }
+    // A panic in a start with no terminal (`--hidden`, at login) also goes to crash.log.
+    crashlog::install();
     // `--hidden`: start with no window (`kot show` opens it).
     let hidden = std::env::args().any(|a| a == "--hidden");
     // A second copy for tests, next to the user's: no single-instance check (pair it with a

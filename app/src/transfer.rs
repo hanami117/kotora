@@ -17,11 +17,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use kotora_core::listxml::{self, Mode, Plan, PlanRow, Verdict};
-use kotora_core::queue::describe;
+use kotora_core::queue::describe_in;
 use kotora_core::service::ServiceId;
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::{Status, paths};
+use kotora_core::{Kind, Status, paths};
 use rune::{El, col, el, row, text};
 
 use crate::model::{Page, State};
@@ -34,6 +34,11 @@ pub struct Transfer {
     /// The last export: what was written, or why not.
     pub export_note: Option<Result<String, String>>,
     pub exporting: bool,
+    /// The same for the manga list.
+    pub manga_export_note: Option<Result<String, String>>,
+    pub manga_exporting: bool,
+    /// The kind of list the import panel (busy, error, preview, done) is about.
+    pub import_kind: Kind,
     /// Reading or matching a file: what is going on.
     pub busy: Option<String>,
     /// The file couldn't be read or matched.
@@ -71,19 +76,23 @@ pub fn refusal(s: &State) -> Option<&'static str> {
 }
 
 /// Writes the saved list of the active service to `path` (also `kot export`). Off the UI thread.
-pub fn export_to(path: &Path) -> Result<String, String> {
+pub fn export_to(path: &Path, kind: Kind) -> Result<String, String> {
     let service = crate::account::active();
     if let Some(why) = listxml::export_refusal(service) {
         return Err(why.into());
     }
     let store = Store::open(&paths::db_file()).map_err(|e| format!("Can't open the saved list: {e}"))?;
-    let ex = listxml::export(&store, service)?;
+    let ex = listxml::export_kind(&store, service, kind)?;
     if ex.written == 0 {
-        return Err("Your saved list is empty: sign in and sync first.".into());
+        return Err(if kind == Kind::Manga {
+            "Your saved manga list is empty: turn manga on, sync, and try again.".into()
+        } else {
+            "Your saved list is empty: sign in and sync first.".into()
+        });
     }
     write_file(path, ex.xml.as_bytes())?;
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-    let mut msg = format!("Exported {} to {name}.", plural(ex.written, "anime", "anime"));
+    let mut msg = format!("Exported {} to {name}.", if kind == Kind::Manga { plural(ex.written, "manga", "manga") } else { plural(ex.written, "anime", "anime") });
     if !ex.skipped.is_empty() {
         msg.push_str(&format!(" Left out (no MyAnimeList id): {}.", ex.skipped.join(", ")));
     }
@@ -108,37 +117,55 @@ pub(crate) fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// The export state of a kind: the note and whether it is writing.
+fn export_state(t: &mut Transfer, kind: Kind) -> (&mut Option<Result<String, String>>, &mut bool) {
+    if kind == Kind::Manga { (&mut t.manga_export_note, &mut t.manga_exporting) } else { (&mut t.export_note, &mut t.exporting) }
+}
+
+fn export_anime(s: &mut State) {
+    export(s, Kind::Anime);
+}
+
+fn export_manga(s: &mut State) {
+    export(s, Kind::Manga);
+}
+
 /// Export…: the save dialog, then a thread writes the file.
-pub fn export(s: &mut State) {
-    if refusal(s).is_some() || s.transfer.exporting {
+pub fn export(s: &mut State, kind: Kind) {
+    if refusal(s).is_some() || *export_state(&mut s.transfer, kind).1 {
         return;
     }
     let Some(h) = s.handle.clone() else { return };
-    let name = listxml::default_file_name(now_unix());
+    let name = listxml::default_file_name_of(kind, now_unix());
     let on_path = move |picked: Option<String>| {
         let Some(path) = picked else { return };
-        h.update_if(|s, _| {
-            s.transfer.exporting = true;
-            s.transfer.export_note = None;
+        h.update_if(move |s, _| {
+            let (note, busy) = export_state(&mut s.transfer, kind);
+            *busy = true;
+            *note = None;
             true
         });
         let h2 = h.clone();
         let _ = std::thread::Builder::new().name("kotora-export".into()).spawn(move || {
-            let r = export_to(Path::new(&path));
+            let r = export_to(Path::new(&path), kind);
             h2.update_if(move |s, _| {
-                s.transfer.exporting = false;
-                s.transfer.export_note = Some(r);
+                let (note, busy) = export_state(&mut s.transfer, kind);
+                *busy = false;
+                *note = Some(r);
                 true
             });
         });
     };
-    if let Err(e) = pick(EXPORT_PROMPT, Some(&name), on_path) {
-        s.transfer.export_note = Some(Err(e));
+    let prompt = if kind == Kind::Manga { EXPORT_MANGA_PROMPT } else { EXPORT_PROMPT };
+    if let Err(e) = pick(prompt, Some(&name), on_path) {
+        *export_state(&mut s.transfer, kind).0 = Some(Err(e));
     }
 }
 
 const EXPORT_PROMPT: &str = "Export your anime list as a MyAnimeList XML file";
-const IMPORT_PROMPT: &str = "Choose a MyAnimeList list export (.xml or .xml.gz)";
+const EXPORT_MANGA_PROMPT: &str = "Export your manga list as a MyAnimeList XML file";
+const IMPORT_PROMPT: &str = "Import anime list: choose a MyAnimeList anime list export (.xml or .xml.gz)";
+const IMPORT_MANGA_PROMPT: &str = "Import manga list: choose a MyAnimeList manga list export (.xml or .xml.gz)";
 
 /// The system's file dialog; `done` gets the path (on the UI thread on macOS, a thread on Linux
 /// and Windows).
@@ -197,43 +224,65 @@ fn pick_linux(prompt: &str, save: Option<&str>) -> Result<Option<String>, String
 
 // ---------------------------------------------------------------------------------------- import
 
+fn import_anime(s: &mut State) {
+    import(s, Kind::Anime);
+}
+
+fn import_manga(s: &mut State) {
+    import(s, Kind::Manga);
+}
+
 /// Import…: the open dialog, then a thread reads and compares the file.
-pub fn import(s: &mut State) {
+pub fn import(s: &mut State, kind: Kind) {
     if s.transfer.busy.is_some() || s.transfer.applying {
         return;
     }
+    s.transfer.import_kind = kind;
     let Some(h) = s.handle.clone() else { return };
     let on_path = move |picked: Option<String>| {
         let Some(path) = picked else { return };
-        h.update_if(|s, _| {
-            s.transfer = Transfer { export_note: s.transfer.export_note.take(), busy: Some("Reading the file\u{2026}".into()), ..Transfer::default() };
+        h.update_if(move |s, _| {
+            let t = &mut s.transfer;
+            s.transfer = Transfer {
+                export_note: t.export_note.take(),
+                manga_export_note: t.manga_export_note.take(),
+                exporting: t.exporting,
+                manga_exporting: t.manga_exporting,
+                import_kind: kind,
+                busy: Some("Reading the file\u{2026}".into()),
+                ..Transfer::default()
+            };
             true
         });
         let h2 = h.clone();
         let _ = std::thread::Builder::new().name("kotora-import".into()).spawn(move || {
-            let r = read_and_plan(&path, &h2);
-            h2.update_if(move |s, _| {
+            let r = read_and_plan(&path, kind, &h2);
+            h2.update_if(move |s, tx| {
                 s.transfer.busy = None;
                 match r {
-                    Ok(p) => s.transfer.preview = Some(p),
+                    Ok(p) => {
+                        s.transfer.preview = Some(p);
+                        tx.scroll_into_view("set/import-preview");
+                    }
                     Err(e) => s.transfer.error = Some(e),
                 }
                 true
             });
         });
     };
-    if let Err(e) = pick(IMPORT_PROMPT, None, on_path) {
+    let prompt = if kind == Kind::Manga { IMPORT_MANGA_PROMPT } else { IMPORT_PROMPT };
+    if let Err(e) = pick(prompt, None, on_path) {
         s.transfer.error = Some(e);
     }
 }
 
 /// Reads `path` and compares it with the saved list of the active service (a thread).
-fn read_and_plan(path: &str, h: &crate::model::Handle) -> Result<Preview, String> {
+fn read_and_plan(path: &str, kind: Kind, h: &crate::model::Handle) -> Result<Preview, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("Can't read the file: {e}"))?;
-    let file = listxml::parse(&bytes)?;
+    let file = listxml::parse_kind(&bytes, kind)?;
     let service = crate::account::active();
     let store = Store::open(&paths::db_file()).map_err(|e| format!("Can't open the saved list: {e}"))?;
-    let list = store.load_list(service.name()).map_err(|e| format!("Can't read the saved list: {e}"))?;
+    let list = store.load_list((service.name(), kind)).map_err(|e| format!("Can't read the saved list: {e}"))?;
     let mut mapped = HashMap::new();
     if service != ServiceId::Mal {
         let ids = Plan::ids_to_map(&file, &list, service.name());
@@ -244,7 +293,7 @@ fn read_and_plan(path: &str, h: &crate::model::Handle) -> Result<Preview, String
                 true
             });
             let mut svc = crate::account::open_for(service).ok_or_else(|| format!("{} is needed to match MyAnimeList ids: sign in, and check you are online.", service.title()))?;
-            let media = svc.media_by_mal_ids(&ids).map_err(|e| format!("Can't look the ids up on {}: {e}", service.title()))?;
+            let media = svc.media_by_mal_ids_of(kind, &ids).map_err(|e| format!("Can't look the ids up on {}: {e}", service.title()))?;
             mapped = media.into_iter().filter_map(|m| Some((m.id_mal?, m))).collect();
         }
     }
@@ -345,34 +394,49 @@ pub(crate) fn line_tagged(key: &str, title: &str, tag: Option<El>, note: String,
         .child(control)
 }
 
-/// Settings → Account: Export list….
-pub fn export_row(s: &State) -> El {
+/// Settings → Account: Export anime list… (and Export manga list…).
+pub fn export_row(s: &State, kind: Kind) -> El {
     let t = &s.transfer;
-    let (note, on): (String, Option<fn(&mut State)>) = match (refusal(s), &t.export_note) {
+    let manga = kind == Kind::Manga;
+    let (export_note, exporting) = if manga { (&t.manga_export_note, t.manga_exporting) } else { (&t.export_note, t.exporting) };
+    let go: fn(&mut State) = if manga { export_manga } else { export_anime };
+    let (note, on): (String, Option<fn(&mut State)>) = match (refusal(s), export_note) {
         (Some(why), _) => (why.to_string(), None),
-        (None, _) if t.exporting => ("Writing the file\u{2026}".into(), None),
-        (None, Some(Ok(m))) => (m.clone(), Some(export)),
-        (None, Some(Err(e))) => (e.clone(), Some(export)),
+        (None, _) if exporting => ("Writing the file\u{2026}".into(), None),
+        (None, Some(Ok(m))) => (m.clone(), Some(go)),
+        (None, Some(Err(e))) => (e.clone(), Some(go)),
         (None, None) if s.account.is_none() => ("Sign in first: the export is written from your saved list.".into(), None),
-        (None, None) => ("Your anime list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, episodes, score, rewatches and the dates Kotora has.".into(), Some(export)),
+        (None, None) if manga => ("Your manga list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, chapters, volumes, score, rereads and the dates Kotora has.".into(), Some(go)),
+        (None, None) => ("Your anime list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, episodes, score, rewatches and the dates Kotora has.".into(), Some(go)),
     };
-    let r = line("set/export", "Export list", note, small_button("set/export-button", "Export\u{2026}", false, on));
-    if matches!(t.export_note, Some(Err(_))) && refusal(s).is_none() { r.key("set/export-error") } else { r }
+    let (key, title, button) = if manga { ("set/export-manga", "Export manga list\u{2026}", "set/export-manga-button") } else { ("set/export", "Export anime list\u{2026}", "set/export-button") };
+    let r = line(key, title, note, small_button(button, "Export\u{2026}", false, on));
+    if matches!(export_note, Some(Err(_))) && refusal(s).is_none() { r.key(if manga { "set/export-manga-error" } else { "set/export-error" }) } else { r }
 }
 
-/// Settings → Account: Import list… and, once a file is read, its preview.
-pub fn import_row(s: &State) -> El {
+/// Settings → Account: Import anime list… (and Import manga list…) and, once a file is read, its
+/// preview under the row of the kind it is about.
+pub fn import_row(s: &State, kind: Kind) -> El {
     let t = &s.transfer;
+    let manga = kind == Kind::Manga;
     let service = s.service.title();
     let signed_in = s.account.is_some();
     let idle = t.busy.is_none() && !t.applying;
+    // The panel belongs to the kind the last import was started for.
+    let mine = t.import_kind == kind;
     let note = match (&t.busy, signed_in) {
-        (Some(b), _) => b.clone(),
-        (None, false) => "Sign in first: the file is compared with your list.".into(),
-        (None, true) => format!("Read a MyAnimeList XML export (.xml or .xml.gz) and add it to your {service} list. You see what changes before anything is sent."),
+        (Some(b), _) if mine => b.clone(),
+        (_, false) => "Sign in first: the file is compared with your list.".into(),
+        _ if manga => format!("Read a MyAnimeList manga XML export (.xml or .xml.gz) and add it to your {service} manga list. You see what changes before anything is sent."),
+        _ => format!("Read a MyAnimeList anime XML export (.xml or .xml.gz) and add it to your {service} anime list. You see what changes before anything is sent."),
     };
-    let on: Option<fn(&mut State)> = if idle && signed_in && t.preview.is_none() { Some(import) } else { None };
-    let mut c = col().key("set/import").w_full().child(line("set/import-line", "Import list", note, small_button("set/import-button", "Import\u{2026}", false, on)));
+    let go: fn(&mut State) = if manga { import_manga } else { import_anime };
+    let on: Option<fn(&mut State)> = if idle && signed_in && t.preview.is_none() { Some(go) } else { None };
+    let (key, line_key, title, button) = if manga { ("set/import-manga", "set/import-manga-line", "Import manga list\u{2026}", "set/import-manga-button") } else { ("set/import", "set/import-line", "Import anime list\u{2026}", "set/import-button") };
+    let mut c = col().key(key).w_full().child(line(line_key, title, note, small_button(button, "Import\u{2026}", false, on)));
+    if !mine {
+        return c;
+    }
     if let Some(e) = &t.error {
         c = c.child(text(e.clone()).key("set/import-error").font(theme::LABEL).color(PAL.status(Status::Dropped)).wrap().pb(12.0));
     }
@@ -415,12 +479,16 @@ pub(crate) fn group(key: &str, head: String, rows: Vec<String>) -> El {
 
 fn values_text(r: &PlanRow) -> String {
     let Some(v) = r.entry.values() else { return String::new() };
-    let mut t = v.status.label().to_string();
+    let manga = r.entry.kind == Kind::Manga;
+    let mut t = v.status.label_in(r.entry.kind).to_string();
     if v.rewatching {
-        t.push_str(", rewatching");
+        t.push_str(if manga { ", rereading" } else { ", rewatching" });
     }
     if v.progress > 0 {
-        t.push_str(&format!(", episode {}", v.progress));
+        t.push_str(&format!(", {} {}", if manga { "chapter" } else { "episode" }, v.progress));
+    }
+    if v.volumes > 0 {
+        t.push_str(&format!(", volume {}", v.volumes));
     }
     if let Some(sc) = v.score {
         t.push_str(&format!(", score {}", sc.to_ten()));
@@ -431,13 +499,15 @@ fn values_text(r: &PlanRow) -> String {
 fn preview(s: &State, p: &Preview) -> El {
     let c = p.plan.counts();
     let service = s.service.title();
+    let kind = p.plan.kind;
+    let manga = kind == Kind::Manga;
     let mut box_ = col().key("set/import-preview").w_full().gap(12.0).padding(14.0).mb(12.0).radius(theme::R_MD).fill(PAL.field).border(1.0, PAL.border);
     box_ = box_.child(
         row()
             .gap(8.0)
             .center_y()
             .child(text(p.file.clone()).font(theme::BODY_MED).color(PAL.text).truncate().grow(1.0).min_w(0.0))
-            .child(text(plural(p.plan.rows.len(), "anime", "anime")).font(theme::LABEL_NUM).color(PAL.faint)),
+            .child(text(if manga { plural(p.plan.rows.len(), "manga", "manga") } else { plural(p.plan.rows.len(), "anime", "anime") }).font(theme::LABEL_NUM).color(PAL.faint)),
     );
     box_ = box_.child(
         row()
@@ -460,7 +530,7 @@ fn preview(s: &State, p: &Preview) -> El {
         .filter(|r| r.verdict == Verdict::Different && r.conflict.is_none())
         .map(|r| match r.current {
             _ if !r.entry.update_on_import => format!("{}: kept (the file asks not to update it)", r.title()),
-            Some(cur) if !r.update.is_empty() => format!("{}: {}", r.title(), describe(&r.update, &cur)),
+            Some(cur) if !r.update.is_empty() => format!("{}: {}", r.title(), describe_in(kind, &r.update, &cur)),
             _ => format!("{}: yours is further along, kept", r.title()),
         })
         .collect();
@@ -511,10 +581,16 @@ fn preview(s: &State, p: &Preview) -> El {
     if !unknown.is_empty() {
         box_ = box_.child(group("set/import-list-unknown", "Left out".into(), unknown));
     }
-    let mut notes = vec![format!("Changes go through the sync queue to {service} at its pace, and wait there while you are offline. A higher episode count wins; a score fills an empty one.")];
-    if p.plan.manga > 0 {
-        let verb = if p.plan.manga == 1 { "is" } else { "are" };
-        notes.push(format!("{} in the file {verb} left out: anime only for now.", plural(p.plan.manga, "manga entry", "manga entries")));
+    let count_rule = if manga { "A higher chapter or volume count wins" } else { "A higher episode count wins" };
+    let to = match s.mirror_target() {
+        Some(m) => format!("{service}, and to {m} (the mirror), at each service\u{2019}s pace"),
+        None => format!("{service} at its pace"),
+    };
+    let mut notes = vec![format!("Changes go through the sync queue to {to}, and wait there while you are offline. {count_rule}; a score fills an empty one.")];
+    if p.plan.other > 0 {
+        let verb = if p.plan.other == 1 { "is" } else { "are" };
+        let (what, hint) = if manga { (plural(p.plan.other, "anime entry", "anime entries"), "Import anime list\u{2026}") } else { (plural(p.plan.other, "manga entry", "manga entries"), "Import manga list\u{2026}") };
+        notes.push(format!("{what} in the file {verb} left out: use \u{201c}{hint}\u{201d} for those."));
     }
     notes.push("Dates and notes in the file are not imported.".into());
     box_ = box_.child(text(notes.join(" ")).font(theme::LABEL).color(PAL.faint).wrap());
@@ -552,11 +628,10 @@ fn pick_status(s: &mut State, id: u32, file: bool) {
 }
 
 fn done_view(s: &State, d: &Done) -> El {
-    let service = s.service.title();
     let (msg, can_undo) = match d.undone {
         Some(n) => (format!("Took back {} that hadn\u{2019}t been sent yet.", plural(n, "change", "changes")), false),
         None if d.queued == 0 => ("Nothing to change: your list already has everything in the file.".to_string(), false),
-        None => (format!("Queued {} for {service}. They go out at its pace; the Queue page shows them.", plural(d.queued, "change", "changes")), true),
+        None => (s.queued_text(d.queued, "change", "changes"), true),
     };
     let mut r = row().key("set/import-done").w_full().gap(8.0).pb(12.0).center_y().flex_wrap().child(text(msg).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0));
     if can_undo {
@@ -623,4 +698,36 @@ fn fake_file(s: &State) -> String {
     add(9105, "Odd One", "Rewatching later", 1, 0);
     x.push_str("<manga><manga_mangadb_id>2</manga_mangadb_id></manga></myanimelist>");
     x
+}
+
+/// The fake preview of the manga scenes: a made-up manga file compared with the fake manga list.
+pub fn fake_manga_preview(s: &mut State) {
+    let list = crate::manga::fake_items();
+    let mut x = String::from("<myanimelist><myinfo><user_name>demo_user</user_name><user_export_type>2</user_export_type></myinfo>");
+    let mut add = |id: u32, title: &str, status: &str, vols: u32, chs: u32, rv: u32, rc: u32, score: u8| {
+        x.push_str(&format!(
+            "<manga><manga_mangadb_id>{id}</manga_mangadb_id><manga_title><![CDATA[{title}]]></manga_title><manga_volumes>{vols}</manga_volumes><manga_chapters>{chs}</manga_chapters><my_read_volumes>{rv}</my_read_volumes><my_read_chapters>{rc}</my_read_chapters><my_score>{score}</my_score><my_status>{status}</my_status></manga>"
+        ));
+    };
+    for (i, it) in list.iter().enumerate() {
+        let st = listxml::status_to_xml_of(Kind::Manga, it.status);
+        let (vols, chs) = (it.media.volumes.unwrap_or(0), it.media.episodes.unwrap_or(0));
+        let score = it.score.map_or(0, kotora_core::Score::to_ten);
+        match i % 4 {
+            // Further along in the file.
+            0 => add(it.media.id, &it.media.title, st, vols, chs, it.volumes + 1, it.progress + 3, score),
+            // A status the plan can't settle.
+            1 if it.status != Status::Dropped => add(it.media.id, &it.media.title, "Dropped", vols, chs, it.volumes, it.progress, score),
+            _ => add(it.media.id, &it.media.title, st, vols, chs, it.volumes, it.progress, score),
+        }
+    }
+    add(9201, "Starlit Ferry", "Plan to Read", 0, 0, 0, 0, 0);
+    add(9202, "Paper Kite Atlas", "Completed", 6, 48, 6, 48, 8);
+    add(9203, "Copper Lanterns", "Reading", 0, 0, 2, 17, 0);
+    add(0, "No Id In The File", "Reading", 0, 0, 0, 1, 0);
+    add(9204, "Odd One", "Reading later", 0, 0, 0, 1, 0);
+    x.push_str("<anime><series_animedb_id>2</series_animedb_id></anime></myanimelist>");
+    let file = listxml::parse_kind(x.as_bytes(), Kind::Manga).expect("the fake file reads");
+    let plan = listxml::plan(&file, s.service.name(), &list, &HashMap::new());
+    s.transfer = Transfer { import_kind: Kind::Manga, preview: Some(Preview { file: "mangalist_demo.xml.gz".into(), plan, use_file: HashSet::new() }), ..Transfer::default() };
 }

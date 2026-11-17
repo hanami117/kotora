@@ -391,6 +391,18 @@ pub trait ListService {
     fn media_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
         Err(ServiceError::Other(format!("{} can't look up MyAnimeList ids", self.title())))
     }
+    /// The service's manga for MyAnimeList manga ids (an import or the mirror into a service keyed
+    /// by its own ids), as [`ListService::media_by_mal_ids`].
+    fn manga_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        Err(ServiceError::Other(format!("{} can't look up MyAnimeList manga ids", self.title())))
+    }
+    /// [`ListService::media_by_mal_ids`] or [`ListService::manga_by_mal_ids`].
+    fn media_by_mal_ids_of(&mut self, kind: Kind, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
+        match kind {
+            Kind::Anime => self.media_by_mal_ids(ids),
+            Kind::Manga => self.manga_by_mal_ids(ids),
+        }
+    }
     /// The whole manga list (only asked once the user turned Manga on: see `Store::manga_enabled`).
     fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
         Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
@@ -401,6 +413,10 @@ pub trait ListService {
     }
     /// Sends one change of a manga entry.
     fn update_manga_entry(&mut self, _media_id: u32, _change: &Change) -> Result<Remote, ServiceError> {
+        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    }
+    /// Removes one manga from the list. Not on the list there: nothing to do, `Ok`.
+    fn delete_manga_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
         Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
     }
     /// A manga title search for the search bar.
@@ -432,11 +448,11 @@ pub trait ListService {
             Kind::Manga => self.update_manga_entry(media_id, change),
         }
     }
-    /// Removes one entry of a list of `kind` (anime only for now: Kotora has no manga UI).
+    /// Removes one entry of a list of `kind`.
     fn delete_entry_of(&mut self, kind: Kind, media_id: u32) -> Result<(), ServiceError> {
         match kind {
             Kind::Anime => self.delete_entry(media_id),
-            Kind::Manga => Err(ServiceError::Other(format!("{} manga entries can't be removed in Kotora yet", self.title()))),
+            Kind::Manga => self.delete_manga_entry(media_id),
         }
     }
 

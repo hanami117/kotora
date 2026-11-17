@@ -29,7 +29,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 - Edit progress, score and status. Changes go to a visible sync queue, so they work offline and conflicts
   are shown, not hidden.
 - Search your list and MyAnimeList or AniList, add an anime in one click, open a details page.
-- Import a MyAnimeList XML export into either service, with a preview first; export a MyAnimeList list as one.
+- Import a MyAnimeList XML export (anime or manga) into either service, with a preview first; export a MyAnimeList anime or manga list as one (Settings → Account → Import anime list… / Import manga list…, Export anime list… / Export manga list…).
 - Fast and small: no browser engine, a single binary, nothing running in the background that you didn't start.
 - A command line, `kot`, to control the running app.
 
@@ -160,7 +160,7 @@ kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
-kot export FILE        your anime list as a MyAnimeList XML file (MyAnimeList lists only)
+kot export [--manga] FILE   your anime list (--manga: your manga list) as a MyAnimeList XML file (MyAnimeList lists only)
 kot config client-id ID   (optional: your own client ID for the service in use)
 kot show | kot quit
 ```
@@ -170,7 +170,7 @@ kot show | kot quit
 Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. Kotora shares no
 code with Taiga.
 
-Kotora is not affiliated with or endorsed by MyAnimeList or AniList. Third-party licences are in
+Kotora is not affiliated with or endorsed by MyAnimeList, AniList or MangaDex. Third-party licences are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
@@ -186,3 +186,5 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
   [anitomy-ng](https://github.com/tylergibbs2/anitomy-ng): file name parsing.
 - [Noto Sans JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License 1.1): the outlines of 小虎
   in the sidebar and the startup animation.
+- [MangaDex](https://mangadex.org/): volume data for "Fill volumes from chapters" (its public API, asked only
+  when you use it, within its rate limit).

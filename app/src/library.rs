@@ -462,6 +462,9 @@ pub enum Undo {
     Edit(u32, kotora_core::Change),
     /// Remove from list: the entry as it was (its removal waits in the queue until sent).
     Remove(Box<crate::model::Entry>),
+    /// The same for a manga.
+    MangaEdit(u32, kotora_core::Change),
+    MangaRemove(Box<crate::manga::MEntry>),
 }
 
 /// Two undos are the same when they put back the same thing (a removal: the same entry).
@@ -470,6 +473,8 @@ impl PartialEq for Undo {
         match (self, other) {
             (Undo::Edit(a, c), Undo::Edit(b, d)) => a == b && c == d,
             (Undo::Remove(a), Undo::Remove(b)) => a.id == b.id && a.updated_at == b.updated_at,
+            (Undo::MangaEdit(a, c), Undo::MangaEdit(b, d)) => a == b && c == d,
+            (Undo::MangaRemove(a), Undo::MangaRemove(b)) => a.id == b.id && a.updated_at == b.updated_at,
             _ => false,
         }
     }
@@ -498,7 +503,7 @@ impl State {
                 self.grid.sel.filter(|id| self.rows.iter().any(|&k| self.entries[k].id == *id))
             }
             Page::List(_) => self.editor.map(|ed| ed.id).and_then(on_list),
-            Page::Details => self.detail.as_ref().map(|d| d.id()).and_then(on_list),
+            Page::Details => self.detail.as_ref().filter(|d| !d.is_manga()).map(|d| d.id()).and_then(on_list),
             _ => None,
         }
     }

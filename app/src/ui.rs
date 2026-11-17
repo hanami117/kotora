@@ -10,7 +10,7 @@ use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, 
 use crate::icons;
 use kotora_core::queue::{Op, OpState};
 
-use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State, remote_text};
+use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State};
 use crate::now::{Now, clock_text};
 use kotora_core::recognize::Found;
 use kotora_detect::{Led, Switch};
@@ -52,7 +52,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
         .children(s.toast.as_ref().map(crate::library::toast))
-        .children(account_tip(s));
+        .children(account_tip(s))
+        .children(crate::volfill::editor_tip(s));
     // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
     // window resize lands every change inside `root` at once, and that must not cut the intro's
     // own tweens short (a window manager that enlarges the window as it opens).
@@ -93,7 +94,7 @@ pub(crate) fn page_key(s: &State, k: &rune::KeyEvent, tx: &Tx) -> Option<kotora_
 pub(crate) fn field_page_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
     let Some(st) = page_key(s, k, tx) else { return false };
     tx.blur();
-    go_to(s, Page::List(st), tx);
+    go_to(s, s.list_page(st), tx);
     true
 }
 
@@ -119,7 +120,11 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if let Some(status) = page_key(s, k, tx) {
-        go_to(s, Page::List(status), tx);
+        go_to(s, s.list_page(status), tx);
+        return true;
+    }
+    if k.is_command('f') && matches!(s.page, Page::Manga(_)) && s.has_list() {
+        s.manga.query.focused = true;
         return true;
     }
     if k.is_command('k') || (k.is_command('f') && !matches!(s.page, Page::List(_))) {
@@ -135,12 +140,17 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.ask = None;
         return true;
     }
-    if k.key == rune::Key::Escape && s.confirm_remove.is_some() {
+    if k.key == rune::Key::Escape && (s.confirm_remove.is_some() || s.manga.confirm_remove.is_some()) {
         s.confirm_remove = None;
+        s.manga.confirm_remove = None;
         return true;
     }
     if k.key == rune::Key::Escape && s.editor.is_some() {
         s.editor = None;
+        return true;
+    }
+    if k.key == rune::Key::Escape && s.manga.editor.is_some() {
+        s.manga.editor = None;
         return true;
     }
     if k.key == rune::Key::Escape && s.online.menu.is_some() {
@@ -181,7 +191,7 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.play_entry(id);
         return true;
     }
-    s.grid_key(k, tx)
+    s.grid_key(k, tx) || s.manga_grid_key(k, tx)
 }
 
 // ------------------------------------------------------------------------------------ sidebar
@@ -211,6 +221,10 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     if let Some((name, service)) = &s.account {
         side = side.child(account(s, name, service, s.lit_page() == Page::Profile));
     }
+    // Anime | Manga.
+    if s.has_list() {
+        side = side.child(crate::manga::switch(s));
+    }
     let lit = s.lit_page();
     // The pages scroll on their own when the window is too short for them; the playing card
     // and the sync line stay at the bottom.
@@ -223,21 +237,21 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
         nav = nav.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
     }
     nav = nav.child(nav_heading("My list"));
+    let manga = s.manga.mode;
     for st in Status::ALL {
-        let count = (!s.loading && s.has_list()).then(|| s.count(st).to_string());
-        nav = nav.child(nav_item(
-            st.slug(),
-            NavMark::Dot(PAL.status(st)),
-            st.label(),
-            count.map(NavEnd::Count),
-            lit == Page::List(st),
-            Page::List(st),
-        ));
+        let (count, label, page) = if manga {
+            let first = s.manga.loading && s.manga.synced_at.is_none();
+            ((!first).then(|| s.manga_count(st).to_string()), st.label_in(kotora_core::Kind::Manga), Page::Manga(st))
+        } else {
+            ((!s.loading && s.has_list()).then(|| s.count(st).to_string()), st.label(), Page::List(st))
+        };
+        let key = if manga { format!("manga-{}", st.slug()) } else { st.slug().to_string() };
+        nav = nav.child(nav_item(&key, NavMark::Dot(PAL.status(st)), label, count.map(NavEnd::Count), lit == page, page));
     }
     nav = nav.child(nav_heading("Kotora").mt(12.0));
     nav = nav
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
-        .child(nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing))
+        .children((!manga).then(|| nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)))
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -253,6 +267,10 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     }
     let (dot, line) = if s.syncing {
         (PAL.faint, "Syncing…".to_string())
+    } else if manga && s.manga.error.is_some() && !s.offline {
+        (PAL.err(), "Manga sync failed".to_string())
+    } else if manga && s.manga.loading {
+        (PAL.faint, "Reading your manga\u{2026}".to_string())
     } else if s.offline && s.queue > 0 {
         (PAL.warn(), format!("Offline · {} changes waiting", s.queue))
     } else if s.offline {
@@ -547,6 +565,9 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::List(_) if s.auth == Auth::NoClientId => crate::setup::page(s, width),
         Page::List(_) if !s.has_list() => welcome(s),
         Page::List(st) => list_page(s, st, wide, width),
+        Page::Manga(_) if s.auth == Auth::NoClientId => crate::setup::page(s, width),
+        Page::Manga(_) if !s.has_list() => welcome(s),
+        Page::Manga(st) => crate::manga::page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),
         Page::Home => crate::home::page(s),
         Page::Profile if s.account.is_none() => welcome(s),
@@ -576,7 +597,10 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a, s.service));
     }
-    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, id)) {
+    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Anime, id)) {
+        m = m.child(bar);
+    }
+    if let Some(bar) = s.manga.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Manga, id)) {
         m = m.child(bar);
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
@@ -628,7 +652,7 @@ fn top_extra(s: &State, title: &str, count: usize, extra: String) -> El {
     top_with(s, title, Some(count), Some(extra), true)
 }
 
-fn top_with(s: &State, title: &str, count: Option<usize>, extra: Option<String>, tools: bool) -> El {
+pub(crate) fn top_with(s: &State, title: &str, count: Option<usize>, extra: Option<String>, tools: bool) -> El {
     let mut t = row().key("top").gap(12.0).center_y().px(theme::PAGE_PAD).pt(18.0).pb(14.0).child(
         row()
             .gap(6.0)
@@ -691,7 +715,7 @@ fn search_box(s: &State) -> El {
 }
 
 /// The Sort button: opens the Sort menu ([`sort_menu`]), by a press, Space, Return or Down.
-fn sort_select(s: &State) -> El {
+pub(crate) fn sort_select(s: &State) -> El {
     let (sort, open) = (s.sort, s.sort_menu);
     let toggle = |s: &mut State, tx: &mut Tx| {
         tx.instant();
@@ -781,7 +805,7 @@ fn sort_menu(s: &State) -> El {
     m
 }
 
-fn refresh_button(syncing: bool) -> El {
+pub(crate) fn refresh_button(syncing: bool) -> El {
     el().key("refresh")
         .role("button")
         .label("Refresh")
@@ -868,13 +892,15 @@ fn results(s: &State, mut page: El, scroll_key: String, wide: bool) -> El {
         page = page.child(a);
     }
     let n = layout(s).len();
-    page.child(header(wide, s.sort)).child(
+    let manga = s.page == Page::Search && s.search_kind() == kotora_core::Kind::Manga;
+    page.child(if manga { crate::manga::header(wide, s.sort) } else { header(wide, s.sort) }).child(
         col().key(scroll_key).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
             col().key("rows").growth(GrowthSpec::default()).virtual_rows(
                 n,
                 theme::ROW_H,
                 |s: &State, i| layout(s).get(i).map_or_else(|| format!("gone-{i}"), |r| crate::search::key(s, *r)).into(),
                 move |s: &State, i| match layout(s).get(i) {
+                    Some(SRow::List(k)) if manga => s.manga.rows.get(*k).map_or_else(el, |&k| crate::manga::list_row(s, &s.manga.entries[k], wide)),
                     Some(SRow::List(k)) => s.rows.get(*k).map_or_else(el, |&k| list_row(s, &s.entries[k], wide)),
                     Some(r) => crate::search::line(s, *r),
                     None => el(),
@@ -905,11 +931,19 @@ fn search_view(s: &State, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&s.find, &format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title())), PAL.faint)
+                .placeholder(
+                    field_hint(&s.find, &if s.search_kind() == kotora_core::Kind::Manga { format!("Search your manga and {svc}, or paste a {svc} manga link", svc = s.service.title()) } else { format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title()) }),
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
                     if field_page_key(s, k, tx) {
+                        return true;
+                    }
+                    // Tab: anime or manga (with Manga on); Shift+Tab still moves the focus.
+                    if k.key == rune::Key::Tab && !k.mods.shift && !k.mods.ctrl && !k.mods.alt && !k.mods.cmd && s.toggle_search_kind() {
+                        tx.instant();
                         return true;
                     }
                     if k.key != rune::Key::Escape || s.online.menu.is_some() {
@@ -932,21 +966,54 @@ fn search_view(s: &State, wide: bool) -> El {
                 }),
         )
         .child(kbd("Esc"));
-    let count = s.searching().then(|| s.rows.len() + s.new_hits().len());
+    let count = s.searching().then(|| s.search_list_len() + s.new_hits().len());
     let page = col()
         .key("page/search")
         .w_full()
         .h_full()
         .child(top(s, "Search", count, false))
-        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).child(field.grow(1.0).max_w(720.0)));
+        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).gap(12.0).center_y().child(field.grow(1.0).max_w(720.0)).children(s.manga.enabled.then(|| kind_toggle(s))));
     if !s.searching() {
-        return page.child(search_hint(s.service.title()));
+        return page.child(search_hint(s.service.title(), s.search_kind() == kotora_core::Kind::Manga));
     }
     results(s, page, "search-scroll".into(), wide)
 }
 
+/// The search page's Anime | Manga toggle (with Manga on); Tab in the box does the same.
+fn kind_toggle(s: &State) -> El {
+    use kotora_core::Kind;
+    let now = s.search_kind();
+    let seg = |kind: Kind| {
+        let on = now == kind;
+        let c = el()
+            .key(format!("search/kind/{}", kind.name()))
+            .role("button")
+            .label(format!("Search {}", kind.label().to_lowercase()))
+            .checked(on)
+            .h(32.0)
+            .px(12.0)
+            .radius(theme::R_SM)
+            .center()
+            .child(text(kind.label()).font(if on { theme::BODY_MED } else { theme::BODY }).color(if on { PAL.text } else { PAL.dim }));
+        if on {
+            c.fill(PAL.raised).border(1.0, PAL.border_strong)
+        } else {
+            c.focusable(true).hover(PAL.hover()).press(PAL.press()).cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.set_search_kind(kind);
+            })
+        }
+    };
+    row()
+        .key("search/kind")
+        .gap(8.0)
+        .center_y()
+        .child(row().h(40.0).padding(4.0).gap(2.0).center_y().radius(theme::R_SM).fill(PAL.field).border(1.0, PAL.border).child(seg(Kind::Anime)).child(seg(Kind::Manga)))
+        .child(kbd("Tab"))
+}
+
 /// The empty search page: what it finds.
-fn search_hint(svc: &str) -> El {
+fn search_hint(svc: &str, manga: bool) -> El {
     let line = |t: &str| text(t.to_string()).font(theme::LABEL).color(PAL.dim).wrap();
     col()
         .key("search-hint")
@@ -957,9 +1024,9 @@ fn search_hint(svc: &str) -> El {
         .radius(theme::R_LG)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(text("Find any anime").font(theme::SECTION).color(PAL.text))
-        .child(line(&format!("Titles in English, Japanese or romaji search your list first, then {svc} (3 letters or more).")))
-        .child(line(&format!("A {svc} link or id (such as 41590) opens that anime's page, on your list or not.")))
+        .child(text(if manga { "Find any manga" } else { "Find any anime" }).font(theme::SECTION).color(PAL.text))
+        .child(line(&format!("Titles in English, Japanese or romaji search your {} first, then {svc} (3 letters or more).", if manga { "manga list" } else { "list" })))
+        .child(line(&if manga { format!("A {svc} manga link or id opens that manga's page, on your list or not. The Anime | Manga switch picks what is searched.") } else { format!("A {svc} link or id (such as 41590) opens that anime's page, on your list or not.") }))
         .child(text("Esc goes back. The box on a list page filters that list.").font(theme::LABEL).color(PAL.faint).wrap().mt(4.0))
 }
 
@@ -995,7 +1062,7 @@ fn chips(s: &State, st: Status) -> El {
 }
 
 /// Column widths shared by the header and the rows.
-fn columns(cover: El, title: El, progress: El, score: El, kind: El, updated: El, wide: bool) -> El {
+pub(crate) fn columns(cover: El, title: El, progress: El, score: El, kind: El, updated: El, wide: bool) -> El {
     let r = row()
         .w_full()
         .gap(theme::COL_GAP)
@@ -1348,11 +1415,20 @@ pub(crate) fn op_cover_url(s: &State, media_id: u32) -> Option<&str> {
     s.entries.iter().find(|e| e.id == media_id).and_then(|e| e.cover_url.as_deref())
 }
 
+/// [`op_cover_url`] for a change of either kind.
+fn op_cover_url_of<'a>(s: &'a State, op: &Op) -> Option<&'a str> {
+    match op.kind {
+        kotora_core::Kind::Manga => s.manga.entries.iter().find(|e| e.id == op.media_id).and_then(|e| e.cover_url.as_deref()),
+        kotora_core::Kind::Anime => op_cover_url(s, op.media_id),
+    }
+}
+
 /// A queued change's poster: the tile, with the real cover over it once it is in memory.
 fn op_cover(s: &State, op: &Op, title: &str) -> El {
     let (w, h) = (34.0, 48.0);
-    let tile = cover(op.media_id, title, w, h, 12.0);
-    match s.covers.get(op.media_id, op_cover_url(s, op.media_id), w, h) {
+    let id = if op.kind == kotora_core::Kind::Manga { crate::manga::cover_id(op.media_id) } else { op.media_id };
+    let tile = cover(id, title, w, h, 12.0);
+    match s.covers.get(id, op_cover_url_of(s, op), w, h) {
         Some(img) => tile.child(el().key("cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
         None => tile,
     }
@@ -1527,6 +1603,7 @@ fn changes(n: u32) -> String {
 fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
+    let manga = op.kind == kotora_core::Kind::Manga;
     let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op_with(op, s.score_format())).font(theme::LABEL_NUM).color(PAL.text));
     if op.edits > 1 && op.state.is_open() {
         line = line.child(text(format!("({} edits merged)", op.edits)).font(theme::LABEL).color(PAL.faint));
@@ -1549,7 +1626,19 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
             .gap(6.0)
             .child(action(format!("q/{id}/edit"), "Edit", false, move |s, tx| {
                 // The entry's page, its editor open, scrolled to it.
-                if let Some(st) = s.entries.iter().find(|e| e.id == media).map(|e| e.status) {
+                if manga {
+                    if let Some(st) = s.manga.entries.iter().find(|e| e.id == media).map(|e| e.status) {
+                        s.manga.query.replace_text("");
+                        if !s.manga.mode {
+                            s.set_kind(kotora_core::Kind::Manga);
+                        }
+                        s.go(Page::Manga(st));
+                        s.set_manga_filter(crate::manga::MFilter::All);
+                        s.manga.editor = None;
+                        s.manga_toggle_editor(media);
+                        tx.scroll_into_view(format!("m{media}"));
+                    }
+                } else if let Some(st) = s.entries.iter().find(|e| e.id == media).map(|e| e.status) {
                     s.query.replace_text("");
                     s.go(Page::List(st));
                     s.set_filter(Filter::All);
@@ -1584,11 +1673,15 @@ pub(crate) fn pill(label: &str, c: Color) -> El {
 fn conflict_values(op: &Op, v: &kotora_core::Values, fmt: kotora_core::ScoreFormat) -> String {
     let total = op.episodes.map_or("?".to_string(), |n| n.to_string());
     let mut parts = Vec::new();
+    let manga = op.kind == kotora_core::Kind::Manga;
     if op.change.status.is_some() {
-        parts.push(v.status.label().to_string());
+        parts.push(v.status.label_in(op.kind).to_string());
     }
     if op.change.progress.is_some() {
-        parts.push(format!("Progress {} / {total}", v.progress));
+        parts.push(format!("{} {} / {total}", if manga { "Chapters" } else { "Progress" }, v.progress));
+    }
+    if op.change.volumes.is_some() {
+        parts.push(format!("Volumes {}", v.volumes));
     }
     if op.change.score.is_some() {
         parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {}", fmt.words(n))));
@@ -1614,12 +1707,12 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), remote_text(r, op.episodes, s.score_format()), "Keep it"),
+        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format()), "Keep it"),
         Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
         None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
     let aside = match &op.remote {
-        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes, s.score_format())),
+        Some(r) => format!("{} has {}", s.service.title(), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format())),
         None => "removed on another device".into(),
     };
     col()
@@ -1678,7 +1771,12 @@ pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut S
         .fill(fill)
         .center()
         .child(text(label.to_string()).font(theme::LABEL_BTN).color(fg));
-    let b = if primary || on.is_none() { b } else { b.border(1.0, PAL.border_strong) };
+    // Off, it still reads as a button (outlined, dimmer), not as plain text.
+    let b = match (primary, on.is_some()) {
+        (_, false) => b.border(1.0, PAL.border),
+        (false, true) => b.border(1.0, PAL.border_strong),
+        (true, true) => b,
+    };
     match on {
         Some(f) => b
             .focusable(true)
@@ -1714,7 +1812,7 @@ pub(crate) fn alert(key: &str, c: Color, message: String, action: Option<El>) ->
 }
 
 /// The bar above the list: sign in again, or the last sync's error.
-fn status_alert(s: &State) -> Option<El> {
+pub(crate) fn status_alert(s: &State) -> Option<El> {
     if s.auth == Auth::Expired {
         return Some(alert(
             "alert/expired",
@@ -1846,7 +1944,7 @@ pub(crate) fn now_cover_url<'a>(s: &'a State, n: &'a Now) -> Option<&'a str> {
         .find(|e| e.id == id)
         .and_then(|e| e.cover_url.as_deref())
         .or(n.cover_url.as_deref())
-        .or_else(|| s.detail.as_ref().filter(|d| d.id() == id).and_then(|d| d.info.as_ref()).and_then(|i| i.cover_url.as_deref()))
+        .or_else(|| s.detail.as_ref().filter(|d| d.id() == id && !d.is_manga()).and_then(|d| d.info.as_ref()).and_then(|i| i.cover_url.as_deref()))
 }
 
 /// A cover for what plays: the real one when loaded (at its own pixel size), else the tile.

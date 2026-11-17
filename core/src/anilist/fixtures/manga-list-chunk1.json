@@ -1,0 +1,12 @@
+{"data":{"MediaListCollection":{"hasNextChunk":true,"lists":[
+ {"entries":[
+  {"id":8001,"mediaId":190001,"status":"CURRENT","progress":21,"progressVolumes":3,"repeat":0,"score":85,"updatedAt":1763200000,
+   "media":{"id":190001,"idMal":79001,"title":{"romaji":"Kami Chouchin","english":"Paper Lanterns","native":"紙提灯"},"synonyms":["KamiChou"],"format":"MANGA","status":"RELEASING","chapters":null,"volumes":null,"countryOfOrigin":"JP","startDate":{"year":2021,"month":4,"day":8},"endDate":{"year":null,"month":null,"day":null},"averageScore":82,"popularity":40210,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/manga/cover/small/bx190001.jpg","large":"https://s4.anilist.example.invalid/media/manga/cover/medium/bx190001.jpg"}}},
+  {"id":8002,"mediaId":190002,"status":"REPEATING","progress":4,"progressVolumes":0,"repeat":1,"score":0,"updatedAt":1763100000,
+   "media":{"id":190002,"idMal":79002,"title":{"romaji":"Cheolui Jeongwon","english":"Iron Garden","native":null},"synonyms":[],"format":"MANGA","status":"FINISHED","chapters":120,"volumes":12,"countryOfOrigin":"KR","startDate":{"year":2018,"month":2,"day":null},"endDate":{"year":2022,"month":9,"day":20},"averageScore":null,"popularity":801,"coverImage":{"medium":null,"large":"https://s4.anilist.example.invalid/media/manga/cover/medium/bx190002.jpg"}}}
+ ]},
+ {"entries":[
+  {"id":8001,"mediaId":190001,"status":"CURRENT","progress":21,"progressVolumes":3,"repeat":0,"score":85,"updatedAt":1763200000,
+   "media":{"id":190001,"title":{"romaji":"Kami Chouchin"},"format":"MANGA","status":"RELEASING"}}
+ ]}
+]}}}

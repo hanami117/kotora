@@ -1,0 +1,5 @@
+{"result":"ok","response":"collection","data":[
+ {"id":"aaaaaaaa-0000-4000-8000-000000000001","type":"manga","attributes":{"title":{"en":"Paper Lanterns (Fan Colored)"},"links":{"mal":"99999","al":"88888"}}},
+ {"id":"bbbbbbbb-0000-4000-8000-000000000002","type":"manga","attributes":{"title":{"ja-ro":"Kami Chouchin"},"links":{"mal":"79001","al":"190001","raw":"https://example.invalid/raw"}}},
+ {"id":"cccccccc-0000-4000-8000-000000000003","type":"manga","attributes":{"title":{"en":"Paper Lanterns: Side Stories"},"links":null}}
+],"limit":10,"offset":0,"total":3}

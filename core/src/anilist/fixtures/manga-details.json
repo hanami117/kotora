@@ -1,0 +1,13 @@
+{"data":{"Media":{"id":190002,"idMal":79002,"title":{"romaji":"Cheolui Jeongwon","english":"Iron Garden","native":"철의 정원"},"synonyms":["Iron Garden (2018)"],"format":"MANGA","status":"FINISHED","chapters":120,"volumes":12,"countryOfOrigin":"KR","startDate":{"year":2018,"month":2,"day":5},"endDate":{"year":2022,"month":9,"day":20},"averageScore":79,"popularity":15400,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/manga/cover/small/bx190002.jpg","large":"https://s4.anilist.example.invalid/media/manga/cover/medium/bx190002.jpg"},
+ "staff":{"edges":[
+  {"role":"Story","node":{"name":{"full":"Min-seo Park"}}},
+  {"role":"Art","node":{"name":{"full":"Ji-ho Han"}}},
+  {"role":"Art (ch. 1-40)","node":{"name":{"full":"Min-seo Park"}}},
+  {"role":"Lettering","node":{"name":{"full":"Ren Kato"}}},
+  {"role":"Original Story","node":{"name":{"full":""}}}
+ ]},
+ "description":"A gardener grows iron flowers.<br><br>\n<i>(Source: made up)</i> &amp; more",
+ "genres":["Drama","Fantasy",""],
+ "rankings":[{"rank":310,"type":"RATED","allTime":true},{"rank":20,"type":"POPULAR","allTime":false},{"rank":420,"type":"POPULAR","allTime":true}],
+ "mediaListEntry":{"id":8002,"mediaId":190002,"status":"REPEATING","progress":4,"progressVolumes":0,"repeat":1,"score":70,"updatedAt":1763100000,"startedAt":{"year":2023,"month":1,"day":2},"completedAt":{"year":2023,"month":6,"day":null}}
+}}}

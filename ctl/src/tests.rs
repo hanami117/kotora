@@ -21,6 +21,7 @@ fn sample() -> Status {
         queue: 4,
         offline: false,
         window: true,
+        mirror: None,
     }
 }
 
@@ -47,7 +48,7 @@ fn wire_format_is_readable() {
 fn requests_and_replies_round_trip() {
     let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0), score_text: None, anyway: true };
     let set_text = Request::Set { title: "Lanterns".into(), progress: None, status: None, score: None, score_text: Some("7.5".into()), anyway: false };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, set_text, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }, Request::Remove { title: "Neon".into(), yes: false }, Request::Remove { title: "9001".into(), yes: true }, Request::Export { path: "/tmp/list.xml".into() }] {
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, set_text, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }, Request::Remove { title: "Neon".into(), yes: false }, Request::Remove { title: "9001".into(), yes: true }, Request::Export { path: "/tmp/list.xml".into() }, Request::ExportManga { path: "/tmp/manga.xml".into() }, Request::MangaList { status: None }, Request::MangaList { status: Some("watching".into()) }, Request::Manga { on: None }, Request::Manga { on: Some(false) }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -212,6 +213,9 @@ fn the_build_script_facts_parse() {
 fn stage_3_wire_format() {
     assert_eq!(serde_json::to_string(&Request::List { status: Some("watching".into()) }).unwrap(), r#"{"cmd":"list","status":"watching"}"#);
     assert_eq!(serde_json::to_string(&Request::List { status: None }).unwrap(), r#"{"cmd":"list"}"#);
+    assert_eq!(serde_json::to_string(&Request::MangaList { status: None }).unwrap(), r#"{"cmd":"manga_list"}"#);
+    assert_eq!(serde_json::to_string(&Request::Manga { on: Some(true) }).unwrap(), r#"{"cmd":"manga","on":true}"#);
+    assert_eq!(serde_json::to_string(&Request::Manga { on: None }).unwrap(), r#"{"cmd":"manga"}"#);
     assert_eq!(serde_json::to_string(&Request::PlusOne { title: "Neon".into(), anyway: false }).unwrap(), r#"{"cmd":"plus_one","title":"Neon"}"#);
     assert_eq!(
         serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None, score_text: None, anyway: false }).unwrap(),
@@ -220,7 +224,7 @@ fn stage_3_wire_format() {
     assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);
     assert_eq!(serde_json::to_string(&Request::Remove { title: "Neon".into(), yes: false }).unwrap(), r#"{"cmd":"remove","title":"Neon"}"#);
     assert_eq!(serde_json::to_string(&Request::Sync).unwrap(), r#"{"cmd":"sync"}"#);
-    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, score_text: None, waiting: None, rewatching: false, times_rewatched: 0 };
+    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, score_text: None, waiting: None, rewatching: false, times_rewatched: 0, ..Default::default() };
     let text = serde_json::to_string(&Reply::Edited { entry: e.clone() }).unwrap();
     assert_eq!(text, r#"{"reply":"edited","entry":{"id":7,"title":"Neon","status":"Watching","progress":3,"episodes":12}}"#);
     assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), Reply::Edited { entry: e });

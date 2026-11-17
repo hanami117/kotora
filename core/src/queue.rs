@@ -744,7 +744,7 @@ pub(crate) fn add_tx(tx: &Connection, service: &str, media: &Media, status: Stat
 }
 
 impl Store {
-    /// Applies an import (`listxml::actions`) to the anime list of `service`: each add and update
+    /// Applies an import (`listxml::actions`) to the anime or manga list of `service`: each add and update
     /// goes into the sync queue like an edit made by hand, all in one transaction (the whole
     /// import is saved, or nothing). Returns the queued changes' ids, for
     /// [`Store::undo_import`].
@@ -779,7 +779,7 @@ pub(crate) fn import_tx(tx: &Connection, service: &str, actions: &[crate::listxm
     for a in actions {
         let (sc, media_id) = match a {
             Action::Add { media, .. } => (Scope::new(service, media.kind), media.id),
-            Action::Update { media_id, .. } => (Scope::new(service, Kind::Anime), *media_id),
+            Action::Update { kind, media_id, .. } => (Scope::new(service, *kind), *media_id),
         };
         let before = entry_values(tx, sc, media_id)?.map(|(v, _)| v);
         let id = match a {
@@ -793,13 +793,14 @@ pub(crate) fn import_tx(tx: &Connection, service: &str, actions: &[crate::listxm
                     score: Some(values.score),
                     rewatching: Some(values.rewatching),
                     times_rewatched: Some(values.times_rewatched),
+                    volumes: (values.volumes > 0).then_some(values.volumes),
                     ..Change::default()
                 };
-                let (cur, _) = entry_values(tx, sc, media.id)?.ok_or_else(|| StoreError("the added anime is not on the saved list".into()))?;
+                let (cur, _) = entry_values(tx, sc, media.id)?.ok_or_else(|| StoreError("the added entry is not on the saved list".into()))?;
                 let rest = rest.without_same(&cur);
                 if rest.is_empty() { first } else { enqueue_tx(tx, sc, media.id, rest, now)?.or(first) }
             }
-            Action::Update { media_id, change } => enqueue_tx(tx, sc, *media_id, *change, now)?,
+            Action::Update { media_id, change, .. } => enqueue_tx(tx, sc, *media_id, *change, now)?,
         };
         if follow {
             crate::mirror::follow(tx, sc, media_id, before, now)?;

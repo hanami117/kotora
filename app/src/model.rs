@@ -42,6 +42,8 @@ pub enum Page {
     Setup,
     /// What airs this week and this season (`airing.rs`).
     Airing,
+    /// A manga list page (`manga.rs`; the sidebar's switch on Manga).
+    Manga(Status),
 }
 
 /// The chips above the list.
@@ -185,6 +187,8 @@ pub struct Entry {
     /// A change for this entry waits in the queue.
     pub waiting: Option<&'static str>,
     /// The service's cover image (`None` in the fake list, and for shows without one).
+    /// AniList `idMal` (the MyAnimeList link with the mirror on); `None` on MyAnimeList.
+    pub id_mal: Option<u32>,
     pub cover_url: Option<String>,
     /// When its episodes air, estimated (start date and weekly slot); `None` when unknown.
     pub timetable: Option<Timetable>,
@@ -235,6 +239,7 @@ impl Entry {
             times_rewatched: it.times_rewatched,
             waiting: None,
             cover_url: m.cover_url.clone(),
+            id_mal: m.id_mal,
             timetable: Timetable::of_media(m),
         }
     }
@@ -281,6 +286,8 @@ impl Entry {
             waiting: self.waiting.map(Into::into),
             rewatching: self.rewatching,
             times_rewatched: self.times_rewatched,
+            volumes: None,
+            volumes_total: None,
         }
     }
 
@@ -325,6 +332,8 @@ pub fn waiting_label(state: OpState) -> &'static str {
 /// `AppHandle::update_if`).
 #[derive(Debug)]
 pub enum Msg {
+    /// The manga list (`manga.rs`).
+    Manga(crate::manga::MangaMsg),
     /// The saved list and the queue from the database, at start.
     Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, profile: Option<Box<kotora_core::service::Profile>>, synced_at: Option<i64>, ops: Vec<Op> },
     /// The Profile page's facts, fresh after a sync.
@@ -494,6 +503,10 @@ pub struct State {
     pub transfer: crate::transfer::Transfer,
     /// Settings → Account → Mirror edits to the other service, and the mirror's queue (`mirror.rs`).
     pub mirror: crate::mirror::MirrorUi,
+    /// Manga mode: the switch, the manga list and its editor (`manga.rs`).
+    pub manga: crate::manga::MangaUi,
+    /// Volumes from chapters with MangaDex (`volfill.rs`).
+    pub volfill: crate::volfill::VolFill,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -568,6 +581,8 @@ impl State {
             settings: Default::default(),
             transfer: Default::default(),
             mirror: Default::default(),
+            manga: Default::default(),
+            volfill: Default::default(),
         };
         s.queue_changed();
         s.refresh();
@@ -633,9 +648,11 @@ impl State {
     /// (the page's own first) and ignores the chip.
     pub fn refresh(&mut self) {
         // The search page has no status of its own: the sidebar's order.
+        self.refresh_manga();
         let st = match self.page {
             Page::List(st) => st,
-            Page::Search if self.searching() => Status::ALL[0],
+            // Manga mode: the search page's matches are manga (`refresh_manga`).
+            Page::Search if self.searching() && self.search_kind() == kotora_core::Kind::Anime => Status::ALL[0],
             _ => {
                 self.rows.clear();
                 return;
@@ -676,6 +693,7 @@ impl State {
         if self.page != page {
             self.page = page;
             self.filter = Filter::All;
+            self.manga.filter = crate::manga::MFilter::All;
             self.refresh();
         }
     }
@@ -730,7 +748,7 @@ impl State {
             e.new_episode = None;
         }
         // Back to where the entry's only waiting change started: the queue drops it.
-        let open: Vec<&Op> = self.ops.iter().filter(|o| o.media_id == id && o.state.is_open()).collect();
+        let open: Vec<&Op> = self.ops.iter().filter(|o| o.kind == kotora_core::Kind::Anime && o.media_id == id && o.state.is_open()).collect();
         let e = &mut self.entries[i];
         if let [op] = open.as_slice()
             && op.state != OpState::Sending
@@ -740,7 +758,7 @@ impl State {
         } else if e.waiting.is_none() {
             e.waiting = Some(waiting_label(OpState::Queued));
         }
-        crate::queue::send(self, Cmd::Edit { media_id: id, change });
+        crate::queue::send(self, Cmd::Edit { kind: kotora_core::Kind::Anime, media_id: id, change });
         self.recheck_now();
         self.refresh();
         Ok(i)
@@ -895,6 +913,7 @@ impl State {
 
     /// A row press: opens its editor, or closes it when it is open.
     pub fn toggle_editor(&mut self, id: u32) {
+        self.manga.editor = None;
         if self.editor.is_some_and(|ed| ed.id == id) {
             self.editor = None;
         } else if let Some(e) = self.entries.iter().find(|e| e.id == id) {
@@ -939,6 +958,15 @@ impl State {
     /// A score cell: a choice that already shows as the entry's score keeps the precise one
     /// (an AniList 73 stays 73 when its 4 stars are picked again).
     pub fn editor_score(&mut self, score: Option<Score>) {
+        // The manga editor: the same rule, against the manga's saved score.
+        if let Some(med) = self.manga.editor {
+            let fmt = self.score_format();
+            let saved = self.manga.entries.iter().find(|e| e.id == med.id).map(|e| e.score);
+            if let Some(ed) = &mut self.manga.editor {
+                ed.score = saved.map_or(score, |cur| fmt.pick(cur, score));
+            }
+            return;
+        }
         let fmt = self.score_format();
         let saved = self.editor.and_then(|ed| self.entries.iter().find(|e| e.id == ed.id)).map(|e| e.score);
         if let Some(ed) = &mut self.editor {
@@ -949,6 +977,10 @@ impl State {
     /// The fine − / + of the 100-point and decimal formats.
     pub fn editor_score_step(&mut self, delta: i32) {
         let fmt = self.score_format();
+        if let Some(ed) = &mut self.manga.editor {
+            ed.score = fmt.step(ed.score, delta);
+            return;
+        }
         if let Some(ed) = &mut self.editor {
             ed.score = fmt.step(ed.score, delta);
         }
@@ -982,7 +1014,7 @@ impl State {
         for e in &mut self.entries {
             e.waiting = None;
         }
-        for op in self.ops.iter().filter(|o| o.state.is_open()) {
+        for op in self.ops.iter().filter(|o| o.kind == kotora_core::Kind::Anime && o.state.is_open()) {
             if let Some(e) = self.entries.iter_mut().find(|e| e.id == op.media_id) {
                 // A conflict or a failure says more than "waiting".
                 if e.waiting.is_none() || op.state != OpState::Queued {
@@ -990,6 +1022,7 @@ impl State {
                 }
             }
         }
+        self.manga_queue_changed();
     }
 
     pub fn queue_cmd(&mut self, cmd: Cmd) {
@@ -1014,6 +1047,9 @@ impl State {
         }
         self.prefs.titles = lang;
         for e in &mut self.entries {
+            e.retitle(lang);
+        }
+        for e in &mut self.manga.entries {
             e.retitle(lang);
         }
         self.refresh();
@@ -1045,6 +1081,9 @@ impl State {
 
     /// The title a queued change shows: the entry's, in the chosen language, else the saved one.
     pub fn op_title<'a>(&'a self, op: &'a Op) -> &'a str {
+        if op.kind == kotora_core::Kind::Manga {
+            return self.manga_title(op.media_id).unwrap_or(op.title.as_str());
+        }
         self.entries.iter().find(|e| e.id == op.media_id).map_or(op.title.as_str(), |e| e.title.as_str())
     }
 
@@ -1059,7 +1098,7 @@ impl State {
                 state: o.state.label().into(),
                 note: match o.state {
                     OpState::Conflict => Some(match &o.remote {
-                        Some(r) => format!("{service} has {}", remote_text(r, o.episodes, self.score_format())),
+                        Some(r) => format!("{service} has {}", remote_text_of(o.kind, r, o.episodes, self.score_format())),
                         None => format!("removed from your list on {service}"),
                     }),
                     OpState::Done => None,
@@ -1112,6 +1151,7 @@ impl State {
     fn apply_msg(&mut self, msg: Msg) -> bool {
         let service = self.service.title();
         match msg {
+            Msg::Manga(m) => self.apply_manga(m),
             Msg::Cache { items, user, picture, profile, synced_at, ops } => {
                 self.ops = ops;
                 // A sync's answer is newer than the saved one.
@@ -1151,6 +1191,8 @@ impl State {
             Msg::SyncFailed(f) => {
                 self.syncing = false;
                 self.loading = false;
+                // The manga list is read after the anime list: not this time.
+                self.manga.loading = false;
                 match f {
                     Fail::Offline(m) => {
                         self.offline = true;
@@ -1197,6 +1239,7 @@ impl State {
             Msg::Idle => {
                 self.syncing = false;
                 self.loading = false;
+                self.manga.loading = false;
                 true
             }
             Msg::SignedIn { user, picture } => {
@@ -1281,6 +1324,11 @@ impl State {
         self.ops.clear();
         self.queue = 0;
         self.editor = None;
+        // The manga list goes too (the other service has its own); the switch goes back to Anime.
+        self.manga = crate::manga::MangaUi::default();
+        if let Page::Manga(st) = self.page {
+            self.page = Page::List(st);
+        }
         self.synced_at = None;
         self.syncing = false;
         self.loading = false;
@@ -1299,6 +1347,7 @@ impl State {
             queue: self.queue,
             offline: self.offline,
             window: self.window,
+            mirror: self.mirror_target().map(|to| self.mirror.ctl_status(to)),
         }
     }
 }
@@ -1352,9 +1401,13 @@ pub fn fake_players() -> Vec<PlayerState> {
 }
 
 /// The service's side of a conflict: "Progress 8 / 24, Watching, score 7", the score in `fmt`.
-pub fn remote_text(r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
+/// A manga's says chapters, volumes and Reading ("Ch 70 / 88, vol 9, Reading, score 8").
+pub fn remote_text_of(kind: kotora_core::Kind, r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
     let total = episodes.map_or("?".to_string(), |n| n.to_string());
     let score = r.values.score.map_or("no score".to_string(), |n| format!("score {}", fmt.words(n)));
+    if kind == kotora_core::Kind::Manga {
+        return format!("Ch {} / {total}, vol {}, {}, {score}", r.values.progress, r.values.volumes, r.values.status.label_in(kind));
+    }
     format!("{} / {total}, {}, {score}", r.values.progress, r.values.status.label())
 }
 
@@ -1498,6 +1551,7 @@ fn fake_entries() -> Vec<Entry> {
             times_rewatched: u32::from(f.rewatching),
             waiting: None,
             cover_url: None,
+            id_mal: None,
             timetable: None,
         })
         .collect();
@@ -1537,6 +1591,7 @@ fn fake_entries() -> Vec<Entry> {
                 times_rewatched: 0,
                 waiting: None,
                 cover_url: None,
+                id_mal: None,
                 timetable: None,
             });
             id += 1;

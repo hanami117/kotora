@@ -8,7 +8,7 @@
 
 use serde::Deserialize;
 
-use super::{API, Alt, ClassifyName, Client, Mal, Picture, Request, Transport, form, non_empty, pct_encode};
+use super::{API, Alt, CallError, ClassifyName, Client, Mal, Picture, Request, Transport, form, non_empty, pct_encode};
 use crate::service::{AnimeHit, Author, Details, MyEntry, ServiceError};
 use crate::{Change, Kind, ListItem, Media, Remote, Status, Values, time};
 
@@ -83,6 +83,16 @@ impl<T: Transport> Client<T> {
         ms.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
     }
 
+    /// Removes one manga from the list (`DELETE /manga/{id}/my_list_status`). MAL answers 404
+    /// when it isn't on the list: that is done too.
+    pub fn delete_manga_entry(&mut self, access: &str, id: u32) -> Result<(), ServiceError> {
+        let req = Request { method: "DELETE", url: format!("{API}/manga/{id}/my_list_status"), bearer: Some(access.to_string()), form: None, json: None };
+        match self.call(&req) {
+            Ok(_) | Err(CallError::NotFound) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// The search bar's manga search, `GET /manga?q=` (`limit` up to 20). Under 3 characters
     /// nothing is asked.
     pub fn browse_manga(&mut self, access: &str, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
@@ -110,6 +120,9 @@ impl<T: Transport> Mal<T> {
     }
     pub(super) fn manga_patch(&mut self, id: u32, change: &Change) -> Result<Remote, ServiceError> {
         self.authed(|c, a| c.patch_manga_entry(a, id, change))
+    }
+    pub(super) fn manga_delete(&mut self, id: u32) -> Result<(), ServiceError> {
+        self.authed(|c, a| c.delete_manga_entry(a, id))
     }
     pub(super) fn manga_browse(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         self.authed(|c, a| c.browse_manga(a, query, limit))

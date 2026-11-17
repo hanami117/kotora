@@ -225,6 +225,9 @@ pub enum Request {
     /// relative path absolute). MyAnimeList lists only: AniList's terms don't allow exporting.
     /// Replies `Done`.
     Export { path: String },
+    /// [`Request::Export`] for the manga list (its own command: an older Kotora would export the
+    /// anime list instead of failing). Replies `Done`.
+    ExportManga { path: String },
     /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
     /// with what comes next, the queue and the last sync. Replies `Dash`.
     Dash,
@@ -235,6 +238,54 @@ pub enum Request {
         title: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         yes: bool,
+    },
+    /// `kot add --manga`: a manga on the list (as `Add`). A separate command, so an older app
+    /// says "bad request" instead of adding an anime. Replies `Edited` (with volumes).
+    MangaAdd {
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// `kot fill-volumes`: volumes read from chapters read (MangaDex). Without `yes` the reply
+    /// is the preview, held (`Error` with `anyway`); with it, the volumes go to the queue.
+    FillVolumes {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        yes: bool,
+    },
+    /// `kot set --manga`: chapters (`progress`), volumes, status or score of a manga (as `Set`,
+    /// a separate command so an older app refuses instead of editing an anime). `title`: a
+    /// title, or the manga's id when it is only digits. Replies `Edited`.
+    MangaSet {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        progress: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        volumes: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        score_text: Option<String>,
+    },
+    /// `kot remove --manga`: as `Remove`, from the manga list.
+    MangaRemove {
+        title: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        yes: bool,
+    },
+    /// The saved manga list of the list service (Manga must be on): one status as in `List`
+    /// (`watching` is Reading, `plan` Plan to read) or all (`None`). Read only. A separate command,
+    /// not a field of `List`, so an older app says it doesn't know it instead of printing the
+    /// anime list. Replies `List` (`progress` / `episodes`: chapters).
+    MangaList {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// Manga mode: `None` asks whether it is on; `Some` turns it on (the next syncs read the
+    /// manga list too, one sync starts now) or off (syncs stop reading it; the saved copy stays).
+    /// Replies `Done`.
+    Manga {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on: Option<bool>,
     },
 }
 
@@ -251,7 +302,13 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         anyway: bool,
     },
-    List { entries: Vec<Entry> },
+    /// `note`: a word after the list (`kot list --manga`: the last manga sync failed, the saved
+    /// list shows).
+    List {
+        entries: Vec<Entry>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     /// The entry after an edit; the change waits in the queue.
     Edited { entry: Entry },
     Queue { ops: Vec<QueueItem> },
@@ -396,6 +453,12 @@ pub struct Entry {
     /// Finished rewatches.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub times_rewatched: u32,
+    /// Manga only: volumes read (`None` for anime).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volumes: Option<u32>,
+    /// Manga only: the volume count, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volumes_total: Option<u32>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -436,6 +499,25 @@ pub struct Status {
     pub offline: bool,
     /// The window is open (false for a `--hidden` start).
     pub window: bool,
+    /// The account mirror (0.3), when it is on for this account: absent from older apps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<MirrorStatus>,
+}
+
+/// The mirror's part of `kot status`: where changes also go and what is not there yet.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MirrorStatus {
+    /// The mirror service ("AniList").
+    pub to: String,
+    /// Changes waiting or being sent, and adds still looking up their id there.
+    pub waiting: u32,
+    /// Changes in conflict with the mirror's website.
+    pub conflicts: u32,
+    /// Changes the mirror service refused.
+    pub failed: u32,
+    /// Entries edited on the mirror's website, waiting to be settled.
+    pub web_edits: u32,
 }
 
 // ------------------------------------------------------------------------------------ transport

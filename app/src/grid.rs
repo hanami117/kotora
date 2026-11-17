@@ -26,21 +26,21 @@ use crate::theme::{self, PAL};
 /// A view's card: poster width and height, the least gap, and the gap's most before cards
 /// line up left instead of spreading.
 #[derive(Clone, Copy)]
-struct Size {
-    w: f32,
-    poster_h: f32,
+pub(crate) struct Size {
+    pub(crate) w: f32,
+    pub(crate) poster_h: f32,
     gap: f32,
     max_gap: f32,
     /// The whole card's height with the space under it (a virtual row's height).
-    row_h: f32,
+    pub(crate) row_h: f32,
 }
 
 /// Grid: 128 x 192 posters.
-const DENSE: Size = Size { w: 128.0, poster_h: 192.0, gap: 16.0, max_gap: 36.0, row_h: 192.0 + 6.0 + 34.0 + 4.0 + 16.0 + 24.0 };
+pub(crate) const DENSE: Size = Size { w: 128.0, poster_h: 192.0, gap: 16.0, max_gap: 36.0, row_h: 192.0 + 6.0 + 34.0 + 4.0 + 16.0 + 24.0 };
 /// Large: 184 x 262 posters on a card with a progress bar and +1.
-const LARGE: Size = Size { w: 184.0, poster_h: 262.0, gap: 20.0, max_gap: 44.0, row_h: 262.0 + 12.0 + 38.0 + 10.0 + 5.0 + 10.0 + 26.0 + 12.0 + 2.0 + 20.0 };
+pub(crate) const LARGE: Size = Size { w: 184.0, poster_h: 262.0, gap: 20.0, max_gap: 44.0, row_h: 262.0 + 12.0 + 38.0 + 10.0 + 5.0 + 10.0 + 26.0 + 12.0 + 2.0 + 20.0 };
 
-fn size(v: ListView) -> Size {
+pub(crate) fn size(v: ListView) -> Size {
     if v == ListView::Large { LARGE } else { DENSE }
 }
 
@@ -50,11 +50,11 @@ pub struct Grid {
     /// The selected entry's media id.
     pub sel: Option<u32>,
     /// Cards per row at the last draw (the arrows need it; set by the view).
-    per_row: Cell<usize>,
+    pub(crate) per_row: Cell<usize>,
 }
 
 /// Cards per row in `width` (the main area's), and the gap between them.
-fn fit(width: f32, z: Size) -> (usize, f32) {
+pub(crate) fn fit(width: f32, z: Size) -> (usize, f32) {
     let avail = width - 2.0 * theme::PAGE_PAD;
     let n = (((avail + z.gap) / (z.w + z.gap)).floor() as usize).max(1);
     let gap = if n > 1 { ((avail - n as f32 * z.w) / (n - 1) as f32).clamp(z.gap, z.max_gap) } else { z.gap };
@@ -98,6 +98,23 @@ impl State {
                 self.open_details(Stub::from_entry(e));
                 return true;
             }
+            // + and - on the selected card: one episode more or less (as +1 and the editor).
+            (Key::Text(t), Some(i)) if matches!(t.as_str(), "+" | "=" | "-") => {
+                tx.instant();
+                let id = self.entries[self.rows[i]].id;
+                let r = if t.as_str() == "-" {
+                    match self.entries.iter().find(|e| e.id == id).map(|e| e.progress) {
+                        Some(p) if p > 0 => self.edit(id, kotora_core::Change { progress: Some(p - 1), ..Default::default() }).map(|_| ()),
+                        _ => Ok(()),
+                    }
+                } else {
+                    self.plus_one_or_ask(id)
+                };
+                if let Err(m) = r {
+                    self.error = Some(m);
+                }
+                return true;
+            }
             (Key::Right | Key::Left | Key::Up | Key::Down, None) => 0,
             (Key::Right, Some(i)) => (i + 1).min(n - 1),
             (Key::Left, Some(i)) => i.saturating_sub(1),
@@ -113,13 +130,15 @@ impl State {
 
 /// A grid row's key: its index. A resize changes how many cards a row holds, not which rows
 /// there are, so the rows stay and only their cards move (at once, see `ui::main`).
-fn row_key(r: usize) -> String {
+pub(crate) fn row_key(r: usize) -> String {
     format!("cards/{r}")
 }
 
 /// The toolbar's segmented switch: List, Grid, Large (icons only on narrow windows).
 pub fn switcher(s: &State, st: Status, labels: bool) -> El {
-    let now = s.view_of(st);
+    // A manga page keeps its own views (`[manga_views]`).
+    let manga = matches!(s.page, Page::Manga(_));
+    let now = if manga { s.manga_view_of(st) } else { s.view_of(st) };
     let mut r = row().key("views").h(32.0).padding(2.0).gap(2.0).center_y().radius(theme::R_SM).fill(PAL.field).border(1.0, PAL.border);
     for v in ListView::ALL {
         let on = v == now;
@@ -142,7 +161,7 @@ pub fn switcher(s: &State, st: Status, labels: bool) -> El {
             .press(PAL.press())
             .on_press_tx(move |s: &mut State, tx: &mut Tx| {
                 tx.instant();
-                s.set_view(st, v);
+                if manga { s.set_manga_view(st, v) } else { s.set_view(st, v) }
             })
             .child(icon(ic, 15.0).color(if on { PAL.accent_hi } else { PAL.dim }))
             .child(if labels { text(v.label()).font(theme::LABEL_BTN).color(if on { PAL.text } else { PAL.dim }) } else { el() });
@@ -178,7 +197,7 @@ pub fn cards(s: &State, st: Status, width: f32) -> El {
 // ---------------------------------------------------------------------------------- pieces
 
 /// A pill on a poster: the page colour, nearly opaque, so it reads on any cover in both themes.
-fn badge(label: &str, dot: Option<rune::Color>) -> El {
+pub(crate) fn badge(label: &str, dot: Option<rune::Color>) -> El {
     let mut b = row().h(20.0).px(7.0).gap(5.0).center_y().radius(10.0).fill(PAL.bg.alpha(0.86));
     if let Some(c) = dot {
         b = b.child(el().size(6.0, 6.0).radius(3.0).fill(c));
@@ -406,6 +425,17 @@ mod tests {
         assert!(s.grid_key(&key(Key::Enter), &mut tx));
         assert_eq!(s.page, Page::Details);
         assert_eq!(s.detail.as_ref().map(|d| d.id()), Some(id));
+        // + and - step the picked card's episode.
+        let mut s = State::fake();
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.grid.per_row.set(4);
+        s.grid_key(&key(Key::Right), &mut tx);
+        let id = s.grid.sel.unwrap();
+        let p = s.entries.iter().find(|e| e.id == id).unwrap().progress;
+        s.grid_key(&key(Key::Text("-".into())), &mut tx);
+        assert_eq!(s.entries.iter().find(|e| e.id == id).unwrap().progress, p - 1);
+        s.grid_key(&key(Key::Text("+".into())), &mut tx);
+        assert_eq!(s.entries.iter().find(|e| e.id == id).unwrap().progress, p);
         // The table view leaves the keys alone.
         let mut s = State::fake();
         assert!(!s.grid_key(&key(Key::Down), &mut tx));
