@@ -75,6 +75,7 @@ pub fn start(s: &mut State) {
     // Home or the last page, in the switch's mode (`[startup]`).
     s.apply_startup(&c);
     crate::settings::load(s, &c);
+    crate::reading::load(s, &c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     #[cfg(not(windows))]

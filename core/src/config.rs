@@ -39,10 +39,20 @@
 //! started_airing = true        # a Plan to watch show started airing
 //! new_episode = true           # the next episode of a Watching show is out (estimated)
 //! new_chapter = false          # a new chapter of a Reading manga (MangaUpdates; Manga on)
+//! read_offer = true            # reading detection: Mark Ch N as read? (Manga on)
+//! read_recorded = true         # reading detection: marked, with Undo
 //!
 //! [release_data]               # Publishing's sources (Manga on); at least one stays on
 //! mangaupdates = true
 //! mangadex = true
+//!
+//! [reading]                    # reading detection (Manga on)
+//! yacreader = true             # watch YACReader's libraries (found from its settings)
+//! libraries = ["/Volumes/Disk/Comics"]   # more library folders
+//! find_libraries = true        # also the libraries in YACReader's own settings
+//! open_files = false           # any reader: comic files open in a process (macOS, Linux; opt-in)
+//! comic_folders = []           # only files in these folders (empty: anywhere)
+//! open_minutes = 10            # open this long counts as read (else: when the next file opens)
 //!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
@@ -104,6 +114,31 @@ pub struct Config {
     pub app: AppSection,
     pub keys: Keys,
     pub release_data: ReleaseData,
+    pub reading: Reading,
+}
+
+/// `[reading]`: reading detection (Manga). It runs only with Manga on.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Reading {
+    /// Watch YACReader's libraries (on by default; nothing runs without a library).
+    pub yacreader: bool,
+    /// Library folders the user added, beside the ones YACReader's settings list.
+    pub libraries: Vec<String>,
+    /// Also watch the libraries listed in YACReader's own settings (`YACReaderLibrary.ini`).
+    pub find_libraries: bool,
+    /// Stage 2, opt-in: comic files any process has open (macOS, Linux).
+    pub open_files: bool,
+    /// Folders the open comic files must be in (empty: anywhere).
+    pub comic_folders: Vec<String>,
+    /// A comic open this long counts as read (when no next file opened first).
+    pub open_minutes: u32,
+}
+
+impl Default for Reading {
+    fn default() -> Self {
+        Reading { yacreader: true, libraries: Vec::new(), find_libraries: true, open_files: false, comic_folders: Vec::new(), open_minutes: 10 }
+    }
 }
 
 /// `[release_data]`: Publishing's release sources (both on by default).
@@ -152,11 +187,15 @@ pub struct Notifications {
     /// A new chapter of a Reading manga is on MangaUpdates (Manga on). Off by default: it is
     /// the one switch that makes Kotora ask a third service in the background.
     pub new_chapter: bool,
+    /// Reading detection: "Mark Ch 21 of Title as read?" (as `offer` for anime).
+    pub read_offer: bool,
+    /// Reading detection: a chapter was marked, with Undo (as `recorded` for anime).
+    pub read_recorded: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false }
+        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true }
     }
 }
 
@@ -689,6 +728,7 @@ impl std::fmt::Debug for Config {
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
             .field("keys", &self.keys)
+            .field("reading", &self.reading)
             .finish()
     }
 }
@@ -731,6 +771,8 @@ struct File {
     keys: Keys,
     #[serde(default)]
     release_data: ReleaseData,
+    #[serde(default)]
+    reading: Reading,
 }
 
 #[derive(Deserialize, Default)]
@@ -770,6 +812,7 @@ impl Config {
             keys: f.keys,
             // Both off is not a choice: MangaUpdates comes back on.
             release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
+            reading: f.reading,
         })
     }
 
@@ -1121,7 +1164,11 @@ mod tests {
     #[test]
     fn notifications_offer_and_recorded_on_detected_off() {
         let n = Config::parse("").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false });
+        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true });
+        // The manga reading switches are their own: turning the anime ones off leaves them on.
+        assert!(Config::parse("[notifications]\noffer = false\nrecorded = false\n").unwrap().notifications.read_offer);
+        let r = Config::parse("[reading]\nfind_libraries = false\nopen_files = true\nopen_minutes = 4\n").unwrap().reading;
+        assert_eq!((r.yacreader, r.find_libraries, r.open_files, r.open_minutes), (true, false, true, 4));
         assert!(Config::parse("[notifications]\nnew_chapter = true\n").unwrap().notifications.new_chapter);
         let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
         assert_eq!(n, Notifications { detected: true, offer: false, ..Notifications::default() });

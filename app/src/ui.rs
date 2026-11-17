@@ -593,6 +593,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     // The Now Playing banner sits on top of every page (design-spec §4).
     if s.banner() {
         m = m.child(banner(s));
+    } else if s.reading_banner() {
+        m = m.child(crate::reading::banner(s));
     } else if s.precise_banner() {
         m = m.child(crate::precise::banner(s));
     }
@@ -2488,11 +2490,17 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
         }
     }
     side = side.child(players_status_card(s));
+    // Reading detection (Manga): the comic read last, above the rest.
+    let reading = s.reading.current.as_ref().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
     let Some(n) = &s.now else {
+        let main = match reading {
+            Some(r) => r,
+            None => now_empty(),
+        };
         let body = if wide {
-            row().gap(16.0).w_full().items_start().child(now_empty().grow(1.0).min_w(0.0)).child(side.w(340.0))
+            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
         } else {
-            col().gap(16.0).w_full().child(now_empty()).child(side)
+            col().gap(16.0).w_full().child(main).child(side)
         };
         return col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
             col()
@@ -2504,7 +2512,10 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
         );
     };
     // Something plays: the hero band on top (no title bar: the band says it), the cards below.
-    let facts = now_facts(s, n);
+    let facts = match reading {
+        Some(r) => col().gap(16.0).child(r).child(now_facts(s, n)),
+        None => now_facts(s, n),
+    };
     let body = if wide {
         row().gap(16.0).w_full().items_start().child(facts.grow(1.0).min_w(0.0)).child(side.w(340.0))
     } else {

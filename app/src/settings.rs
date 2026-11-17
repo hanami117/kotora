@@ -103,9 +103,9 @@ impl Section {
             Section::Notifications => vec![
                 (Some("While you watch"), vec![Row::NotifyDetected, Row::NotifyOffer, Row::NotifyRecorded]),
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
-                (Some("Manga"), vec![Row::NotifyChapter]),
+                (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
-            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd])],
+            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
         }
     }
@@ -161,6 +161,18 @@ pub enum Row {
     NotifyChapter,
     ReleaseMu,
     ReleaseMd,
+    /// Reading detection: watch YACReader's libraries.
+    ReadingYac,
+    /// Reading detection: the libraries (found and added).
+    ReadingLibs,
+    /// Reading detection: also the libraries in YACReader's own settings.
+    ReadingFind,
+    /// Reading detection, stage 2: comic files open in any reader.
+    ReadingOpen,
+    ReadingMinutes,
+    ReadingFolders,
+    NotifyReadOffer,
+    NotifyReadRecorded,
     About,
     Licences,
     Links,
@@ -207,6 +219,14 @@ impl Row {
             Row::NotifyChapter => "notify-chapter",
             Row::ReleaseMu => "release-mu",
             Row::ReleaseMd => "release-md",
+            Row::ReadingYac => "reading-yacreader",
+            Row::ReadingLibs => "reading-libraries",
+            Row::ReadingFind => "reading-find",
+            Row::ReadingOpen => "reading-open-files",
+            Row::ReadingMinutes => "reading-minutes",
+            Row::ReadingFolders => "reading-folders",
+            Row::NotifyReadOffer => "notify-read-offer",
+            Row::NotifyReadRecorded => "notify-read-recorded",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -266,6 +286,14 @@ const SPECS: &[Spec] = &[
     spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
     spec(Row::ReleaseMu, Section::Manga, "MangaUpdates", "Release data for Publishing from MangaUpdates.", "manga release data source sources mangaupdates publishing chapters latest"),
     spec(Row::ReleaseMd, Section::Manga, "MangaDex", "Release data for Publishing from MangaDex, official chapters included.", "manga release data source sources mangadex publishing chapters latest official manga plus"),
+    spec(Row::ReadingYac, Section::Manga, "YACReader", crate::reading::SWITCH_NOTE, "reading detection detect read chapter comic reader yacreader cbz cbr mark as read library"),
+    spec(Row::ReadingFind, Section::Manga, "Find YACReader\u{2019}s libraries", "Also watch the libraries listed in YACReader\u{2019}s own settings.", "reading yacreader library libraries find auto ini settings"),
+    spec(Row::ReadingOpen, Section::Manga, "Any reader (open files)", crate::reading::OPEN_FILES_NOTE, "reading detection any reader open file files process simple comic mcomix okular evince zathura komikku preview cbz cbr pdf zip folder"),
+    spec(Row::ReadingMinutes, Section::Manga, "Open this long counts as read", "When the next chapter doesn\u{2019}t open first.", "reading minutes open time counts read threshold"),
+    spec(Row::ReadingFolders, Section::Manga, "Comic folders", "Any app\u{2019}s comic files in these folders count; elsewhere only known readers.", "reading comic folders folder manga directory path"),
+    spec(Row::NotifyReadOffer, Section::Notifications, "Chapter read offered", "Mark Ch 21 as read? with Mark read and Not now.", "notification notifications alert manga chapter read offer ask mark reading detection yacreader"),
+    spec(Row::NotifyReadRecorded, Section::Notifications, "Chapter recorded", "Marked, with Undo.", "notification notifications alert manga chapter recorded marked undo reading detection"),
+    spec(Row::ReadingLibs, Section::Manga, "YACReader libraries", "Found in YACReader\u{2019}s settings, or added here.", "reading library libraries folder comics yacreader ydb database path"),
     spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
@@ -1023,6 +1051,40 @@ fn row_el(s: &State, r: Row) -> El {
             };
             line("New chapter", note, crate::ui::switch_if("set/notify-chapter".into(), "New chapter", p.notify.new_chapter, s.manga.enabled, |s, v| s.set_notify(crate::notes::Kind::Chapter, v)))
         }
+        Row::ReadingYac => line(
+            "YACReader",
+            crate::reading::switch_row_note(s),
+            crate::ui::switch_if("set/reading-yacreader".into(), "YACReader", s.reading.on, s.manga.enabled, |s, v| s.set_reading_on(v)),
+        ),
+        Row::ReadingFind => line(
+            "Find YACReader\u{2019}s libraries",
+            "Also watch the libraries listed in YACReader\u{2019}s own settings. Off: only the ones added below.",
+            crate::ui::switch_if("set/reading-find".into(), "Find YACReader\u{2019}s libraries", s.reading.find, s.manga.enabled && s.reading.on, |s, v| s.set_reading_find(v)),
+        ),
+        Row::ReadingOpen => line(
+            "Any reader (open files)",
+            if crate::reading::OPEN_FILES_HERE { crate::reading::OPEN_FILES_NOTE.to_string() } else { "Not on Windows yet.".to_string() },
+            crate::ui::switch_if("set/reading-open-files".into(), "Any reader (open files)", s.reading.open_files && crate::reading::OPEN_FILES_HERE, s.manga.enabled && crate::reading::OPEN_FILES_HERE, |s, v| s.set_open_files(v)),
+        ),
+        Row::ReadingMinutes => {
+            let minutes = s.reading.minutes;
+            let stepper = row()
+                .key("set/reading-minutes")
+                .h(28.0)
+                .center_y()
+                .radius(theme::R_SM)
+                .fill(PAL.field)
+                .border(1.0, PAL.border_strong)
+                .child(cell("set/reading-minutes/minus".into(), "Fewer minutes".into(), false, |s| s.step_open_minutes(false)).child(text("\u{2212}").font(theme::LABEL).color(PAL.dim)))
+                .child(row().min_w(64.0).center().child(text(format!("{minutes} min")).font(theme::LABEL_NUM).color(PAL.text)))
+                .child(cell("set/reading-minutes/plus".into(), "More minutes".into(), false, |s| s.step_open_minutes(true)).child(text("+").font(theme::LABEL).color(PAL.dim)));
+            let stepper = if s.reading.open_files { stepper } else { stepper.opacity(0.4) };
+            line("Open this long counts as read", "When the next chapter of the series doesn\u{2019}t open first.", stepper)
+        }
+        Row::ReadingFolders => block("Comic folders", "Any app\u{2019}s comic files in these folders count; elsewhere only known readers\u{2019}.", crate::reading::folders_block(s)),
+        Row::NotifyReadOffer => notify("Chapter read offered", "\u{201c}Mark Ch 21 of Title as read?\u{201d} with Mark read and Not now. Manga reading detection.", "set/notify-read-offer", p.notify.read_offer, crate::notes::Kind::ReadOffer),
+        Row::NotifyReadRecorded => notify("Chapter recorded", "\u{201c}Marked Ch 21 as read\u{201d} with Undo.", "set/notify-read-recorded", p.notify.read_recorded, crate::notes::Kind::ReadRecorded),
+        Row::ReadingLibs => block("Libraries", "Found in YACReader\u{2019}s settings, or added here (the folder with .yacreaderlibrary in it).", crate::reading::libraries_block(s)),
         Row::ReleaseMu | Row::ReleaseMd => {
             let md = r == Row::ReleaseMd;
             let (on, other) = if md { (p.sources.md, p.sources.mu) } else { (p.sources.mu, p.sources.md) };

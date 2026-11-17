@@ -220,4 +220,62 @@ mod tests {
         drop(fakes);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Reading detection, stage 2: a process named like a reader holding a `.cbz`, and one with
+    /// another name holding a page image inside a comic folder; the real process table.
+    #[test]
+    fn comic_scanner_finds_open_comics() {
+        let dir = std::env::temp_dir().join(format!("kotora-libproc-comics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Manga/Kotora Test Comic/Ch 2")).unwrap();
+        let dir: PathBuf = dir.canonicalize().unwrap();
+        let cbz = dir.join("Kotora Test Comic c001.cbz");
+        std::fs::write(&cbz, b"").unwrap();
+        let page = dir.join("Manga/Kotora Test Comic/Ch 2/001.jpg");
+        std::fs::write(&page, b"").unwrap();
+        let reader = fake_player(&dir, "Simple Comic", &cbz);
+        let other = fake_player(&dir, "pageviewer", &page);
+        let folders = vec![dir.join("Manga").display().to_string()];
+        let mut sc = crate::comics::ComicScanner::new(LibProc::new());
+        let start = Instant::now();
+        let mut found = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) {
+            found = sc.scan(&folders);
+            if found.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let v: Vec<(u32, &str, &str)> = found.iter().map(|o| (o.pid, o.app.as_str(), o.path.as_str())).collect();
+        let (cbz, chapter) = (cbz.display().to_string(), dir.join("Manga/Kotora Test Comic/Ch 2").display().to_string());
+        assert!(v.contains(&(reader.child.id(), "Simple Comic", cbz.as_str())), "{v:?}");
+        assert!(v.contains(&(other.child.id(), "pageviewer", chapter.as_str())), "{v:?}");
+        // Without comic folders, the unknown process is not looked at.
+        assert!(!sc.scan(&[]).iter().any(|o| o.pid == other.child.id()));
+        drop((reader, other));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Lightness: one scan of the real process table, without and with a comic folder (every
+    /// process's open files are read then). `cargo test -p kotora-detect comic_scan_cost --
+    /// --ignored --nocapture`, release.
+    #[test]
+    #[ignore = "timing"]
+    fn comic_scan_cost() {
+        let mut sc = crate::comics::ComicScanner::new(LibProc::new());
+        let t = Instant::now();
+        sc.scan(&[]);
+        let first = t.elapsed();
+        let t = Instant::now();
+        for _ in 0..20 {
+            sc.scan(&[]);
+        }
+        let readers = t.elapsed() / 20;
+        let folders = vec![std::env::temp_dir().display().to_string()];
+        let t = Instant::now();
+        for _ in 0..5 {
+            sc.scan(&folders);
+        }
+        println!("first scan {first:?}; readers only {readers:?}; with a comic folder {:?}", t.elapsed() / 5);
+    }
 }

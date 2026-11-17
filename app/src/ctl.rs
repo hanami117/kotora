@@ -99,7 +99,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
-        Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now() }))),
+        Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now(), reading: s.ctl_reading() }))),
         Request::Airing => reply(on_ui(handle, false, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());
@@ -151,16 +151,28 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Dash(s.ctl_dash()))
         })),
         Request::Confirm => reply(on_ui(handle, true, |s| {
+            // Nothing to record for what plays, but a chapter read waits: mark it.
+            let anime = s.offer().is_some() || s.rewatch_offer().is_some();
+            if !anime && s.reading_offer().is_some() {
+                let (title, _) = s.confirm_reading()?;
+                let i = s.manga.entries.iter().position(|e| e.title == title).ok_or("That manga is not on your list.")?;
+                return Ok(Reply::Edited { entry: s.manga_ctl(i) });
+            }
             let (title, _) = s.confirm_offer()?;
             let i = s.entries.iter().position(|e| e.title == title).ok_or("That anime is not on your list.")?;
             Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
         })),
         Request::Dismiss => reply(on_ui(handle, true, |s| {
-            if s.now.is_none() {
+            if s.now.is_none() && s.reading.current.is_none() {
                 return Err("Nothing is playing.".to_string());
             }
-            s.dismiss_now();
-            Ok(Reply::Now { now: s.ctl_now() })
+            // What plays first; a chapter read when nothing plays (or what plays asks nothing).
+            if s.now.is_none() || (!s.banner() && s.reading_banner()) {
+                s.dismiss_reading();
+            } else {
+                s.dismiss_now();
+            }
+            Ok(Reply::Now { now: s.ctl_now(), reading: s.ctl_reading() })
         })),
         Request::SetClientId { id } => match kotora_core::config::save_client_id_for(&kotora_core::paths::config_file(), crate::account::active(), &id) {
             Err(message) => Reply::Error { message, anyway: false },

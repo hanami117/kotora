@@ -1,14 +1,17 @@
 //! Manga support, first pieces (experimental).
 //!
-//! Nothing here is wired into the app yet. There is no UI, no list sync and no thread.
+//! The app uses [`reading`] for reading detection (YACReader).
 //!
 //! - [`name`]: a file name parser for comic files (`.cbz`, `.cbr`, `.cb7`, `.zip`, `.pdf`,
 //!   `.epub`) and their folders: series, volume, chapter, group, language, year.
 //! - [`yacreader`]: a read-only reader of YACReader's library databases. It reports what the user
 //!   opened lately, how far they got, and whether YACReader calls it read.
+//! - [`reading`]: what was read → a manga on the list, the offer, and the library watcher.
 //! - [`chapter_read`]: the one rule that says when Kotora counts a chapter as read.
 
 pub mod name;
+pub mod openfile;
+pub mod reading;
 pub mod yacreader;
 
 /// Whether a chapter counts as read.
