@@ -235,6 +235,9 @@ fn main() {
     let app = app.keep_running().on_close(on_close);
     #[cfg(target_os = "macos")]
     let app = app.on_reopen(on_reopen).on_window(on_window);
+    // Windows: the window gets the program's icon (title bar, taskbar, Alt+Tab).
+    #[cfg(windows)]
+    let app = app.on_window(win::on_window);
     let handle = app.handle();
     // The startup intro's clock starts at the first frame presented (`intro::on_frame`); the
     // first-frame log keeps running beside it.

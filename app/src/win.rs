@@ -150,6 +150,33 @@ pub fn register_app_id() -> bool {
     ok
 }
 
+/// The window shows: give it the program's own icon (the one `build.rs` put into the exe, id 1),
+/// for the title bar, the taskbar and Alt+Tab. Rune sets none, and Windows would draw its
+/// blank default. On the UI thread, once per window.
+pub fn on_window(handle: &rune::WindowHandle) {
+    use rune::raw_window_handle::RawWindowHandle;
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON};
+
+    let _ = handle.with_raw_handle(|h| {
+        let RawWindowHandle::Win32(h) = h.as_raw() else { return };
+        let hwnd = h.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+        // SAFETY: the window is alive for this callback; resource id 1 is passed the way
+        // MAKEINTRESOURCE does (a small number in place of a name); LR_SHARED icons belong
+        // to the system and are never freed by us. A missing icon gives null, and the
+        // window keeps the default.
+        unsafe {
+            let module = GetModuleHandleW(std::ptr::null());
+            for (which, cx, cy) in [(ICON_BIG, SM_CXICON, SM_CYICON), (ICON_SMALL, SM_CXSMICON, SM_CYSMICON)] {
+                let icon = LoadImageW(module, std::ptr::without_provenance::<u16>(1), IMAGE_ICON, GetSystemMetrics(cx), GetSystemMetrics(cy), LR_SHARED);
+                if !icon.is_null() {
+                    SendMessageW(hwnd, WM_SETICON, which as usize, icon as isize);
+                }
+            }
+        }
+    });
+}
+
 /// The primary screen's work area (the screen less the taskbar) in points, and its scale.
 /// None when Windows doesn't say.
 pub fn work_area() -> Option<(f32, f32)> {
