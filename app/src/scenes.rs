@@ -2693,10 +2693,39 @@ mod tests {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
+        // Airing this week: the episode on the poster, the day and time under the title.
+        let rt = render("home-covers", (1280.0, 800.0));
+        let texts: Vec<String> = rt.elements().into_iter().filter(|e| e.path.contains("home/airing/scroll/")).filter_map(|e| e.text).collect();
+        for want in ["Ep 6", "Today 14:00", "Tomorrow 15:00", "Sun 13:00"] {
+            assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
+        }
         let rt = render("home-library", (1280.0, 800.0));
         assert!(rt.find("play").is_some(), "Play when the next file is there");
         let rt = render("home-quiet", (1280.0, 800.0));
         assert!(rt.find("home/airing/scroll").is_none() && rt.find("home/plan/scroll").is_none());
+    }
+
+    /// Nothing on a Home card pokes out of its shelf or card (the shelf's height once cut the
+    /// descenders of the last line: the "p" of "Ep"), with Manga on too, wide and narrow.
+    #[test]
+    fn home_cards_fit_their_shelves() {
+        for scene in ["home-covers", "home-manga", "home-library"] {
+            for size in [(1280.0, 800.0), (960.0, 600.0), (760.0, 560.0)] {
+                let rt = render(scene, size);
+                let els = rt.elements();
+                for shelf in ["continue", "reading", "airing", "plan"] {
+                    let scroll = format!("home/{shelf}/scroll");
+                    let Some(area) = els.iter().find(|e| e.key.as_deref() == Some(scroll.as_str())) else { continue };
+                    let bottom = area.rect[1] + area.rect[3];
+                    let inside: Vec<_> = els.iter().filter(|e| e.path.contains(&format!("{scroll}/")) && e.rect[3] > 0.0).collect();
+                    assert!(inside.iter().any(|e| e.text.is_some()), "{scene} {shelf}: texts");
+                    for e in inside {
+                        let b = e.rect[1] + e.rect[3];
+                        assert!(b <= bottom + 0.01, "{scene} {size:?} {shelf}: {} ({:?}) ends at {b}, the shelf at {bottom}", e.path, e.text);
+                    }
+                }
+            }
+        }
     }
 
     /// The new headers: Now Playing's hero, the details banner (wide) and banner card (narrow),

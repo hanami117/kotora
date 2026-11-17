@@ -9,6 +9,10 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   closed or hidden) and **Mode** (Last used, Anime or Manga). A page that no longer makes sense (a removed
   entry's details, a Manga page with Manga off) opens Home. In `config.toml`: `[startup] open_on`, `mode`
   (and `last_page`, kept by Kotora); a value that isn't a choice is a warning on stderr, never an error.
+- Home → Airing this week: each card says when, in your time zone, as the Airing page does ("Today 18:30",
+  "Tomorrow 01:00", "Thu 23:00"); the episode moves to the chip on the poster.
+- Home: the last line under the posters (Airing this week, Plan to watch) was cut at the bottom (the "p" of
+  "Ep").
 
 ## [0.3.1] - 2026-11-17
 

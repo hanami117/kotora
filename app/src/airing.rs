@@ -290,6 +290,18 @@ impl Airing {
     fn day_from_today(&self, t: i64, now: i64) -> i64 {
         self.clock(t).day - self.clock(now).day
     }
+
+    /// When `t` is, in this zone, as the Airing page words days: "Today 18:30", "Tomorrow
+    /// 01:00", else the weekday ("Thu 23:00"). For times within the next week.
+    pub(crate) fn when(&self, t: i64, now: i64) -> String {
+        let c = self.clock(t);
+        let day = match c.day - self.clock(now).day {
+            0 => "Today",
+            1 => "Tomorrow",
+            _ => DAY_SHORT[usize::from(c.weekday)],
+        };
+        format!("{day} {}", c.hhmm())
+    }
 }
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1822,6 +1834,41 @@ mod tests {
         fake(&mut s);
         s.go(Page::Airing);
         s
+    }
+
+    /// Home's "when" line: Today / Tomorrow / the weekday, by the zone's calendar day (not 24 h
+    /// steps), at midnight edges and in zones on both sides of UTC.
+    #[test]
+    fn when_words_days_like_the_page() {
+        const FRI: i64 = 1_799_971_200; // Friday 2027-01-15 00:00 UTC
+        const H: i64 = 3600;
+        let at = |tz: i64, t: i64, now: i64| {
+            let a = Airing { tz: Some(tz), ..Airing::default() };
+            a.when(t, now)
+        };
+        assert_eq!(Clock::at(FRI, 0).weekday, 4);
+        // UTC+1, now Friday 23:59.
+        let now = FRI + 23 * H - 60;
+        assert_eq!(at(H, now, now), "Today 23:59");
+        assert_eq!(at(H, now + 120, now), "Tomorrow 00:01", "two minutes on is the next day");
+        assert_eq!(at(H, now + 86_400, now), "Tomorrow 23:59");
+        assert_eq!(at(H, now + 86_400 + 60, now), "Sun 00:00");
+        assert_eq!(at(H, now + 6 * 86_400 + 60, now), "Fri 00:00", "a week on: today's weekday");
+        // Just after midnight: late tonight is still today.
+        let now = FRI + 23 * H + 60; // Saturday 00:01 at UTC+1
+        assert_eq!(at(H, now + 29 * 60, now), "Today 00:30");
+        assert_eq!(at(H, now + 23 * H + 58 * 60, now), "Today 23:59");
+        // The same two instants (22:59 and 23:01 UTC on Friday) in other zones.
+        let (now, t) = (FRI + 23 * H - 60, FRI + 23 * H + 60);
+        assert_eq!(at(0, t, now), "Today 23:01");
+        assert_eq!(at(9 * H, t, now), "Today 08:01", "Japan: both Saturday morning");
+        assert_eq!(at(-5 * H, t, now), "Today 18:01");
+        // West of UTC, midnight falls at 05:00 UTC.
+        let (now, t) = (FRI + 5 * H - 60, FRI + 5 * H + 60);
+        assert_eq!(at(-5 * H, t, now), "Tomorrow 00:01", "Thursday 23:59 -> Friday 00:01");
+        assert_eq!(at(0, t, now), "Today 05:01");
+        // Half-hour zones (India, UTC+5:30).
+        assert_eq!(at(5 * H + 1800, FRI + 18 * H + 1800 + 60, FRI + 18 * H), "Tomorrow 00:01");
     }
 
     #[test]

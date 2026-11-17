@@ -1,7 +1,7 @@
 //! Home: the list at a glance, in shelves. Continue watching (wide cards: the next episode's +1,
 //! and Play when the file is in the library folders), with Manga on Continue reading (the same
 //! cards for manga: +1 is the next chapter, or volume), Airing this week (the next episode of each
-//! airing show on the list, soonest first, with its day), and Plan to watch. Each shelf scrolls
+//! airing show on the list, soonest first, with its day and time), and Plan to watch. Each shelf scrolls
 //! sideways and links to its full page ("See all").
 //!
 //! Only reads `State`: the order is made here from at most a few hundred entries, which costs
@@ -24,6 +24,13 @@ const WIDE_W: f32 = 320.0;
 const WIDE_H: f32 = 132.0;
 const SMALL_W: f32 = 116.0;
 const SMALL_H: f32 = 174.0;
+/// Title box and the line under the poster.
+const SMALL_TITLE_H: f32 = 34.0;
+const SMALL_LINE_H: f32 = 16.0;
+const SMALL_GAP: f32 = 6.0;
+/// A poster card's whole height (the shelf's height: a shorter shelf clips the last line's
+/// descenders, the "p" of "Ep").
+const SMALL_CARD_H: f32 = SMALL_H + SMALL_GAP + SMALL_TITLE_H + SMALL_GAP + SMALL_LINE_H;
 
 /// Continue watching: Watching (and rewatches) with a next episode, last updated first.
 fn continuing(s: &State) -> Vec<&Entry> {
@@ -160,25 +167,17 @@ pub fn page(s: &State) -> El {
             "Nothing to continue: start something from Plan to read.",
         ));
     }
-    let today = s.airing.clock(s.clock()).day;
+    let now = s.clock();
+    let today = s.airing.clock(now).day;
     body = body.child(shelf(
         "airing",
         "Airing this week",
         air.len(),
         Some(Page::Airing),
-        SMALL_H + 6.0 + 34.0 + 18.0,
+        SMALL_CARD_H,
         air.iter()
             .take(SHELF_MAX)
-            .map(|(e, ep, at)| {
-                let c = s.airing.clock(*at);
-                let day = match c.day - today {
-                    0 => "Today".to_string(),
-                    1 => "Tomorrow".to_string(),
-                    _ => kotora_core::airing::DAY_SHORT[c.weekday as usize].to_string(),
-                };
-                let time = format!("{:02}:{:02}", c.minute / 60, c.minute % 60);
-                small_card(s, e, Some((day, c.day == today)), format!("Ep {ep} \u{b7} {time}"))
-            })
+            .map(|(e, ep, at)| small_card(s, e, Some((format!("Ep {ep}"), s.airing.clock(*at).day == today)), s.airing.when(*at, now)))
             .collect(),
         "None of your shows airs in the next seven days.",
     ));
@@ -187,7 +186,7 @@ pub fn page(s: &State) -> El {
         "Plan to watch",
         plan.len(),
         Some(Page::List(Status::PlanToWatch)),
-        SMALL_H + 6.0 + 34.0 + 18.0,
+        SMALL_CARD_H,
         plan.iter().take(SHELF_MAX).map(|e| small_card(s, e, None, e.episodes.map_or_else(|| e.kind.to_string(), |n| format!("{} \u{b7} {n} ep", e.kind)))).collect(),
         "Your Plan to watch list is empty.",
     ));
@@ -339,10 +338,11 @@ fn wide_card(s: &State, e: &Entry) -> El {
         )
 }
 
-/// A poster card (Airing this week, Plan to watch), with an optional day chip on the poster.
-fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -> El {
+/// A poster card (Airing this week, Plan to watch), with an optional chip on the poster (the
+/// episode that airs; filled on today's).
+fn small_card(s: &State, e: &Entry, chip: Option<(String, bool)>, line: String) -> El {
     let mut p = look::poster(s, e.id, &e.title, e.cover_url.as_deref(), SMALL_W, SMALL_H, theme::R_MD);
-    if let Some((d, today)) = day {
+    if let Some((d, today)) = chip {
         let chip = row().absolute(6.0, 6.0).h(20.0).px(8.0).center_y().radius(10.0);
         p = p.child(if today {
             chip.fill(PAL.airing).child(text(d).font(theme::BADGE).color(PAL.bg))
@@ -357,7 +357,7 @@ fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -
         .role("button")
         .label(format!("About {}", e.title))
         .w(SMALL_W)
-        .gap(6.0)
+        .gap(SMALL_GAP)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
         // The middle button plays the next episode, as on the list.
@@ -374,6 +374,6 @@ fn small_card(s: &State, e: &Entry, day: Option<(String, bool)>, line: String) -
             s.open_details(stub.clone());
         })
         .child(p)
-        .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
-        .child(text(line).font(theme::LABEL_NUM).color(PAL.dim).truncate())
+        .child(col().h(SMALL_TITLE_H).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
+        .child(col().h(SMALL_LINE_H).child(text(line).font(theme::LABEL_NUM).color(PAL.dim).truncate()))
 }
