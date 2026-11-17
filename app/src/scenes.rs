@@ -1090,6 +1090,33 @@ pub const SCENES: &[Scene] = &[
         s.mirror.manga_aligned = false;
         mirror_settings(s);
     }),
+    // Fill volumes from chapters (MangaDex): the row, looking up, the preview, done, offline.
+    ("settings-fill-volumes", |s| fill_volumes(s, |_| {})),
+    ("settings-fill-volumes-busy", |s| fill_volumes(s, |s| s.volfill.busy = Some((7, 18)))),
+    ("settings-fill-volumes-preview", |s| fill_volumes(s, crate::volfill::fake_preview)),
+    ("settings-fill-volumes-done", |s| fill_volumes(s, |s| s.volfill.done = Some((4, vec![1, 2, 3, 4])))),
+    ("settings-fill-volumes-offline", |s| {
+        fill_volumes(s, |s| s.volfill.error = Some("Can\u{2019}t reach MangaDex: volumes from chapters need the network. Nothing was changed.".into()))
+    }),
+    // The manga editor's "Vol from chapters": ready, looking up, and not on MangaDex (hover note).
+    ("manga-editor-vol-fill", |s| {
+        manga(s);
+        s.manga_toggle_editor(2);
+        s.volfill.tables.insert(2, Some(kotora_core::mangadex::Lookup::Found(crate::volfill::fake_table())));
+        crate::volfill::fill_editor(s);
+        s.toast = None;
+    }),
+    ("manga-editor-vol-fill-looking", |s| {
+        manga(s);
+        s.manga_toggle_editor(2);
+        s.volfill.tables.insert(2, None);
+    }),
+    ("manga-editor-vol-fill-missing", |s| {
+        manga(s);
+        s.manga_toggle_editor(4);
+        s.volfill.tables.insert(4, Some(kotora_core::mangadex::Lookup::NotFound));
+        s.volfill.tip = true;
+    }),
     // A status conflict settled for AniList's status.
     ("settings-mirror-preview-picked", |s| {
         crate::mirror::fake_preview(s);
@@ -1773,6 +1800,14 @@ fn manga(s: &mut State) {
     for e in s.manga.entries.iter_mut().filter(|e| e.id % 5 != 2) {
         e.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", e.id));
     }
+}
+
+/// Settings → Account with Manga on, searched for the volumes row, `f` setting its state.
+fn fill_volumes(s: &mut State, f: fn(&mut State)) {
+    crate::manga::fake(s);
+    f(s);
+    crate::settings::open(s, Section::Account);
+    crate::settings::set_query(s, "volumes");
 }
 
 /// The search page in Manga mode for `q`, MyAnimeList's manga results in when `answered`.

@@ -52,7 +52,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
         .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
         .children(s.toast.as_ref().map(crate::library::toast))
-        .children(account_tip(s));
+        .children(account_tip(s))
+        .children(crate::volfill::editor_tip(s));
     // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
     // window resize lands every change inside `root` at once, and that must not cut the intro's
     // own tweens short (a window manager that enlarges the window as it opens).

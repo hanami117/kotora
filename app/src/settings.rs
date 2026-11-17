@@ -83,7 +83,7 @@ impl Section {
         match self {
             Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga])],
+            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
                 if kotora_detect::VLC_WEB {
@@ -131,6 +131,8 @@ pub enum Row {
     ExportManga,
     /// Import manga list… and its preview (only while manga is on).
     ImportManga,
+    /// Fill volumes from chapters… (MangaDex; only while manga is on).
+    FillVolumes,
     Player(Switch),
     /// macOS: VLC is read through its web interface.
     VlcWeb,
@@ -173,6 +175,7 @@ impl Row {
             Row::Import => "import",
             Row::ExportManga => "export-manga",
             Row::ImportManga => "import-manga",
+            Row::FillVolumes => "fill-volumes",
             Row::VlcWeb => "vlc-web",
             Row::Auto => "auto",
             Row::Threshold => "threshold",
@@ -227,6 +230,7 @@ const SPECS: &[Spec] = &[
     spec(Row::Export, Section::Account, "Export anime list\u{2026}", "Your anime list as a MyAnimeList XML file.", "export anime backup save download xml mal myanimelist file kitsu taiga move transfer"),
     spec(Row::Import, Section::Account, "Import anime list\u{2026}", "Read a MyAnimeList anime XML export and add it to your anime list.", "import anime restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
     spec(Row::ExportManga, Section::Account, "Export manga list\u{2026}", "Your manga list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file manga chapters volumes move transfer"),
+    spec(Row::FillVolumes, Section::Account, "Fill volumes from chapters\u{2026}", "Volumes read from chapters read, with MangaDex\u{2019}s volume tables; never lowered.", "volumes chapters mangadex fill manga count compute"),
     spec(Row::ImportManga, Section::Account, "Import manga list\u{2026}", "Read a MyAnimeList manga XML export and add it to your manga list.", "import restore load upload xml gz mal myanimelist file manga chapters volumes move transfer merge"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
@@ -657,7 +661,7 @@ fn section_view(s: &State, sec: Section) -> El {
 
 /// Whether a row shows: the manga ones only while manga is on.
 fn shown(s: &State, r: Row) -> bool {
-    !matches!(r, Row::ExportManga | Row::ImportManga) || s.manga.enabled
+    !matches!(r, Row::ExportManga | Row::ImportManga | Row::FillVolumes) || s.manga.enabled
 }
 
 fn group_head(title: &str) -> El {
@@ -864,6 +868,7 @@ fn row_el(s: &State, r: Row) -> El {
         Row::Import => crate::transfer::import_row(s, kotora_core::Kind::Anime),
         Row::ExportManga => crate::transfer::export_row(s, kotora_core::Kind::Manga),
         Row::ImportManga => crate::transfer::import_row(s, kotora_core::Kind::Manga),
+        Row::FillVolumes => crate::volfill::settings_row(s),
         Row::Player(sw) => player(s, sw),
         Row::VlcWeb if cfg!(windows) => block(
             "VLC web interface",
@@ -975,7 +980,7 @@ fn row_el(s: &State, r: Row) -> El {
         ),
         Row::About => about(s),
         Row::Licences => col().key("set/licences").w_full().gap(3.0).py(12.0).child(text("Licences").font(theme::BODY_MED).color(PAL.text)).child(
-            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Not affiliated with MyAnimeList or AniList.")
+            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Volume data for \u{201c}Fill volumes from chapters\u{201d}: MangaDex. Not affiliated with MyAnimeList, AniList or MangaDex.")
                 .font(theme::LABEL)
                 .color(PAL.dim)
                 .wrap(),

@@ -50,6 +50,14 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   MyAnimeList and to AniList, whenever the other service's id is known (MyAnimeList's from the MyAnimeList id;
   AniList's from its saved list). Without the mirror, the one link of your service, as before.
 
+- **Volumes from chapters (MangaDex):** with Manga on, Settings → Account → Fill volumes from chapters… looks
+  up your manga on MangaDex (matched by MyAnimeList id, or AniList id) and sets volumes read from chapters read,
+  by MangaDex's volume tables. A preview first ("Ch 171 → Vol 0 → 19", plus what MangaDex doesn't have and what
+  is already right or higher); volumes are never lowered; changes go through the sync queue with Undo, and to
+  the mirror too when it is on. The manga editor has a "Vol from chapters" button that fills its Volumes field
+  (you still save). Only when you ask: no background requests, under 3 a second, each series saved for 30
+  days. Volume data: MangaDex.
+
 ### Changed
 - Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import
   anime list…**, beside Export manga list… and Import manga list…; the messages, file dialogs and `kot help` say

@@ -1205,7 +1205,7 @@ pub fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
     });
     let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });
     if let Some(ed) = open {
-        c = c.child(editor(e, &ed, false, s.score_format()));
+        c = c.child(editor(e, &ed, false, s.score_format(), crate::volfill::editor_button(s, id)));
     }
     c.child(el().w_full().h(1.0).fill(PAL.border.alpha(0.6)))
 }
@@ -1269,7 +1269,7 @@ fn reread_cell(e: &MEntry) -> El {
 
 /// The manga editor: status, chapters, volumes and score, then Cancel / Save (one change).
 /// `compact`: the details page's narrow column.
-pub fn editor(e: &MEntry, ed: &MEditor, compact: bool, fmt: ScoreFormat) -> El {
+pub fn editor(e: &MEntry, ed: &MEditor, compact: bool, fmt: ScoreFormat, fill: El) -> El {
     let mut statuses = row().flex_wrap().gap(6.0);
     for st in Status::ALL {
         let on = ed.status == st;
@@ -1300,7 +1300,8 @@ pub fn editor(e: &MEntry, ed: &MEditor, compact: bool, fmt: ScoreFormat) -> El {
             }),
         ));
     let ch = field("Chapters", stepper(Unit::Chapters, ed.chapters, e.chapters_total));
-    let vol = field("Volumes", stepper(Unit::Volumes, ed.volumes, e.volumes_total));
+    // "Vol from chapters" (MangaDex) beside the volumes stepper.
+    let vol = field("Volumes", row().gap(8.0).center_y().child(stepper(Unit::Volumes, ed.volumes, e.volumes_total)).child(fill));
     if compact {
         return col().key("editor").gap(12.0).pt(12.0).child(field("Status", statuses)).child(row().flex_wrap().gap(12.0).child(ch).child(vol)).child(field("Score", scores)).child(buttons.pt(4.0));
     }
@@ -1387,7 +1388,7 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     }
     c = c.child(facts);
     match s.manga.editor.filter(|ed| ed.id == id) {
-        Some(ed) => c.child(editor(e, &ed, true, s.score_format())),
+        Some(ed) => c.child(editor(e, &ed, true, s.score_format(), crate::volfill::editor_button(s, id))),
         None => {
             let mut actions = row().pt(10.0).gap(8.0).child(crate::ui::action("det/edit".into(), "Edit", false, move |s, _| s.manga_toggle_editor(id)).h(32.0).px(12.0));
             if e.status == Status::Completed && !e.rereading {

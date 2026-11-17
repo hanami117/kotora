@@ -170,7 +170,7 @@ kot show | kot quit
 Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. Kotora shares no
 code with Taiga.
 
-Kotora is not affiliated with or endorsed by MyAnimeList or AniList. Third-party licences are in
+Kotora is not affiliated with or endorsed by MyAnimeList, AniList or MangaDex. Third-party licences are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
@@ -186,3 +186,5 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
   [anitomy-ng](https://github.com/tylergibbs2/anitomy-ng): file name parsing.
 - [Noto Sans JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License 1.1): the outlines of 小虎
   in the sidebar and the startup animation.
+- [MangaDex](https://mangadex.org/): volume data for "Fill volumes from chapters" (its public API, asked only
+  when you use it, within its rate limit).

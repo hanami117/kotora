@@ -36,6 +36,10 @@ pub enum Cmd {
     Import(Vec<kotora_core::listxml::Action>),
     /// Takes back an import's changes that still wait.
     UndoImport(Vec<i64>),
+    /// "Fill volumes from chapters": the volume changes, queued as one import (`volfill.rs`).
+    FillVolumes(Vec<kotora_core::listxml::Action>),
+    /// Takes them back while they wait.
+    UndoFillVolumes(Vec<i64>),
     /// Remove from list: off the saved list, the removal queued.
     Remove { kind: Kind, media_id: u32 },
     /// Undo of a removal that hasn't left: its queued removal is discarded.
@@ -146,6 +150,26 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
             h.update_if(move |s, _| crate::transfer::undone(s, r));
             touched
         }
+        Cmd::FillVolumes(actions) => {
+            let touched: Vec<(Kind, u32)> = actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::Update { kind, media_id, .. } => Some((*kind, *media_id)),
+                    Action::Add { .. } => None,
+                })
+                .collect();
+            let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The volumes can't be saved: {e}"));
+            let ok = r.is_ok();
+            h.update_if(move |s, _| crate::volfill::applied(s, r));
+            if ok { touched } else { Vec::new() }
+        }
+        Cmd::UndoFillVolumes(ids) => {
+            let now = now_unix();
+            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
+            let r = store.undo_import(service, &ids, now).map_err(|e| format!("The volumes can't be taken back: {e}"));
+            h.update_if(move |s, _| crate::volfill::undone(s, r));
+            touched
+        }
         _ => Vec::new(),
     }
 }
@@ -174,7 +198,7 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind
             store.discard(crate::account::name(), id, now).map(|_| m)
         }
         // Handled by `transfer`.
-        Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
+        Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_) => Ok(None),
         Cmd::Remove { kind, media_id } => store.remove_from_list((crate::account::name(), kind), media_id, now).map(|_| Some((kind, media_id))),
         Cmd::UndoRemove { kind, media_id } => {
             let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kind && o.state.is_open()));
@@ -218,7 +242,7 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             if let Cmd::Add { media, .. } = &cmd {
                 added.push(media.id);
             }
-            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_)) {
+            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_)) {
                 // Read the whole list once the queue is empty: the imported adds get their
                 // covers and episodes from the service.
                 refresh |= matches!(cmd, Cmd::Import(_));

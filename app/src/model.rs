@@ -505,6 +505,8 @@ pub struct State {
     pub mirror: crate::mirror::MirrorUi,
     /// Manga mode: the switch, the manga list and its editor (`manga.rs`).
     pub manga: crate::manga::MangaUi,
+    /// Volumes from chapters with MangaDex (`volfill.rs`).
+    pub volfill: crate::volfill::VolFill,
 }
 
 /// The clock of the fake state (scenes and tests): a fixed moment, so snaps never change.
@@ -580,6 +582,7 @@ impl State {
             transfer: Default::default(),
             mirror: Default::default(),
             manga: Default::default(),
+            volfill: Default::default(),
         };
         s.queue_changed();
         s.refresh();
