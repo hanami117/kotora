@@ -382,3 +382,19 @@ fn the_viewer_log_beats_a_stale_comic_id() {
     let mut open = vec![v01];
     assert_eq!(viewer_from_log(&mut open, Some("/m/gone.cbz".into()), None, false, |_| false), None);
 }
+
+/// Live test: the match was logged twice per open (the open-file signal, then the database's
+/// page). Once, and again only when something changed.
+#[test]
+fn the_match_is_logged_once_per_open() {
+    let k = |page: Option<(i64, i64)>, finished: bool, found: &str| LogKey { path: "/m/Dragon Ball Z v12.cbz".into(), found: found.into(), finished, page };
+    let first = k(None, false, "list entry 42 (sure: you picked it)");
+    assert!(log_due(None, &first));
+    assert!(!log_due(Some(&first), &k(Some((1, 187)), false, "list entry 42 (sure: you picked it)")), "the page arriving is no change");
+    assert!(!log_due(Some(&k(Some((1, 187)), false, "x")), &k(None, false, "x")));
+    assert!(log_due(Some(&k(Some((1, 187)), false, "x")), &k(Some((90, 187)), false, "x")), "the page moved");
+    assert!(log_due(Some(&first), &k(None, true, "list entry 42 (sure: you picked it)")), "read to the end");
+    assert!(log_due(Some(&first), &k(None, false, "not on the list: Dragon Ball (42)")), "another match");
+    let other = LogKey { path: "/m/Dragon Ball Z v13.cbz".into(), ..first.clone() };
+    assert!(log_due(Some(&first), &other), "another file");
+}

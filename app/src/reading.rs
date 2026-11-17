@@ -640,9 +640,42 @@ fn open(store: &mut Option<Store>) -> Option<&mut Store> {
     store.as_mut()
 }
 
+/// What one match line says, to log it once per open: the file, the match and "read to the end";
+/// the page counts only once it is known on both lines (the open-file signal comes first, without
+/// a page; YACReader's database follows with one).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LogKey {
+    pub path: std::path::PathBuf,
+    pub found: String,
+    pub finished: bool,
+    pub page: Option<(i64, i64)>,
+}
+
+/// Whether `new` says something the last line didn't.
+pub(crate) fn log_due(prev: Option<&LogKey>, new: &LogKey) -> bool {
+    let Some(p) = prev else { return true };
+    p.path != new.path || p.found != new.found || p.finished != new.finished || matches!((p.page, new.page), (Some(a), Some(b)) if a != b)
+}
+
+thread_local! {
+    static LAST_LOG: std::cell::RefCell<Option<LogKey>> = const { std::cell::RefCell::new(None) };
+}
+
 fn recognise(store: &mut Option<Store>, read: Read) -> Seen {
     let seen = recognise_quiet(store, read);
     let r = &seen.read;
+    let key = LogKey { path: r.path.clone(), found: found_text(&seen.found), finished: r.finished, page: (r.pages > 0 && !r.weak).then_some((r.page, r.pages)) };
+    let due = LAST_LOG.with(|l| {
+        let mut l = l.borrow_mut();
+        let due = log_due(l.as_ref(), &key);
+        // Keep the page once known, so a later line without one doesn't hide a real change.
+        let page = key.page.or(l.as_ref().filter(|p| p.path == key.path).and_then(|p| p.page));
+        *l = Some(LogKey { page, ..key.clone() });
+        due
+    });
+    if !due {
+        return seen;
+    }
     let state = if r.finished { format!(", read to the end{}", r.why.as_ref().map(|w| format!(" ({w})")).unwrap_or_default()) } else if r.pages > 0 && !r.weak { format!(", page {} of {}", r.page, r.pages) } else { String::new() };
     let renum = r.renumbered.as_ref().map(|n| format!(" [{n}]")).unwrap_or_default();
     log(format_args!("{} in {}: \"{}\" {}{renum}{state} → {}", name_of(&r.path), r.source, r.series, r.label(), found_text(&seen.found)));
