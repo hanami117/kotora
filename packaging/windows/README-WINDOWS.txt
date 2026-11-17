@@ -1,32 +1,38 @@
-Kotora for Windows: test build
-==============================
+Kotora for Windows (preview)
+============================
 
-This is an early test build. It is not signed, has no installer and does not update itself.
-It was built and tested by machine only (GitHub Actions); you are among the first people to
-run it on a real Windows desktop. Expect rough edges, and please report them.
+Kotora is new on Windows: this is a preview. It was built and tested by machine (GitHub
+Actions) and tried on few real PCs so far. Expect rough edges, and please report them.
+It is not signed yet.
 
-Needs Windows 10 or 11, 64-bit (x64).
+Needs Windows 10 (version 1809 or newer) or Windows 11, 64-bit (x64).
 
 
-How to run
-----------
-1. Unpack the zip into a folder of its own, for example C:\Kotora (not inside Program Files).
-2. Double-click kotora.exe.
-3. Windows will say "Windows protected your PC" (SmartScreen), because the program is not
-   signed. Click "More info", then "Run anyway". If there is no "Run anyway": right-click
-   kotora.exe, Properties, tick "Unblock", OK, and start it again.
-4. Kotora asks for a MyAnimeList Client ID and walks you through it, then you sign in to
-   MyAnimeList in your browser.
+Install
+-------
+With the installer (Kotora-windows-x64-setup.exe): run it. Windows will say "Windows
+protected your PC" (SmartScreen), because the program is not signed: click "More info",
+then "Run anyway". Setup installs Kotora for you only, never asks for administrator rights,
+adds a Start menu entry and puts kot (the command line) on your PATH. A new version is
+installed the same way, over the old one. Uninstall in Windows Settings, Apps, Installed
+apps: your settings, sign-in and saved list are kept unless you say otherwise.
+
+From the zip: unpack it into a folder of its own, for example C:\Kotora (not inside Program
+Files), and double-click kotora.exe. If SmartScreen has no "Run anyway": right-click
+kotora.exe, Properties, tick "Unblock", OK, and start it again.
+
+Then choose MyAnimeList or AniList and sign in in your browser.
 
 Closing the window keeps Kotora running in the notification area (the tray, next to the
 clock; it may be behind the ^ arrow). Click the icon to open the window again; right-click
-it for Quit.
+it for Quit. To start Kotora with Windows: Settings, General, "Start Kotora when I log in".
 
-kot.exe is the command line. In a terminal (PowerShell) in the same folder:
-    .\kot status        is Kotora running, who is signed in
-    .\kot list          your list
-    .\kot now           what Kotora sees playing
-    .\kot quit          quits Kotora
+kot.exe is the command line. In a terminal (PowerShell):
+    kot status        is Kotora running, who is signed in
+    kot list          your list
+    kot now           what Kotora sees playing
+    kot quit          quits Kotora
+(From the zip, kot is not on your PATH: run .\kot in Kotora's folder.)
 
 
 What should work
@@ -70,16 +76,32 @@ Then Main interfaces, Lua: set a password under "Lua HTTP". Restart VLC. Then ty
 password in Kotora: Settings, Detection, VLC web interface, Save.
 
 
+Notifications
+-------------
+Kotora shows Windows notifications (toasts): "Update ... to episode 6?" with Yes and Not now,
+"Recorded" with Undo, and news about new episodes. Switch each kind on or off in Settings,
+Notifications.
+- The buttons work while Kotora runs (it runs in the tray). A notification left over after
+  Kotora quit does nothing when clicked.
+- While a video plays full screen, Windows may hold notifications back and only list them
+  in the notification centre (Windows Settings, System, Notifications, "Do not disturb").
+  The question is also in Kotora's window, and kot confirm answers it.
+
+
+Updates
+-------
+Once a day Kotora asks kotora.moe whether a new version is out and shows a banner with a
+Download button for the new installer. Nothing is downloaded by itself. Switch it off in
+Settings, General.
+
+
 What does not work yet
 ----------------------
 - Detection without setup has limits: a file with a title of its own inside (not its file
   name) may show under that title; a player started with a custom window title is not
   seen; other players than the six above are not seen at all.
-- Desktop notifications (toasts). The banner inside the window still shows.
-- Start at login (the switch in Settings is greyed out).
-- The update check (this build never looks for a newer version).
-- No program icon on kotora.exe, no installer, no Start menu entry.
-- kot has no time limit when the app hangs: press Ctrl+C.
+- A notification clicked after Kotora quit does nothing (see above).
+- The programs are not signed: SmartScreen warns at every new version.
 
 
 Where Kotora keeps its files
@@ -90,8 +112,9 @@ Where Kotora keeps its files
     Log             %LOCALAPPDATA%\kotora\Logs\kotora.log
 
 (Paste a path into the address bar of Explorer to open it.)
-To remove Kotora completely: quit it, delete the folder you unpacked and the two kotora
-folders above.
+To remove Kotora completely: uninstall it and answer Yes when it asks about your settings
+and list (from the zip: quit it, delete the folder you unpacked and the two kotora folders
+above).
 
 
 How to report a problem
@@ -105,14 +128,13 @@ Please send:
    sign-in.
 4. Your Windows version (Win+R, winver) and, for a blank or broken window, your graphics
    card.
-5. The version: run   .\kotora.exe --version | more   in PowerShell, or see Settings, About.
+5. The version: Settings, About (or   kot --version   in PowerShell).
 
 For a window that stays blank or crashes at start, run this in PowerShell in Kotora's
 folder and send the file gpu.txt it makes:
     $env:RUNE_GPU_LOG = "1"; .\kotora.exe 2>&1 | Out-File gpu.txt
 
-Report at https://github.com/hanami117/kotora/issues or straight to the person who gave
-you this build.
+Report at https://github.com/hanami117/kotora/issues
 
 
 Kotora is free software under the GPL, version 3 or later. Source: https://github.com/hanami117/kotora
