@@ -249,7 +249,7 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         yes: bool,
     },
-    /// The saved manga list (MyAnimeList only; Manga must be on): one status as in `List`
+    /// The saved manga list of the list service (Manga must be on): one status as in `List`
     /// (`watching` is Reading, `plan` Plan to read) or all (`None`). Read only. A separate command,
     /// not a field of `List`, so an older app says it doesn't know it instead of printing the
     /// anime list. Replies `List` (`progress` / `episodes`: chapters).

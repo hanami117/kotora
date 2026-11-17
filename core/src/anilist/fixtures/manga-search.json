@@ -1,0 +1,7 @@
+{"data":{"Page":{"media":[
+ {"id":190001,"idMal":79001,"title":{"romaji":"Kami Chouchin","english":"Paper Lanterns","native":"紙提灯"},"synonyms":[],"format":"MANGA","status":"RELEASING","chapters":null,"volumes":null,"countryOfOrigin":"JP","startDate":{"year":2021,"month":4,"day":8},"endDate":{},"averageScore":82,"popularity":40210,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/manga/cover/small/bx190001.jpg"},
+  "staff":{"edges":[{"role":"Story & Art","node":{"name":{"full":"Aoi Hoshimiya"}}},{"role":"Translator (English)","node":{"name":{"full":"Ren Kato"}}}]}},
+ {"id":190004,"idMal":79004,"title":{"romaji":"Yoru no Renkinjutsushi","english":"Night Shift Alchemist"},"format":"NOVEL","status":"HIATUS","volumes":9,"countryOfOrigin":"JP","startDate":{"year":2019},"averageScore":77,"coverImage":{},
+  "staff":{"edges":[{"role":"Story","node":{"name":{"full":"Mio Tanabe"}}},{"role":"Illustration","node":{"name":{"full":"Sora Ikeda"}}}]}},
+ {"id":0,"title":{"romaji":"broken"}}
+]}}}

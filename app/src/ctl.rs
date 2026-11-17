@@ -383,9 +383,6 @@ fn open_store() -> Result<kotora_core::store::Store, String> {
 /// `failed`: why the last manga sync failed (from the window), if it did: said instead of the
 /// list when there is none yet, else after it.
 fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Option<&str>, failed: Option<String>) -> Result<Reply, String> {
-    if service != ServiceId::Mal {
-        return Err(MAL_ONLY.into());
-    }
     let only = status.map(parse_status).transpose()?;
     let scope = (service.name(), Kind::Manga);
     let err = |e: kotora_core::store::StoreError| format!("Can't read the saved manga list: {e}");
@@ -399,6 +396,11 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
         });
     }
     let items = store.load_list(scope).map_err(err)?;
+    // Scores as the user reads them on the service (AniList's own format; MyAnimeList 1-10).
+    let format = match service {
+        ServiceId::Mal => ScoreFormat::Point10,
+        ServiceId::AniList => store.profile(service.name()).ok().flatten().map(|p| p.score_format).unwrap_or_default(),
+    };
     // Open changes (none can be made yet without the UI, but the queue holds both kinds).
     let ops = store.queue(service.name(), kotora_core::time::now_unix()).map_err(err)?;
     let waiting = |id: u32| ops.iter().find(|o| o.kind == Kind::Manga && o.media_id == id && o.state != OpState::Done).map(|o| crate::model::waiting_label(o.state).to_string());
@@ -412,7 +414,7 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
             progress: it.progress,
             episodes: it.media.episodes,
             score: it.score.map(kotora_core::Score::to_ten),
-            score_text: it.score.map(|s| ScoreFormat::Point10.show(s)),
+            score_text: it.score.map(|s| format.show(s)),
             waiting: waiting(it.media.id),
             rewatching: it.rewatching,
             times_rewatched: it.times_rewatched,
@@ -424,22 +426,23 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
     Ok(Reply::List { entries, note })
 }
 
-const MAL_ONLY: &str = "Manga lists are MyAnimeList only for now (AniList is anime only in Kotora).";
+/// `kot add --manga` / `kot remove --manga` on AniList: they go through the window's manga list,
+/// which is MyAnimeList only until the window's switch works on AniList (`State::manga_possible`).
+const MAL_ONLY: &str = "Adding and removing manga is MyAnimeList only for now (on AniList, kot manga and kot list --manga work).";
 
 /// `kot manga [on|off]`: the `manga:enabled` switch ([`kotora_core::store::Store::manga_enabled`]).
 /// Off keeps the saved manga list; nothing is ever written to the service.
 fn manga_switch(store: &kotora_core::store::Store, service: ServiceId, on: Option<bool>) -> Result<String, String> {
     let err = |e: kotora_core::store::StoreError| format!("Can't save the setting: {e}");
+    let svc = service.title();
     match on {
         None => {
-            let state = if store.manga_enabled().map_err(err)? { "on: syncs read your MyAnimeList manga list too" } else { "off (kot manga on turns it on)" };
-            let note = if service == ServiceId::Mal { "" } else { " AniList is anime only in Kotora: nothing is read while AniList is your list service." };
-            Ok(format!("Manga is {state}.{note}"))
+            let state = if store.manga_enabled().map_err(err)? { format!("on: syncs read your {svc} manga list too") } else { "off (kot manga on turns it on)".into() };
+            Ok(format!("Manga is {state}."))
         }
-        Some(true) if service != ServiceId::Mal => Err(MAL_ONLY.into()),
         Some(true) => {
             store.set_manga_enabled(true).map_err(err)?;
-            Ok("Manga is on: syncs read your MyAnimeList manga list too (read only).".into())
+            Ok(format!("Manga is on: syncs read your {svc} manga list too (read only)."))
         }
         Some(false) => {
             store.set_manga_enabled(false).map_err(err)?;
@@ -483,7 +486,7 @@ mod tests {
         }
     }
 
-    /// `kot manga` and `kot list --manga`: off by default, MyAnimeList only, read from the saved
+    /// `kot manga` and `kot list --manga`: off by default, read from the saved
     /// list (Reading first, newest update first), with chapters and volumes; anime never shows.
     /// `kot add --manga` / `kot remove --manga`: MyAnimeList, Manga on; remove asks first, then
     /// takes it off the manga list (the anime with the same id stays).
@@ -514,8 +517,6 @@ mod tests {
         store.replace_list("mal", &[anime], 1).unwrap();
         assert!(manga_switch(&store, ServiceId::Mal, None).unwrap().starts_with("Manga is off"));
         assert!(manga_list(&store, ServiceId::Mal, None, None).unwrap_err().starts_with("Manga is off"));
-        assert_eq!(manga_switch(&store, ServiceId::AniList, Some(true)).unwrap_err(), MAL_ONLY);
-        assert!(!store.manga_enabled().unwrap(), "AniList: stays off");
         manga_switch(&store, ServiceId::Mal, Some(true)).unwrap();
         assert!(store.manga_enabled().unwrap());
         assert!(manga_list(&store, ServiceId::Mal, None, None).unwrap_err().contains("kot sync"), "not read yet");
@@ -537,11 +538,43 @@ mod tests {
         assert_eq!(saved.len(), 3);
         assert!(note.is_some_and(|n| n.ends_with("This is the list saved by the last good sync.")));
         assert_eq!((entries[0].episodes, entries[0].volumes_total, entries[0].score_text.as_deref()), (Some(120), Some(12), Some("8")));
-        assert_eq!(manga_list(&store, ServiceId::AniList, None, None).unwrap_err(), MAL_ONLY);
+        assert!(manga_list(&store, ServiceId::AniList, None, None).unwrap_err().contains("kot sync"), "AniList's manga list is its own: not read yet");
         // Off: syncs stop reading it, the saved copy stays.
         assert!(manga_switch(&store, ServiceId::Mal, Some(false)).unwrap().starts_with("Manga is off"));
         assert_eq!(store.load_list(("mal", Kind::Manga)).unwrap().len(), 3);
         assert_eq!(store.load_list("mal").unwrap().len(), 1, "the anime list untouched");
+    }
+
+    /// AniList: `kot manga on` works, and `kot list --manga` shows AniList's own saved manga
+    /// (never MyAnimeList's), with scores in the user's AniList score format.
+    #[test]
+    fn kot_manga_works_on_anilist() {
+        let mut store = Store::open_memory().unwrap();
+        assert_eq!(manga_switch(&store, ServiceId::AniList, None).unwrap(), "Manga is off (kot manga on turns it on).");
+        assert_eq!(manga_switch(&store, ServiceId::AniList, Some(true)).unwrap(), "Manga is on: syncs read your AniList manga list too (read only).");
+        assert!(store.manga_enabled().unwrap());
+        assert_eq!(manga_switch(&store, ServiceId::AniList, None).unwrap(), "Manga is on: syncs read your AniList manga list too.");
+        store.replace_list(("mal", Kind::Manga), &[manga(2, "On MyAnimeList", Status::Watching, 1, 0, 1)], 1).unwrap();
+        assert!(manga_list(&store, ServiceId::AniList, None, None).unwrap_err().contains("kot sync"), "not read yet");
+        let mut reread = manga(190002, "Iron Garden", Status::Completed, 4, 0, 60);
+        reread.rewatching = true;
+        reread.times_rewatched = 1;
+        reread.score = Score::from_points(73);
+        store.replace_list(("anilist", Kind::Manga), &[manga(190001, "Paper Lanterns", Status::Watching, 21, 3, 50), reread], 100).unwrap();
+        let entries = |store: &Store| match manga_list(store, ServiceId::AniList, None, None) {
+            Ok(Reply::List { entries, .. }) => entries,
+            other => panic!("not a list: {other:?}"),
+        };
+        let got = entries(&store);
+        assert_eq!(got.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(), ["Paper Lanterns", "Iron Garden"], "AniList's own, not MyAnimeList's");
+        assert_eq!((got[1].status.as_str(), got[1].rewatching, got[1].times_rewatched), ("Completed", true, 1), "rereading");
+        // No profile saved yet: the window's default too (1-10).
+        assert_eq!(got[1].score_text.as_deref(), Some("7"));
+        for (format, text) in [(ScoreFormat::Point100, "73"), (ScoreFormat::Point10Decimal, "7.3"), (ScoreFormat::Point10, "7"), (ScoreFormat::Point5, "★★★★☆")] {
+            store.set_profile("anilist", &kotora_core::service::Profile { score_format: format, ..Default::default() }).unwrap();
+            assert_eq!(entries(&store)[1].score_text.as_deref(), Some(text), "{format:?}");
+        }
+        assert_eq!((got[0].volumes, got[0].volumes_total), (Some(3), Some(12)));
     }
 
     /// `kot +1` and `kot set` hold an episode that hasn't aired yet; `--anyway` marks it.
