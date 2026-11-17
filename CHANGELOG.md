@@ -66,6 +66,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **`kot set --manga TITLE|ID [CH] [--volumes N] [--status S] [--score SCORE|none]`**: a manga's chapters,
   volumes, status or score from the terminal, as the manga editor does (sync queue, mirror). A TITLE made only of
   digits is the manga's id (`kot set --manga 24 258`: manga 24, chapter 258).
+- **`kot status` shows the mirror** when it is on, like the sidebar's account chip: `demo_user on MyAnimeList ⇄
+  AniList · 329 entries · synced · mirror: 2 waiting` (and conflicts, failed changes and website edits to settle,
+  if any).
 
 ### Changed
 - Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import

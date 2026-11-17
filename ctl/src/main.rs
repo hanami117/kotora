@@ -387,7 +387,10 @@ fn status_text(st: &Status) -> String {
 fn status_short(st: &Status) -> String {
     let who = match &st.account {
         Some(name) if st.service.is_empty() => name.clone(),
-        Some(name) => format!("{name} on {}", st.service),
+        Some(name) => match &st.mirror {
+            Some(m) => format!("{name} on {} \u{21c4} {}", st.service, m.to),
+            None => format!("{name} on {}", st.service),
+        },
         None => "not signed in".to_string(),
     };
     let queue = match st.queue {
@@ -396,6 +399,10 @@ fn status_short(st: &Status) -> String {
         n => format!("{n} changes waiting"),
     };
     let mut line = format!("{who} · {} {} · {queue}", st.entries, if st.entries == 1 { "entry" } else { "entries" });
+    if let Some(m) = &st.mirror {
+        line.push_str(" · mirror: ");
+        line.push_str(&mirror_short(m));
+    }
     if st.offline {
         line.push_str(" · offline");
     }
@@ -403,6 +410,21 @@ fn status_short(st: &Status) -> String {
         line.push_str(" · hidden");
     }
     line
+}
+
+/// The mirror part of the status line: "synced", or what is not on the mirror yet.
+fn mirror_short(m: &kotora_ctl::MirrorStatus) -> String {
+    let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let parts: Vec<String> = [
+        (m.waiting > 0).then(|| format!("{} waiting", m.waiting)),
+        (m.conflicts > 0).then(|| plural(m.conflicts, "conflict", "conflicts")),
+        (m.failed > 0).then(|| format!("{} failed", m.failed)),
+        (m.web_edits > 0).then(|| plural(m.web_edits, "website edit", "website edits")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() { "synced".to_string() } else { parts.join(", ") }
 }
 
 /// `set TITLE… [EP] [--status S] [--score SCORE|none]`: the last bare number is the episode.
@@ -790,10 +812,24 @@ mod tests {
 
     #[test]
     fn status_reads_plainly() {
-        let st = Status { version: "0.1.0 (build 1)".into(), account: Some("demo_user".into()), service: "MyAnimeList".into(), entries: 303, queue: 4, offline: false, window: true };
+        let st = Status { version: "0.1.0 (build 1)".into(), account: Some("demo_user".into()), service: "MyAnimeList".into(), entries: 303, queue: 4, offline: false, window: true, mirror: None };
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\ndemo_user on MyAnimeList · 303 entries · 4 changes waiting\n");
         let st = Status { version: "0.1.0 (build 1)".into(), entries: 1, offline: true, ..Default::default() };
         assert_eq!(status_text(&st), "Kotora 0.1.0 (build 1)\nnot signed in · 1 entry · synced · offline · hidden\n");
+    }
+
+    #[test]
+    fn status_shows_the_mirror() {
+        let mirror = |waiting, conflicts, failed, web_edits| Some(kotora_ctl::MirrorStatus { to: "AniList".into(), waiting, conflicts, failed, web_edits });
+        let st = Status { version: "0.3.0 (build 1)".into(), account: Some("demo_user".into()), service: "MyAnimeList".into(), entries: 329, mirror: mirror(0, 0, 0, 0), window: true, ..Default::default() };
+        assert_eq!(status_short(&st), "demo_user on MyAnimeList \u{21c4} AniList · 329 entries · synced · mirror: synced");
+        let st = Status { mirror: mirror(3, 0, 0, 0), ..st };
+        assert_eq!(status_short(&st), "demo_user on MyAnimeList \u{21c4} AniList · 329 entries · synced · mirror: 3 waiting");
+        let st = Status { queue: 1, mirror: mirror(2, 1, 2, 1), ..st };
+        assert_eq!(status_short(&st), "demo_user on MyAnimeList \u{21c4} AniList · 329 entries · 1 change waiting · mirror: 2 waiting, 1 conflict, 2 failed, 1 website edit");
+        // Not signed in: no mirror name in the account part.
+        let st = Status { account: None, ..st };
+        assert!(status_short(&st).starts_with("not signed in · "));
     }
 
     #[test]

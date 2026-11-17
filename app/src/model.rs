@@ -1347,6 +1347,7 @@ impl State {
             queue: self.queue,
             offline: self.offline,
             window: self.window,
+            mirror: self.mirror_target().map(|to| self.mirror.ctl_status(to)),
         }
     }
 }

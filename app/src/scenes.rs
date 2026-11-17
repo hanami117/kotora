@@ -2277,6 +2277,22 @@ mod tests {
         assert!(render("home", (1280.0, 800.0)).find("account/dot").is_none());
     }
 
+    /// `kot status` names the mirror and splits the chip's badge by state; nothing while it is off.
+    #[test]
+    fn kot_status_shows_the_mirror() {
+        let mut s = State::fake();
+        assert_eq!(s.ctl_status().mirror, None);
+        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
+        let m = s.ctl_status().mirror.expect("the mirror is on");
+        assert_eq!((m.to.as_str(), m.waiting, m.conflicts, m.failed, m.web_edits), ("AniList", 0, 0, 0, 0));
+        let mut s = State::fake();
+        crate::mirror::fake_on(&mut s);
+        let m = s.ctl_status().mirror.expect("the mirror is on");
+        assert_eq!(m.waiting + m.conflicts + m.failed + m.web_edits, s.mirror.badge(), "the same count as the chip's dot");
+        s.mirror.link = None;
+        assert_eq!(s.ctl_status().mirror, None);
+    }
+
     #[test]
     fn export_and_import_scenes() {
         // MyAnimeList: both rows work.

@@ -120,6 +120,18 @@ impl MirrorUi {
         (self.edits.len() + self.waiting() + self.waits.iter().filter(|w| w.error.is_none()).count()) as u32
     }
 
+    /// `kot status`'s mirror part (the chip's badge, split by state).
+    pub fn ctl_status(&self, to: &str) -> kotora_ctl::MirrorStatus {
+        let count = |f: fn(OpState) -> bool| self.ops.iter().filter(|o| f(o.state)).count() as u32;
+        kotora_ctl::MirrorStatus {
+            to: to.to_string(),
+            waiting: count(|st| matches!(st, OpState::Queued | OpState::Sending)) + self.waits.iter().filter(|w| w.error.is_none()).count() as u32,
+            conflicts: count(|st| st == OpState::Conflict),
+            failed: count(|st| st == OpState::Failed),
+            web_edits: self.edits.len() as u32,
+        }
+    }
+
     /// Changes still waiting for the mirror.
     pub fn waiting(&self) -> usize {
         self.ops.iter().filter(|o| o.state.is_open()).count()

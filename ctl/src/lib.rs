@@ -499,6 +499,25 @@ pub struct Status {
     pub offline: bool,
     /// The window is open (false for a `--hidden` start).
     pub window: bool,
+    /// The account mirror (0.3), when it is on for this account: absent from older apps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<MirrorStatus>,
+}
+
+/// The mirror's part of `kot status`: where changes also go and what is not there yet.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MirrorStatus {
+    /// The mirror service ("AniList").
+    pub to: String,
+    /// Changes waiting or being sent, and adds still looking up their id there.
+    pub waiting: u32,
+    /// Changes in conflict with the mirror's website.
+    pub conflicts: u32,
+    /// Changes the mirror service refused.
+    pub failed: u32,
+    /// Entries edited on the mirror's website, waiting to be settled.
+    pub web_edits: u32,
 }
 
 // ------------------------------------------------------------------------------------ transport

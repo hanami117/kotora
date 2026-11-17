@@ -21,6 +21,7 @@ fn sample() -> Status {
         queue: 4,
         offline: false,
         window: true,
+        mirror: None,
     }
 }
 
