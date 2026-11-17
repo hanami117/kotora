@@ -771,6 +771,9 @@ fn as_file(link: Link, main: &[ListItem]) -> XmlList {
     let entries = main
         .iter()
         .map(|it| XmlEntry {
+            kind: Kind::Anime,
+            volumes_read: 0,
+            volumes: None,
             mal_id: mal_id_of(link.main, &it.media).unwrap_or(0),
             title: it.media.title.clone(),
             series_type: String::new(),
@@ -787,7 +790,7 @@ fn as_file(link: Link, main: &[ListItem]) -> XmlList {
             update_on_import: true,
         })
         .collect();
-    XmlList { user_name: None, entries, manga: 0 }
+    XmlList { kind: Kind::Anime, user_name: None, entries, other: 0 }
 }
 
 /// MyAnimeList ids only on the main list (the mirror must look them up when it is AniList).
@@ -854,12 +857,12 @@ pub fn align_actions(p: &Preview, align: Align, mirror_status: &HashSet<u32>) ->
         };
         let c = full(&target).without_same_ten(&r.mirror);
         if !c.is_empty() {
-            to.push(Action::Update { media_id: r.mirror_id, change: c });
+            to.push(Action::Update { kind: Kind::Anime, media_id: r.mirror_id, change: c });
         }
         if align == Align::Merge {
             let c = full(&target).without_same_ten(&r.main);
             if !c.is_empty() {
-                main.push(Action::Update { media_id: r.main_id, change: c });
+                main.push(Action::Update { kind: Kind::Anime, media_id: r.main_id, change: c });
             }
         }
     }

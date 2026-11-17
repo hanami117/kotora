@@ -160,7 +160,7 @@ kot confirm            record the offered episode
 kot dismiss            not now
 kot queue              changes waiting to sync
 kot sync               send the queue now
-kot export FILE        your anime list as a MyAnimeList XML file (MyAnimeList lists only)
+kot export [--manga] FILE   your anime (or manga) list as a MyAnimeList XML file (MyAnimeList lists only)
 kot config client-id ID   (optional: your own client ID for the service in use)
 kot show | kot quit
 ```

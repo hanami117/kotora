@@ -1007,6 +1007,46 @@ pub const SCENES: &[Scene] = &[
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
+    // Manga export and import (the rows show only while manga is on).
+    ("settings-transfer-manga", |s| {
+        s.manga.enabled = true;
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-manga-export-done", |s| {
+        s.manga.enabled = true;
+        s.transfer.manga_export_note = Some(Ok("Exported 12 manga to mangalist-2027-01-15.xml.".into()));
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    // AniList: no export (its API terms), and no manga import yet.
+    ("settings-manga-anilist", |s| {
+        anilist(s);
+        s.manga.enabled = true;
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "xml");
+    }),
+    ("settings-manga-import-preview", |s| {
+        s.manga.enabled = true;
+        crate::transfer::fake_manga_preview(s);
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    // An anime file given to the manga import.
+    ("settings-manga-import-error", |s| {
+        s.manga.enabled = true;
+        s.transfer.import_kind = kotora_core::Kind::Manga;
+        s.transfer.error = Some(kotora_core::listxml::parse_kind(b"<myanimelist><anime/></myanimelist>", kotora_core::Kind::Manga).unwrap_err());
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
+    ("settings-manga-import-done", |s| {
+        s.manga.enabled = true;
+        s.transfer.import_kind = kotora_core::Kind::Manga;
+        s.transfer.done = Some(crate::transfer::Done { queued: 9, ids: (1..=9).collect(), undone: None });
+        crate::settings::open(s, Section::Account);
+        crate::settings::set_query(s, "import");
+    }),
     // Settings → Account → Mirror edits (`mirror.rs`). The search brings the row to the top.
     ("settings-mirror", |s| {
         s.mirror.other_signed_in = true;
@@ -2130,7 +2170,7 @@ mod tests {
         assert!(c.conflicts > 1 && c.different > 0 && c.same > 0);
         assert_eq!(c.new + c.different + c.same + c.unknown, 40 + 6, "40 of the fake list, six more");
         assert!(render("settings-import-preview", (1280.0, 1600.0)).find("set/import-conflicts-all").is_some());
-        assert_eq!(p.plan.manga, 1);
+        assert_eq!((p.plan.other, p.plan.kind), (1, kotora_core::Kind::Anime));
         // AniList: the id it doesn't know is left out, the one it maps is new.
         let mut s = State::fake();
         super::anilist(&mut s);
@@ -2150,6 +2190,44 @@ mod tests {
         super::anilist(&mut s);
         assert!(crate::transfer::refusal(&s).is_some_and(|w| w.contains("terms")));
         assert!(render("settings-export-anilist", (1280.0, 800.0)).find("set/import-button").is_some());
+    }
+
+    #[test]
+    fn manga_export_and_import_scenes() {
+        use kotora_core::Kind;
+        // Manga off: the anime rows only.
+        let rt = render("settings-transfer", (1280.0, 800.0));
+        assert!(rt.find("set/export-manga-button").is_none() && rt.find("set/import-manga-button").is_none());
+        // Manga on: the manga rows beside them.
+        let rt = render("settings-transfer-manga", (1280.0, 900.0));
+        for k in ["set/export-button", "set/export-manga-button", "set/import-button", "set/import-manga-button"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(render("settings-manga-export-done", (1280.0, 900.0)).find("set/export-manga").is_some());
+        // The preview sits under the manga row and counts chapters and volumes.
+        let rt = render("settings-manga-import-preview", (1280.0, 1700.0));
+        for k in ["set/import-manga", "set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        let mut s = State::fake();
+        crate::transfer::fake_manga_preview(&mut s);
+        let p = s.transfer.preview.as_ref().unwrap();
+        assert_eq!((p.plan.kind, p.plan.other), (Kind::Manga, 1));
+        let c = p.plan.counts();
+        assert_eq!((c.new, c.unknown), (3, 2), "three new ids, no id and an unknown status");
+        assert!(c.conflicts >= 2 && c.different > 0 && c.same > 0);
+        assert!(p.plan.rows.iter().any(|r| r.verdict == kotora_core::listxml::Verdict::New && r.media.as_ref().is_some_and(|m| m.kind == Kind::Manga)));
+        // An anime file given to the manga import says so.
+        let rt = render("settings-manga-import-error", (1280.0, 900.0));
+        assert!(rt.find("set/import-error").is_some());
+        assert!(rt.find("set/import-manga").is_some());
+        assert!(render("settings-manga-import-done", (1280.0, 900.0)).find("set/import-undo").is_some());
+        // AniList: no export, and importing manga says it comes later.
+        let mut s = State::fake();
+        super::anilist(&mut s);
+        assert!(crate::transfer::refusal(&s).is_some());
+        assert!(crate::transfer::manga_import_refusal(s.service).is_some_and(|w| w.contains("later")));
+        assert!(crate::transfer::manga_import_refusal(kotora_core::service::ServiceId::Mal).is_none());
     }
 
     #[test]

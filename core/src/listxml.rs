@@ -1,8 +1,18 @@
-//! The user's anime list as a MyAnimeList XML file: export and import.
+//! The user's anime or manga list as a MyAnimeList XML file: export and import.
 //!
 //! The format is the one MyAnimeList's own export writes (`myanimelist` / `myinfo` / `anime`
 //! with `series_animedb_id`, `my_watched_episodes`, `my_status`, `my_score`, …). MyAnimeList,
 //! AniList, Kitsu and Taiga read it. MyAnimeList ships it gzipped (`.xml.gz`); both are read.
+//!
+//! A manga list is the same file with `<manga>` entries (`manga_mangadb_id`, `manga_title`,
+//! `manga_volumes`, `manga_chapters`, `my_read_volumes`, `my_read_chapters`, `my_times_read`,
+//! `my_rereading`, statuses `Reading` and `Plan to Read`, `user_export_type` 2 in `myinfo`). The
+//! field names follow MyAnimeList's own manga export as read by `malexport`
+//! (<https://github.com/seanbreckenridge/malexport>, `parse/xml.py`); the `myinfo` totals are
+//! not read by anything, so they are written as best known. A file is read as one kind: an
+//! anime file given to the manga import (and the other way round) is refused with a message.
+//! In an entry, `episodes` / `watched` / `times_watched` / `rewatching` hold a manga's chapter
+//! count, chapters read, times read and rereading.
 //!
 //! - **Export** ([`export`]): only from a MyAnimeList list. AniList's API terms forbid using its
 //!   API as a backup and using its data, user data included, in competing list services
@@ -38,7 +48,8 @@ pub const NO_DATE: &str = "0000-00-00";
 /// One `<anime>` of a file, as read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmlEntry {
-    /// `series_animedb_id`; 0 when missing or not a number.
+    pub kind: Kind,
+    /// `series_animedb_id` (manga: `manga_mangadb_id`); 0 when missing or not a number.
     pub mal_id: u32,
     pub title: String,
     /// `series_type` as written (`TV`, `Movie`, …).
@@ -50,6 +61,10 @@ pub struct XmlEntry {
     /// `None`: a status Kotora doesn't know.
     pub status: Option<Status>,
     pub watched: u32,
+    /// Manga: `my_read_volumes`; 0 for anime.
+    pub volumes_read: u32,
+    /// Manga: `manga_volumes`; `None` when 0 (unknown or still publishing).
+    pub volumes: Option<u32>,
     /// The file's `my_score` (1-10) on the 100-point scale (`Score::from_ten`); `None`: 0 (not
     /// scored) or missing. Written back with `Score::to_ten`.
     pub score: Option<Score>,
@@ -79,17 +94,22 @@ impl XmlEntry {
         if let Some(n) = self.episodes {
             progress = progress.min(n);
         }
-        Some(Values { status, progress, score: self.score, rewatching, times_rewatched: self.times_watched, volumes: 0 })
+        let mut volumes = self.volumes_read;
+        if let Some(n) = self.volumes {
+            volumes = volumes.min(n);
+        }
+        Some(Values { status, progress, score: self.score, rewatching, times_rewatched: self.times_watched, volumes })
     }
 
     /// A media row for an anime that is not on the list yet (MyAnimeList: its id is the key;
     /// the next sync replaces the row with what the service has).
     pub fn media(&self) -> Media {
         Media {
-            kind: Kind::Anime,
+            kind: self.kind,
             id: self.mal_id,
             title: if self.title.is_empty() { format!("MyAnimeList {}", self.mal_id) } else { self.title.clone() },
             episodes: self.episodes,
+            volumes: self.volumes,
             format: format_from_type(&self.series_type),
             ..Media::default()
         }
@@ -99,15 +119,23 @@ impl XmlEntry {
 /// A file, as read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct XmlList {
+    /// The kind read (the other kind's entries are not read).
+    pub kind: Kind,
     /// `myinfo/user_name`, when there is one.
     pub user_name: Option<String>,
     pub entries: Vec<XmlEntry>,
-    /// `<manga>` entries: not imported (anime only for now).
-    pub manga: usize,
+    /// Entries of the other kind in the file (not imported).
+    pub other: usize,
 }
 
-/// Reads a MyAnimeList XML file, plain or gzipped.
+/// Reads the anime of a MyAnimeList XML file, plain or gzipped.
 pub fn parse(bytes: &[u8]) -> Result<XmlList, String> {
+    parse_kind(bytes, Kind::Anime)
+}
+
+/// Reads the `kind` entries of a MyAnimeList XML file, plain or gzipped. A file that holds only
+/// the other kind is refused, and says which.
+pub fn parse_kind(bytes: &[u8], kind: Kind) -> Result<XmlList, String> {
     let text = if bytes.starts_with(&[0x1f, 0x8b]) {
         let mut out = Vec::new();
         flate2::read::GzDecoder::new(bytes)
@@ -130,17 +158,24 @@ pub fn parse(bytes: &[u8]) -> Result<XmlList, String> {
     if root.tag_name().name() != "myanimelist" {
         return Err("This is not a MyAnimeList list export (no <myanimelist>).".into());
     }
-    let mut list = XmlList::default();
+    let mut list = XmlList { kind, ..XmlList::default() };
+    let (own, other) = if kind == Kind::Manga { ("manga", "anime") } else { ("anime", "manga") };
     for n in root.children().filter(|n| n.is_element()) {
-        match n.tag_name().name() {
-            "myinfo" => list.user_name = child_text(n, "user_name").filter(|s| !s.is_empty()),
-            "anime" => list.entries.push(read_entry(n)),
-            "manga" => list.manga += 1,
-            _ => {}
+        let name = n.tag_name().name();
+        if name == "myinfo" {
+            list.user_name = child_text(n, "user_name").filter(|s| !s.is_empty());
+        } else if name == own {
+            list.entries.push(if kind == Kind::Manga { read_manga(n) } else { read_entry(n) });
+        } else if name == other {
+            list.other += 1;
         }
     }
-    if list.entries.is_empty() && list.manga > 0 {
-        return Err("This is a manga list. Kotora imports anime lists for now.".into());
+    if list.entries.is_empty() && list.other > 0 {
+        return Err(if kind == Kind::Manga {
+            "This is an anime list. Use \u{201c}Import list\u{201d} (anime) to read it; this import is for manga lists.".into()
+        } else {
+            "This is a manga list. Use \u{201c}Import manga list\u{201d} to read it; this import is for anime lists.".into()
+        });
     }
     Ok(list)
 }
@@ -160,6 +195,9 @@ fn read_entry(n: roxmltree::Node) -> XmlEntry {
     let date = |name| child_text(n, name).filter(|d| !d.is_empty() && !d.starts_with("0000"));
     let score = num(n, "my_score");
     XmlEntry {
+        kind: Kind::Anime,
+        volumes_read: 0,
+        volumes: None,
         mal_id: num(n, "series_animedb_id"),
         title: child_text(n, "series_title").unwrap_or_default(),
         series_type: child_text(n, "series_type").unwrap_or_default(),
@@ -178,16 +216,41 @@ fn read_entry(n: roxmltree::Node) -> XmlEntry {
     }
 }
 
-/// `my_status`: the words MyAnimeList writes (`Plan to Watch`, `On-Hold`), the API's names
-/// (`plan_to_watch`) and the old numbers (1-4, 6).
+fn read_manga(n: roxmltree::Node) -> XmlEntry {
+    let raw_status = child_text(n, "my_status").unwrap_or_default();
+    let date = |name| child_text(n, name).filter(|d| !d.is_empty() && !d.starts_with("0000"));
+    let score = num(n, "my_score");
+    XmlEntry {
+        kind: Kind::Manga,
+        mal_id: num(n, "manga_mangadb_id"),
+        title: child_text(n, "manga_title").unwrap_or_default(),
+        series_type: String::new(),
+        episodes: Some(num(n, "manga_chapters")).filter(|e| *e > 0),
+        volumes: Some(num(n, "manga_volumes")).filter(|e| *e > 0),
+        status: status_from_xml(&raw_status),
+        raw_status,
+        watched: num(n, "my_read_chapters"),
+        volumes_read: num(n, "my_read_volumes"),
+        score: if (1..=10).contains(&score) { Score::from_ten(score) } else { None },
+        start_date: date("my_start_date"),
+        finish_date: date("my_finish_date"),
+        times_watched: num(n, "my_times_read"),
+        rewatching: num(n, "my_rereading") == 1,
+        rewatching_ep: 0,
+        update_on_import: child_text(n, "update_on_import").is_none_or(|v| v.trim() != "0"),
+    }
+}
+
+/// `my_status`: the words MyAnimeList writes (`Plan to Watch`, `Plan to Read`, `On-Hold`), the
+/// API's names (`plan_to_watch`) and the old numbers (1-4, 6).
 pub fn status_from_xml(s: &str) -> Option<Status> {
     let w: String = s.trim().to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     Some(match w.as_str() {
-        "watching" | "1" => Status::Watching,
+        "watching" | "reading" | "1" => Status::Watching,
         "completed" | "2" => Status::Completed,
         "onhold" | "3" => Status::OnHold,
         "dropped" | "4" => Status::Dropped,
-        "plantowatch" | "6" => Status::PlanToWatch,
+        "plantowatch" | "plantoread" | "6" => Status::PlanToWatch,
         _ => return None,
     })
 }
@@ -200,6 +263,15 @@ pub fn status_to_xml(st: Status) -> &'static str {
         Status::OnHold => "On-Hold",
         Status::Dropped => "Dropped",
         Status::PlanToWatch => "Plan to Watch",
+    }
+}
+
+/// `my_status` of a manga file: `Reading` and `Plan to Read`.
+pub fn status_to_xml_of(kind: Kind, st: Status) -> &'static str {
+    match (kind, st) {
+        (Kind::Manga, Status::Watching) => "Reading",
+        (Kind::Manga, Status::PlanToWatch) => "Plan to Read",
+        _ => status_to_xml(st),
     }
 }
 
@@ -248,11 +320,17 @@ pub struct Export {
 
 /// The saved anime list of `service` as a MyAnimeList XML file (see the module notes).
 pub fn export(store: &Store, service: ServiceId) -> Result<Export, String> {
+    export_kind(store, service, Kind::Anime)
+}
+
+/// The saved list of `kind` of `service` as a MyAnimeList XML file.
+pub fn export_kind(store: &Store, service: ServiceId, kind: Kind) -> Result<Export, String> {
     if let Some(why) = export_refusal(service) {
         return Err(why.into());
     }
     let name = service.name();
-    let mut items = store.load_list(name).map_err(|e| e.to_string())?;
+    let scope = (name, kind);
+    let mut items = store.load_list(scope).map_err(|e| e.to_string())?;
     items.sort_by(|a, b| a.media.title.to_lowercase().cmp(&b.media.title.to_lowercase()).then(a.media.id.cmp(&b.media.id)));
     let user = store.account(name).map_err(|e| e.to_string())?.unwrap_or_default();
     let mut skipped = Vec::new();
@@ -262,11 +340,11 @@ pub fn export(store: &Store, service: ServiceId) -> Result<Export, String> {
             skipped.push(it.media.title.clone());
             continue;
         }
-        let mine = store.details(name, it.media.id).ok().flatten().and_then(|(d, _)| d.mine);
+        let mine = store.details(scope, it.media.id).ok().flatten().and_then(|(d, _)| d.mine);
         let (start, finish) = mine.map_or((None, None), |m| (m.start_date, m.finish_date));
         rows.push(ExportRow { item: it, start, finish });
     }
-    let xml = write(&user, &rows);
+    let xml = if kind == Kind::Manga { write_manga(&user, &rows) } else { write(&user, &rows) };
     Ok(Export { xml, written: rows.len(), skipped })
 }
 
@@ -363,10 +441,66 @@ pub fn write(user_name: &str, rows: &[ExportRow]) -> String {
     x
 }
 
+/// A manga list as MyAnimeList's manga export lays it out (see the module notes).
+pub fn write_manga(user_name: &str, rows: &[ExportRow]) -> String {
+    let count = |st: Status| rows.iter().filter(|r| r.item.status == st).count();
+    let mut x = String::with_capacity(512 + rows.len() * 900);
+    x.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
+    x.push_str("<!-- Written by Kotora (https://kotora.moe) in MyAnimeList's export format. -->\n");
+    x.push_str("<myanimelist>\n\n\t<myinfo>\n");
+    x.push_str("\t\t<user_id>0</user_id>\n");
+    x.push_str(&format!("\t\t<user_name>{}</user_name>\n", esc(user_name)));
+    x.push_str("\t\t<user_export_type>2</user_export_type>\n");
+    x.push_str(&format!("\t\t<user_total_manga>{}</user_total_manga>\n", rows.len()));
+    x.push_str(&format!("\t\t<user_total_reading>{}</user_total_reading>\n", count(Status::Watching)));
+    x.push_str(&format!("\t\t<user_total_completed>{}</user_total_completed>\n", count(Status::Completed)));
+    x.push_str(&format!("\t\t<user_total_onhold>{}</user_total_onhold>\n", count(Status::OnHold)));
+    x.push_str(&format!("\t\t<user_total_dropped>{}</user_total_dropped>\n", count(Status::Dropped)));
+    x.push_str(&format!("\t\t<user_total_plantoread>{}</user_total_plantoread>\n", count(Status::PlanToWatch)));
+    x.push_str("\t</myinfo>\n\n");
+    for r in rows {
+        let it = &r.item;
+        let m = &it.media;
+        x.push_str("\t<manga>\n");
+        x.push_str(&format!("\t\t<manga_mangadb_id>{}</manga_mangadb_id>\n", m.id));
+        x.push_str(&format!("\t\t<manga_title>{}</manga_title>\n", cdata(&m.title)));
+        x.push_str(&format!("\t\t<manga_volumes>{}</manga_volumes>\n", m.volumes.unwrap_or(0)));
+        x.push_str(&format!("\t\t<manga_chapters>{}</manga_chapters>\n", m.episodes.unwrap_or(0)));
+        x.push_str("\t\t<my_id>0</my_id>\n");
+        x.push_str(&format!("\t\t<my_read_volumes>{}</my_read_volumes>\n", it.volumes));
+        x.push_str(&format!("\t\t<my_read_chapters>{}</my_read_chapters>\n", it.progress));
+        x.push_str(&format!("\t\t<my_start_date>{}</my_start_date>\n", xml_date(r.start.as_deref())));
+        x.push_str(&format!("\t\t<my_finish_date>{}</my_finish_date>\n", xml_date(r.finish.as_deref())));
+        x.push_str("\t\t<my_scanalation_group><![CDATA[]]></my_scanalation_group>\n");
+        x.push_str(&format!("\t\t<my_score>{}</my_score>\n", it.score.map_or(0, Score::to_ten)));
+        x.push_str("\t\t<my_storage></my_storage>\n");
+        x.push_str("\t\t<my_retail_volumes>0</my_retail_volumes>\n");
+        x.push_str(&format!("\t\t<my_status>{}</my_status>\n", status_to_xml_of(Kind::Manga, it.status)));
+        // Kotora doesn't keep notes.
+        x.push_str("\t\t<my_comments><![CDATA[]]></my_comments>\n");
+        x.push_str(&format!("\t\t<my_times_read>{}</my_times_read>\n", it.times_rewatched));
+        x.push_str("\t\t<my_tags><![CDATA[]]></my_tags>\n");
+        x.push_str("\t\t<my_priority>LOW</my_priority>\n");
+        x.push_str("\t\t<my_reread_value></my_reread_value>\n");
+        x.push_str(&format!("\t\t<my_rereading>{}</my_rereading>\n", u8::from(it.rewatching)));
+        x.push_str("\t\t<my_discuss>1</my_discuss>\n");
+        x.push_str("\t\t<my_sns>default</my_sns>\n");
+        x.push_str("\t\t<update_on_import>1</update_on_import>\n");
+        x.push_str("\t</manga>\n\n");
+    }
+    x.push_str("</myanimelist>\n");
+    x
+}
+
 /// A file name for the save dialog: `animelist-2026-11-16.xml`.
 pub fn default_file_name(now: i64) -> String {
+    default_file_name_of(Kind::Anime, now)
+}
+
+/// `animelist-…` or `mangalist-2026-11-16.xml`.
+pub fn default_file_name_of(kind: Kind, now: i64) -> String {
     let (y, m, d) = crate::time::civil_from_days(now.div_euclid(86_400));
-    format!("animelist-{y:04}-{m:02}-{d:02}.xml")
+    format!("{}list-{y:04}-{m:02}-{d:02}.xml", if kind == Kind::Manga { "manga" } else { "anime" })
 }
 
 // ---------------------------------------------------------------------------------------- import
@@ -424,8 +558,10 @@ impl PlanRow {
 pub struct Plan {
     pub service: String,
     pub rows: Vec<PlanRow>,
-    /// `<manga>` entries in the file (not imported).
-    pub manga: usize,
+    /// The kind compared.
+    pub kind: Kind,
+    /// Entries of the other kind in the file (not imported).
+    pub other: usize,
 }
 
 /// What the user chose.
@@ -503,9 +639,16 @@ fn rank(v: &Values) -> Option<u8> {
 /// asked); the progress further along wins when the status stays; a score fills an empty one,
 /// a score already there is kept; the rewatch count takes the higher.
 pub(crate) fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Change, Option<StatusConflict>, Change) {
+    resolve_counts(cur, file, episodes, None)
+}
+
+/// [`resolve`] for either kind: `volumes_total` is a manga's volume count, when known. The
+/// volumes read take the higher count, like the chapters.
+pub(crate) fn resolve_counts(cur: &Values, file: &Values, episodes: Option<u32>, volumes_total: Option<u32>) -> (Change, Option<StatusConflict>, Change) {
     let same_slot = cur.status == file.status && cur.rewatching == file.rewatching;
     let higher = |mut v: Values| {
         v.times_rewatched = cur.times_rewatched.max(file.times_rewatched);
+        v.volumes = cur.volumes.max(file.volumes);
         if v.score.is_none() {
             v.score = file.score.or(cur.score);
         }
@@ -518,6 +661,9 @@ pub(crate) fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Ch
             && let Some(n) = episodes
         {
             v.progress = n;
+            if let Some(vn) = volumes_total {
+                v.volumes = vn;
+            }
         }
         v
     };
@@ -528,7 +674,7 @@ pub(crate) fn resolve(cur: &Values, file: &Values, episodes: Option<u32>) -> (Ch
         score: Some(v.score),
         rewatching: Some(v.rewatching),
         times_rewatched: Some(v.times_rewatched),
-        volumes: None,
+        volumes: Some(v.volumes),
     }
     .without_same_ten(cur);
     if same_slot {
@@ -582,13 +728,13 @@ pub fn plan(file: &XmlList, service: &str, list: &[ListItem], mapped: &HashMap<u
             row.target = Some(it.media.id);
             row.media = Some(it.media.clone());
             row.current = Some(cur);
-            let same = cur.status == want.status && cur.progress == want.progress && Score::same_ten(cur.score, want.score) && cur.rewatching == want.rewatching && cur.times_rewatched == want.times_rewatched;
+            let same = cur.status == want.status && cur.progress == want.progress && cur.volumes == want.volumes && Score::same_ten(cur.score, want.score) && cur.rewatching == want.rewatching && cur.times_rewatched == want.times_rewatched;
             if same {
                 row.verdict = Verdict::Same;
             } else {
                 row.verdict = Verdict::Different;
                 if e.update_on_import {
-                    let (update, conflict, with_file) = resolve(&cur, &want, it.media.episodes.or(e.episodes));
+                    let (update, conflict, with_file) = resolve_counts(&cur, &want, it.media.episodes.or(e.episodes), it.media.volumes.or(e.volumes));
                     row.update = update;
                     row.conflict = conflict;
                     row.with_file_status = with_file;
@@ -607,7 +753,7 @@ pub fn plan(file: &XmlList, service: &str, list: &[ListItem], mapped: &HashMap<u
             None => rows.push(unknown(row, format!("Not on {title}"))),
         }
     }
-    Plan { service: service.to_string(), rows, manga: file.manga }
+    Plan { service: service.to_string(), rows, kind: file.kind, other: file.other }
 }
 
 /// One step of applying a plan: what `Store::import` does for one entry.
@@ -616,7 +762,7 @@ pub enum Action {
     /// Put `media` on the list with these values.
     Add { media: Box<Media>, values: Values },
     /// Change the entry `media_id`.
-    Update { media_id: u32, change: Change },
+    Update { kind: Kind, media_id: u32, change: Change },
 }
 
 /// The steps for `mode`. `use_file_status`: target ids whose status conflict the user settled
@@ -634,7 +780,7 @@ pub fn actions(plan: &Plan, mode: Mode, use_file_status: &HashSet<u32>) -> Vec<A
             Verdict::Different if mode == Mode::NewAndDifferent => {
                 let change = if r.conflict.is_some() && use_file_status.contains(&id) { r.with_file_status } else { r.update };
                 if !change.is_empty() {
-                    out.push(Action::Update { media_id: id, change });
+                    out.push(Action::Update { kind: plan.kind, media_id: id, change });
                 }
             }
             _ => {}
@@ -643,5 +789,7 @@ pub fn actions(plan: &Plan, mode: Mode, use_file_status: &HashSet<u32>) -> Vec<A
     out
 }
 
+#[cfg(test)]
+mod manga_tests;
 #[cfg(test)]
 mod tests;

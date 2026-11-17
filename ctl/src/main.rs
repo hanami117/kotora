@@ -70,8 +70,8 @@ Commands:
                         dropped. Needs manga on
   manga [on|off]        whether syncs also read your manga list (MyAnimeList
                         or AniList; off by default); on syncs now
-  export FILE           write your anime list as a MyAnimeList XML file
-                        (MyAnimeList lists only)
+  export [--manga] FILE write your anime (or manga) list as a MyAnimeList
+                        XML file (MyAnimeList lists only)
   config client-id ID   use your own Client ID for your list service
                         (MyAnimeList or AniList, as chosen in Kotora; optional)
   show                  show the window
@@ -137,9 +137,10 @@ fn main() -> ExitCode {
             }
         },
         ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
-        ["export", file] => Request::Export { path: absolute(file) },
+        ["export", "--manga", file] | ["export", file, "--manga"] if !file.starts_with("--") => Request::ExportManga { path: absolute(file) },
+        ["export", file] if !file.starts_with("--") => Request::Export { path: absolute(file) },
         ["export", ..] => {
-            eprintln!("kot: use kot export FILE (try kot help)");
+            eprintln!("kot: use kot export [--manga] FILE (try kot help)");
             return ExitCode::from(2);
         }
         ["config", "client-id", id] => Request::SetClientId { id: (*id).to_string() },

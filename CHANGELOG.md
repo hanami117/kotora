@@ -31,6 +31,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   details read authors from AniList's staff (AniList has no magazine, so no serialization). Manga, manhwa,
   manhua, light novel and one-shot get MyAnimeList's labels. Same rate budget as anime (25 requests a minute);
   AniList data is still never exported. The window's switch on AniList comes with the manga UI.
+- **Export and import your manga list:** with Manga on, Settings → Account has Export manga list… and Import
+  manga list… beside the anime ones, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
+  export format (status, chapters and volumes read, score, times read, rereading, start and finish dates where
+  Kotora has them). The import reads `.xml` or `.xml.gz`, compares first (new, different, same, entries it can't
+  use) and works as the anime one: "Add new only" or "Add new and update", a higher chapter or volume count wins,
+  a score fills an empty one, you choose when the statuses disagree, everything goes through the sync queue, and
+  "Undo import" takes back what hasn't been sent. An anime file given to the manga import (or the other way round)
+  is refused with a message saying which list it is. MyAnimeList only: AniList's API terms don't allow exporting
+  from AniList, and importing a manga list into AniList comes with AniList manga.
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list
