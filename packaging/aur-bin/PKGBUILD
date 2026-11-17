@@ -22,7 +22,7 @@ pkgver=0.2.1
 _build=1
 if ((_build > 1)); then _rel=$pkgver-$_build; else _rel=$pkgver; fi
 pkgrel=1
-pkgdesc='Anime tracker for MyAnimeList and AniList: recognises the episode in your player and asks before it records it (prebuilt)'
+pkgdesc='Anime and manga tracker for MyAnimeList and AniList: recognises the episode in your player and asks before it records it (prebuilt)'
 arch=('x86_64')
 url='https://kotora.moe'
 license=('GPL-3.0-or-later')

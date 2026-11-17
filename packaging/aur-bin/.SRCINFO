@@ -1,5 +1,5 @@
 pkgbase = kotora-bin
-	pkgdesc = Anime tracker for MyAnimeList and AniList: recognises the episode in your player and asks before it records it (prebuilt)
+	pkgdesc = Anime and manga tracker for MyAnimeList and AniList: recognises the episode in your player and asks before it records it (prebuilt)
 	pkgver = 0.2.1
 	pkgrel = 1
 	url = https://kotora.moe
