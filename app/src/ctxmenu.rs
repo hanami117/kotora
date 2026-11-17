@@ -39,6 +39,8 @@ pub enum Sub {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ctx {
     pub id: u32,
+    /// Anime or manga (the manga pages' rows and posters).
+    pub kind: kotora_core::Kind,
     pub at: At,
     pub sub: Option<(Sub, bool)>,
 }
@@ -50,7 +52,13 @@ impl State {
     pub fn open_ctx(&mut self, id: u32, at: At) {
         self.sort_menu = false;
         self.airing.menu = false;
-        self.ctx = Some(Ctx { id, at, sub: None });
+        self.ctx = Some(Ctx { id, kind: kotora_core::Kind::Anime, at, sub: None });
+    }
+
+    /// The menu of a manga (its row or poster).
+    pub fn open_manga_ctx(&mut self, id: u32, at: At) {
+        self.sort_menu = false;
+        self.ctx = Some(Ctx { id, kind: kotora_core::Kind::Manga, at, sub: None });
     }
 
     /// The Menu key, Shift+F10: the menu of the selected entry (as P plays it), under it.
@@ -134,6 +142,15 @@ impl State {
         let (id, back) = match self.toast.take().and_then(|t| t.undo) {
             Some(Undo::Edit(id, back)) => (id, back),
             Some(Undo::Remove(e)) => return self.undo_remove(*e),
+            Some(Undo::MangaRemove(e)) => return self.undo_remove_manga(*e),
+            Some(Undo::MangaEdit(id, back)) => {
+                let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+                let change = back.without_same(&e.values());
+                if let Err(m) = self.manga_edit(id, change) {
+                    self.error = Some(m);
+                }
+                return;
+            }
             None => return,
         };
         let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
@@ -256,8 +273,10 @@ fn surface(key: &str, w: f32) -> El {
 }
 
 /// The submenu next to its row.
-fn submenu(s: &State, id: u32, sub: Sub, keys: bool) -> El {
-    let e = s.entries.iter().find(|e| e.id == id);
+fn submenu(s: &State, id: u32, kind: kotora_core::Kind, sub: Sub, keys: bool) -> El {
+    let manga = kind == kotora_core::Kind::Manga;
+    // The entry's status and score, of either kind.
+    let e = if manga { s.manga.entries.iter().find(|e| e.id == id).map(|e| (e.status, e.score)) } else { s.entries.iter().find(|e| e.id == id).map(|e| (e.status, e.score)) };
     let (anchor, mut m) = match sub {
         Sub::Move => ("ctx/move", surface("ctx-sub/move", 170.0)),
         Sub::Score => ("ctx/score", surface("ctx-sub/score", 150.0)),
@@ -265,19 +284,20 @@ fn submenu(s: &State, id: u32, sub: Sub, keys: bool) -> El {
     match sub {
         Sub::Move => {
             for st in Status::ALL {
-                let on = e.is_some_and(|e| e.status == st);
-                m = m.child(item(format!("ctx/move/{}", st.slug()), st.label().to_string(), true, Some(on), move |s, _| s.ctx_move(id, st)));
+                let on = e.is_some_and(|e| e.0 == st);
+                let label = if manga { st.label_in(kind) } else { st.label() };
+                m = m.child(item(format!("ctx/move/{}", st.slug()), label.to_string(), true, Some(on), move |s, _| if manga { s.manga_ctx_move(id, st) } else { s.ctx_move(id, st) }));
             }
         }
         Sub::Score => {
-            let fmt = s.score_format();
+            let fmt = if manga { kotora_core::ScoreFormat::Point10 } else { s.score_format() };
             for (n, label, choice) in crate::scores::menu_choices(fmt).into_iter().rev() {
-                let on = e.is_some_and(|e| crate::scores::menu_lit(fmt, e.score, choice));
-                m = m.child(item(format!("ctx/score/{n}"), label, true, Some(on), move |s, _| s.ctx_score(id, Some(choice))));
+                let on = e.is_some_and(|e| crate::scores::menu_lit(fmt, e.1, choice));
+                m = m.child(item(format!("ctx/score/{n}"), label, true, Some(on), move |s, _| if manga { s.manga_ctx_score(id, Some(choice)) } else { s.ctx_score(id, Some(choice)) }));
             }
             m = m.child(sep());
-            let on = e.is_some_and(|e| e.score.is_none());
-            m = m.child(item("ctx/score/none".into(), "No score".into(), true, Some(on), move |s, _| s.ctx_score(id, None)));
+            let on = e.is_some_and(|e| e.1.is_none());
+            m = m.child(item("ctx/score/none".into(), "No score".into(), true, Some(on), move |s, _| if manga { s.manga_ctx_score(id, None) } else { s.ctx_score(id, None) }));
         }
     }
     let m = m.anchored(anchor, Side::Right, Align::Start, 2.0).on_key(|s: &mut State, k: &rune::KeyEvent, _tx: &mut Tx| {
@@ -305,7 +325,6 @@ fn submenu(s: &State, id: u32, sub: Sub, keys: bool) -> El {
 /// The menu, and the zero-size point it hangs from after a right-click. Mounted at the root.
 pub fn view(s: &State, c: &Ctx) -> Vec<El> {
     let id = c.id;
-    let Some(e) = s.entries.iter().find(|e| e.id == id) else { return Vec::new() };
     let mut out = Vec::new();
     let (anchor, side) = match &c.at {
         At::Point(x, y) => {
@@ -314,6 +333,12 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
         }
         At::Under(k) => (k.clone(), Side::Bottom),
     };
+    if c.kind == kotora_core::Kind::Manga {
+        let Some(m) = manga_menu(s, c) else { return Vec::new() };
+        out.push(m.anchored(anchor, side, Align::Start, 2.0).modal(true, |s: &mut State| s.ctx = None));
+        return out;
+    }
+    let Some(e) = s.entries.iter().find(|e| e.id == id) else { return Vec::new() };
     let has_next = e.episodes.is_none_or(|n| e.progress < n);
     let next = e.progress + 1;
     let url = s.service.media_url(kotora_core::Kind::Anime, id);
@@ -345,10 +370,53 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
         .child(sep())
         .child(item("ctx/remove".into(), "Remove from list\u{2026}".into(), s.has_list(), None, move |s, _| s.ask_remove(id)));
     if let Some((sub, keys)) = c.sub {
-        m = m.child(submenu(s, id, sub, keys));
+        m = m.child(submenu(s, id, kotora_core::Kind::Anime, sub, keys));
     }
     out.push(m.anchored(anchor, side, Align::Start, 2.0).modal(true, |s: &mut State| s.ctx = None));
     out
+}
+
+/// A manga's menu: Move to ▸, Score ▸, +1 chapter (or volume), Edit…, Open details, Open on
+/// MyAnimeList, Remove from list… (asks first). No Play: manga have no player.
+fn manga_menu(s: &State, c: &Ctx) -> Option<El> {
+    let id = c.id;
+    let e = s.manga.entries.iter().find(|e| e.id == id)?;
+    let url = s.service.media_url(kotora_core::Kind::Manga, id);
+    let open = |k: Sub| c.sub.is_some_and(|(o, _)| o == k);
+    let (unit, next) = match e.plus_unit() {
+        crate::manga::Unit::Chapters => ("chapter", e.chapters + 1),
+        crate::manga::Unit::Volumes => ("volume", e.volumes + 1),
+    };
+    let at_end = match e.plus_unit() {
+        crate::manga::Unit::Chapters => e.chapters_total.is_some_and(|n| e.chapters >= n),
+        crate::manga::Unit::Volumes => e.volumes_total.is_some_and(|n| e.volumes >= n),
+    };
+    let mut m = surface("ctx-menu", 230.0)
+        .label(format!("{}: actions", e.title))
+        .child(text(e.title.clone()).font(theme::CAPTION.tracking(0.0)).color(PAL.faint).truncate().px(8.0).pt(4.0).pb(4.0))
+        .child(sub_item(Sub::Move, "Move to", open(Sub::Move)))
+        .child(sub_item(Sub::Score, "Score", open(Sub::Score)))
+        .child(sep())
+        .child(item("ctx/plus".into(), if at_end { format!("+1 {unit}") } else { format!("+1 {unit} ({unit} {next})") }, !at_end && s.has_list(), None, move |s, _| s.manga_ctx_plus(id)))
+        .child(sep())
+        .child(item("ctx/edit".into(), "Edit\u{2026}".into(), true, None, move |s, _| s.manga_ctx_edit_entry(id)))
+        .child(item("ctx/details".into(), "Open details".into(), true, None, move |s, _| {
+            s.ctx = None;
+            if let Some(e) = s.manga.entries.iter().find(|e| e.id == id) {
+                let stub = crate::manga::stub(e);
+                s.open_details(stub);
+            }
+        }))
+        .child(item("ctx/mal".into(), format!("Open on {}", s.service.title()), true, None, move |s, _| {
+            s.ctx = None;
+            crate::online::open_url(s, url.clone());
+        }))
+        .child(sep())
+        .child(item("ctx/remove".into(), "Remove from list\u{2026}".into(), s.has_list(), None, move |s, _| s.ask_remove_manga(id)));
+    if let Some((sub, keys)) = c.sub {
+        m = m.child(submenu(s, id, kotora_core::Kind::Manga, sub, keys));
+    }
+    Some(m)
 }
 
 #[cfg(test)]

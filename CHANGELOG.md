@@ -13,6 +13,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   as anime. Progress shows chapters, volumes or both, whichever you have read; `+1` steps chapters (volumes for
   a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing, Airing and Search
   stay anime only. AniList has no manga in Kotora yet: there the switch stays on Anime, with a note.
+- **Manga: posters, search, add and remove.** The manga pages have the List / Grid / Large views, kept
+  apart from the anime pages' (`[manga_views]`); posters show what you read (Ch and/or Vol) with `+1` on
+  hover (always on Reading). With the switch on Manga, Search (Ctrl/⌘ K) searches your manga and
+  MyAnimeList's (a MyAnimeList manga link opens its page); results add as Reading or another status, as does
+  a manga's details page. Remove from list on a manga's right-click menu and its details page works like the
+  anime one: it asks first, leaves at once, waits in the sync queue with Undo, and a manga changed on
+  MyAnimeList meanwhile becomes a conflict instead of being deleted. The right-click menu also has Move to,
+  Score, +1 chapter, Edit and Open on MyAnimeList. `kot add --manga QUERY|ID` and `kot remove --manga
+  TITLE|ID` do the same from the terminal (Manga must be on).
 - **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
   manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror and list
   export leave manga out.

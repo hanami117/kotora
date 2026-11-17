@@ -403,6 +403,10 @@ pub trait ListService {
     fn update_manga_entry(&mut self, _media_id: u32, _change: &Change) -> Result<Remote, ServiceError> {
         Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
     }
+    /// Removes one manga from the list. Not on the list there: nothing to do, `Ok`.
+    fn delete_manga_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
+        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    }
     /// A manga title search for the search bar.
     fn browse_manga(&mut self, _query: &str, _limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         Ok(Vec::new())
@@ -432,11 +436,11 @@ pub trait ListService {
             Kind::Manga => self.update_manga_entry(media_id, change),
         }
     }
-    /// Removes one entry of a list of `kind` (anime only for now: Kotora has no manga UI).
+    /// Removes one entry of a list of `kind`.
     fn delete_entry_of(&mut self, kind: Kind, media_id: u32) -> Result<(), ServiceError> {
         match kind {
             Kind::Anime => self.delete_entry(media_id),
-            Kind::Manga => Err(ServiceError::Other(format!("{} manga entries can't be removed in Kotora yet", self.title()))),
+            Kind::Manga => self.delete_manga_entry(media_id),
         }
     }
 

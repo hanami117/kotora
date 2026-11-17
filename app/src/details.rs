@@ -37,7 +37,7 @@ pub struct Stub {
 
 impl Stub {
     pub fn from_hit(h: &AnimeHit, lang: kotora_core::config::TitleLang) -> Stub {
-        Stub { id: h.id, title: lang.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref()).to_string(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes, kind: Kind::Anime }
+        Stub { id: h.id, title: lang.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref()).to_string(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes, kind: h.kind }
     }
 
     pub fn from_entry(e: &Entry) -> Stub {
@@ -226,9 +226,19 @@ impl State {
         }
     }
 
-    /// "Add to list" on the page.
+    /// "Add to list" on the page (an anime, or a manga to the manga list).
     pub fn add_shown(&mut self, status: Status) {
         let Some(d) = &self.detail else { return };
+        if d.is_manga() {
+            let media = match &d.info {
+                Some(info) => info.media(),
+                None => kotora_core::Media { kind: Kind::Manga, id: d.stub.id, title: d.stub.title.clone(), episodes: d.stub.episodes, format: d.stub.format.clone(), cover_url: d.stub.cover_url.clone(), ..Default::default() },
+            };
+            if let Err(e) = self.manga_add(media, status) {
+                self.error = Some(e);
+            }
+            return;
+        }
         let media = match &d.info {
             Some(info) => info.media(),
             None => kotora_core::Media {

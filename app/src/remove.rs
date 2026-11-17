@@ -22,6 +22,7 @@ impl State {
     pub fn ask_remove(&mut self, id: u32) {
         self.ctx = None;
         if self.entries.iter().any(|e| e.id == id) {
+            self.manga.confirm_remove = None;
             self.confirm_remove = Some(id);
         }
     }
@@ -52,7 +53,7 @@ impl State {
         if self.editor.is_some_and(|ed| ed.id == id) {
             self.editor = None;
         }
-        crate::queue::send(self, Cmd::Remove { media_id: id });
+        crate::queue::send(self, Cmd::Remove { kind: kotora_core::Kind::Anime, media_id: id });
         self.recheck_now();
         self.refresh();
         let text = format!("Removed {} from your list", e.title);
@@ -68,15 +69,15 @@ impl State {
             return;
         }
         self.entries.push(e);
-        crate::queue::send(self, Cmd::UndoRemove { media_id: id });
+        crate::queue::send(self, Cmd::UndoRemove { kind: kotora_core::Kind::Anime, media_id: id });
         self.recheck_now();
         self.refresh();
     }
 }
 
-/// "Remove … from your list?": Remove or Cancel (Escape).
-pub fn bar(s: &State, id: u32) -> Option<El> {
-    let question = s.remove_question(id)?;
+/// "Remove … from your list?": Remove or Cancel (Escape). `kind`: an anime or a manga.
+pub fn bar(s: &State, kind: kotora_core::Kind, id: u32) -> Option<El> {
+    let question = if kind == kotora_core::Kind::Manga { s.manga_remove_question(id)? } else { s.remove_question(id)? };
     Some(
         row()
             .key("remove")
@@ -100,13 +101,19 @@ pub fn bar(s: &State, id: u32) -> Option<El> {
             )
             .child(text("Remove?").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
             .child(button("remove/yes", "Remove", true, Some(|s: &mut State| {
-                if let Some(id) = s.confirm_remove
-                    && let Err(m) = s.remove_entry(id)
-                {
+                let r = match (s.manga.confirm_remove, s.confirm_remove) {
+                    (Some(id), _) => s.remove_manga(id),
+                    (None, Some(id)) => s.remove_entry(id),
+                    _ => Ok(()),
+                };
+                if let Err(m) = r {
                     s.error = Some(m);
                 }
             })))
-            .child(button("remove/cancel", "Cancel", false, Some(|s: &mut State| s.confirm_remove = None))),
+            .child(button("remove/cancel", "Cancel", false, Some(|s: &mut State| {
+                s.confirm_remove = None;
+                s.manga.confirm_remove = None;
+            }))),
     )
 }
 

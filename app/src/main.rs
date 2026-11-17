@@ -29,6 +29,7 @@ mod intro;
 mod kanji;
 mod library;
 mod manga;
+mod mgrid;
 mod look;
 #[cfg(target_os = "macos")]
 mod iina;

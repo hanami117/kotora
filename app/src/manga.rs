@@ -236,6 +236,8 @@ pub struct MangaUi {
     /// The last manga sync failed: why. Shown on the manga pages and by `kot list --manga`.
     pub error: Option<String>,
     pub editor: Option<MEditor>,
+    /// "Remove … from your manga list?" asks about this manga (the bar on top of the page).
+    pub confirm_remove: Option<u32>,
 }
 
 impl Default for MangaUi {
@@ -251,6 +253,7 @@ impl Default for MangaUi {
             synced_at: None,
             error: None,
             editor: None,
+            confirm_remove: None,
         }
     }
 }
@@ -375,11 +378,15 @@ impl State {
 
     /// Rebuilds the manga page's rows (status, chip, filter box, sort).
     pub fn refresh_manga(&mut self) {
-        let Page::Manga(st) = self.page else {
-            self.manga.rows.clear();
-            return;
+        // The search page in Manga mode: every manga matching its field, Reading's first.
+        let (st, q) = match self.page {
+            Page::Manga(st) => (st, self.manga.query.text.trim().to_lowercase()),
+            Page::Search if self.manga.mode && self.searching() => (Status::Watching, self.find.text.trim().to_lowercase()),
+            _ => {
+                self.manga.rows.clear();
+                return;
+            }
         };
-        let q = self.manga.query.text.trim().to_lowercase();
         let m = &self.manga;
         let mut rows: Vec<usize> = (0..m.entries.len())
             .filter(|&i| {
@@ -644,6 +651,218 @@ impl State {
     }
 }
 
+/// How long the removal's toast with Undo stays (as the anime one).
+const UNDO_SECS: f64 = 8.0;
+
+impl State {
+    /// The view of manga list page `st` (`[manga_views]`).
+    pub fn manga_view_of(&self, st: Status) -> kotora_core::config::ListView {
+        self.prefs.manga_views.get(st)
+    }
+
+    /// The toolbar's switch on a manga page: its view changes and `config.toml` keeps it.
+    pub fn set_manga_view(&mut self, st: Status, v: kotora_core::config::ListView) {
+        if self.manga_view_of(st) == v {
+            return;
+        }
+        self.prefs.manga_views.set(st, v);
+        crate::detect::save_setting(self, "manga_views", kotora_core::config::Views::key(st), kotora_core::config::quote(v.key()));
+    }
+
+    /// Search, the details page, `kot add --manga`: puts a manga on the list with `status` (it
+    /// shows at once, waiting to sync) and queues the add. One already on the list gets the
+    /// status instead. Completed starts at the last chapter and volume when they are known.
+    pub fn manga_add(&mut self, mut media: kotora_core::Media, status: Status) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        if !self.manga_possible() {
+            return Err(format!("Manga lists are {} only for now.", ServiceId::Mal.title()));
+        }
+        media.kind = Kind::Manga;
+        if let Some(i) = self.manga.entries.iter().position(|e| e.id == media.id) {
+            self.manga_edit(media.id, Change { status: Some(status), ..Default::default() })?;
+            return Ok(i);
+        }
+        let done = status == Status::Completed;
+        let item = ListItem {
+            progress: if done { media.episodes.unwrap_or(0) } else { 0 },
+            volumes: if done { media.volumes.unwrap_or(0) } else { 0 },
+            media: media.clone(),
+            status,
+            score: None,
+            rewatching: false,
+            times_rewatched: 0,
+            updated_at: self.clock(),
+        };
+        let mut e = MEntry::from_item(&item, self.prefs.titles);
+        e.waiting = Some(waiting_label(OpState::Queued));
+        self.manga.entries.push(e);
+        crate::queue::send(self, crate::queue::Cmd::Add { media: Box::new(media), status, progress: None });
+        self.refresh_manga();
+        Ok(self.manga.entries.len() - 1)
+    }
+
+    /// Asks before removing a manga (the bar on top of the page).
+    pub fn ask_remove_manga(&mut self, id: u32) {
+        self.ctx = None;
+        if self.manga.entries.iter().any(|e| e.id == id) {
+            self.confirm_remove = None;
+            self.manga.confirm_remove = Some(id);
+        }
+    }
+
+    /// The question the bar and `kot remove --manga` ask (the mirror is anime only).
+    pub fn manga_remove_question(&self, id: u32) -> Option<String> {
+        let e = self.manga.entries.iter().find(|e| e.id == id)?;
+        Some(format!("Remove {} from your manga list? It goes from your {} list too, with its chapters, volumes and score.", e.title, self.service.title()))
+    }
+
+    /// Removes a manga now: off the list at once, its removal queued (a conflict if it changed
+    /// on the service since), a toast with Undo.
+    pub fn remove_manga(&mut self, id: u32) -> Result<(), String> {
+        self.manga.confirm_remove = None;
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        let i = self.manga.entries.iter().position(|e| e.id == id).ok_or("That manga is not on your list.")?;
+        let e = self.manga.entries.remove(i);
+        if self.manga.editor.is_some_and(|ed| ed.id == id) {
+            self.manga.editor = None;
+        }
+        crate::queue::send(self, crate::queue::Cmd::Remove { kind: Kind::Manga, media_id: id });
+        self.refresh_manga();
+        let text = format!("Removed {} from your manga list", e.title);
+        self.toast = Some(crate::library::Toast {
+            text,
+            warn: false,
+            until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS),
+            undo: Some(crate::library::Undo::MangaRemove(Box::new(e))),
+        });
+        Ok(())
+    }
+
+    /// Undo of a manga's removal: back at once; the worker discards the waiting removal (if it
+    /// already left, the queue says so and the entry goes again).
+    pub fn undo_remove_manga(&mut self, e: MEntry) {
+        let id = e.id;
+        if self.manga.entries.iter().any(|x| x.id == id) {
+            return;
+        }
+        self.manga.entries.push(e);
+        crate::queue::send(self, crate::queue::Cmd::UndoRemove { kind: Kind::Manga, media_id: id });
+        self.manga_queue_changed();
+        self.refresh_manga();
+    }
+
+    /// A change from the manga's right-click menu: made, then a toast with Undo.
+    pub fn manga_ctx_edit(&mut self, id: u32, change: Change, done: String) {
+        self.ctx = None;
+        let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+        let old = e.values();
+        if change.without_same(&old).is_empty() {
+            return;
+        }
+        if let Err(m) = self.manga_edit(id, change) {
+            self.error = Some(m);
+            return;
+        }
+        let back = Change { status: Some(old.status), progress: Some(old.progress), score: Some(old.score), rewatching: Some(old.rewatching), times_rewatched: Some(old.times_rewatched), volumes: Some(old.volumes) };
+        self.toast = Some(crate::library::Toast { text: done, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(6.0), undo: Some(crate::library::Undo::MangaEdit(id, back)) });
+    }
+
+    /// The menu's Move to: Completed fills the known counts (`manga_edit`).
+    pub fn manga_ctx_move(&mut self, id: u32, st: Status) {
+        let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+        let done = format!("Moved {} to {}", e.title, st.label_in(Kind::Manga));
+        self.manga_ctx_edit(id, Change { status: Some(st), ..Default::default() }, done);
+    }
+
+    pub fn manga_ctx_score(&mut self, id: u32, score: Option<Score>) {
+        let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+        let done = match score {
+            Some(n) => format!("Scored {} {}", e.title, ScoreFormat::Point10.words(n)),
+            None => format!("Removed the score of {}", e.title),
+        };
+        self.manga_ctx_edit(id, Change { score: Some(score), ..Default::default() }, done);
+    }
+
+    /// The menu's +1 (a chapter, or a volume when only volumes show).
+    pub fn manga_ctx_plus(&mut self, id: u32) {
+        let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+        let (u, title) = (e.plus_unit(), e.title.clone());
+        let change = match u {
+            Unit::Chapters => Change { progress: Some(e.chapters + 1), ..Default::default() },
+            Unit::Volumes => Change { volumes: Some(e.volumes + 1), ..Default::default() },
+        };
+        let done = match u {
+            Unit::Chapters => format!("Chapter {} of {title} recorded", e.chapters + 1),
+            Unit::Volumes => format!("Volume {} of {title} recorded", e.volumes + 1),
+        };
+        self.manga_ctx_edit(id, change, done);
+    }
+
+    /// Edit… from the menu: the table's own editor, else the details page with its editor.
+    pub fn manga_ctx_edit_entry(&mut self, id: u32) {
+        self.ctx = None;
+        let table = matches!(self.page, Page::Manga(st) if self.manga_view_of(st) == kotora_core::config::ListView::List);
+        if table && self.manga.rows.iter().any(|&k| self.manga.entries[k].id == id) {
+            if self.manga.editor.is_none_or(|ed| ed.id != id) {
+                self.manga_toggle_editor(id);
+            }
+            return;
+        }
+        let Some(e) = self.manga.entries.iter().find(|e| e.id == id) else { return };
+        let stub = stub(e);
+        self.open_details(stub);
+        self.manga_toggle_editor(id);
+    }
+
+    /// The entry as `kot` prints it (chapters, volumes).
+    pub fn manga_ctl(&self, i: usize) -> kotora_ctl::Entry {
+        let e = &self.manga.entries[i];
+        kotora_ctl::Entry {
+            id: e.id,
+            title: e.title.clone(),
+            status: e.status.label_in(Kind::Manga).into(),
+            progress: e.chapters,
+            episodes: e.chapters_total,
+            score: e.score.map(Score::to_ten),
+            score_text: e.score.map(|s| ScoreFormat::Point10.show(s)),
+            waiting: e.waiting.map(Into::into),
+            rewatching: e.rereading,
+            times_rewatched: e.times_reread,
+            volumes: Some(e.volumes),
+            volumes_total: e.volumes_total,
+        }
+    }
+
+    /// The manga `q` names: its id, a whole title, or a part of one that matches one manga.
+    pub fn find_manga(&self, q: &str) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        let q = q.trim();
+        if let Some(i) = q.parse::<u32>().ok().and_then(|id| self.manga.entries.iter().position(|e| e.id == id)) {
+            return Ok(i);
+        }
+        let lower = q.to_lowercase();
+        let es = &self.manga.entries;
+        if let Some(i) = es.iter().position(|e| e.search.split('\n').any(|t| t == lower)) {
+            return Ok(i);
+        }
+        let hits: Vec<usize> = (0..es.len()).filter(|&i| es[i].search.contains(&lower)).collect();
+        match hits.as_slice() {
+            [one] => Ok(*one),
+            [] => Err(format!("No manga on your list matches \u{201c}{q}\u{201d}.")),
+            many => {
+                let names: Vec<String> = many.iter().take(6).map(|&i| format!("  {:>6}  {}", es[i].id, es[i].title)).collect();
+                Err(format!("Several manga match \u{201c}{q}\u{201d}; give more of the title or the id:\n{}", names.join("\n")))
+            }
+        }
+    }
+}
+
 /// The manga half of a sync as a message for the UI (`None`: Manga is off).
 pub fn manga_msg(r: kotora_core::sync::MangaSync, svc: &str) -> Option<MangaMsg> {
     if let Some(m) = fail_text(&r, svc) {
@@ -751,7 +970,7 @@ fn page_alert(s: &State) -> Option<El> {
 }
 
 /// A manga list page: top bar, chips, then the rows (each opens its editor).
-pub fn page(s: &State, st: Status, wide: bool) -> El {
+pub fn page(s: &State, st: Status, wide: bool, width: f32) -> El {
     let label = st.label_in(Kind::Manga);
     let searching = !s.manga.query.text.trim().is_empty();
     let count = s.manga_count(st);
@@ -763,6 +982,10 @@ pub fn page(s: &State, st: Status, wide: bool) -> El {
     let mut head = crate::ui::top_with(s, title, (!first).then_some(shown), extra, false).child(spacer()).child(filter_box(s)).child(crate::ui::sort_select(s));
     if s.auth == crate::model::Auth::SignedIn {
         head = head.child(crate::ui::refresh_button(s.syncing || s.manga.loading));
+    }
+    // The view switch ends the top bar; a narrow window has no room there, so it ends the chips.
+    if !first && wide {
+        head = head.child(crate::grid::switcher(s, st, true));
     }
     let mut page = col().key(format!("page/manga-{}", st.slug())).w_full().h_full().child(head);
     if let Some(a) = page_alert(s) {
@@ -797,12 +1020,15 @@ pub fn page(s: &State, st: Status, wide: bool) -> El {
         );
     }
     if !searching {
-        page = page.child(chips(s, st));
+        page = page.child(if wide { chips(s, st) } else { chips(s, st).child(spacer()).child(crate::grid::switcher(s, st, false).mt(-3.0)) });
     }
     if s.manga.rows.is_empty() {
         let q = s.manga.query.text.trim();
         let line = if q.is_empty() { "No manga match this filter.".to_string() } else { format!("Nothing matches \u{201c}{q}\u{201d}.") };
         return page.child(col().key("no-match").grow(1.0).min_h(0.0).center().pb(60.0).child(text(line).font(theme::SECTION).color(PAL.text)));
+    }
+    if !searching && s.manga_view_of(st) != kotora_core::config::ListView::List {
+        return page.child(crate::mgrid::cards(s, st, width));
     }
     let n = s.manga.rows.len();
     page.child(header(wide, s.sort)).child(
@@ -849,7 +1075,7 @@ fn chips(s: &State, st: Status) -> El {
     r
 }
 
-fn header(wide: bool, sort: crate::model::Sort) -> El {
+pub fn header(wide: bool, sort: crate::model::Sort) -> El {
     use crate::model::Sort;
     let h = |t: &str, sorted: bool| text(t.to_uppercase()).font(theme::CAPTION).color(if sorted { PAL.dim } else { PAL.faint });
     col()
@@ -939,10 +1165,10 @@ pub fn stub(e: &MEntry) -> crate::details::Stub {
     crate::details::Stub { id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), format: String::new(), episodes: e.chapters_total, kind: Kind::Manga }
 }
 
-fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
+pub fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
     let id = e.id;
     let mut sub = row().w_full().min_w(0.0).gap(8.0).center_y().clip_fade(0.0, 0.0, 16.0, 0.0);
-    if !s.manga.query.text.trim().is_empty() {
+    if !s.manga.query.text.trim().is_empty() || s.page == Page::Search {
         sub = sub.child(tag(e.status.label_in(Kind::Manga), PAL.status(e.status), true));
     }
     match e.run {
@@ -981,6 +1207,11 @@ fn list_row(s: &State, e: &MEntry, wide: bool) -> El {
     .role("button")
     .label(format!("Edit {}", e.title))
     .hover(PAL.hover())
+    // Right-click (Ctrl-click on macOS): the manga's menu at the pointer.
+    .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+        tx.instant();
+        s.open_manga_ctx(id, crate::ctxmenu::At::Point(p.x, p.y));
+    })
     .on_press_tx(move |s: &mut State, tx: &mut Tx| {
         tx.instant();
         s.manga_toggle_editor(id);
@@ -1106,7 +1337,21 @@ pub fn editor(e: &MEntry, ed: &MEditor, compact: bool) -> El {
 pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     let id = d.id();
     let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else {
-        return c.child(text("Not on your manga list.").font(theme::BODY).color(PAL.dim).pt(6.0));
+        // Not on the list: add it (Reading first, the other statuses under it).
+        let mut more = row().flex_wrap().gap(6.0).pt(8.0);
+        for st in [Status::PlanToWatch, Status::Completed, Status::OnHold, Status::Dropped] {
+            let label = st.label_in(Kind::Manga);
+            more = more.child(
+                cell(format!("det/add/{}", st.slug()), format!("Add as {label}"), false, move |s| s.add_shown(st))
+                    .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.status(st)))
+                    .child(text(label).font(theme::LABEL).color(PAL.dim)),
+            );
+        }
+        return c
+            .child(text("Not on your manga list.").font(theme::BODY).color(PAL.dim).pt(6.0))
+            .child(row().key("det/add").pt(10.0).gap(8.0).child(button("det/add-watching", "Add as Reading", true, Some(|s: &mut State| s.add_shown(Status::Watching)))))
+            .child(more)
+            .child(text(format!("It goes to the sync queue first, then to {}.", s.service.title())).font(theme::LABEL).color(PAL.faint).wrap().pt(10.0));
     };
     let mut head = row().gap(8.0).center_y().pt(6.0).child(el().size(8.0, 8.0).radius(4.0).fill(PAL.status(e.status))).child(text(e.status.label_in(Kind::Manga)).font(theme::BODY_MED).color(PAL.text));
     if e.rereading {
@@ -1171,6 +1416,7 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
                     }
                 }));
             }
+            actions = actions.child(spacer()).child(ghost("det/remove", "Remove from list\u{2026}", move |s| s.ask_remove_manga(id)));
             c.child(actions)
         }
     }
@@ -1245,6 +1491,28 @@ pub fn fake(s: &mut State) {
     s.manga.synced_at = Some(crate::model::FAKE_NOW - 120);
     s.set_manga_items(&fake_items());
     s.go(Page::Manga(Status::Watching));
+}
+
+/// Made-up MyAnimeList manga results (scenes and tests): "Salt & Gears" is on the fake list.
+pub fn fake_hits() -> Vec<kotora_core::service::AnimeHit> {
+    let h = |id: u32, title: &str, en: Option<&str>, format: &str, ch: Option<u32>, vols: Option<u32>, run: &str, mean: Option<f32>| kotora_core::service::AnimeHit {
+        kind: Kind::Manga,
+        id,
+        title: title.into(),
+        title_en: en.map(Into::into),
+        format: format.into(),
+        episodes: ch,
+        volumes: vols,
+        air_status: run.into(),
+        mean,
+        ..Default::default()
+    };
+    vec![
+        h(2, "Salt & Gears", None, "manhwa", Some(88), None, "currently_publishing", Some(8.02)),
+        h(501, "Salt Road Couriers", Some("Couriers of the Salt Road"), "manga", Some(64), Some(8), "finished", Some(7.84)),
+        h(502, "Salt and Lantern Anthology", None, "light_novel", None, Some(3), "currently_publishing", Some(7.21)),
+        h(503, "Saltwater Cartography", None, "one_shot", Some(1), Some(1), "finished", None),
+    ]
 }
 
 /// A made-up manga information page (scenes): the mockup's facts.
@@ -1432,5 +1700,155 @@ mod tests {
         s.apply(Msg::Manga(MangaMsg::Items { items: vec![], gone: vec![] }));
         assert_eq!(entry(&s, 3).waiting, Some("Waiting to sync"));
         assert_eq!(entry(&s, 1).waiting, None, "an anime change never tags the manga with its id");
+    }
+}
+
+/// Add, remove, search and the menu (stage 4b).
+#[cfg(test)]
+mod more_tests {
+    use super::*;
+    use crate::library::Undo;
+    use kotora_core::config::ListView;
+
+    fn loaded() -> State {
+        let mut s = State::fake();
+        fake(&mut s);
+        s
+    }
+
+    fn entry(s: &State, id: u32) -> Option<&MEntry> {
+        s.manga.entries.iter().find(|e| e.id == id)
+    }
+
+    /// The search page in Manga mode: the manga list's matches, MyAnimeList's manga minus
+    /// those, and adds that go to the manga list (never the anime one).
+    #[test]
+    fn manga_search_and_add() {
+        let mut s = loaded();
+        s.find.replace_text("salt");
+        s.open_search();
+        assert_eq!(s.search_kind(), Kind::Manga);
+        s.online.show("salt", fake_hits());
+        let titles: Vec<&str> = s.manga.rows.iter().map(|&k| s.manga.entries[k].title.as_str()).collect();
+        assert_eq!(titles, ["Salt & Gears"], "the manga list's match");
+        assert!(s.rows.is_empty(), "no anime rows on a manga search");
+        assert_eq!(s.new_hits().iter().map(|h| h.id).collect::<Vec<_>>(), [501, 502, 503], "the one on the list is not offered");
+        s.add_hit(501, Status::PlanToWatch);
+        let e = entry(&s, 501).unwrap();
+        assert_eq!((e.status, e.chapters, e.waiting), (Status::PlanToWatch, 0, Some("Waiting to sync")));
+        assert!(!s.entries.iter().any(|e| e.id == 501), "not an anime");
+        s.add_hit(503, Status::Completed);
+        let e = entry(&s, 503).unwrap();
+        assert_eq!((e.chapters, e.volumes), (1, 1), "Completed starts at the last chapter and volume");
+        // Already on the list: the status changes instead.
+        s.manga_add(kotora_core::Media { id: 2, kind: Kind::Manga, ..Default::default() }, Status::OnHold).unwrap();
+        assert_eq!(entry(&s, 2).unwrap().status, Status::OnHold);
+        assert_eq!(s.manga.entries.iter().filter(|e| e.id == 2).count(), 1);
+        // A result opens the manga's page.
+        s.open_mal_id(502);
+        assert!(s.detail.as_ref().is_some_and(|d| d.is_manga() && d.id() == 502));
+        // Back to Anime: the same words search anime again (results are kept per kind).
+        let mut s = loaded();
+        s.find.replace_text("salt");
+        s.open_search();
+        s.online.show("salt", fake_hits());
+        s.manga.mode = false;
+        s.search_changed();
+        assert_eq!(s.online.kind, Kind::Anime);
+        assert!(s.online.hits.is_empty(), "manga results never show as anime ones");
+    }
+
+    #[test]
+    fn manga_links_open_manga_pages() {
+        use crate::search::{mal_id, mal_id_in};
+        assert_eq!(mal_id_in("https://myanimelist.net/manga/2001/Paper_Lanterns", Kind::Manga), Some((2001, true)));
+        assert_eq!(mal_id_in("myanimelist.net/manga.php?id=2001", Kind::Manga), Some((2001, true)));
+        assert_eq!(mal_id_in("https://myanimelist.net/anime/41590", Kind::Manga), None, "an anime link is not a manga");
+        assert_eq!(mal_id("https://myanimelist.net/manga/2001"), None);
+        assert_eq!(mal_id_in("2001", Kind::Manga), Some((2001, false)));
+    }
+
+    /// The details page of a manga not on the list adds it to the manga list.
+    #[test]
+    fn details_add_a_manga() {
+        let mut s = loaded();
+        s.open_details(crate::details::Stub { kind: Kind::Manga, ..crate::details::Stub::bare(777, "Paper Kite Express") });
+        let mut d = fake_details(777, "Paper Kite Express");
+        d.mine = None;
+        d.episodes = Some(30);
+        s.details_answer(crate::details::Answer { id: 777, kind: Kind::Manga, result: Ok(d), item: None, done: true });
+        s.add_shown(Status::Watching);
+        assert_eq!(entry(&s, 777).map(|e| (e.status, e.chapters_total)), Some((Status::Watching, Some(30))));
+        assert!(!s.entries.iter().any(|e| e.id == 777));
+    }
+
+    /// Remove asks first, leaves at once, Undo puts it back; an anime with the same id stays.
+    #[test]
+    fn remove_asks_then_undo_puts_it_back() {
+        let mut s = loaded();
+        let anime = s.entries.iter().any(|e| e.id == 2);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(10.0, 10.0));
+        s.ask_remove_manga(2);
+        assert_eq!((s.ctx.is_none(), s.manga.confirm_remove, s.confirm_remove), (true, Some(2), None));
+        assert!(s.manga_remove_question(2).unwrap().starts_with("Remove Salt & Gears from your manga list?"));
+        assert!(entry(&s, 2).is_some(), "nothing goes before the answer");
+        s.remove_manga(2).unwrap();
+        assert!(entry(&s, 2).is_none() && s.manga.confirm_remove.is_none());
+        assert!(!s.manga.rows.iter().any(|&k| s.manga.entries[k].id == 2));
+        assert_eq!(s.entries.iter().any(|e| e.id == 2), anime, "the anime 2 is untouched");
+        assert!(matches!(s.toast.as_ref().and_then(|t| t.undo.clone()), Some(Undo::MangaRemove(_))));
+        s.toast_undo();
+        let e = entry(&s, 2).unwrap();
+        assert_eq!((e.chapters, e.status), (64, Status::Watching), "back as it was");
+        assert!(s.manga.rows.iter().any(|&k| s.manga.entries[k].id == 2));
+        assert!(s.remove_manga(9_999).is_err());
+        // Removing the manga being edited closes its editor.
+        s.manga_toggle_editor(2);
+        s.remove_manga(2).unwrap();
+        assert!(s.manga.editor.is_none());
+    }
+
+    /// The menu's Move to, Score and +1 go through the queue, each with Undo.
+    #[test]
+    fn the_menu_moves_scores_and_steps_with_undo() {
+        let mut s = loaded();
+        let before = entry(&s, 8).unwrap().values();
+        s.open_manga_ctx(8, crate::ctxmenu::At::Point(1.0, 1.0));
+        s.manga_ctx_move(8, Status::Completed);
+        assert!(s.ctx.is_none());
+        let e = entry(&s, 8).unwrap();
+        assert_eq!((e.status, e.chapters, e.volumes), (Status::Completed, 52, 6));
+        assert!(s.toast.as_ref().is_some_and(|t| t.text == "Moved Harbor of Small Lights to Completed"));
+        s.toast_undo();
+        assert_eq!(entry(&s, 8).unwrap().values(), before, "Undo puts it back");
+        s.manga_ctx_score(2, kotora_core::score::ten(10));
+        assert_eq!(entry(&s, 2).unwrap().score, kotora_core::score::ten(10));
+        s.manga_ctx_plus(6);
+        assert_eq!(entry(&s, 6).unwrap().volumes, 4, "volumes only: a volume");
+        assert!(s.toast.as_ref().is_some_and(|t| t.text == "Volume 4 of Night Shift Alchemist recorded"));
+        // Edit… in the table: the row's editor; in the grid: the details page with it.
+        s.manga_ctx_edit_entry(2);
+        assert_eq!(s.manga.editor.map(|e| e.id), Some(2));
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.manga_ctx_edit_entry(1);
+        assert!(s.page == Page::Details && s.detail.as_ref().is_some_and(|d| d.is_manga()));
+    }
+
+    /// Each kind keeps its views.
+    #[test]
+    fn views_are_kept_per_kind() {
+        let mut s = loaded();
+        s.set_manga_view(Status::Watching, ListView::Large);
+        assert_eq!((s.manga_view_of(Status::Watching), s.view_of(Status::Watching)), (ListView::Large, ListView::List));
+        s.set_view(Status::Completed, ListView::Grid);
+        assert_eq!(s.manga_view_of(Status::Completed), ListView::List);
+    }
+
+    /// A removal MyAnimeList changed meanwhile: the conflict says chapters, volumes and Reading.
+    #[test]
+    fn a_manga_conflict_reads_as_manga() {
+        let r = kotora_core::Remote { values: kotora_core::Values { volumes: 9, ..kotora_core::Values::new(Status::Watching, 70, kotora_core::score::ten(8)) }, updated_at: 0 };
+        assert_eq!(crate::model::remote_text_of(Kind::Manga, &r, Some(88), ScoreFormat::Point10), "Ch 70 / 88, vol 9, Reading, score 8");
+        assert_eq!(crate::model::remote_text_of(Kind::Anime, &r, Some(88), ScoreFormat::Point10), "70 / 88, Watching, score 8");
     }
 }

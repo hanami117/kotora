@@ -645,7 +645,8 @@ impl State {
         self.refresh_manga();
         let st = match self.page {
             Page::List(st) => st,
-            Page::Search if self.searching() => Status::ALL[0],
+            // Manga mode: the search page's matches are manga (`refresh_manga`).
+            Page::Search if self.searching() && !self.manga.mode => Status::ALL[0],
             _ => {
                 self.rows.clear();
                 return;
@@ -1087,7 +1088,7 @@ impl State {
                 state: o.state.label().into(),
                 note: match o.state {
                     OpState::Conflict => Some(match &o.remote {
-                        Some(r) => format!("{service} has {}", remote_text(r, o.episodes, self.score_format())),
+                        Some(r) => format!("{service} has {}", remote_text_of(o.kind, r, o.episodes, self.score_format())),
                         None => format!("removed from your list on {service}"),
                     }),
                     OpState::Done => None,
@@ -1389,9 +1390,13 @@ pub fn fake_players() -> Vec<PlayerState> {
 }
 
 /// The service's side of a conflict: "Progress 8 / 24, Watching, score 7", the score in `fmt`.
-pub fn remote_text(r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
+/// A manga's says chapters, volumes and Reading ("Ch 70 / 88, vol 9, Reading, score 8").
+pub fn remote_text_of(kind: kotora_core::Kind, r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
     let total = episodes.map_or("?".to_string(), |n| n.to_string());
     let score = r.values.score.map_or("no score".to_string(), |n| format!("score {}", fmt.words(n)));
+    if kind == kotora_core::Kind::Manga {
+        return format!("Ch {} / {total}, vol {}, {}, {score}", r.values.progress, r.values.volumes, r.values.status.label_in(kind));
+    }
     format!("{} / {total}, {}, {score}", r.values.progress, r.values.status.label())
 }
 

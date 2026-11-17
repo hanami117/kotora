@@ -59,6 +59,9 @@
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
 //! [views]                      # each list page's view: "list", "grid" (posters) or "large"
 //! watching = "grid"            # also plan_to_watch, completed, on_hold, dropped
+//!
+//! [manga_views]                # the same for the manga list pages (watching = Reading)
+//! watching = "large"
 //! ```
 //!
 //! The MAL Client ID is public by design but still never goes into the repo, tests or logs, and
@@ -86,6 +89,8 @@ pub struct Config {
     pub display: Display,
     pub startup: Startup,
     pub views: Views,
+    /// `[manga_views]`: the manga list pages' views (each kind keeps its own).
+    pub manga_views: Views,
     pub notifications: Notifications,
     pub library: Library,
     pub app: AppSection,
@@ -577,6 +582,8 @@ struct File {
     #[serde(default)]
     views: Views,
     #[serde(default)]
+    manga_views: Views,
+    #[serde(default)]
     notifications: Notifications,
     #[serde(default)]
     library: Library,
@@ -616,6 +623,7 @@ impl Config {
             display: f.display,
             startup: f.startup,
             views: f.views,
+            manga_views: f.manga_views,
             notifications: f.notifications,
             library: f.library,
             app: f.app,
@@ -986,6 +994,10 @@ mod tests {
         v.set(Status::Dropped, ListView::Large);
         assert_eq!(v.get(Status::Dropped), ListView::Large);
         assert!(Config::parse("[views]\nwatching = \"mosaic\"\n").is_err(), "an unknown value is refused");
+        // The manga pages keep their own views.
+        let c = Config::parse("[views]\nwatching = \"grid\"\n[manga_views]\nwatching = \"large\"\n").unwrap();
+        assert_eq!((c.views.get(Status::Watching), c.manga_views.get(Status::Watching)), (ListView::Grid, ListView::Large));
+        assert_eq!(c.manga_views.get(Status::Completed), ListView::List);
     }
 
     #[test]

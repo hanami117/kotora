@@ -124,6 +124,99 @@ pub const SCENES: &[Scene] = &[
         s.manga.error = Some("Your manga list wasn't read: MyAnimeList asked Kotora to slow down. Try again in a minute.".into());
         s.refresh_manga();
     }),
+    // Poster views on the manga pages (kept apart from the anime pages' views).
+    ("manga-grid", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+    }),
+    ("manga-large", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Large);
+    }),
+    ("manga-grid-completed", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Completed, ListView::Grid);
+        s.go(Page::Manga(Status::Completed));
+    }),
+    // Search in Manga mode: the manga list's matches, then MyAnimeList's manga.
+    ("manga-search", |s| manga_search(s, "salt", true)),
+    ("manga-search-menu", |s| {
+        manga_search(s, "salt", true);
+        s.online.menu = Some(501);
+    }),
+    ("manga-search-added", |s| {
+        manga_search(s, "salt", true);
+        s.add_hit(501, Status::PlanToWatch);
+    }),
+    ("manga-search-empty", |s| {
+        manga(s);
+        s.open_search();
+        s.find.focused = false;
+    }),
+    // A manga not on the list (from a result): Add as Reading and the other statuses.
+    ("manga-details-not-on-list", |s| {
+        manga_search(s, "salt", true);
+        s.open_mal_id(501);
+        let mut d = crate::manga::fake_details(501, "Salt Road Couriers");
+        d.mine = None;
+        d.title_en = Some("Couriers of the Salt Road".into());
+        d.title_ja = None;
+        d.synonyms.clear();
+        d.air_status = "finished".into();
+        d.episodes = Some(64);
+        d.volumes = Some(8);
+        s.details_answer(crate::details::Answer { id: 501, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
+    }),
+    // Remove from list: asks first, then a toast with Undo; the right-click menu.
+    ("manga-remove-confirm", |s| {
+        manga(s);
+        s.ask_remove_manga(2);
+    }),
+    ("manga-removed", |s| {
+        manga(s);
+        let _ = s.remove_manga(2);
+    }),
+    ("manga-details-remove-confirm", |s| {
+        manga_details(s, 1);
+        s.ask_remove_manga(1);
+    }),
+    ("manga-ctx", |s| {
+        manga(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+    }),
+    ("manga-ctx-move", |s| {
+        manga(s);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
+        if let Some(c) = &mut s.ctx {
+            c.sub = Some((crate::ctxmenu::Sub::Move, false));
+        }
+    }),
+    ("manga-ctx-grid", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 300.0));
+    }),
+    // A manga removal that MyAnimeList changed meanwhile: the conflict card.
+    ("manga-queue-removal-conflict", |s| {
+        manga(s);
+        let _ = s.remove_manga(2);
+        let mut op = s.ops[0].clone();
+        op.id = 98;
+        op.kind = kotora_core::Kind::Manga;
+        op.media_id = 2;
+        op.title = "Salt & Gears".into();
+        op.episodes = Some(88);
+        op.removed = true;
+        op.change = kotora_core::Change::default();
+        op.old = kotora_core::Values { volumes: 0, ..kotora_core::Values::new(Status::Watching, 64, kotora_core::score::ten(8)) };
+        op.state = OpState::Conflict;
+        op.remote = Some(kotora_core::Remote { values: kotora_core::Values { volumes: 9, ..kotora_core::Values::new(Status::Watching, 70, kotora_core::score::ten(8)) }, updated_at: crate::model::FAKE_NOW - 1800 });
+        s.ops.retain(|o| o.state != OpState::Conflict);
+        s.ops.insert(0, op);
+        s.toast = None;
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.go(Page::Queue);
+    }),
     // A manga's page: the information, the "Your list" card with chapters and volumes.
     ("manga-details", |s| manga_details(s, 1)),
     ("manga-details-editor", |s| {
@@ -1581,6 +1674,22 @@ fn manga(s: &mut State) {
     s.covers.fake();
     for e in s.manga.entries.iter_mut().filter(|e| e.id % 5 != 2) {
         e.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", e.id));
+    }
+}
+
+/// The search page in Manga mode for `q`, MyAnimeList's manga results in when `answered`.
+fn manga_search(s: &mut State, q: &str, answered: bool) {
+    manga(s);
+    s.find.replace_text(q);
+    s.open_search();
+    s.find.focused = false;
+    s.online.pending = false;
+    if answered {
+        let mut hits = crate::manga::fake_hits();
+        for h in hits.iter_mut().filter(|h| h.id != 503) {
+            h.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", h.id));
+        }
+        s.online.show(q, hits);
     }
 }
 

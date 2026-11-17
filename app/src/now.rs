@@ -150,6 +150,8 @@ pub struct Prefs {
     pub intro: bool,
     /// Each list page's view (`[views]`, the switch in the list's toolbar).
     pub views: kotora_core::config::Views,
+    /// The manga list pages' views (`[manga_views]`): each kind keeps its own.
+    pub manga_views: kotora_core::config::Views,
     /// Settings → Startup: what the system says about the login start (`autostart.rs`).
     pub login: crate::autostart::Login,
     /// The login entry is being changed on a worker thread.
@@ -165,7 +167,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), manga_views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
     }
 }
 
@@ -184,6 +186,7 @@ impl Prefs {
             theme: c.display.theme,
             intro: c.display.intro,
             views: c.views,
+            manga_views: c.manga_views,
             // The system's login entry, read by `detect::start`; off until then.
             login: Default::default(),
             login_busy: false,

@@ -951,6 +951,10 @@ impl<T: Transport> ListService for Mal<T> {
         self.manga_patch(media_id, change)
     }
 
+    fn delete_manga_entry(&mut self, media_id: u32) -> Result<(), ServiceError> {
+        self.manga_delete(media_id)
+    }
+
     fn browse_manga(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
         self.manga_browse(query, limit)
     }
@@ -1282,6 +1286,19 @@ mod tests {
         assert!(matches!(c.delete_entry("acc", 1001), Err(ServiceError::Other(_))));
         let seen = seen.lock().unwrap();
         assert_eq!((seen[0].0.as_str(), seen[0].1.as_str(), seen[0].2.as_deref(), seen[0].3.as_deref()), ("DELETE", "https://api.myanimelist.net/v2/anime/1001/my_list_status", Some("acc"), None));
+    }
+
+    /// A manga's removal: its own address; 404 is done too.
+    #[test]
+    fn delete_removes_a_manga_entry() {
+        let status = |n: u16| Ok(Response { status: n, retry_after: None, body: String::new() });
+        let (f, seen) = fake(vec![ok("[]"), status(404), status(503)]);
+        let (mut c, _) = client(f);
+        assert_eq!(c.delete_manga_entry("acc", 2001), Ok(()));
+        assert_eq!(c.delete_manga_entry("acc", 2001), Ok(()), "already gone");
+        assert!(matches!(c.delete_manga_entry("acc", 2001), Err(ServiceError::Offline(_))));
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("DELETE", "https://api.myanimelist.net/v2/manga/2001/my_list_status"));
     }
 
     /// A rewatch goes as MAL's form fields, and its answer is read back.

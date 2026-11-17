@@ -10,7 +10,7 @@ use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, 
 use crate::icons;
 use kotora_core::queue::{Op, OpState};
 
-use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State, remote_text};
+use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State};
 use crate::now::{Now, clock_text};
 use kotora_core::recognize::Found;
 use kotora_detect::{Led, Switch};
@@ -139,8 +139,9 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.ask = None;
         return true;
     }
-    if k.key == rune::Key::Escape && s.confirm_remove.is_some() {
+    if k.key == rune::Key::Escape && (s.confirm_remove.is_some() || s.manga.confirm_remove.is_some()) {
         s.confirm_remove = None;
+        s.manga.confirm_remove = None;
         return true;
     }
     if k.key == rune::Key::Escape && s.editor.is_some() {
@@ -565,7 +566,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::List(st) => list_page(s, st, wide, width),
         Page::Manga(_) if s.auth == Auth::NoClientId => crate::setup::page(s, width),
         Page::Manga(_) if !s.has_list() => welcome(s),
-        Page::Manga(st) => crate::manga::page(s, st, wide),
+        Page::Manga(st) => crate::manga::page(s, st, wide, width),
         Page::Home if !s.has_list() => welcome(s),
         Page::Home => crate::home::page(s),
         Page::Profile if s.account.is_none() => welcome(s),
@@ -595,7 +596,10 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a, s.service));
     }
-    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, id)) {
+    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Anime, id)) {
+        m = m.child(bar);
+    }
+    if let Some(bar) = s.manga.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Manga, id)) {
         m = m.child(bar);
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
@@ -887,13 +891,15 @@ fn results(s: &State, mut page: El, scroll_key: String, wide: bool) -> El {
         page = page.child(a);
     }
     let n = layout(s).len();
-    page.child(header(wide, s.sort)).child(
+    let manga = s.page == Page::Search && s.manga.mode;
+    page.child(if manga { crate::manga::header(wide, s.sort) } else { header(wide, s.sort) }).child(
         col().key(scroll_key).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
             col().key("rows").growth(GrowthSpec::default()).virtual_rows(
                 n,
                 theme::ROW_H,
                 |s: &State, i| layout(s).get(i).map_or_else(|| format!("gone-{i}"), |r| crate::search::key(s, *r)).into(),
                 move |s: &State, i| match layout(s).get(i) {
+                    Some(SRow::List(k)) if manga => s.manga.rows.get(*k).map_or_else(el, |&k| crate::manga::list_row(s, &s.manga.entries[k], wide)),
                     Some(SRow::List(k)) => s.rows.get(*k).map_or_else(el, |&k| list_row(s, &s.entries[k], wide)),
                     Some(r) => crate::search::line(s, *r),
                     None => el(),
@@ -924,7 +930,10 @@ fn search_view(s: &State, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&s.find, &format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title())), PAL.faint)
+                .placeholder(
+                    field_hint(&s.find, &if s.manga.mode { format!("Search your manga and {svc}, or paste a {svc} manga link", svc = s.service.title()) } else { format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title()) }),
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
@@ -951,7 +960,7 @@ fn search_view(s: &State, wide: bool) -> El {
                 }),
         )
         .child(kbd("Esc"));
-    let count = s.searching().then(|| s.rows.len() + s.new_hits().len());
+    let count = s.searching().then(|| s.search_list_len() + s.new_hits().len());
     let page = col()
         .key("page/search")
         .w_full()
@@ -959,13 +968,13 @@ fn search_view(s: &State, wide: bool) -> El {
         .child(top(s, "Search", count, false))
         .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).child(field.grow(1.0).max_w(720.0)));
     if !s.searching() {
-        return page.child(search_hint(s.service.title()));
+        return page.child(search_hint(s.service.title(), s.manga.mode));
     }
     results(s, page, "search-scroll".into(), wide)
 }
 
 /// The empty search page: what it finds.
-fn search_hint(svc: &str) -> El {
+fn search_hint(svc: &str, manga: bool) -> El {
     let line = |t: &str| text(t.to_string()).font(theme::LABEL).color(PAL.dim).wrap();
     col()
         .key("search-hint")
@@ -976,9 +985,9 @@ fn search_hint(svc: &str) -> El {
         .radius(theme::R_LG)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(text("Find any anime").font(theme::SECTION).color(PAL.text))
-        .child(line(&format!("Titles in English, Japanese or romaji search your list first, then {svc} (3 letters or more).")))
-        .child(line(&format!("A {svc} link or id (such as 41590) opens that anime's page, on your list or not.")))
+        .child(text(if manga { "Find any manga" } else { "Find any anime" }).font(theme::SECTION).color(PAL.text))
+        .child(line(&format!("Titles in English, Japanese or romaji search your {} first, then {svc} (3 letters or more).", if manga { "manga list" } else { "list" })))
+        .child(line(&if manga { format!("A {svc} manga link or id opens that manga's page, on your list or not. The Anime | Manga switch picks what is searched.") } else { format!("A {svc} link or id (such as 41590) opens that anime's page, on your list or not.") }))
         .child(text("Esc goes back. The box on a list page filters that list.").font(theme::LABEL).color(PAL.faint).wrap().mt(4.0))
 }
 
@@ -1625,11 +1634,15 @@ pub(crate) fn pill(label: &str, c: Color) -> El {
 fn conflict_values(op: &Op, v: &kotora_core::Values, fmt: kotora_core::ScoreFormat) -> String {
     let total = op.episodes.map_or("?".to_string(), |n| n.to_string());
     let mut parts = Vec::new();
+    let manga = op.kind == kotora_core::Kind::Manga;
     if op.change.status.is_some() {
-        parts.push(v.status.label().to_string());
+        parts.push(v.status.label_in(op.kind).to_string());
     }
     if op.change.progress.is_some() {
-        parts.push(format!("Progress {} / {total}", v.progress));
+        parts.push(format!("{} {} / {total}", if manga { "Chapters" } else { "Progress" }, v.progress));
+    }
+    if op.change.volumes.is_some() {
+        parts.push(format!("Volumes {}", v.volumes));
     }
     if op.change.score.is_some() {
         parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {}", fmt.words(n))));
@@ -1655,12 +1668,12 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), remote_text(r, op.episodes, s.score_format()), "Keep it"),
+        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format()), "Keep it"),
         Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
         None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
     };
     let aside = match &op.remote {
-        Some(r) => format!("{} has {}", s.service.title(), remote_text(r, op.episodes, s.score_format())),
+        Some(r) => format!("{} has {}", s.service.title(), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format())),
         None => "removed on another device".into(),
     };
     col()

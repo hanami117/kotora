@@ -59,9 +59,11 @@ Commands:
   next TITLE            play the next episode of TITLE from your
                         library folders (Settings \u{2192} Library)
   remove TITLE|ID       take an anime off your list (asks first; --yes
-      [--yes]             doesn't). Undo it in Kotora's sync queue
+      [--yes] [--manga]   doesn't; --manga: a manga). Undo it in Kotora's
+                          sync queue
   add QUERY|ID          put an anime on your list: a title to search
-      [--status STATUS]   your list service for (it must find one), or its id
+      [--status STATUS]   your list service for (it must find one), or its id;
+      [--manga]           --manga: a manga (MyAnimeList; Manga must be on)
   list --manga [STATUS|all]
                         your manga list (MyAnimeList; read only); STATUS:
                         reading (the default), plan, completed, on-hold,
@@ -177,7 +179,7 @@ fn main() -> ExitCode {
     // terminal, else say how.
     if let Ok(Reply::Error { message, anyway: true }) = &reply {
         eprintln!("kot: {message}");
-        let removing = matches!(req, Request::Remove { .. });
+        let removing = matches!(req, Request::Remove { .. } | Request::MangaRemove { .. });
         if !confirm(if removing { "Remove it? [y/N] " } else { "Mark anyway? [y/N] " }) {
             if !interactive() {
                 eprintln!("{}", if removing { "kot: run it again with --yes to remove it." } else { "kot: run it again with --anyway to mark it." });
@@ -316,18 +318,21 @@ fn with_anyway(req: Request) -> Request {
         Request::PlusOne { title, .. } => Request::PlusOne { title, anyway: true },
         Request::Set { title, progress, status, score, score_text, .. } => Request::Set { title, progress, status, score, score_text, anyway: true },
         Request::Remove { title, .. } => Request::Remove { title, yes: true },
+        Request::MangaRemove { title, .. } => Request::MangaRemove { title, yes: true },
         other => other,
     }
 }
 
-/// `remove TITLE…|ID [--yes]`.
+/// `remove TITLE…|ID [--yes] [--manga]`.
 fn parse_remove(words: &[&str]) -> Result<Request, String> {
     let yes = words.iter().any(|w| matches!(*w, "--yes" | "-y"));
-    let title: Vec<&str> = words.iter().copied().filter(|w| !matches!(*w, "--yes" | "-y")).collect();
+    let manga = words.contains(&"--manga");
+    let title: Vec<&str> = words.iter().copied().filter(|w| !matches!(*w, "--yes" | "-y" | "--manga")).collect();
     if title.is_empty() {
         return Err("remove needs a title or an id".into());
     }
-    Ok(Request::Remove { title: title.join(" "), yes })
+    let title = title.join(" ");
+    Ok(if manga { Request::MangaRemove { title, yes } } else { Request::Remove { title, yes } })
 }
 
 /// `+1 TITLE… [--anyway]`.
@@ -406,10 +411,11 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
 
 /// `add QUERY… [--status S]`.
 fn parse_add(words: &[&str]) -> Result<Request, String> {
-    let (mut query, mut status) = (Vec::new(), None);
+    let (mut query, mut status, mut manga) = (Vec::new(), None, false);
     let mut i = 0;
     while i < words.len() {
         match words[i] {
+            "--manga" => manga = true,
             "--status" => {
                 status = Some(words.get(i + 1).ok_or("--status needs a status")?.to_string());
                 i += 1;
@@ -421,7 +427,8 @@ fn parse_add(words: &[&str]) -> Result<Request, String> {
     if query.is_empty() {
         return Err("add needs a title or an id".into());
     }
-    Ok(Request::Add { query: query.join(" "), status })
+    let query = query.join(" ");
+    Ok(if manga { Request::MangaAdd { query, status } } else { Request::Add { query, status } })
 }
 
 fn progress_text(e: &Entry) -> String {
@@ -655,6 +662,10 @@ mod tests {
     fn add_reads_the_query_and_the_status() {
         assert_eq!(parse_add(&["Velvet", "Orchard"]), Ok(Request::Add { query: "Velvet Orchard".into(), status: None }));
         assert_eq!(parse_add(&["9001", "--status", "plan"]), Ok(Request::Add { query: "9001".into(), status: Some("plan".into()) }));
+        assert_eq!(parse_add(&["--manga", "Salt", "Road", "--status", "reading"]), Ok(Request::MangaAdd { query: "Salt Road".into(), status: Some("reading".into()) }));
+        assert_eq!(parse_remove(&["Salt", "--manga", "--yes"]), Ok(Request::MangaRemove { title: "Salt".into(), yes: true }));
+        assert_eq!(parse_remove(&["Salt"]), Ok(Request::Remove { title: "Salt".into(), yes: false }));
+        assert_eq!(with_anyway(Request::MangaRemove { title: "Salt".into(), yes: false }), Request::MangaRemove { title: "Salt".into(), yes: true });
         assert!(parse_add(&[]).is_err());
         assert!(parse_add(&["--status", "plan"]).is_err());
         assert!(parse_add(&["x", "--status"]).is_err());

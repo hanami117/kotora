@@ -37,9 +37,9 @@ pub enum Cmd {
     /// Takes back an import's changes that still wait.
     UndoImport(Vec<i64>),
     /// Remove from list: off the saved list, the removal queued.
-    Remove { media_id: u32 },
+    Remove { kind: Kind, media_id: u32 },
     /// Undo of a removal that hasn't left: its queued removal is discarded.
-    UndoRemove { media_id: u32 },
+    UndoRemove { kind: Kind, media_id: u32 },
 }
 
 /// The worker's mailbox. `slot` holds the sender while a worker thread runs.
@@ -154,7 +154,6 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
 fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind, u32)>, String> {
     let now = now_unix();
     let media = |store: &Store, id: i64| store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| (o.kind, o.media_id));
-    let anime = |id: u32| Some((Kind::Anime, id));
     let r = match cmd {
         Cmd::Edit { kind, media_id, change } => store.enqueue((crate::account::name(), kind), media_id, change, now).map(|_| Some((kind, media_id))),
         Cmd::Add { media, status, progress } => store.add_to_list(crate::account::name(), &media, status, progress, now).map(|_| Some((media.kind, media.id))),
@@ -176,11 +175,11 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind
         }
         // Handled by `transfer`.
         Cmd::Import(_) | Cmd::UndoImport(_) => Ok(None),
-        Cmd::Remove { media_id } => store.remove_from_list(crate::account::name(), media_id, now).map(|_| anime(media_id)),
-        Cmd::UndoRemove { media_id } => {
-            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kotora_core::Kind::Anime && o.state.is_open()));
+        Cmd::Remove { kind, media_id } => store.remove_from_list((crate::account::name(), kind), media_id, now).map(|_| Some((kind, media_id))),
+        Cmd::UndoRemove { kind, media_id } => {
+            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kind && o.state.is_open()));
             match waiting {
-                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| anime(media_id)),
+                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| Some((kind, media_id))),
                 // Too late: the run loop's snapshot of the entry takes it off the list again.
                 _ => {
                     return Err(format!("It was already removed on {}. Add it again from Search.", crate::account::active().title()));
@@ -226,13 +225,13 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                 touched.extend(transfer(h, &mut store, cmd).into_iter().map(|id| (Kind::Anime, id)));
                 continue;
             }
-            let undo = if let Cmd::UndoRemove { media_id } = &cmd { Some(*media_id) } else { None };
+            let undo = if let Cmd::UndoRemove { kind, media_id } = &cmd { Some((*kind, *media_id)) } else { None };
             match apply(&mut store, cmd, &mut refresh) {
                 Ok(Some(t)) => touched.push(t),
                 Ok(None) => {}
                 Err(m) => {
                     // An Undo too late: the entry the UI put back goes again.
-                    touched.extend(undo.map(|id| (Kind::Anime, id)));
+                    touched.extend(undo);
                     report(h, Msg::QueueError(m));
                 }
             }

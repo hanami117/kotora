@@ -155,6 +155,36 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 Err(message) => Reply::Error { message, anyway: false },
             }
         }
+        // A manga: MyAnimeList only, with Manga on (its list is what the window shows).
+        Request::MangaAdd { query, status: st } => {
+            let status = match st.as_deref().map(parse_status).transpose() {
+                Ok(s) => s.unwrap_or(Status::Watching),
+                Err(message) => return Reply::Error { message, anyway: false },
+            };
+            match on_ui(handle, false, manga_ready) {
+                Ok(Ok(())) => {}
+                Ok(Err(message)) | Err(message) => return Reply::Error { message, anyway: false },
+            }
+            match find_online_of(&query, Kind::Manga) {
+                Ok(media) => reply(on_ui(handle, true, move |s| {
+                    let i = s.manga_add(media, status)?;
+                    Ok(Reply::Edited { entry: s.manga_ctl(i) })
+                })),
+                Err(message) => Reply::Error { message, anyway: false },
+            }
+        }
+        Request::MangaRemove { title, yes } => reply(on_ui(handle, true, move |s| {
+            manga_ready(s)?;
+            let i = s.find_manga(&title)?;
+            let id = s.manga.entries[i].id;
+            if !yes {
+                let message = s.manga_remove_question(id).unwrap_or_default();
+                return Ok(Reply::Error { message, anyway: true });
+            }
+            let name = s.manga.entries[i].title.clone();
+            s.remove_manga(id)?;
+            Ok(Reply::Done { message: format!("Removed {name} from your manga list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the manga.") })
+        })),
         // Off the UI thread: reads the database and writes the file.
         Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path)) {
             Ok(message) => Reply::Done { message },
@@ -271,14 +301,34 @@ fn set(s: &mut State, title: &str, mut change: Change, anyway: bool) -> Result<R
 
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
 /// a title that matches one result exactly, or a single result. Runs on the connection's thread.
+/// `kot add --manga` and `kot remove --manga` need a signed-in MyAnimeList with Manga on.
+fn manga_ready(s: &mut State) -> Result<(), String> {
+    if !s.has_list() {
+        return Err("Not signed in.".into());
+    }
+    if !s.manga_possible() {
+        return Err(MAL_ONLY.into());
+    }
+    if !s.manga.enabled {
+        return Err("Manga is off: turn it on with kot manga on (or the Anime | Manga switch).".into());
+    }
+    Ok(())
+}
+
 fn find_online(query: &str) -> Result<kotora_core::Media, String> {
+    find_online_of(query, Kind::Anime)
+}
+
+/// One anime (or manga) the query names on the service: its id, an exact title, or the only
+/// result.
+fn find_online_of(query: &str, kind: Kind) -> Result<kotora_core::Media, String> {
     let title = crate::account::active().title();
     let mut mal = crate::account::open().ok_or_else(|| format!("kot add needs {title}: sign in first (and be online)."))?;
     let q = query.trim();
     if let Ok(id) = q.parse::<u32>() {
-        return mal.details(id).map(|d| d.media()).map_err(crate::online::error_text);
+        return mal.details_of(kind, id).map(|d| d.media()).map_err(crate::online::error_text);
     }
-    let hits = mal.browse(q, 10).map_err(crate::online::error_text)?;
+    let hits = mal.browse_of(kind, q, 10).map_err(crate::online::error_text)?;
     let lower = q.to_lowercase();
     let exact: Vec<_> = hits
         .iter()
@@ -290,7 +340,7 @@ fn find_online(query: &str) -> Result<kotora_core::Media, String> {
         (_, []) => Err(format!("{title} found nothing for \u{201c}{q}\u{201d}.")),
         _ => {
             let names: Vec<String> = hits.iter().take(6).map(|h| format!("  {:>6}  {}", h.id, h.title)).collect();
-            Err(format!("Several anime match \u{201c}{q}\u{201d}; give the id:\n{}", names.join("\n")))
+            Err(format!("Several {} match \u{201c}{q}\u{201d}; give the id:\n{}", if kind == Kind::Manga { "manga" } else { "anime" }, names.join("\n")))
         }
     }
 }
@@ -435,6 +485,27 @@ mod tests {
 
     /// `kot manga` and `kot list --manga`: off by default, MyAnimeList only, read from the saved
     /// list (Reading first, newest update first), with chapters and volumes; anime never shows.
+    /// `kot add --manga` / `kot remove --manga`: MyAnimeList, Manga on; remove asks first, then
+    /// takes it off the manga list (the anime with the same id stays).
+    #[test]
+    fn kot_adds_and_removes_manga_only_with_manga_on() {
+        let mut s = State::fake();
+        assert!(manga_ready(&mut s).unwrap_err().starts_with("Manga is off"));
+        s.service = ServiceId::AniList;
+        assert_eq!(manga_ready(&mut s).unwrap_err(), MAL_ONLY);
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        assert!(manga_ready(&mut s).is_ok());
+        assert_eq!(s.find_manga("salt").map(|i| s.manga.entries[i].id), Ok(2));
+        assert_eq!(s.find_manga("2").map(|i| s.manga.entries[i].id), Ok(2), "an id");
+        assert!(s.find_manga("a").unwrap_err().starts_with("Several manga match"));
+        let i = s.find_manga("salt").unwrap();
+        assert_eq!(s.manga_ctl(i).volumes, Some(0));
+        s.remove_manga(2).unwrap();
+        assert!(s.find_manga("salt").is_err());
+        assert!(s.entries.iter().any(|e| e.id == 2), "the anime 2 stays");
+    }
+
     #[test]
     fn kot_lists_the_saved_manga() {
         let mut store = Store::open_memory().unwrap();
