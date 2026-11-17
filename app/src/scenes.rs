@@ -184,6 +184,12 @@ pub const SCENES: &[Scene] = &[
         manga(s);
         s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
     }),
+    // "Continue reading" in the menu of a manga with a known last comic.
+    ("manga-ctx-continue", |s| {
+        manga(s);
+        crate::reading::fake_resume(s, 1, 87, false);
+        s.open_manga_ctx(1, crate::ctxmenu::At::Point(420.0, 140.0));
+    }),
     ("manga-ctx-move", |s| {
         manga(s);
         s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
@@ -332,6 +338,25 @@ pub const SCENES: &[Scene] = &[
         crate::manga::fake(s);
         s.now = None;
         crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.reading_open(Vec::new());
+        s.go(Page::NowPlaying);
+    }),
+    // The details page of a manga read in YACReader: where it stopped, Continue reading.
+    ("manga-details-continue", |s| {
+        manga_details(s, 1);
+        crate::reading::fake_resume(s, 1, 87, false);
+    }),
+    // Read to the end: the next volume in the folder.
+    ("manga-details-continue-next", |s| {
+        manga_details(s, 1);
+        crate::reading::fake_resume(s, 1, 1, true);
+    }),
+    // The comic closed half-read: Now Reading says where it stopped.
+    ("now-reading-continue", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        crate::reading::fake_resume(s, 1, 87, false);
         s.reading_open(Vec::new());
         s.go(Page::NowPlaying);
     }),
@@ -3769,4 +3794,18 @@ mod manga_polish {
         let r = rt("now-playing-page");
         assert!(r.find("np-mini").is_some() && r.find("rd-mini").is_none());
     }
+
+    /// Continue reading: on the details card, in the menu, and in Now Reading once closed.
+    #[test]
+    fn continue_reading_shows_up() {
+        let r = rt("manga-details-continue");
+        assert!(r.find("rd-resume/go").is_some() && r.find("rd-resume/where").is_some());
+        let r = rt("manga-ctx-continue");
+        assert!(r.find("ctx/continue").is_some());
+        let r = rt("manga-ctx");
+        assert!(r.find("ctx/continue").is_none(), "unknown: hidden");
+        let r = rt("now-reading-continue");
+        assert!(r.find("rd-resume/go").is_some());
+    }
 }
+

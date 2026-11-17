@@ -270,3 +270,32 @@ fn opening_again_makes_it_now_reading_again() {
     s.reading_open(vec![std::path::PathBuf::from("/srv/manga/Other/c001.cbz")]);
     assert!(s.now_reading().is_none(), "another file open: this one closed");
 }
+
+#[test]
+fn continue_reading_shows_where_it_stopped_and_how_it_opens() {
+    let mut s = state();
+    assert!(s.resume_of(1).is_none());
+    s.want_resume(1);
+    assert!(s.reading.resume_asked.is_empty(), "no thread headless: nothing asked");
+    fake_resume(&mut s, 1, 87, false);
+    let r = s.resume_of(1).unwrap().clone();
+    assert_eq!(r.label(), "Vol 11 \u{b7} p. 87/190");
+    // As YACReaderLibrary opens a comic: the library, the comic id, the library id.
+    assert_eq!(launch_args(&r), ["/media/comics", "--comicId=7", "--libraryId=1"]);
+    let no_id = kotora_core::manga::resume::Resume { library_id: None, ..r };
+    assert_eq!(launch_args(&no_id), ["/media/comics/Inkwell Cartographers v11.cbz"], "the file alone");
+    // Unknown again: hidden.
+    s.apply_reading(ReadingMsg::Resume { media_id: 1, at: None });
+    assert!(s.resume_of(1).is_none() && resume_line(&s, 1).is_none());
+}
+
+#[test]
+fn a_closed_comic_leaves_continue_reading_in_now_reading() {
+    let mut s = state();
+    fake(&mut s, "Inkwell Cartographers v12 c120.cbz", 14);
+    fake_resume(&mut s, 1, 87, false);
+    s.reading_open(Vec::new());
+    assert!(s.reading.current.is_none());
+    assert_eq!(s.reading.last_media, Some(1));
+    assert!(resume_line(&s, 1).is_some());
+}

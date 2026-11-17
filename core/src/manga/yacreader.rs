@@ -64,6 +64,9 @@ pub struct Library {
     pub name: String,
     /// The library's folder.
     pub path: PathBuf,
+    /// The id YACReaderLibrary gives the viewer (`--libraryId`): the INI's legacy id. `None` for a
+    /// library Kotora knows only by its folder.
+    pub id: Option<i64>,
 }
 
 impl Library {
@@ -220,9 +223,9 @@ fn decode_library_list(bytes: &[u8]) -> Option<Vec<Library>> {
     for _ in 0..count {
         let name = s.string()?;
         let path = s.string()?;
-        s.u32()?; // the legacy id
+        let id = s.u32()? as i32; // the legacy id: the viewer's `--libraryId`
         s.take(16)?; // the QUuid
-        v.push(Library { name, path: PathBuf::from(path) });
+        v.push(Library { name, path: PathBuf::from(path), id: Some(i64::from(id)) });
     }
     s.done().then_some(v)
 }
@@ -234,9 +237,9 @@ fn decode_legacy_list(bytes: &[u8]) -> Option<Vec<Library>> {
     let mut v = Vec::new();
     for _ in 0..count {
         let name = s.string()?;
-        s.u32()?;
+        let id = s.u32()? as i32;
         let path = s.string()?;
-        v.push(Library { name, path: PathBuf::from(path) });
+        v.push(Library { name, path: PathBuf::from(path), id: Some(i64::from(id)) });
     }
     s.done().then_some(v)
 }
@@ -244,6 +247,8 @@ fn decode_legacy_list(bytes: &[u8]) -> Option<Vec<Library>> {
 /// A comic YACReader has opened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Opened {
+    /// `comic.id`: the viewer's `--comicId`.
+    pub id: i64,
     /// The file's path inside the library, as YACReader keeps it (`/Series/c021.cbz`).
     pub rel_path: String,
     /// The file's path: the library's folder and `rel_path`.
@@ -333,29 +338,22 @@ impl Db {
         Ok(Db { conn, library_dir, version, has_series })
     }
 
-    /// Comic `id` (`comic.id`, the viewer's `--comicId`), opened or not. YACReader writes the
-    /// page only when the comic is closed, so while it is open its row says what was saved
-    /// before (often page 1 and no time).
-    pub fn comic(&self, id: i64) -> Result<Option<Opened>> {
+    /// The columns [`Db::row`] reads, from `comic c JOIN comic_info ci`.
+    fn select(&self) -> String {
         let series = if self.has_series { "ci.series" } else { "NULL" };
-        let sql = format!(
-            "SELECT c.path, c.fileName, {series}, COALESCE(ci.currentPage, 0), COALESCE(ci.numPages, 0), COALESCE(ci.read, 0), \
+        format!(
+            "SELECT c.id, c.path, c.fileName, {series}, COALESCE(ci.currentPage, 0), COALESCE(ci.numPages, 0), COALESCE(ci.read, 0), \
                     COALESCE(CAST(ci.lastTimeOpened AS INTEGER), 0) \
-             FROM comic c JOIN comic_info ci ON ci.id = c.comicInfoId WHERE c.id = ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query_map([id], |r| {
-            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?))
-        })?;
-        let Some(row) = rows.next() else { return Ok(None) };
-        let (path, file_name, meta, current_page, num_pages, read, last_opened) = row?;
-        Ok(Some(self.opened(path, file_name, meta, current_page, num_pages, read, last_opened)))
+             FROM comic c JOIN comic_info ci ON ci.id = c.comicInfoId"
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn opened(&self, path: Option<String>, file_name: String, meta: Option<String>, current_page: i64, num_pages: i64, read: i64, last_opened: i64) -> Opened {
+    fn row(&self, r: &rusqlite::Row<'_>) -> rusqlite::Result<Opened> {
+        let (id, path, file_name, meta): (i64, Option<String>, String, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+        let (current_page, num_pages, read, last_opened): (i64, i64, i64, i64) = (r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?);
         let rel_path = path.filter(|p| !p.is_empty()).unwrap_or_else(|| format!("/{file_name}"));
-        Opened {
+        Ok(Opened {
+            id,
             path: self.library_dir.join(rel_path.trim_start_matches('/')),
             parsed: name::parse_path(&rel_path),
             meta_series: meta.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
@@ -364,39 +362,37 @@ impl Db {
             num_pages,
             read_flag: read != 0,
             last_opened,
-        }
+        })
+    }
+
+    /// Comic `id` (`comic.id`, the viewer's `--comicId`), opened or not. YACReader writes the
+    /// page only when the comic is closed, so while it is open its row says what was saved
+    /// before (often page 1 and no time).
+    pub fn comic(&self, id: i64) -> Result<Option<Opened>> {
+        let mut stmt = self.conn.prepare(&format!("{} WHERE c.id = ?1", self.select()))?;
+        let mut rows = stmt.query_map([id], |r| self.row(r))?;
+        Ok(rows.next().transpose()?)
     }
 
     /// The comics opened at or after `since` (Unix seconds), newest first. Comics YACReader has
     /// only listed, never opened, are not in it.
     pub fn opened_since(&self, since: i64) -> Result<Vec<Opened>> {
-        let series = if self.has_series { "ci.series" } else { "NULL" };
         let sql = format!(
-            "SELECT c.path, c.fileName, {series}, \
-                    COALESCE(ci.currentPage, 0), COALESCE(ci.numPages, 0), COALESCE(ci.read, 0), \
-                    CAST(ci.lastTimeOpened AS INTEGER) \
-             FROM comic c JOIN comic_info ci ON ci.id = c.comicInfoId \
-             WHERE ci.lastTimeOpened IS NOT NULL AND CAST(ci.lastTimeOpened AS INTEGER) >= ?1 \
-             ORDER BY CAST(ci.lastTimeOpened AS INTEGER) DESC, c.id DESC"
+            "{} WHERE ci.lastTimeOpened IS NOT NULL AND CAST(ci.lastTimeOpened AS INTEGER) >= ?1 \
+             ORDER BY CAST(ci.lastTimeOpened AS INTEGER) DESC, c.id DESC",
+            self.select()
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([since], |r| {
-            Ok((
-                r.get::<_, Option<String>>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, i64>(5)?,
-                r.get::<_, i64>(6)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (path, file_name, meta, current_page, num_pages, read, last_opened) = row?;
-            out.push(self.opened(path, file_name, meta, current_page, num_pages, read, last_opened));
-        }
-        Ok(out)
+        let rows = stmt.query_map([since], |r| self.row(r))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Every comic of the library, opened or not (for "the next one" after a comic read to the
+    /// end).
+    pub fn comics(&self) -> Result<Vec<Opened>> {
+        let mut stmt = self.conn.prepare(&format!("{} ORDER BY c.id", self.select()))?;
+        let rows = stmt.query_map([], |r| self.row(r))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
 

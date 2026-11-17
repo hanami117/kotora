@@ -65,6 +65,8 @@ pub enum ReadingMsg {
     Seen(Box<Seen>),
     /// The comics the readers have open now (sent when it changes, before any `Seen`).
     Open(Vec<std::path::PathBuf>),
+    /// Where to continue a manga (`None`: nothing to continue).
+    Resume { media_id: u32, at: Option<kotora_core::manga::resume::Resume> },
     /// The libraries watched, and those that couldn't be read.
     Libs { watched: Vec<String>, errors: Vec<LibState> },
 }
@@ -150,6 +152,11 @@ pub struct ReadingUi {
     pub current: Option<Reading>,
     /// What the readers have open now (`ReadingMsg::Open`).
     pub open_now: Vec<std::path::PathBuf>,
+    /// The manga of the comic read last (Now Reading's "Continue reading" once it closed).
+    pub last_media: Option<u32>,
+    /// "Continue reading": the thread's answers by manga, and the manga asked about.
+    pub resume: std::collections::HashMap<u32, Option<kotora_core::manga::resume::Resume>>,
+    pub resume_asked: std::collections::HashSet<u32>,
     tx: Option<Sender<In>>,
     /// Counts the threads started: a message from a stopped one is dropped.
     epoch: u64,
@@ -172,6 +179,9 @@ impl Default for ReadingUi {
             minutes: 10,
             current: None,
             open_now: Vec::new(),
+            last_media: None,
+            resume: Default::default(),
+            resume_asked: Default::default(),
             tx: None,
             epoch: 0,
         }
@@ -195,6 +205,8 @@ enum In {
     Correct { key: String, media_id: Option<u32> },
     /// The manga list gained or lost entries: recognise again.
     ListChanged,
+    /// Where to continue this manga (`resume`); answered now and again after each change.
+    Resume(u32),
 }
 
 // ------------------------------------------------------------------------------- the thread
@@ -216,6 +228,8 @@ pub fn forget(s: &mut State) {
     s.reading.watched.clear();
     s.reading.errors.clear();
     s.reading.open_now.clear();
+    s.reading.resume.clear();
+    s.reading.resume_asked.clear();
     s.withdraw_reading_note();
     s.reading.current = None;
 }
@@ -245,6 +259,8 @@ fn stop(s: &mut State) {
     s.reading.watched.clear();
     s.reading.errors.clear();
     s.reading.open_now.clear();
+    s.reading.resume.clear();
+    s.reading.resume_asked.clear();
     if s.reading.current.as_ref().is_some_and(|r| r.marked.is_none()) {
         s.withdraw_reading_note();
         s.reading.current = None;
@@ -288,6 +304,9 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
     let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
     let mut open_sent: Vec<std::path::PathBuf> = Vec::new();
+    // "Continue reading": the manga asked about, answered again after each change.
+    let mut resume_ids: Vec<u32> = Vec::new();
+    let known = kotora_core::manga::yacreader::find_ini().and_then(|i| kotora_core::manga::yacreader::libraries(&i).ok()).unwrap_or_default();
     let mut yac_cache: Option<(String, i64, String)> = None;
     let mut watch = Watch::new(libs, now_unix());
     let mut store: Option<Store> = None;
@@ -295,9 +314,11 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     let mut last_errors: Vec<LibState> = Vec::new();
     loop {
         let mut errors = Vec::new();
+        let mut changed = false;
         if let Some(r) = watch.poll(&mut errors)
             && last.as_ref() != Some(&r)
         {
+            changed = true;
             let seen = recognise(&mut store, r.clone());
             last = Some(r);
             send(h, ReadingMsg::Seen(Box::new(seen)));
@@ -336,6 +357,7 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             let mut paths: Vec<std::path::PathBuf> = open.iter().map(|o| std::path::PathBuf::from(&o.path)).collect();
             paths.sort();
             if paths != open_sent {
+                changed = true;
                 open_sent = paths.clone();
                 send(h, ReadingMsg::Open(paths));
             }
@@ -345,6 +367,12 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                 let seen = recognise(&mut store, r.clone());
                 last = Some(r);
                 send(h, ReadingMsg::Seen(Box::new(seen)));
+            }
+        }
+        if changed {
+            let libs = kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
+            for id in &resume_ids {
+                send(h, ReadingMsg::Resume { media_id: *id, at: resume_for(&mut store, &libs, *id) });
             }
         }
         if errors != last_errors {
@@ -361,6 +389,13 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                     send(h, ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))));
                 }
             }
+            Ok(In::Resume(id)) => {
+                if !resume_ids.contains(&id) {
+                    resume_ids.push(id);
+                }
+                let libs = kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
+                send(h, ReadingMsg::Resume { media_id: id, at: resume_for(&mut store, &libs, id) });
+            }
             Ok(In::ListChanged) => {
                 if let Some(r) = &last {
                     send(h, ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))));
@@ -369,6 +404,67 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
+    }
+}
+
+/// Where to continue manga `id` of the list (its entry and the user's picks from the store).
+fn resume_for(store: &mut Option<Store>, libs: &[kotora_core::manga::yacreader::Library], id: u32) -> Option<kotora_core::manga::resume::Resume> {
+    let st = open(store)?;
+    let svc = crate::account::name();
+    let item = st.load_item(Scope::new(svc, Kind::Manga), id).ok()??;
+    let picked = st.picked_keys(svc, Kind::Manga, id).unwrap_or_default();
+    kotora_core::manga::resume::resume(libs, &item, &picked)
+}
+
+/// How YACReaderLibrary opens a comic (`library_comic_opener.cpp`): the viewer with the library,
+/// `--comicId` and `--libraryId`, so the page is saved back to the library. Without a library id
+/// (a library YACReader's settings don't list) the file alone.
+pub fn launch_args(r: &kotora_core::manga::resume::Resume) -> Vec<String> {
+    match r.library_id {
+        Some(lib) => vec![r.library.to_string_lossy().into_owned(), format!("--comicId={}", r.comic_id), format!("--libraryId={lib}")],
+        None => vec![r.path.to_string_lossy().into_owned()],
+    }
+}
+
+/// Starts YACReader on the comic (never waits on it). macOS: `open -n <YACReader.app> --args …`
+/// as the library does; Linux: `YACReader …`; else, or when YACReader isn't there, the file with
+/// the system's opener.
+fn launch(r: &kotora_core::manga::resume::Resume) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let file = r.path.to_string_lossy().into_owned();
+    let spawn = |prog: &str, args: &[String]| Command::new(prog).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ());
+    #[cfg(target_os = "macos")]
+    {
+        let home = kotora_core::paths::home_dir().unwrap_or_default();
+        let app = [std::path::PathBuf::from("/Applications/YACReader.app"), home.join("Applications/YACReader.app")].into_iter().find(|p| p.is_dir());
+        if let Some(app) = app {
+            let mut a = vec!["-n".to_string(), app.to_string_lossy().into_owned(), "--args".into()];
+            a.extend(launch_args(r));
+            return spawn("open", &a).map_err(|e| format!("Can't start YACReader: {e}"));
+        }
+        spawn("open", &[file]).map_err(|e| format!("Can't open the comic: {e}"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if spawn("YACReader", &launch_args(r)).is_ok() {
+            return Ok(());
+        }
+        spawn("xdg-open", &[file]).map_err(|e| format!("Can't open the comic (no YACReader, no xdg-open): {e}"))
+    }
+    #[cfg(windows)]
+    {
+        // YACReader's installer puts it in Program Files.
+        let exe = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .flat_map(|d| [std::path::PathBuf::from(&d).join("YACReader").join("YACReader.exe"), std::path::PathBuf::from(&d).join("Programs").join("YACReader").join("YACReader.exe")])
+            .find(|p| p.is_file());
+        if let Some(exe) = exe
+            && spawn(&exe.to_string_lossy(), &launch_args(r)).is_ok()
+        {
+            return Ok(());
+        }
+        crate::win::open(&file)
     }
 }
 
@@ -453,7 +549,44 @@ impl State {
             }
             ReadingMsg::Seen(seen) => self.reading_seen(*seen),
             ReadingMsg::Open(paths) => self.reading_open(paths),
+            ReadingMsg::Resume { media_id, at } => {
+                let changed = self.reading.resume.get(&media_id) != Some(&at);
+                self.reading.resume.insert(media_id, at);
+                changed
+            }
         }
+    }
+
+    /// Asks the reading thread where to continue `media_id` (once; it answers again on changes).
+    pub fn want_resume(&mut self, media_id: u32) {
+        if self.reading.running() && self.reading.resume_asked.insert(media_id) {
+            self.reading.send(In::Resume(media_id));
+        }
+    }
+
+    /// Where to continue `media_id`, when known.
+    pub fn resume_of(&self, media_id: u32) -> Option<&kotora_core::manga::resume::Resume> {
+        self.reading.resume.get(&media_id)?.as_ref()
+    }
+
+    /// "Continue reading": reopens the comic in YACReader at the saved page.
+    pub fn continue_reading(&mut self, media_id: u32) {
+        let Some(r) = self.resume_of(media_id).cloned() else { return };
+        self.ctx = None;
+        if self.handle.is_none() {
+            return;
+        }
+        let h = self.handle.clone();
+        let _ = std::thread::Builder::new().name("kotora-continue".into()).spawn(move || {
+            if let Err(e) = launch(&r)
+                && let Some(h) = h
+            {
+                h.update_if(move |s, _| {
+                    s.toast = Some(crate::library::Toast { text: e, warn: true, until: std::time::Instant::now() + Duration::from_secs(6), undo: None });
+                    true
+                });
+            }
+        });
     }
 
     /// The comic followed now: open in its reader. `None` when it was closed (it may still ask
@@ -488,6 +621,10 @@ impl State {
     pub fn reading_seen(&mut self, seen: Seen) -> bool {
         let mut new = Reading::from_seen(seen);
         new.open = self.reading.open_now.contains(&new.read.path);
+        if let Some(id) = new.media_id() {
+            self.reading.last_media = Some(id);
+            self.want_resume(id);
+        }
         match &mut self.reading.current {
             Some(old) if old.read.path == new.read.path => {
                 let (dismissed, acted, marked, picking, mark) = (old.dismissed, old.acted, old.marked, old.picking, old.mark);
@@ -1161,7 +1298,28 @@ pub fn empty(s: &State) -> El {
     for h in how {
         c = c.child(text(h).font(theme::LABEL).color(PAL.dim).wrap());
     }
+    // The manga read last: where it stopped.
+    if let Some(id) = s.reading.last_media
+        && let Some(line) = resume_line(s, id)
+    {
+        let title = s.manga.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
+        c = c.child(text(title).key("rd-empty/last").font(theme::BODY_MED).color(PAL.text).pt(8.0)).child(line);
+    }
     c
+}
+
+/// "Continue reading" for `media_id`: where the user stopped and the button (none when unknown).
+pub fn resume_line(s: &State, media_id: u32) -> Option<El> {
+    let r = s.resume_of(media_id)?;
+    let what = if r.next { format!("Next: {}", r.label()) } else { format!("Stopped at {}", r.label()) };
+    Some(
+        col()
+            .key("rd-resume")
+            .gap(6.0)
+            .pt(10.0)
+            .child(text(what).key("rd-resume/where").font(theme::LABEL).color(PAL.dim).wrap())
+            .child(row().child(action("rd-resume/go".into(), "Continue reading", false, move |s, _| s.continue_reading(media_id)).h(30.0).px(12.0))),
+    )
 }
 
 /// The sidebar's card for the comic being read (Manga mode), like the playing card for anime.
@@ -1353,6 +1511,12 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         acts = acts.child(ghost("rd/wrong", "Wrong manga\u{2026}", State::wrong_manga).h(26.0));
     }
     info = info.child(acts);
+    // Closed: where it stopped, to open it again.
+    if !r.open
+        && let Some(line) = r.media_id().and_then(|id| resume_line(s, id))
+    {
+        info = info.child(line);
+    }
     let mut c = col()
         .key("np-reading")
         .gap(12.0)
@@ -1417,6 +1581,7 @@ fn picker(r: &Reading) -> El {
 /// A made-up comic for the scenes: `file` in a made-up library, on page `page` of 40.
 pub fn fake(s: &mut State, file: &str, page: i64) {
     let o = kotora_core::manga::yacreader::Opened {
+        id: 1,
         rel_path: format!("/{file}"),
         path: std::path::PathBuf::from("/comics").join(file),
         parsed: kotora_core::manga::name::parse_path(file),
@@ -1441,6 +1606,7 @@ pub fn fake(s: &mut State, file: &str, page: i64) {
 #[cfg(test)]
 pub fn fake_closed(s: &mut State, file: &str, page: i64) {
     let o = kotora_core::manga::yacreader::Opened {
+        id: 1,
         rel_path: format!("/{file}"),
         path: std::path::PathBuf::from("/comics").join(file),
         parsed: kotora_core::manga::name::parse_path(file),
@@ -1454,6 +1620,22 @@ pub fn fake_closed(s: &mut State, file: &str, page: i64) {
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
     s.reading_seen(Seen { read, found, candidates: Vec::new(), cover_url: None });
+}
+
+/// A made-up "Continue reading" answer for manga `id` (`page` of 190 in volume 11).
+pub fn fake_resume(s: &mut State, id: u32, page: i64, next: bool) {
+    let r = kotora_core::manga::resume::Resume {
+        library: "/media/comics".into(),
+        library_id: Some(1),
+        comic_id: 7,
+        path: "/media/comics/Inkwell Cartographers v11.cbz".into(),
+        chapter: None,
+        volume: Some(11),
+        page,
+        pages: 190,
+        next,
+    };
+    s.apply_reading(ReadingMsg::Resume { media_id: id, at: Some(r) });
 }
 
 /// A made-up comic open in `app` (stage 2), counted as read when `why` is given.

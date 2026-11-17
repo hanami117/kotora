@@ -21,6 +21,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   restarts.
 
 ### Added
+- **Continue reading** (YACReader): a manga's details page, its right-click menu and Now Reading (once the
+  comic is closed) say where you stopped ("Stopped at Vol 11 · p. 87/190", from YACReader's library, read
+  only; Kotora keeps no pages) with **Continue reading**, which opens the comic in YACReader the way its library
+  does (`--comicId`, `--libraryId`: the page is saved back). Read to the end: the next file of the series in
+  that library ("Next: Vol 12"). Hidden when nothing is known, the file is gone, or there is no next one.
 - **Now Reading**: in Manga mode with reading detection on, the sidebar's Now Playing is Now Reading, with a
   card for the comic open (title, chapter or volume, reader, cover, the match or "Add as Reading"); the page
   shows the comic first.

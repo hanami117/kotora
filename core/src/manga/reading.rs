@@ -367,7 +367,7 @@ pub fn library_at(p: &str) -> Library {
     let path = PathBuf::from(p);
     let folder = if path.file_name().is_some_and(|n| n == "library.ydb") { path.parent().and_then(|d| d.parent()).map(PathBuf::from).unwrap_or(path.clone()) } else { path };
     let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    Library { name, path: folder }
+    Library { name, path: folder, id: None }
 }
 
 #[cfg(test)]

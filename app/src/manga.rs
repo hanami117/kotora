@@ -1435,6 +1435,9 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     match s.manga.editor.filter(|ed| ed.id == id) {
         Some(ed) => c.child(editor(e, &ed, true, s.score_format(), crate::volfill::editor_button(s, id))),
         None => {
+            if let Some(line) = crate::reading::resume_line(s, id) {
+                c = c.child(line);
+            }
             let mut actions = row().pt(10.0).gap(8.0).child(crate::ui::action("det/edit".into(), "Edit", false, move |s, _| s.manga_toggle_editor(id)).h(32.0).px(12.0));
             if e.status == Status::Completed && !e.rereading {
                 actions = actions.child(crate::ui::action("det/reread".into(), "Reread", false, move |s, _| {

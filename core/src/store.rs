@@ -449,6 +449,13 @@ impl Store {
     }
 
     /// [`Store::recognition`] for a list of `kind` (manga reading uses `Kind::Manga`).
+    /// The keys the user picked `media_id` for ("Wrong manga…"), of a list of `kind`.
+    pub fn picked_keys(&self, service: &str, kind: Kind, media_id: u32) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare("SELECT key FROM recognition WHERE service = ?1 AND kind = ?2 AND source = 'user' AND media_id = ?3")?;
+        let rows = st.query_map(params![service, kind.name(), media_id], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn recognition_of(&self, service: &str, kind: Kind, key: &str) -> Result<Option<(u32, String, String)>> {
         Ok(self
             .conn

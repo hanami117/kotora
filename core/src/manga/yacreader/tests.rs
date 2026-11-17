@@ -316,7 +316,7 @@ fn odd_characters_in_the_library_path() {
 
 #[test]
 fn a_library_knows_its_database() {
-    let lib = Library { name: "Manga".into(), path: PathBuf::from("/shelf/manga") };
+    let lib = Library { name: "Manga".into(), path: PathBuf::from("/shelf/manga"), id: None };
     assert_eq!(lib.db_path(), Path::new("/shelf/manga/.yacreaderlibrary/library.ydb"));
 }
 
@@ -332,7 +332,7 @@ path=/usr/share/yacreader/server/docroot
 #[test]
 fn reads_the_library_list() {
     let libs = parse_libraries(INI_NEW);
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/tmp/lib") }]);
+    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/tmp/lib"), id: Some(1) }]);
 }
 
 /// A Qt `QDataStream` string, for building test input.
@@ -379,6 +379,7 @@ fn reads_several_libraries_with_odd_names() {
     let libs = parse_libraries(&qsettings_bytes(&b));
     let got: Vec<_> = libs.iter().map(|l| (l.name.as_str(), l.path.to_str().unwrap())).collect();
     assert_eq!(got, [("Manga", "/data/manga"), ("Comics \"US\"", "/data/Comics (US)"), ("本", "/data/日本語/本")]);
+    assert!(libs.iter().all(|l| l.id == Some(7)), "the viewer's --libraryId");
 }
 
 #[test]
@@ -389,7 +390,7 @@ fn reads_the_old_library_list() {
     b.extend(1i32.to_be_bytes());
     b.extend(qstring("/old/manga"));
     let libs = parse_libraries(&qsettings_bytes(&b));
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/old/manga") }]);
+    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/old/manga"), id: Some(1) }]);
 }
 
 #[test]

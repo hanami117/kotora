@@ -12,6 +12,7 @@
 pub mod name;
 pub mod openfile;
 pub mod reading;
+pub mod resume;
 pub mod yacreader;
 
 /// Whether a chapter counts as read.

@@ -17,6 +17,7 @@ fn item(id: u32, title: &str, en: Option<&str>, chapters: u32, total: Option<u32
 fn read_of(file: &str) -> Read {
     let parsed = name::parse_path(file);
     let o = Opened {
+        id: 1,
         rel_path: format!("/{file}"),
         path: PathBuf::from("/lib").join(file),
         parsed,
