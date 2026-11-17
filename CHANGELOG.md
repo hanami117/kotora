@@ -76,6 +76,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   so too (`kot export FILE` still writes the anime list; `--manga` the manga list).
 
 ### Fixed
+- If Kotora stops by itself, the reason is now kept in `~/.local/state/kotora/crash.log` (Linux and macOS):
+  started hidden or at login, with no terminal, the message was lost.
 - Settings in a wide window scrolls again when a section is taller than the window: the import, mirror and
   volume previews that open under their rows were cut at the window's bottom with no way to reach them. A
   preview now scrolls into view when it opens, and a button that is off still looks like a button.
