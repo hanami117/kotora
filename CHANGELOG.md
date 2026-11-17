@@ -4,6 +4,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Linux and Windows:** Ctrl Q quits Kotora, even from the tray, also while you type in a search box. (macOS has ⌘Q.)
+
 ## [0.4.0] - 2026-11-17
 
 Kotora now notices the manga you read in your own comic files and asks to mark the chapter, as it does for an

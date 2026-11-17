@@ -94,15 +94,31 @@ pub(crate) fn page_key(s: &State, k: &rune::KeyEvent, tx: &Tx) -> Option<kotora_
 /// For a text field's `on_input_key`: the page keys go to their page instead of typing (Alt+1
 /// would type "1" on Linux, Option+1 "¡" on macOS). Plain digits still type.
 pub(crate) fn field_page_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    if quit_key(k) {
+        quit(s, tx);
+        return true;
+    }
     let Some(st) = page_key(s, k, tx) else { return false };
     tx.blur();
     go_to(s, s.list_page(st), tx);
     true
 }
 
+/// Ctrl+Q alone quits on Linux and Windows (macOS has ⌘Q in its menu). Not Ctrl+Shift+Q or Alt.
+pub(crate) fn quit_key(k: &rune::KeyEvent) -> bool {
+    !cfg!(target_os = "macos") && k.is_command('q') && k.mods.ctrl && !k.mods.shift && !k.mods.alt
+}
+
+/// Really quits, never to the tray: the page left open is kept first.
+fn quit(s: &mut State, tx: &mut Tx) {
+    crate::tray::before_quit(s);
+    tx.quit();
+}
+
 /// Ctrl K (Cmd K on macOS) opens the search page from anywhere, as does Ctrl F off the list
 /// pages; on a list page Ctrl F jumps to its filter box. Escape closes the inline editor, a
-/// menu, the details page or the search page. Ctrl , (Cmd , on macOS) opens Settings and Ctrl 1 to 5
+/// menu, the details page or the search page. Ctrl Q quits on Linux and Windows (⌘Q's menu item on
+/// macOS). Ctrl , (Cmd , on macOS) opens Settings and Ctrl 1 to 5
 /// (Alt 1 to 5 if Settings says so: `page_key`) open Watching, Plan to Watch, Completed, On Hold
 /// and Dropped, as the Go menu does on macOS.
 pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
@@ -116,6 +132,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         && let Some(used) = crate::settings::on_key(s, k, tx)
     {
         return used;
+    }
+    if quit_key(k) {
+        quit(s, tx);
+        return true;
     }
     if k.is_command(',') {
         go_to(s, Page::Settings, tx);
@@ -2609,6 +2629,22 @@ mod tests {
         let mut tx = rune::Tx::default();
         assert!(super::on_key(&mut s, &chord(','), &mut tx));
         assert_eq!(s.page, crate::model::Page::Settings);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn ctrl_q_quits_but_not_with_shift_or_alt() {
+        let mut s = crate::model::State::fake();
+        let mut tx = rune::Tx::default();
+        for mods in [rune::Mods { ctrl: true, shift: true, ..Default::default() }, rune::Mods { ctrl: true, alt: true, ..Default::default() }] {
+            let k = rune::KeyEvent { key: rune::Key::Command('q'), mods };
+            assert!(!super::quit_key(&k), "{k:?}");
+            assert!(!super::field_page_key(&mut s, &k, &mut tx), "{k:?}");
+        }
+        assert!(!super::on_key(&mut s, &chord('w'), &mut tx));
+        assert!(super::quit_key(&chord('q')));
+        assert!(super::on_key(&mut s, &chord('q'), &mut tx), "Ctrl Q quits");
+        assert!(super::field_page_key(&mut s, &chord('q'), &mut tx), "also in a text field");
     }
 
     #[test]

@@ -521,7 +521,7 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> Option<bool> {
 /// What the list page keys do, with the chosen modifier, and that the others stay.
 fn page_keys_note(keys: config::PageKeys) -> String {
     let (first, last) = (keys.hint('1'), keys.hint('5'));
-    let fixed = if cfg!(target_os = "macos") { "\u{2318} , for Settings, \u{2318} K and \u{2318} F" } else { "Ctrl , for Settings, Ctrl K and Ctrl F" };
+    let fixed = if cfg!(target_os = "macos") { "\u{2318} , for Settings, \u{2318} K and \u{2318} F" } else { "Ctrl , for Settings, Ctrl K, Ctrl F and Ctrl Q (quit)" };
     format!("{first} to {last} open Watching, Plan to watch, Completed, On hold and Dropped, also while you type in a search box. {fixed} stay as they are.")
 }
 

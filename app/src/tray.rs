@@ -40,11 +40,14 @@ pub fn show_window(handle: &Handle) {
 
 /// Quit (the tray, `kot quit`): the page left open is kept first.
 pub fn quit(handle: &Handle) {
-    handle.update(|s: &mut State, _| {
-        s.remember_page();
-        crate::discord::shutdown();
-    });
+    handle.update(|s: &mut State, _| before_quit(s));
     handle.quit();
+}
+
+/// What a real quit does first, however it was asked (the tray, `kot quit`, Ctrl+Q).
+pub fn before_quit(s: &mut State) {
+    s.remember_page();
+    crate::discord::shutdown();
 }
 
 /// A tray Play next item was picked: play that anime's next episode (Settings' Open with).
