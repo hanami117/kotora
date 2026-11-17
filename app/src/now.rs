@@ -142,6 +142,8 @@ pub struct Prefs {
     pub iina_precise_answered: bool,
     /// Settings → Notifications (`[notifications]`).
     pub notify: kotora_core::config::Notifications,
+    /// Settings → Manga → Release data (`[release_data]`).
+    pub sources: kotora_core::mangaupdates::Sources,
     /// Settings → Titles (`[display] titles`).
     pub titles: kotora_core::config::TitleLang,
     /// Settings → Appearance (`[display] theme`).
@@ -167,7 +169,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), manga_views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), sources: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), manga_views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default() }
     }
 }
 
@@ -182,6 +184,7 @@ impl Prefs {
             precise_answered: c.notices.mpv_precise,
             iina_precise_answered: c.notices.iina_precise,
             notify: c.notifications.clone(),
+            sources: kotora_core::mangaupdates::Sources { mu: c.release_data.mangaupdates, md: c.release_data.mangadex },
             titles: c.display.titles,
             theme: c.display.theme,
             intro: c.display.intro,

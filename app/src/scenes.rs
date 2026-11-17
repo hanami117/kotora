@@ -241,10 +241,34 @@ pub const SCENES: &[Scene] = &[
         publishing(s);
         crate::publishing::fake_stale(s);
     }),
+    // MangaDex's official chapters in use (MangaUpdates frozen), with the source choice.
     ("publishing-stale-panel", |s| {
         publishing(s);
         crate::publishing::fake_stale(s);
+        s.publishing_toggle(102);
+    }),
+    // Read past every source: "ahead of release data".
+    ("publishing-ahead-panel", |s| {
+        publishing(s);
+        crate::publishing::fake_stale(s);
         s.publishing_toggle(101);
+    }),
+    ("manga-details-publishing-ahead", |s| {
+        manga_details(s, 1);
+        crate::publishing::fake_stale(s);
+        let e = s.manga.entries.iter().find(|e| e.id == 101).unwrap();
+        let stub = crate::manga::stub(e);
+        s.open_details(stub);
+    }),
+    // Settings → Manga → Release data.
+    ("settings-manga", |s| {
+        crate::manga::fake(s);
+        crate::settings::open(s, Section::Manga);
+    }),
+    ("settings-manga-one-source", |s| {
+        crate::manga::fake(s);
+        s.prefs.sources.md = false;
+        crate::settings::open(s, Section::Manga);
     }),
     // A row's panel: a guessed match, its releases, the link field.
     ("publishing-panel", |s| {

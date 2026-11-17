@@ -21,7 +21,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use kotora_core::airnotes::What;
-use kotora_core::mangaupdates::{self as mu, Cache, Confidence, Info, Key, ListRun, Matched, Pace};
+use kotora_core::mangadex;
+use kotora_core::mangaupdates::{self as mu, Cache, Confidence, Info, Key, ListRun, Matched, Pace, Source, Sources};
 use kotora_core::service::ServiceError;
 use kotora_core::store::Store;
 use kotora_core::time::Clock;
@@ -98,6 +99,10 @@ pub struct PRow {
     pub fresh: bool,
     pub hiatus: bool,
     pub finished: bool,
+    /// Read past every source's latest chapter: the sources are behind, not the user.
+    pub ahead: bool,
+    /// The source the numbers come from.
+    pub source: Option<Source>,
     pub error: Option<String>,
     next_key: i64,
     latest_key: i64,
@@ -128,6 +133,8 @@ pub struct Publishing {
     notify: Arc<AtomicBool>,
     /// The app is offline (forced or the network failed): the worker asks nothing.
     offline: Arc<AtomicBool>,
+    /// The sources turned on (bits: MangaUpdates 1, MangaDex 2), for the worker.
+    sources: Arc<std::sync::atomic::AtomicU8>,
     note_ids: Vec<(String, u32)>,
 }
 
@@ -147,12 +154,46 @@ impl Publishing {
 
 /// What the worker is asked.
 enum Cmd {
-    /// A pass: `force` asks MangaUpdates again for all; `only` one manga.
+    /// A pass: `force` asks the sources again for all; `only` one manga.
     Pass { force: bool, only: Option<u32> },
-    /// The user pasted a link for a manga.
-    Pick { media_id: u32, series: u64 },
-    /// Back to the search for a manga.
-    Unpick { media_id: u32 },
+    /// A change of a manga's series or source, from its panel.
+    Pick { media_id: u32, what: Pick },
+}
+
+/// What the panel changed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pick {
+    /// A pasted MangaUpdates series.
+    Mu(u64),
+    /// A pasted MangaDex series (its UUID).
+    Md(String),
+    /// Back to the search (MangaUpdates) or to the id link (MangaDex).
+    ResetMu,
+    ResetMd,
+    /// Auto, MangaUpdates or MangaDex for this manga (no request).
+    Source(Source),
+}
+
+impl Pick {
+    fn needs_network(&self) -> bool {
+        !matches!(self, Pick::Source(_))
+    }
+}
+
+/// Both sources and their caches (the worker's; tests pass recorded transports).
+pub struct Src<T: kotora_core::http::Transport, U: kotora_core::http::Transport> {
+    pub mu: mu::Client<T>,
+    pub mu_cache: Cache,
+    pub md: mangadex::Client<U>,
+    pub md_cache: Cache,
+}
+
+fn sources_bits(s: Sources) -> u8 {
+    u8::from(s.mu) | (u8::from(s.md) << 1)
+}
+
+fn sources_of(b: u8) -> Sources {
+    Sources { mu: b & 1 != 0, md: b & 2 != 0 }
 }
 
 /// What the worker answers.
@@ -177,6 +218,22 @@ impl State {
         self.publishing_send(Cmd::Pass { force: false, only: None });
     }
 
+    /// Settings → Manga → Release data: a source on or off (one always stays on).
+    pub fn set_release_source(&mut self, md: bool, on: bool) {
+        let mut s = self.prefs.sources;
+        if md { s.md = on } else { s.mu = on }
+        if !s.mu && !s.md {
+            return;
+        }
+        self.prefs.sources = s;
+        crate::detect::save_setting(self, "release_data", if md { "mangadex" } else { "mangaupdates" }, on.to_string());
+        self.publishing_rebuild();
+        // A source turned on: its data, for what is stale (only while Manga is on).
+        if on {
+            self.publishing_send(Cmd::Pass { force: false, only: None });
+        }
+    }
+
     /// `kot publishing`: a pass for what is stale (as opening the page).
     pub fn publishing_kick(&mut self) {
         self.publishing_send(Cmd::Pass { force: false, only: None });
@@ -194,7 +251,7 @@ impl State {
         let entries: Vec<crate::manga::MEntry> = self.manga.entries.iter().filter(|e| e.status == Status::Watching).cloned().collect();
         let info = entries.iter().filter_map(|e| self.publishing.info.get(&e.id).map(|i| (e.id, i.clone()))).collect();
         let now = self.clock();
-        CtlSnapshot { entries, info, sort: self.publishing.sort, now, today: self.publishing_today(now), offline: self.publishing_offline(), error: self.publishing.error.clone(), busy: self.publishing.busy.is_some() }
+        CtlSnapshot { entries, info, sort: self.publishing.sort, now, today: self.publishing_today(now), offline: self.publishing_offline(), error: self.publishing.error.clone(), busy: self.publishing.busy.is_some(), sources: self.prefs.sources }
     }
 }
 
@@ -208,29 +265,39 @@ pub struct CtlSnapshot {
     pub offline: bool,
     pub error: Option<String>,
     pub busy: bool,
+    pub sources: Sources,
 }
 
 /// `kot publishing`'s answer, off the UI thread: the saved files fill in what memory lacks
 /// (never a request), then the same rows and notice as the page. Returns the saved infos read,
 /// for the page.
-pub fn ctl_reply(mut snap: CtlSnapshot, cache: &Cache, store: Option<&Store>, svc: kotora_core::service::ServiceId) -> (Vec<kotora_ctl::PublishingItem>, Option<String>, Vec<(u32, Info)>) {
+pub fn ctl_reply(mut snap: CtlSnapshot, cache: &Cache, md_cache: &Cache, store: Option<&Store>, svc: kotora_core::service::ServiceId) -> (Vec<kotora_ctl::PublishingItem>, Option<String>, Vec<(u32, Info)>) {
     let mut read = Vec::new();
     for e in &snap.entries {
         if snap.info.contains_key(&e.id) {
             continue;
         }
         let key = Key { service: svc, media_id: e.id };
-        let i = mu::saved(cache, key, store.and_then(|st| mu::picked(st, key)));
-        if i.looked {
+        let i = match store {
+            Some(st) => mu::saved_all(cache, md_cache, st, key, snap.sources),
+            None => {
+                let mut i = if snap.sources.mu { mu::saved(cache, key, None) } else { Info::default() };
+                if snap.sources.md {
+                    i.md = mu::md_saved(md_cache, key, None);
+                }
+                i
+            }
+        };
+        if i.looked || i.md.looked {
             snap.info.insert(e.id, i.clone());
             read.push((e.id, i));
         }
     }
-    let checked = snap.info.values().filter_map(|i| i.fetched_at).max();
-    let rows = build_rows(&snap.entries, &snap.info, snap.sort, snap.now, snap.today);
+    let checked = snap.info.values().filter_map(Info::checked_at).max();
+    let rows = build_rows(&snap.entries, &snap.info, snap.sources, snap.sort, snap.now, snap.today);
     let items = ctl_items(&snap.entries, &rows);
     let note = notice(snap.offline, snap.error.as_deref(), checked, snap.now).or_else(|| {
-        (snap.busy || snap.info.values().all(|i| i.fetched_at.is_none())).then(|| "Kotora is checking MangaUpdates; run it again in a minute for the rest.".to_string())
+        (snap.busy || checked.is_none()).then(|| "Kotora is checking the release sources; run it again in a minute for the rest.".to_string())
     });
     (items, note.filter(|_| !snap.entries.is_empty()), read)
 }
@@ -290,6 +357,7 @@ impl State {
         let p = &mut self.publishing;
         p.notify.store(self.prefs.notify.new_chapter, Ordering::SeqCst);
         p.offline.store(self.offline || paths::offline_forced(), Ordering::SeqCst);
+        p.sources.store(sources_bits(self.prefs.sources), Ordering::SeqCst);
         let cmd = match &p.tx {
             Some(tx) => match tx.send(cmd) {
                 Ok(()) => return,
@@ -301,8 +369,8 @@ impl State {
         let (tx, rx) = mpsc::channel();
         let _ = tx.send(cmd);
         p.tx = Some(tx);
-        let (notify, offline) = (p.notify.clone(), p.offline.clone());
-        let _ = std::thread::Builder::new().name("kotora-publishing".into()).spawn(move || run(&h, &rx, &notify, &offline));
+        let (notify, offline, sources) = (p.notify.clone(), p.offline.clone(), p.sources.clone());
+        let _ = std::thread::Builder::new().name("kotora-publishing".into()).spawn(move || run(&h, &rx, &notify, &offline, &sources));
     }
 
     /// The worker's answer.
@@ -339,7 +407,8 @@ impl State {
                 match result {
                     Ok(info) => {
                         let title = info.matched.as_ref().map_or_else(String::new, |m| m.title.clone());
-                        p.link_note = Some((false, if title.is_empty() { "Back to the search.".into() } else { format!("Now matched with \u{201c}{title}\u{201d}.") }));
+                        let _ = title;
+                        p.link_note = Some((false, "Saved.".into()));
                         p.link = TextEdit::default();
                         p.info.insert(media_id, info);
                     }
@@ -347,7 +416,7 @@ impl State {
                 }
             }
         }
-        self.publishing.checked_at = self.publishing.info.values().filter_map(|i| i.fetched_at).max();
+        self.publishing.checked_at = self.publishing.info.values().filter_map(Info::checked_at).max();
         self.publishing_rebuild();
         self.page == Page::Publishing || self.page == Page::Details
     }
@@ -356,7 +425,7 @@ impl State {
     pub fn publishing_rebuild(&mut self) {
         let now = self.clock();
         let today = self.publishing_today(now);
-        self.publishing.rows = build_rows(&self.manga.entries, &self.publishing.info, self.publishing.sort, now, today);
+        self.publishing.rows = build_rows(&self.manga.entries, &self.publishing.info, self.prefs.sources, self.publishing.sort, now, today);
     }
 
     /// Offline: forced, or the app's last request found no network.
@@ -389,31 +458,55 @@ impl State {
         p.link_note = None;
     }
 
-    /// The panel's Use: the pasted link becomes the manga's series.
+    /// The panel's Use: the pasted link (MangaUpdates or MangaDex) becomes the manga's series.
     pub fn publishing_use_link(&mut self, media_id: u32) {
         let text = self.publishing.link.text.clone();
-        let Some(series) = mu::series_id_from_link(&text) else {
-            self.publishing.link_note = Some((true, "That isn\u{2019}t a MangaUpdates series link. Open the series on mangaupdates.com and copy the address (mangaupdates.com/series/\u{2026}).".into()));
+        let what = if let Some(id) = text.to_ascii_lowercase().contains("mangadex").then(|| mangadex::md_id_from_link(&text)).flatten() {
+            Pick::Md(id)
+        } else if let Some(series) = mu::series_id_from_link(&text) {
+            Pick::Mu(series)
+        } else {
+            self.publishing.link_note = Some((true, "That isn\u{2019}t a series link Kotora knows. Open the series on mangaupdates.com or mangadex.org and copy the address (mangaupdates.com/series/\u{2026} or mangadex.org/title/\u{2026}).".into()));
             return;
         };
-        if self.publishing_offline() {
-            self.publishing.link_note = Some((true, "Offline: the link is checked with MangaUpdates first; try again when online.".into()));
+        let off_source = match what {
+            Pick::Md(_) if !self.prefs.sources.md => Some("MangaDex"),
+            Pick::Mu(_) if !self.prefs.sources.mu => Some("MangaUpdates"),
+            _ => None,
+        };
+        if let Some(name) = off_source {
+            self.publishing.link_note = Some((true, format!("{name} is turned off in Settings \u{2192} Manga \u{2192} Release data.")));
             return;
         }
-        self.publishing.linking = true;
-        self.publishing.link_note = None;
-        self.publishing_send(Cmd::Pick { media_id, series });
+        self.publishing_pick(media_id, what);
     }
 
-    /// The panel's Reset: forget the picked series, search again.
+    /// The panel's Reset for MangaUpdates (search again) or MangaDex (back to the id link).
     pub fn publishing_unpick(&mut self, media_id: u32) {
-        if self.publishing_offline() {
-            self.publishing.link_note = Some((true, "Offline: Reset searches MangaUpdates again; try again when online.".into()));
+        self.publishing_pick(media_id, Pick::ResetMu);
+    }
+
+    pub fn publishing_unpick_md(&mut self, media_id: u32) {
+        self.publishing_pick(media_id, Pick::ResetMd);
+    }
+
+    /// The panel's source: Auto, MangaUpdates or MangaDex. Shown at once; saved by the worker.
+    pub fn publishing_source(&mut self, media_id: u32, s: Source) {
+        if let Some(i) = self.publishing.info.get_mut(&media_id) {
+            i.pref = s;
+        }
+        self.publishing_rebuild();
+        self.publishing_send(Cmd::Pick { media_id, what: Pick::Source(s) });
+    }
+
+    fn publishing_pick(&mut self, media_id: u32, what: Pick) {
+        if what.needs_network() && self.publishing_offline() {
+            self.publishing.link_note = Some((true, "Offline: links are checked with the source first; try again when online.".into()));
             return;
         }
-        self.publishing.linking = true;
+        self.publishing.linking = what.needs_network();
         self.publishing.link_note = None;
-        self.publishing_send(Cmd::Unpick { media_id });
+        self.publishing_send(Cmd::Pick { media_id, what });
     }
 
     /// Shows the due New chapter notifications, under the switch. Never visible in the window.
@@ -425,7 +518,8 @@ impl State {
                 continue;
             }
             let behind = n - e.chapters;
-            let body = if behind > 1 { format!("{behind} chapters to read. {}.", mu::CREDIT) } else { format!("{}.", mu::CREDIT) };
+            let credit = credit(self.prefs.sources);
+            let body = if behind > 1 { format!("{behind} chapters to read. {credit}.") } else { format!("{credit}.") };
             let note = Note { id: format!("kotora-m{id}-ch{n}"), kind: crate::notes::Kind::Chapter, summary: format!("New chapter of {}: {label}", e.title), body, tail: None };
             let ids = &mut self.publishing.note_ids;
             ids.retain(|(i, _)| *i != note.id);
@@ -466,14 +560,14 @@ impl State {
     pub fn publishing_fake(&mut self, info: Vec<(u32, Info)>) {
         self.publishing.info = info.into_iter().collect();
         self.publishing.tz = Some(0);
-        self.publishing.checked_at = self.publishing.info.values().filter_map(|i| i.fetched_at).max();
+        self.publishing.checked_at = self.publishing.info.values().filter_map(Info::checked_at).max();
         self.publishing_rebuild();
     }
 }
 
 /// The rows of the Reading manga in `entries`, sorted.
-pub fn build_rows(entries: &[crate::manga::MEntry], info: &HashMap<u32, Info>, sort: PSort, now: i64, today: i64) -> Vec<PRow> {
-    let mut rows: Vec<PRow> = entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, list_run(e), info.get(&e.id), now, today)).collect();
+pub fn build_rows(entries: &[crate::manga::MEntry], info: &HashMap<u32, Info>, on: Sources, sort: PSort, now: i64, today: i64) -> Vec<PRow> {
+    let mut rows: Vec<PRow> = entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, list_run(e), info.get(&e.id), on, now, today)).collect();
     let title = |id: u32| entries.iter().find(|e| e.id == id).map_or_else(String::new, |e| e.title.to_lowercase());
     match sort {
         PSort::Next => rows.sort_by_cached_key(|r| (r.next_key, title(r.id))),
@@ -490,8 +584,8 @@ pub fn build_rows(entries: &[crate::manga::MEntry], info: &HashMap<u32, Info>, s
 pub fn notice(offline: bool, error: Option<&str>, checked_at: Option<i64>, now: i64) -> Option<String> {
     if offline {
         return Some(match checked_at {
-            Some(at) => format!("Offline: MangaUpdates data from {}; can\u{2019}t refresh now.", ago_long(at, now)),
-            None => "Offline: release data comes from MangaUpdates.".into(),
+            Some(at) => format!("Offline: release data from {}; can\u{2019}t refresh now.", ago_long(at, now)),
+            None => "Offline: release data comes from MangaUpdates and MangaDex.".into(),
         });
     }
     let e = error?;
@@ -541,19 +635,42 @@ pub fn list_run(e: &crate::manga::MEntry) -> ListRun {
     }
 }
 
-fn row_of(id: u32, read: u32, list: ListRun, info: Option<&Info>, now: i64, today: i64) -> PRow {
-    let mut r = PRow { id, latest: String::new(), when: String::new(), behind: None, pace: String::new(), next: String::new(), look: Look::Pending, fresh: false, hiatus: false, finished: false, error: None, next_key: i64::MAX, latest_key: i64::MIN };
+fn row_of(id: u32, read: u32, list: ListRun, info: Option<&Info>, on: Sources, now: i64, today: i64) -> PRow {
+    let mut r = PRow { id, latest: String::new(), when: String::new(), behind: None, pace: String::new(), next: String::new(), look: Look::Pending, fresh: false, hiatus: false, finished: false, ahead: false, source: None, error: None, next_key: i64::MAX, latest_key: i64::MIN };
     let Some(info) = info else { return r };
     r.error = info.error.clone();
-    let Some(m) = &info.matched else {
-        r.look = if info.looked { Look::NotFound } else { Look::Pending };
+    if !info.found(on) {
+        r.look = if info.not_found(on) { Look::NotFound } else { Look::Pending };
         return r;
-    };
-    let Some(s) = info.summary(now, list) else {
+    }
+    let Some((s, used)) = info.best(now, list, on) else {
         r.look = Look::NoReleases;
         return r;
     };
-    r.look = Look::Found(m.confidence);
+    r.source = Some(used);
+    r.look = match (used, &info.matched) {
+        (Source::MangaUpdates, Some(m)) => Look::Found(m.confidence),
+        // MangaDex: linked by the list's id, or picked.
+        _ => Look::Found(if info.md.picked { Confidence::Picked } else { Confidence::Sure }),
+    };
+    // Read past what every source knows (a series groups stopped and no source follows):
+    // say so, never "caught up" on an old chapter.
+    if s.latest_no.is_some_and(|n| f64::from(read) > n.floor()) {
+        r.ahead = true;
+        r.latest = format!("Read {read}");
+        r.when = "ahead of release data".into();
+        r.finished = s.run == mu::Run::Finished;
+        r.hiatus = s.run == mu::Run::Hiatus;
+        r.pace = match s.run {
+            mu::Run::Finished => "Finished".into(),
+            mu::Run::Hiatus => "On hiatus".into(),
+            mu::Run::Ongoing => "Ongoing".into(),
+        };
+        if s.run == mu::Run::Ongoing {
+            r.next = "release dates not tracked".into();
+        }
+        return r;
+    }
     if let Some(l) = &s.latest {
         r.latest = mu::chapter_label(l);
     } else if let Some(v) = &s.volume_only {
@@ -598,9 +715,8 @@ fn timer_pass(notify: bool, online: bool) -> bool {
     notify && online
 }
 
-fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool, offline: &AtomicBool) {
-    let cache = Cache::default_dir();
-    let mut client = mu::Client::online();
+fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool, offline: &AtomicBool, sources: &std::sync::atomic::AtomicU8) {
+    let mut src = Src { mu: mu::Client::online(), mu_cache: Cache::default_dir(), md: mangadex::Client::online(), md_cache: Cache::mangadex_dir() };
     loop {
         let cmd = if notify.load(Ordering::SeqCst) {
             match rx.recv_timeout(EVERY) {
@@ -623,6 +739,7 @@ fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool, offlin
         }
         let Ok(store) = Store::open(&paths::db_file()) else { continue };
         let svc = crate::account::active();
+        let on = sources_of(sources.load(Ordering::SeqCst));
         let mut pass: Option<(bool, Option<u32>)> = None;
         for c in cmds {
             match c {
@@ -632,23 +749,15 @@ fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool, offlin
                         Some((f, o)) => (f || force, if o.is_none() || only.is_none() { None } else { o.or(only) }),
                     });
                 }
-                Cmd::Pick { media_id, .. } | Cmd::Unpick { media_id } if !online(offline) => {
-                    let result = Err("Offline: try again when online.".to_string());
-                    h.update_if(move |s, _| s.publishing_answer(Answer::Picked { media_id, result }));
-                }
-                Cmd::Pick { media_id, series } => {
-                    let result = pick(&mut client, &cache, &store, Key { service: svc, media_id }, Some(series));
-                    h.update_if(move |s, _| s.publishing_answer(Answer::Picked { media_id, result }));
-                }
-                Cmd::Unpick { media_id } => {
-                    let result = pick(&mut client, &cache, &store, Key { service: svc, media_id }, None);
+                Cmd::Pick { media_id, what } => {
+                    let result = if what.needs_network() && !online(offline) { Err("Offline: try again when online.".to_string()) } else { pick(&mut src, &store, Key { service: svc, media_id }, what, on) };
                     h.update_if(move |s, _| s.publishing_answer(Answer::Picked { media_id, result }));
                 }
             }
         }
         if let Some((force, only)) = pass {
             let send = |a: Answer| h.update_if(move |s, _| s.publishing_answer(a));
-            one_pass(&mut client, &cache, &store, svc, force, only, kotora_core::time::now_unix, online(offline), &send);
+            one_pass(&mut src, &store, svc, on, force, only, kotora_core::time::now_unix, online(offline), &send);
         }
     }
 }
@@ -661,29 +770,30 @@ fn reading(store: &Store, svc: kotora_core::service::ServiceId) -> Vec<ListItem>
 /// One pass (see the module): the saved files, then MangaUpdates for what is stale, then the
 /// chapters to announce (each marked announced, whatever the switch says).
 #[allow(clippy::too_many_arguments)]
-pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cache: &Cache, store: &Store, svc: kotora_core::service::ServiceId, force: bool, only: Option<u32>, now: fn() -> i64, online: bool, send: &dyn Fn(Answer)) {
+pub fn one_pass<T: kotora_core::http::Transport, U: kotora_core::http::Transport>(src: &mut Src<T, U>, store: &Store, svc: kotora_core::service::ServiceId, on: Sources, force: bool, only: Option<u32>, now: fn() -> i64, online: bool, send: &dyn Fn(Answer)) {
     let items: Vec<ListItem> = reading(store, svc).into_iter().filter(|it| only.is_none_or(|id| it.media.id == id)).collect();
     let key = |it: &ListItem| Key { service: svc, media_id: it.media.id };
-    let mut infos: HashMap<u32, Info> = items.iter().map(|it| (it.media.id, mu::saved(cache, key(it), mu::picked(store, key(it))))).collect();
+    let mut infos: HashMap<u32, Info> = items.iter().map(|it| (it.media.id, mu::saved_all(&src.mu_cache, &src.md_cache, store, key(it), on))).collect();
     send(Answer::Saved(infos.iter().map(|(k, v)| (*k, v.clone())).collect()));
     let mut error = None;
     if online {
         let t = now();
-        let todo: Vec<&ListItem> = items.iter().filter(|it| force || mu::stale(cache, key(it), mu::picked(store, key(it)).as_ref(), t)).collect();
+        let todo: Vec<&ListItem> = items.iter().filter(|it| force || mu::stale_all(&src.mu_cache, &src.md_cache, store, key(it), on, t)).collect();
         if !todo.is_empty() {
             send(Answer::Started(todo.len()));
         }
         for (i, it) in todo.iter().enumerate() {
             let id = it.media.id;
-            match mu::fetch(client, cache, key(it), mu::picked(store, key(it)), &it.media, now(), force) {
+            match mu::fetch_all((&mut src.mu, &src.mu_cache), (&mut src.md, &src.md_cache), store, key(it), &it.media, on, now(), force) {
                 Ok(info) => {
                     infos.insert(id, info.clone());
                     send(Answer::One { media_id: id, info, done: i + 1, of: todo.len() });
                 }
                 Err(e @ (ServiceError::Offline(_) | ServiceError::RateLimited)) => {
                     error = Some(match e {
-                        ServiceError::RateLimited => "MangaUpdates asked Kotora to slow down; the rest comes on the next refresh.".to_string(),
-                        _ => "Can\u{2019}t reach MangaUpdates.".to_string(),
+                        ServiceError::RateLimited => "A release source asked Kotora to slow down; the rest comes on the next refresh.".to_string(),
+                        ServiceError::Offline(m) => format!("{}.", m.split(':').next().unwrap_or("Can\u{2019}t reach the release sources").replace("can\u{2019}t", "Can\u{2019}t")),
+                        _ => String::new(),
                     });
                     break;
                 }
@@ -700,7 +810,7 @@ pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cac
     let t = now();
     let mut dues = Vec::new();
     for it in items.iter().filter(|_| online) {
-        let Some(s) = infos.get(&it.media.id).and_then(|i| i.summary(t, ListRun::from_word(&it.media.air_status))) else { continue };
+        let Some((s, _)) = infos.get(&it.media.id).and_then(|i| i.best(t, ListRun::from_word(&it.media.air_status), on)) else { continue };
         if let Some(n) = mu::new_chapter(&s, it.progress, t)
             && store.announce_once(svc.name(), it.media.id, What::Chapter(n), t).unwrap_or(false)
         {
@@ -712,21 +822,33 @@ pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cac
 
 /// A pasted series (checked with MangaUpdates, then its releases), or (`None`) back to the
 /// search. Saves the choice.
-fn pick<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cache: &Cache, store: &Store, key: Key, series: Option<u64>) -> Result<Info, String> {
+fn pick<T: kotora_core::http::Transport, U: kotora_core::http::Transport>(src: &mut Src<T, U>, store: &Store, key: Key, what: Pick, on: Sources) -> Result<Info, String> {
     let item = store.load_item(Scope::new(key.service.name(), Kind::Manga), key.media_id).ok().flatten().ok_or("That manga isn\u{2019}t on your list any more.")?;
     let now = kotora_core::time::now_unix();
-    let picked = match series {
-        Some(id) => {
-            let (id, title, _) = client.series(id).map_err(|e| match e {
+    let save = |r: kotora_core::store::Result<()>| r.map_err(|e| e.to_string());
+    match what {
+        Pick::Mu(id) => {
+            let (id, title, _) = src.mu.series(id).map_err(|e| match e {
                 ServiceError::Other(m) if m.contains("no such") => "MangaUpdates has no series with that link.".to_string(),
                 e => crate::online::error_text(e),
             })?;
-            Some(Matched { id, title, confidence: Confidence::Picked })
+            save(mu::set_picked(store, key, Some(&Matched { id, title, confidence: Confidence::Picked })))?;
         }
-        None => None,
-    };
-    mu::set_picked(store, key, picked.as_ref()).map_err(|e| e.to_string())?;
-    mu::fetch(client, cache, key, picked, &item.media, now, true).map_err(crate::online::error_text)
+        Pick::Md(id) => {
+            let (id, title) = src.md.title_of(&id).map_err(|e| match e {
+                ServiceError::Other(m) if m.contains("no such") => "MangaDex has no series with that link.".to_string(),
+                e => crate::online::error_text(e),
+            })?;
+            save(mu::set_md_picked(store, key, Some((&id, &title))))?;
+        }
+        Pick::ResetMu => save(mu::set_picked(store, key, None))?,
+        Pick::ResetMd => save(mu::set_md_picked(store, key, None))?,
+        Pick::Source(s) => {
+            save(mu::set_source_pref(store, key, s))?;
+            return Ok(mu::saved_all(&src.mu_cache, &src.md_cache, store, key, on));
+        }
+    }
+    mu::fetch_all((&mut src.mu, &src.mu_cache), (&mut src.md, &src.md_cache), store, key, &item.media, on, now, true).map_err(crate::online::error_text)
 }
 
 // -------------------------------------------------------------------------------------- view
@@ -784,12 +906,21 @@ fn sort_chips(s: &State) -> El {
 }
 
 /// Under the rows: the credit and what the dates are.
-fn footer() -> El {
+/// "Release data: MangaUpdates, MangaDex" (the sources turned on).
+pub fn credit(on: Sources) -> String {
+    match (on.mu, on.md) {
+        (true, true) => "Release data: MangaUpdates, MangaDex".into(),
+        (false, true) => "Release data: MangaDex".into(),
+        _ => mu::CREDIT.into(),
+    }
+}
+
+fn footer(on: Sources) -> El {
     col().key("pub/footer").w_full().child(el().w_full().h(1.0).fill(PAL.border)).child(
         row()
             .px(theme::PAGE_PAD)
             .py(8.0)
-            .child(text(format!("{} \u{b7} Next dates are estimates from past releases, not announcements.", mu::CREDIT)).key("pub/credit").font(theme::SMALL).color(PAL.faint).truncate()),
+            .child(text(format!("{} \u{b7} Next dates are estimates from past releases, not announcements.", credit(on))).key("pub/credit").font(theme::SMALL).color(PAL.faint).truncate()),
     )
 }
 
@@ -857,7 +988,7 @@ pub fn page(s: &State) -> El {
             ),
         ),
     )
-    .child(footer())
+    .child(footer(s.prefs.sources))
 }
 
 fn latest_cell(r: &PRow, offline: bool) -> El {
@@ -868,6 +999,9 @@ fn latest_cell(r: &PRow, offline: bool) -> El {
             _ => "\u{2013}",
         };
         return text(t).font(theme::LABEL).color(PAL.faint);
+    }
+    if r.ahead {
+        return col().gap(1.0).child(text(r.latest.clone()).font(theme::NUM_MED).color(PAL.text).truncate()).child(text(r.when.clone()).key("ahead").font(theme::SMALL).color(PAL.warn()));
     }
     col()
         .gap(1.0)
@@ -985,6 +1119,38 @@ fn panel(s: &State, id: u32) -> El {
     col().key("pub/panel").w_full().px(theme::PAGE_PAD).pl(theme::PAGE_PAD + 48.0).pt(4.0).pb(14.0).gap(10.0).fill(PAL.surface).child(match_block(s, id, true))
 }
 
+/// The MangaDex series: linked by the list's id (never a title guess), or picked.
+fn md_line(info: Option<&Info>, id: u32, wide: bool) -> El {
+    let md = info.map(|i| &i.md);
+    match md.and_then(|m| m.id.clone().map(|x| (x, m))) {
+        Some((mid, m)) => {
+            let url = mangadex::md_url(&mid);
+            let how = if m.picked { "Your pick" } else { "Linked by its MyAnimeList/AniList id" };
+            let open = text("Open on MangaDex \u{2197}")
+                .key("pub/open-md")
+                .role("link")
+                .label("Open on MangaDex")
+                .focusable(true)
+                .font(theme::LABEL_BTN)
+                .color(PAL.accent_hi)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut State| crate::online::open_url(s, url.clone()));
+            let name = text(if m.title.is_empty() { "(untitled)".to_string() } else { m.title.clone() }).font(theme::BODY_MED).color(PAL.text);
+            let mut r = if wide {
+                row().gap(8.0).center_y().child(text("MangaDex:").font(theme::LABEL).color(PAL.faint)).child(name).child(text("\u{b7}").font(theme::LABEL).color(PAL.faint)).child(text(how).font(theme::LABEL).color(PAL.dim)).child(el().w(6.0)).child(open)
+            } else {
+                row().child(col().gap(3.0).child(text("ON MANGADEX").font(theme::CAPTION).color(PAL.faint)).child(name.wrap()).child(text(how).font(theme::LABEL).color(PAL.dim)).child(open))
+            };
+            if m.picked {
+                r = r.child(action(format!("pub/reset-md/{id}"), "Reset", false, move |s: &mut State, _| s.publishing_unpick_md(id)));
+            }
+            r
+        }
+        None if md.is_some_and(|m| m.looked) => col().key("pub/md-none").w_full().child(text("No MangaDex series links to this manga\u{2019}s MyAnimeList/AniList id. Paste its mangadex.org link below if it\u{2019}s there.").font(theme::LABEL).color(PAL.dim).wrap()),
+        None => col().w_full().child(text("MangaDex: not looked up yet.").font(theme::LABEL).color(PAL.dim)),
+    }
+}
+
 /// The series matched, its releases, and the link field. `wide`: releases in one line.
 fn match_block(s: &State, id: u32, wide: bool) -> El {
     let p = &s.publishing;
@@ -1017,15 +1183,66 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
                 row().child(col().gap(3.0).child(text("ON MANGAUPDATES").font(theme::CAPTION).color(PAL.faint)).child(name.wrap()).child(how).child(open))
             }
         }
-        (None, true) => row().child(text("No MangaUpdates series has this title. Paste its link below if it\u{2019}s there under another name.").font(theme::LABEL).color(PAL.dim).wrap()),
+        (None, true) => col().w_full().child(text("No MangaUpdates series has this title. Paste its link below if it\u{2019}s there under another name.").font(theme::LABEL).color(PAL.dim).wrap()),
         (None, false) => row().child(text("Not looked up yet.").font(theme::LABEL).color(PAL.dim)),
     };
-    c = c.child(what);
+    let on = s.prefs.sources;
+    if on.mu {
+        c = c.child(what);
+    }
+    if on.md {
+        c = c.child(md_line(info, id, wide));
+    }
     let list = s.manga.entries.iter().find(|e| e.id == id).map_or(ListRun::Unknown, list_run);
+    // Which source the numbers come from, and the choice.
+    if let Some(i) = info {
+        let used = i.best(now, list, on).map(|b| b.1);
+        let mut chips = row().key("pub/source").gap(6.0).center_y().flex_wrap().child(text("Source").font(theme::LABEL).color(PAL.faint).pr(2.0));
+        for src in Source::ALL.into_iter().filter(|x| match x {
+            Source::MangaUpdates => on.mu,
+            Source::MangaDex => on.md,
+            Source::Auto => on.mu && on.md,
+        }) {
+            let sel = i.pref == src;
+            let chip = row()
+                .key(format!("pub/source/{}", src.word()))
+                .role("button")
+                .label(format!("Use {}", src.label()))
+                .checked(sel)
+                .focusable(true)
+                .h(24.0)
+                .px(9.0)
+                .center_y()
+                .radius(12.0)
+                .hover(PAL.hover())
+                .press(PAL.press())
+                .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                    tx.instant();
+                    s.publishing_source(id, src);
+                })
+                .child(text(src.label()).font(theme::LABEL).color(if sel { PAL.accent_hi } else { PAL.dim }));
+            chips = chips.child(if sel { chip.fill(PAL.accent.alpha(0.14)) } else { chip.border(1.0, PAL.border) });
+        }
+        if let Some(u) = used {
+            let ext = if u == Source::MangaDex && i.md.external { " (an official release it links to)" } else { "" };
+            chips = chips.child(text(format!("Showing {}{ext}", u.label())).key("pub/source-used").font(theme::LABEL).color(PAL.dim).pl(4.0));
+        }
+        c = c.child(chips);
+    }
+    if let Some(r) = s.publishing.rows.iter().find(|r| r.id == id).filter(|r| r.ahead) {
+        let _ = r;
+        c = c.child(
+            text("You\u{2019}ve read past the latest chapter the release sources list (often an official release they don\u{2019}t follow), so there is nothing to count or estimate.")
+                .key("pub/ahead")
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap(),
+        );
+    }
     if let Some(status) = info.and_then(|i| i.series.as_ref()).map(|x| x.status.clone()).filter(|t| !t.is_empty()) {
         c = c.child(text(format!("Status on MangaUpdates: {status}")).key("pub/mu-status").font(theme::LABEL).color(PAL.dim).wrap());
     }
-    if let Some(sum) = info.and_then(|i| i.summary(now, list)) {
+    if let Some(sum) = info.and_then(|i| i.best(now, list, on)).map(|b| b.0) {
         if sum.from_record && sum.stale && sum.run == mu::Run::Ongoing {
             c = c.child(
                 text("The latest chapter is from MangaUpdates\u{2019} series record. Its release list stopped (often when an official release starts), so there are no dates to estimate from.")
@@ -1069,7 +1286,7 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(crate::ui::field_hint(&p.link, "mangaupdates.com/series/\u{2026}"), PAL.faint)
+                .placeholder(crate::ui::field_hint(&p.link, "mangaupdates.com/series/\u{2026} or mangadex.org/title/\u{2026}"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.publishing.link)
                 .on_submit(move |s: &mut State, tx: &mut Tx| {
                     tx.blur();
@@ -1085,7 +1302,7 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
             fix = fix.child(action(format!("pub/reset/{id}"), "Reset", false, move |s: &mut State, _| s.publishing_unpick(id)));
         }
     }
-    let label = if matched.is_some() { "Wrong series? Paste the right MangaUpdates link:" } else { "Paste a MangaUpdates link:" };
+    let label = "Wrong or missing series? Paste its MangaUpdates or MangaDex link:";
     c = c.child(col().gap(4.0).child(text(label).font(theme::LABEL).color(PAL.dim)).child(fix));
     if let Some((failed, t)) = &p.link_note {
         c = c.child(text(t.clone()).key("pub/link-note").font(theme::LABEL).color(if *failed { PAL.err() } else { PAL.ok() }).wrap());
@@ -1101,11 +1318,11 @@ pub fn details_card(s: &State, id: u32) -> Option<El> {
         return None;
     }
     let now = s.clock();
-    let r = row_of(id, e.chapters, list_run(e), info, now, s.publishing_today(now));
+    let r = row_of(id, e.chapters, list_run(e), info, s.prefs.sources, now, s.publishing_today(now));
     let mut c = crate::ui::card("det-publishing", "Publishing");
     let kv = |k: &str, v: El| crate::ui::kv(k, v);
     let looking = r.look == Look::Pending && !s.publishing_offline();
-    let latest = if r.latest.is_empty() { text(if looking { "Looking\u{2026}" } else { "\u{2013}" }).font(theme::LABEL_NUM).color(PAL.dim) } else { text(format!("{} \u{b7} {}", r.latest, r.when)).font(theme::LABEL_NUM).color(PAL.text) };
+    let latest = if r.latest.is_empty() { text(if looking { "Looking\u{2026}" } else { "\u{2013}" }).font(theme::LABEL_NUM).color(PAL.dim) } else { text(format!("{} \u{b7} {}", r.latest, r.when)).font(theme::LABEL_NUM).color(PAL.text).wrap() };
     let behind = match r.behind {
         Some(0) => "Caught up".to_string(),
         Some(n) => format!("{n} to read"),
@@ -1117,7 +1334,7 @@ pub fn details_card(s: &State, id: u32) -> Option<El> {
         c = c.child(text(n).key("det-publishing/notice").font(theme::LABEL).color(fg).wrap().pb(4.0));
     }
     c = c
-        .child(col().pt(4.0).child(kv("Latest", latest)).child(kv("To read", text(behind).font(theme::LABEL_NUM).color(PAL.text))).child(kv("Next (estimate)", text(next).font(theme::LABEL_NUM).color(PAL.text))))
+        .child(col().pt(4.0).child(kv("Latest", latest)).child(kv("To read", text(behind).font(theme::LABEL_NUM).color(PAL.text))).child(kv("Next (estimate)", text(next).font(theme::LABEL_NUM).color(PAL.text).wrap())))
         .child(el().h(6.0))
         .child(match_block(s, id, false))
         .child(text(format!("{}. Next dates are estimates from past releases.", mu::CREDIT)).font(theme::SMALL).color(PAL.faint).wrap().pt(8.0));
@@ -1133,7 +1350,8 @@ pub fn fake_info() -> Vec<(u32, Info)> {
     let rel = |ch: &str, days_ago: i64| mu::Release { chapter: ch.into(), volume: None, day: today - days_ago * DAY, added: today - days_ago * DAY + 9 * 3600 };
     let weekly = |last: u32, ago: i64, n: u32| (0..n).map(|k| rel(&(last - k).to_string(), ago + 7 * i64::from(k))).collect::<Vec<_>>();
     let m = |id: u64, title: &str, c: Confidence| Some(Matched { id, title: title.into(), confidence: c });
-    let info = |matched, releases| Info { matched, looked: true, releases, series: None, fetched_at: Some(now - 40 * 60), error: None };
+    let none_md = mu::MdSide { looked: true, ..mu::MdSide::default() };
+    let info = |matched, releases| Info { matched, looked: true, releases, series: None, fetched_at: Some(now - 40 * 60), error: None, md: none_md.clone(), ..Info::default() };
     vec![
         // Inkwell Cartographers: read 119, weekly, 121 out yesterday.
         (1, info(m(81_000_000_001, "Inkwell Cartographers", Confidence::Sure), weekly(121, 1, 12))),
@@ -1146,7 +1364,7 @@ pub fn fake_info() -> Vec<(u32, Info)> {
         // Night Shift Alchemist (a light novel): volumes only.
         (6, info(m(81_000_000_006, "Night Shift Alchemist", Confidence::Sure), [(9, 20), (8, 140), (7, 262)].iter().map(|(v, d)| mu::Release { chapter: String::new(), volume: Some(v.to_string()), day: today - d * DAY, added: 0 }).collect())),
         // Kumo Atelier: no series found.
-        (7, Info { matched: None, looked: true, releases: Vec::new(), series: None, fetched_at: None, error: None }),
+        (7, Info { matched: None, looked: true, releases: Vec::new(), series: None, fetched_at: None, error: None, md: none_md.clone(), ..Info::default() }),
     ]
 }
 
@@ -1159,29 +1377,35 @@ pub fn fake_stale(s: &mut State) {
     let now = crate::model::FAKE_NOW;
     let today = now.div_euclid(DAY) * DAY;
     #[allow(clippy::type_complexity)]
-    let rows: [(u32, &str, &str, u32, (u32, i64, u32), Option<(u32, &str, bool)>); 9] = [
-        // Simulpub: groups stopped two years ago at 272; the record says 368.
-        (101, "Goal Line Furnace", "currently_publishing", 368, (272, 730, 10), Some((368, "33 Volumes (Ongoing)", false))),
-        (102, "Scrapyard Saints", "currently_publishing", 170, (86, 700, 10), Some((174, "15 Volumes (Ongoing)", false))),
-        // Monthly, official English since last year.
-        (103, "Crimson Harvest", "currently_publishing", 85, (85, 400, 6), Some((97, "15 Volumes (Ongoing)", false))),
-        (104, "Witch Hat Sketchbook", "currently_publishing", 68, (68, 1100, 8), Some((80, "14 Volumes (Ongoing)", false))),
-        (105, "Firefly Bride", "currently_publishing", 15, (15, 1100, 6), Some((33, "6 Volumes (Ongoing)", false))),
+    let rows: [(u32, &str, &str, u32, (u32, i64, u32), Option<(u32, &str, bool)>, Option<(u32, i64, u32)>); 9] = [
+        // Kodansha-style simulpub: groups stopped at 272 two years ago, MangaUpdates' record too,
+        // and MangaDex doesn't carry it: read 362, ahead of every source.
+        (101, "Goal Line Furnace", "currently_publishing", 362, (272, 730, 10), Some((272, "33 Volumes (Ongoing)", false)), None),
+        // MANGA Plus-style: MangaDex links the official weekly chapters (to 174); MangaUpdates stopped.
+        (102, "Scrapyard Saints", "currently_publishing", 170, (86, 700, 10), Some((86, "15 Volumes (Ongoing)", false)), Some((174, 6, 10))),
+        // MangaUpdates' record ahead of its releases, nothing on MangaDex.
+        (103, "Crimson Harvest", "currently_publishing", 85, (85, 400, 6), Some((97, "15 Volumes (Ongoing)", false)), None),
+        (104, "Witch Hat Sketchbook", "currently_publishing", 68, (68, 1100, 8), Some((80, "14 Volumes (Ongoing)", false)), None),
+        (105, "Firefly Bride", "currently_publishing", 15, (15, 1100, 6), Some((33, "6 Volumes (Ongoing)", false)), None),
         // Finished: MangaUpdates says Complete; the list says finished.
-        (106, "The Lone Ridge", "currently_publishing", 170, (170, 5100, 4), Some((170, "17 Volumes (Complete)", true))),
-        (107, "Cursed Modulo", "finished", 25, (25, 240, 8), Some((25, "3 Volumes (Ongoing)", false))),
+        (106, "The Lone Ridge", "currently_publishing", 170, (170, 5100, 4), Some((170, "17 Volumes (Complete)", true)), None),
+        (107, "Cursed Modulo", "finished", 25, (25, 240, 8), Some((25, "3 Volumes (Ongoing)", false)), None),
         // A real hiatus (status), and a normal weekly series.
-        (108, "Lantern Cartel", "currently_publishing", 140, (140, 300, 8), Some((140, "16 Volumes (Hiatus)", false))),
-        (109, "Harbor Relay", "currently_publishing", 55, (57, 2, 10), Some((57, "6 Volumes (Ongoing)", false))),
+        (108, "Lantern Cartel", "currently_publishing", 140, (140, 300, 8), Some((140, "16 Volumes (Hiatus)", false)), None),
+        (109, "Harbor Relay", "currently_publishing", 55, (57, 2, 10), Some((57, "6 Volumes (Ongoing)", false)), None),
     ];
     let lang = s.prefs.titles;
-    for (id, title, run, read, (last, ago, n), rec) in rows {
+    let weekly = |last: u32, ago: i64, n: u32| (0..n).map(|k| mu::Release { chapter: (last - k).to_string(), volume: None, day: today - (ago + 7 * i64::from(k)) * DAY, added: 0 }).collect::<Vec<_>>();
+    for (id, title, run, read, (last, ago, n), rec, md) in rows {
         let it = ListItem { media: Media { kind: Kind::Manga, id, title: title.into(), format: "manga".into(), air_status: run.into(), ..Default::default() }, status: Status::Watching, progress: read, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: now - DAY };
         s.manga.entries.push(crate::manga::MEntry::from_item(&it, lang));
-        let releases = (0..n).map(|k| mu::Release { chapter: (last - k).to_string(), volume: None, day: today - (ago + 7 * i64::from(k)) * DAY, added: 0 }).collect();
         let series = rec.map(|(c, st, done)| mu::Series { latest_chapter: Some(c), status: st.into(), completed: done, last_updated: now - 2 * DAY, went_up_at: 0 });
         let m = Some(Matched { id: 70_000_000_000 + u64::from(id), title: title.into(), confidence: Confidence::Sure });
-        s.publishing.info.insert(id, Info { matched: m, looked: true, releases, series, fetched_at: Some(now - 40 * 60), error: None });
+        let md = match md {
+            Some((l, a, k)) => mu::MdSide { id: Some(format!("{id:08x}-0000-4000-8000-000000000000")), title: title.into(), looked: true, releases: weekly(l, a, k).into_iter().map(|r| mu::Release { added: r.day + 15 * 3600, ..r }).collect(), fetched_at: Some(now - 40 * 60), external: true, ..mu::MdSide::default() },
+            None => mu::MdSide { looked: true, ..mu::MdSide::default() },
+        };
+        s.publishing.info.insert(id, Info { matched: m, looked: true, releases: weekly(last, ago, n), series, fetched_at: Some(now - 40 * 60), md, ..Info::default() });
     }
     s.manga.entries.retain(|e| e.id > 100 || e.status != Status::Watching);
     s.publishing.tz = Some(0);
@@ -1259,7 +1483,7 @@ mod tests {
         s.publishing_toggle(2);
         s.publishing.link = TextEdit::new("https://example.com/series/abc");
         s.publishing_use_link(2);
-        assert!(s.publishing.link_note.as_ref().is_some_and(|(f, t)| *f && t.contains("isn\u{2019}t a MangaUpdates series link")));
+        assert!(s.publishing.link_note.as_ref().is_some_and(|(f, t)| *f && t.contains("isn\u{2019}t a series link Kotora knows")));
         assert!(!s.publishing.linking);
         assert!(s.publishing.tx.is_none(), "headless: no worker");
     }
@@ -1275,7 +1499,7 @@ mod tests {
         let n: Vec<Note> = s.notes.log.iter().filter_map(|x| if let crate::notes::Sent::Show(n) = x { Some(n.clone()) } else { None }).collect();
         assert_eq!(n.len(), 1, "read already, and not Reading: nothing");
         assert_eq!(n[0].summary, "New chapter of Inkwell Cartographers: Ch 121");
-        assert_eq!(n[0].body, "2 chapters to read. Release data: MangaUpdates.");
+        assert_eq!(n[0].body, "2 chapters to read. Release data: MangaUpdates, MangaDex.");
         assert_eq!(n[0].kind, crate::notes::Kind::Chapter);
         // A click opens the manga's page.
         assert!(s.note_action(&n[0].id, Act::Open));
@@ -1296,12 +1520,12 @@ mod tests {
     #[test]
     fn the_offline_notice_matches_the_airing_page() {
         let now = 1_800_000_000;
-        assert_eq!(notice(true, None, Some(now - 3 * 3600), now).as_deref(), Some("Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now."));
-        assert_eq!(notice(true, None, Some(now - 3600), now).as_deref(), Some("Offline: MangaUpdates data from 1 hour ago; can\u{2019}t refresh now."));
-        assert_eq!(notice(true, None, Some(now - 600), now).as_deref(), Some("Offline: MangaUpdates data from less than an hour ago; can\u{2019}t refresh now."));
-        assert_eq!(notice(true, None, Some(now - 2 * DAY), now).as_deref(), Some("Offline: MangaUpdates data from 2 days ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 3 * 3600), now).as_deref(), Some("Offline: release data from 3 hours ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 3600), now).as_deref(), Some("Offline: release data from 1 hour ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 600), now).as_deref(), Some("Offline: release data from less than an hour ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 2 * DAY), now).as_deref(), Some("Offline: release data from 2 days ago; can\u{2019}t refresh now."));
         // Offline wins over a refresh's error.
-        assert_eq!(notice(true, Some("Can\u{2019}t reach MangaUpdates."), None, now).as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        assert_eq!(notice(true, Some("Can\u{2019}t reach MangaUpdates."), None, now).as_deref(), Some("Offline: release data comes from MangaUpdates and MangaDex."));
         assert_eq!(notice(false, Some("Can\u{2019}t reach MangaUpdates."), Some(now), now).as_deref(), Some("Can\u{2019}t reach MangaUpdates. Showing the saved releases."));
         assert_eq!(notice(false, Some("Can\u{2019}t reach MangaUpdates."), None, now).as_deref(), Some("Can\u{2019}t reach MangaUpdates."));
         assert_eq!(notice(false, None, Some(now), now), None);
@@ -1317,7 +1541,7 @@ mod tests {
         }
         s.offline = true;
         s.publishing.checked_at = Some(s.clock() - 3 * 3600);
-        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now."));
+        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: release data from 3 hours ago; can\u{2019}t refresh now."));
         assert_eq!(row(&s, 1).latest, "Ch 121", "the saved data shows");
         // No link check offline.
         s.publishing_toggle(2);
@@ -1332,7 +1556,7 @@ mod tests {
         crate::manga::fake(&mut s);
         s.offline = true;
         s.publishing_fake(Vec::new());
-        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: release data comes from MangaUpdates and MangaDex."));
         assert!(!s.publishing.rows.is_empty(), "the Reading manga still list");
         // The details card has the same words.
         let mut s = page();
@@ -1345,6 +1569,9 @@ mod tests {
             assert_eq!(s.publishing_notice().as_deref(), Some("Can\u{2019}t reach MangaUpdates. Showing the saved releases."));
         }
     }
+
+    /// MangaUpdates only (the older tests; MangaDex has its own).
+    const MU_ONLY: Sources = Sources { mu: true, md: false };
 
     /// A transport that counts requests and has no answers (any request fails).
     struct Never(std::rc::Rc<std::cell::Cell<usize>>);
@@ -1389,24 +1616,24 @@ mod tests {
         }
         let (cache, store, dir) = saved_scratch("offline", at());
         let asked = std::rc::Rc::new(std::cell::Cell::new(0));
-        let mut client = mu::Client::without_sleep(Never(asked.clone()));
+        let mut src = Src { mu: mu::Client::without_sleep(Never(asked.clone())), mu_cache: cache, md: mangadex::Client::without_sleep(Never(asked.clone())), md_cache: Cache::new(dir.join("md")) };
         let got = std::cell::RefCell::new(Vec::new());
         let send = |a: Answer| got.borrow_mut().push(label(a));
         let svc = kotora_core::service::ServiceId::Mal;
         // Offline, even forced: the saved data at once, no request, no notification.
-        one_pass(&mut client, &cache, &store, svc, true, None, at, false, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, true, None, at, false, &send);
         assert_eq!(*got.borrow(), ["saved 1", "done None []"]);
         assert_eq!(asked.get(), 0);
         // Back online (the data is fresh): still no request, and now the chapter is announced, once.
         got.borrow_mut().clear();
-        one_pass(&mut client, &cache, &store, svc, false, None, at, true, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, false, None, at, true, &send);
         assert_eq!(*got.borrow(), ["saved 1", "done None [(2, 65, \"Ch 65\")]"]);
         assert_eq!(asked.get(), 0);
         // A refresh online that fails: the error, the saved data kept.
         got.borrow_mut().clear();
-        one_pass(&mut client, &cache, &store, svc, true, None, at, true, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, true, None, at, true, &send);
         assert_eq!(*got.borrow(), ["saved 1", "started 1", "done Some(\"Can\u{2019}t reach MangaUpdates.\") []"]);
-        assert_eq!(mu::saved(&cache, Key { service: svc, media_id: 2 }, None).releases.len(), 4, "the saved releases stay");
+        assert_eq!(mu::saved(&src.mu_cache, Key { service: svc, media_id: 2 }, None).releases.len(), 4, "the saved releases stay");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1420,20 +1647,20 @@ mod tests {
         s.offline = true;
         // Nothing in memory yet: kot fills in from the saved files (no request is possible here).
         let snap = s.ctl_publishing_snapshot();
-        let (items, note, read) = ctl_reply(snap, &cache, Some(&store), kotora_core::service::ServiceId::Mal);
+        let (items, note, read) = ctl_reply(snap, &cache, &Cache::new(dir.join("md")), Some(&store), kotora_core::service::ServiceId::Mal);
         assert_eq!(read.len(), 1, "Salt & Gears was saved");
         let salt = items.iter().find(|i| i.title == "Salt & Gears").unwrap();
         assert_eq!((salt.latest.as_str(), salt.behind), ("Ch 65", Some(1)));
-        assert_eq!(note.as_deref(), Some("Offline: MangaUpdates data from less than an hour ago; can\u{2019}t refresh now."));
+        assert_eq!(note.as_deref(), Some("Offline: release data from less than an hour ago; can\u{2019}t refresh now."));
         // The page gets what kot read.
         s.publishing_answer(Answer::Saved(read));
         assert!(s.publishing.info.contains_key(&2));
         // Nothing saved at all, offline.
         let empty = Cache::new(dir.join("none"));
-        let (items, note, read) = ctl_reply(State::fake_publishing_offline_snapshot(), &empty, None, kotora_core::service::ServiceId::Mal);
+        let (items, note, read) = ctl_reply(State::fake_publishing_offline_snapshot(), &empty, &empty, None, kotora_core::service::ServiceId::Mal);
         assert!(read.is_empty());
         assert!(!items.is_empty(), "the Reading manga still list");
-        assert_eq!(note.as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        assert_eq!(note.as_deref(), Some("Offline: release data comes from MangaUpdates and MangaDex."));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1460,11 +1687,16 @@ mod tests {
         fake_stale(&mut s);
         let items = s.ctl_publishing();
         let get = |t: &str| items.iter().find(|i| i.title == t).cloned().unwrap();
-        // Simulpub: the record's chapter, no date, no estimate, never "hiatus".
+        // Ahead of every source (Kodansha-style): never "caught up" on chapter 272.
         let g = get("Goal Line Furnace");
-        assert_eq!((g.latest.as_str(), g.when.as_str(), g.behind), ("Ch 368", "date not tracked", Some(0)));
+        assert_eq!((g.latest.as_str(), g.when.as_str(), g.behind), ("Read 362", "ahead of release data", None));
         assert_eq!((g.pace.as_str(), g.next.as_str()), ("Ongoing", "release dates not tracked"));
-        assert_eq!(get("Scrapyard Saints").behind, Some(4));
+        let row = s.publishing.rows.iter().find(|r| r.id == 101).unwrap();
+        assert!(row.ahead && !row.latest.contains("272"));
+        // MangaDex's official chapters beat MangaUpdates' frozen history.
+        let sc = get("Scrapyard Saints");
+        assert_eq!((sc.latest.as_str(), sc.behind, sc.pace.as_str()), ("Ch 174", Some(4), "Weekly"));
+        assert_eq!(s.publishing.rows.iter().find(|r| r.id == 102).unwrap().source, Some(Source::MangaDex));
         assert_eq!((get("Crimson Harvest").latest.as_str(), get("Crimson Harvest").behind), ("Ch 97", Some(12)));
         assert_eq!(get("Witch Hat Sketchbook").pace, "Ongoing");
         // Finished, by MangaUpdates' status or by the list's.
@@ -1478,11 +1710,47 @@ mod tests {
         assert!(h.next.starts_with("next ~"), "{}", h.next);
         // No row says hiatus but the one whose status says so.
         assert_eq!(items.iter().filter(|i| i.pace == "On hiatus").count(), 1);
-        // The weekly sorts first (the only estimate); untracked, finished and hiatus after.
-        assert_eq!(items[0].title, "Harbor Relay");
+        // The weeklies sort first (the only estimates); untracked, finished and hiatus after.
+        assert_eq!(items[0].title, "Scrapyard Saints");
+        assert_eq!(items[1].title, "Harbor Relay");
+        // MangaDex off: Scrapyard Saints falls back to MangaUpdates, and is ahead of it.
+        s.prefs.sources = Sources { mu: true, md: false };
+        s.publishing_rebuild();
+        let sc = s.ctl_publishing().into_iter().find(|i| i.title == "Scrapyard Saints").unwrap();
+        assert_eq!((sc.latest.as_str(), sc.when.as_str()), ("Read 170", "ahead of release data"));
+        s.prefs.sources = Sources::default();
+        s.publishing_rebuild();
         for i in &items {
             println!("kot| {:<22} {:<8} {:<18} {:<11} {}{}", i.title, i.latest, i.when, i.behind.map_or(String::new(), |b| if b == 0 { "caught up".into() } else { format!("{b} to read") }), i.pace, if i.next.is_empty() { String::new() } else { format!(", {}", i.next) });
         }
+    }
+
+    #[test]
+    fn release_sources_one_always_stays_on_and_links_go_to_their_source() {
+        let mut s = page();
+        assert_eq!(s.prefs.sources, Sources::default());
+        s.set_release_source(true, false);
+        assert_eq!(s.prefs.sources, Sources { mu: true, md: false });
+        s.set_release_source(false, false);
+        assert_eq!(s.prefs.sources, Sources { mu: true, md: false }, "the last source on stays on");
+        assert_eq!(credit(s.prefs.sources), "Release data: MangaUpdates");
+        // A MangaDex link while MangaDex is off: said, nothing asked.
+        s.publishing_toggle(2);
+        s.publishing.link = TextEdit::new("https://mangadex.org/title/eeeeeeee-0000-4000-8000-000000000005/x");
+        s.publishing_use_link(2);
+        assert!(s.publishing.link_note.as_ref().is_some_and(|(f, t)| *f && t.starts_with("MangaDex is turned off")));
+        s.set_release_source(true, true);
+        s.set_release_source(false, false);
+        assert_eq!(s.prefs.sources, Sources { mu: false, md: true });
+        assert_eq!(credit(s.prefs.sources), "Release data: MangaDex");
+        // A MangaUpdates link now: turned off too.
+        s.publishing.link = TextEdit::new("https://www.mangaupdates.com/series/pb8uwds/x");
+        s.publishing_use_link(2);
+        assert!(s.publishing.link_note.as_ref().is_some_and(|(_, t)| t.starts_with("MangaUpdates is turned off")));
+        // The source choice shows at once.
+        s.set_release_source(false, true);
+        s.publishing_source(2, Source::MangaDex);
+        assert_eq!(s.publishing.info.get(&2).map(|i| i.pref), Some(Source::MangaDex));
     }
 
     #[test]
@@ -1523,7 +1791,8 @@ mod tests {
         let search = r#"{"results":[{"record":{"series_id":5,"title":"Salt & Gears","type":"Manhwa","year":""},"hit_title":"Salt & Gears"}]}"#;
         let rel = |ch: u32, d: i64| format!(r#"{{"record":{{"chapter":"{ch}","release_date":"{}","time_added":{{"timestamp":{}}}}}}}"#, date(now - d * DAY), now - d * DAY);
         let releases = format!(r#"{{"results":[{},{},{},{}]}}"#, rel(65, 0), rel(64, 7), rel(63, 14), rel(62, 21));
-        let mut client = mu::Client::without_sleep(Rec(RefCell::new(Vec::new()), RefCell::new([search.to_string(), releases, r#"{"series_id":5,"title":"Salt & Gears","latest_chapter":65,"status":"8 Volumes (Ongoing)"}"#.to_string()].into())));
+        let client = mu::Client::without_sleep(Rec(RefCell::new(Vec::new()), RefCell::new([search.to_string(), releases, r#"{"series_id":5,"title":"Salt & Gears","latest_chapter":65,"status":"8 Volumes (Ongoing)"}"#.to_string()].into())));
+        let mut src = Src { mu: client, mu_cache: cache, md: mangadex::Client::without_sleep(Never(std::rc::Rc::default())), md_cache: Cache::new(dir.join("md")) };
         let got = RefCell::new(Vec::new());
         let send = |a: Answer| {
             got.borrow_mut().push(match a {
@@ -1537,15 +1806,15 @@ mod tests {
         fn at() -> i64 {
             1_794_916_800 + 60
         }
-        one_pass(&mut client, &cache, &store, svc, false, None, at, true, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, false, None, at, true, &send);
         assert_eq!(*got.borrow(), ["saved 1", "started 1", "one 2", "done None [(2, 65, \"Ch 65\")]"]);
         // Again: nothing asked (fresh), nothing announced twice.
         got.borrow_mut().clear();
-        one_pass(&mut client, &cache, &store, svc, false, None, at, true, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, false, None, at, true, &send);
         assert_eq!(*got.borrow(), ["saved 1", "done None []"]);
         // Offline: the saved files only.
         got.borrow_mut().clear();
-        one_pass(&mut client, &cache, &store, svc, true, None, at, false, &send);
+        one_pass(&mut src, &store, svc, MU_ONLY, true, None, at, false, &send);
         assert_eq!(*got.borrow(), ["saved 1", "done None []"]);
         let _ = std::fs::remove_dir_all(&dir);
 

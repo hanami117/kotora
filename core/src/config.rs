@@ -40,6 +40,10 @@
 //! new_episode = true           # the next episode of a Watching show is out (estimated)
 //! new_chapter = false          # a new chapter of a Reading manga (MangaUpdates; Manga on)
 //!
+//! [release_data]               # Publishing's sources (Manga on); at least one stays on
+//! mangaupdates = true
+//! mangadex = true
+//!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
 //!
@@ -96,6 +100,21 @@ pub struct Config {
     pub library: Library,
     pub app: AppSection,
     pub keys: Keys,
+    pub release_data: ReleaseData,
+}
+
+/// `[release_data]`: Publishing's release sources (both on by default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ReleaseData {
+    pub mangaupdates: bool,
+    pub mangadex: bool,
+}
+
+impl Default for ReleaseData {
+    fn default() -> Self {
+        ReleaseData { mangaupdates: true, mangadex: true }
+    }
 }
 
 /// Kotora itself (`[app]`). Not `[updates]`, which is about the list.
@@ -595,6 +614,8 @@ struct File {
     app: AppSection,
     #[serde(default)]
     keys: Keys,
+    #[serde(default)]
+    release_data: ReleaseData,
 }
 
 #[derive(Deserialize, Default)]
@@ -632,6 +653,8 @@ impl Config {
             library: f.library,
             app: f.app,
             keys: f.keys,
+            // Both off is not a choice: MangaUpdates comes back on.
+            release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
         })
     }
 

@@ -131,7 +131,8 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                     // The saved files fill in what the window hasn't read yet (this thread, no request).
                     let store = kotora_core::store::Store::open(&kotora_core::paths::db_file()).ok();
                     let cache = kotora_core::mangaupdates::Cache::default_dir();
-                    let (items, note, read) = crate::publishing::ctl_reply(snap, &cache, store.as_ref(), crate::account::active());
+                    let md_cache = kotora_core::mangaupdates::Cache::mangadex_dir();
+                    let (items, note, read) = crate::publishing::ctl_reply(snap, &cache, &md_cache, store.as_ref(), crate::account::active());
                     if !read.is_empty() {
                         handle.update_if(move |s, _| s.publishing_answer(crate::publishing::Answer::Saved(read)));
                     }

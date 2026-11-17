@@ -31,11 +31,12 @@ pub enum Section {
     Detection,
     Library,
     Notifications,
+    Manga,
     About,
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [Section::General, Section::Appearance, Section::Account, Section::Detection, Section::Library, Section::Notifications, Section::About];
+    pub const ALL: [Section; 8] = [Section::General, Section::Appearance, Section::Account, Section::Detection, Section::Library, Section::Notifications, Section::Manga, Section::About];
 
     /// The `config.toml` value, also the end of the section's keys.
     pub fn key(self) -> &'static str {
@@ -46,6 +47,7 @@ impl Section {
             Section::Detection => "detection",
             Section::Library => "library",
             Section::Notifications => "notifications",
+            Section::Manga => "manga",
             Section::About => "about",
         }
     }
@@ -62,6 +64,7 @@ impl Section {
             Section::Detection => "Detection",
             Section::Library => "Library",
             Section::Notifications => "Notifications",
+            Section::Manga => "Manga",
             Section::About => "About",
         }
     }
@@ -74,6 +77,7 @@ impl Section {
             Section::Detection => &icons::EYE,
             Section::Library => &icons::FOLDER,
             Section::Notifications => &icons::BELL,
+            Section::Manga => &icons::BOOK,
             Section::About => &icons::INFO,
         }
     }
@@ -101,6 +105,7 @@ impl Section {
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
                 (Some("Manga"), vec![Row::NotifyChapter]),
             ],
+            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
         }
     }
@@ -150,6 +155,8 @@ pub enum Row {
     NotifyStarted,
     NotifyEpisode,
     NotifyChapter,
+    ReleaseMu,
+    ReleaseMd,
     About,
     Licences,
     Links,
@@ -192,6 +199,8 @@ impl Row {
             Row::NotifyStarted => "notify-started",
             Row::NotifyEpisode => "notify-episode",
             Row::NotifyChapter => "notify-chapter",
+            Row::ReleaseMu => "release-mu",
+            Row::ReleaseMd => "release-md",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -247,6 +256,8 @@ const SPECS: &[Spec] = &[
     spec(Row::NotifyOffer, Section::Notifications, "Update offered", "Update to 6? with Update and Not now.", "notification notifications alert popup offer ask"),
     spec(Row::NotifyRecorded, Section::Notifications, "Episode recorded", "Recorded, with Undo.", "notification notifications alert popup recorded undo"),
     spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
+    spec(Row::ReleaseMu, Section::Manga, "MangaUpdates", "Release data for Publishing from MangaUpdates.", "manga release data source sources mangaupdates publishing chapters latest"),
+    spec(Row::ReleaseMd, Section::Manga, "MangaDex", "Release data for Publishing from MangaDex, official chapters included.", "manga release data source sources mangadex publishing chapters latest official manga plus"),
     spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
@@ -994,9 +1005,20 @@ fn row_el(s: &State, r: Row) -> El {
             };
             line("New chapter", note, crate::ui::switch_if("set/notify-chapter".into(), "New chapter", p.notify.new_chapter, s.manga.enabled, |s, v| s.set_notify(crate::notes::Kind::Chapter, v)))
         }
+        Row::ReleaseMu | Row::ReleaseMd => {
+            let md = r == Row::ReleaseMd;
+            let (on, other) = if md { (p.sources.md, p.sources.mu) } else { (p.sources.mu, p.sources.md) };
+            let (title, note, key) = if md {
+                ("MangaDex", "Chapters MangaDex lists, official ones included (MANGA Plus and other publishers it links to). Found only by your list\u{2019}s MyAnimeList/AniList id. Credit: MangaDex.", "set/release-md")
+            } else {
+                ("MangaUpdates", "Scanlation and official English releases as groups report them, and each series\u{2019} status. Found by title (check the match on Publishing). Credit: MangaUpdates.", "set/release-mu")
+            };
+            // At least one stays on: the last one on can't be turned off.
+            line(title, note, crate::ui::switch_if(key.into(), title, on, other || !on, move |s, v| s.set_release_source(md, v)))
+        }
         Row::About => about(s),
         Row::Licences => col().key("set/licences").w_full().gap(3.0).py(12.0).child(text("Licences").font(theme::BODY_MED).color(PAL.text)).child(
-            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Volume data for \u{201c}Fill volumes from chapters\u{201d}: MangaDex. Release data for Publishing: MangaUpdates. Not affiliated with MyAnimeList, AniList, MangaDex or MangaUpdates.")
+            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Volume data for \u{201c}Fill volumes from chapters\u{201d}: MangaDex. Release data for Publishing: MangaUpdates and MangaDex. Not affiliated with MyAnimeList, AniList, MangaDex or MangaUpdates.")
                 .font(theme::LABEL)
                 .color(PAL.dim)
                 .wrap(),

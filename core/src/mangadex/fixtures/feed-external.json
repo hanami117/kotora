@@ -1,0 +1,423 @@
+{
+"result": "ok",
+"response": "collection",
+"data": [
+{
+"id": "f0000368-0000-4000-8000-000000000000",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "368",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/368en",
+"publishAt": "2026-11-10T15:00:00+00:00",
+"readableAt": "2026-11-10T15:00:00+00:00",
+"createdAt": "2026-11-10T15:00:00+00:00",
+"updatedAt": "2026-11-10T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000368-0000-4000-8000-000000000001",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "368",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/368es",
+"publishAt": "2026-11-10T15:05:00+00:00",
+"readableAt": "2026-11-10T15:05:00+00:00",
+"createdAt": "2026-11-10T15:05:00+00:00",
+"updatedAt": "2026-11-10T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000367-0000-4000-8000-000000000002",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "367",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/367en",
+"publishAt": "2026-11-03T15:00:00+00:00",
+"readableAt": "2026-11-03T15:00:00+00:00",
+"createdAt": "2026-11-03T15:00:00+00:00",
+"updatedAt": "2026-11-03T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000367-0000-4000-8000-000000000003",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "367",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/367es",
+"publishAt": "2026-11-03T15:05:00+00:00",
+"readableAt": "2026-11-03T15:05:00+00:00",
+"createdAt": "2026-11-03T15:05:00+00:00",
+"updatedAt": "2026-11-03T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000366-0000-4000-8000-000000000004",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "366",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/366en",
+"publishAt": "2026-10-27T15:00:00+00:00",
+"readableAt": "2026-10-27T15:00:00+00:00",
+"createdAt": "2026-10-27T15:00:00+00:00",
+"updatedAt": "2026-10-27T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000366-0000-4000-8000-000000000005",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "366",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/366es",
+"publishAt": "2026-10-27T15:05:00+00:00",
+"readableAt": "2026-10-27T15:05:00+00:00",
+"createdAt": "2026-10-27T15:05:00+00:00",
+"updatedAt": "2026-10-27T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000365-0000-4000-8000-000000000006",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "365",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/365en",
+"publishAt": "2026-10-20T15:00:00+00:00",
+"readableAt": "2026-10-20T15:00:00+00:00",
+"createdAt": "2026-10-20T15:00:00+00:00",
+"updatedAt": "2026-10-20T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000365-0000-4000-8000-000000000007",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "365",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/365es",
+"publishAt": "2026-10-20T15:05:00+00:00",
+"readableAt": "2026-10-20T15:05:00+00:00",
+"createdAt": "2026-10-20T15:05:00+00:00",
+"updatedAt": "2026-10-20T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000364-0000-4000-8000-000000000008",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "364",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/364en",
+"publishAt": "2026-10-13T15:00:00+00:00",
+"readableAt": "2026-10-13T15:00:00+00:00",
+"createdAt": "2026-10-13T15:00:00+00:00",
+"updatedAt": "2026-10-13T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000364-0000-4000-8000-000000000009",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "364",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/364es",
+"publishAt": "2026-10-13T15:05:00+00:00",
+"readableAt": "2026-10-13T15:05:00+00:00",
+"createdAt": "2026-10-13T15:05:00+00:00",
+"updatedAt": "2026-10-13T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000363-0000-4000-8000-000000000010",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "363",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/363en",
+"publishAt": "2026-10-06T15:00:00+00:00",
+"readableAt": "2026-10-06T15:00:00+00:00",
+"createdAt": "2026-10-06T15:00:00+00:00",
+"updatedAt": "2026-10-06T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000363-0000-4000-8000-000000000011",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "363",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/363es",
+"publishAt": "2026-10-06T15:05:00+00:00",
+"readableAt": "2026-10-06T15:05:00+00:00",
+"createdAt": "2026-10-06T15:05:00+00:00",
+"updatedAt": "2026-10-06T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000362-0000-4000-8000-000000000012",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "362",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/362en",
+"publishAt": "2026-09-29T15:00:00+00:00",
+"readableAt": "2026-09-29T15:00:00+00:00",
+"createdAt": "2026-09-29T15:00:00+00:00",
+"updatedAt": "2026-09-29T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000362-0000-4000-8000-000000000013",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "362",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/362es",
+"publishAt": "2026-09-29T15:05:00+00:00",
+"readableAt": "2026-09-29T15:05:00+00:00",
+"createdAt": "2026-09-29T15:05:00+00:00",
+"updatedAt": "2026-09-29T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000361-0000-4000-8000-000000000014",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "361",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/361en",
+"publishAt": "2026-09-22T15:00:00+00:00",
+"readableAt": "2026-09-22T15:00:00+00:00",
+"createdAt": "2026-09-22T15:00:00+00:00",
+"updatedAt": "2026-09-22T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000361-0000-4000-8000-000000000015",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "361",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/361es",
+"publishAt": "2026-09-22T15:05:00+00:00",
+"readableAt": "2026-09-22T15:05:00+00:00",
+"createdAt": "2026-09-22T15:05:00+00:00",
+"updatedAt": "2026-09-22T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000360-0000-4000-8000-000000000016",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "360",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/360en",
+"publishAt": "2026-09-15T15:00:00+00:00",
+"readableAt": "2026-09-15T15:00:00+00:00",
+"createdAt": "2026-09-15T15:00:00+00:00",
+"updatedAt": "2026-09-15T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000360-0000-4000-8000-000000000017",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "360",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/360es",
+"publishAt": "2026-09-15T15:05:00+00:00",
+"readableAt": "2026-09-15T15:05:00+00:00",
+"createdAt": "2026-09-15T15:05:00+00:00",
+"updatedAt": "2026-09-15T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000359-0000-4000-8000-000000000018",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "359",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/359en",
+"publishAt": "2026-09-08T15:00:00+00:00",
+"readableAt": "2026-09-08T15:00:00+00:00",
+"createdAt": "2026-09-08T15:00:00+00:00",
+"updatedAt": "2026-09-08T15:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000359-0000-4000-8000-000000000019",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "359",
+"title": null,
+"translatedLanguage": "es",
+"externalUrl": "https://mangaplus.example.invalid/viewer/359es",
+"publishAt": "2026-09-08T15:05:00+00:00",
+"readableAt": "2026-09-08T15:05:00+00:00",
+"createdAt": "2026-09-08T15:05:00+00:00",
+"updatedAt": "2026-09-08T15:05:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000401-0000-4000-8000-000000000020",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "401",
+"title": null,
+"translatedLanguage": "xx",
+"externalUrl": "https://mangaplus.example.invalid/viewer/401xx",
+"publishAt": "2026-11-10T16:00:00+00:00",
+"readableAt": "2026-11-10T16:00:00+00:00",
+"createdAt": "2026-11-10T16:00:00+00:00",
+"updatedAt": "2026-11-10T16:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": false
+}
+},
+{
+"id": "f0000369-0000-4000-8000-000000000021",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": "369",
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": "https://mangaplus.example.invalid/viewer/369en",
+"publishAt": "2026-11-10T17:00:00+00:00",
+"readableAt": "2026-11-10T17:00:00+00:00",
+"createdAt": "2026-11-10T17:00:00+00:00",
+"updatedAt": "2026-11-10T17:00:00+00:00",
+"pages": 0,
+"version": 1,
+"isUnavailable": true
+}
+},
+{
+"id": "f0000000-0000-4000-8000-000000000022",
+"type": "chapter",
+"attributes": {
+"volume": null,
+"chapter": null,
+"title": null,
+"translatedLanguage": "en",
+"externalUrl": null,
+"publishAt": "2025-06-28T15:00:00+00:00",
+"readableAt": "2025-06-28T15:00:00+00:00",
+"createdAt": "2025-06-28T15:00:00+00:00",
+"updatedAt": "2025-06-28T15:00:00+00:00",
+"pages": 20,
+"version": 1,
+"isUnavailable": false
+}
+}
+],
+"limit": 100,
+"offset": 0,
+"total": 23
+}

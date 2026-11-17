@@ -206,3 +206,6 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
   when you use it, within its rate limit).
 - [MangaUpdates](https://www.mangaupdates.com/): release data for Publishing and New chapter notifications
   (its public API, only with Manga on, for Reading manga, cached, at most every 4 hours per series).
+- [MangaDex](https://mangadex.org/): release data for Publishing too, official chapters it links to included
+  (its public API; a series is used only when it links to your list's MyAnimeList or AniList id). Each source
+  can be turned off in Settings → Manga.

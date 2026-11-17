@@ -202,3 +202,64 @@ fn the_fill_goes_through_the_queue_with_undo() {
     assert_eq!(s.load_item(scope, 1).unwrap().unwrap().volumes, 0, "Undo: back as it was");
     assert_eq!(s.open_count("mal").unwrap(), 0);
 }
+
+// ------------------------------------------------------------- Publishing's chapter feed
+
+const FEED: &str = include_str!("fixtures/feed-external.json");
+const SEARCH_LINKED: &str = include_str!("fixtures/search-linked.json");
+const MANGA: &str = include_str!("fixtures/manga.json");
+
+#[test]
+fn the_feed_keeps_official_external_chapters_and_prefers_english() {
+    let f = parse_feed(FEED).unwrap();
+    assert_eq!(f.len(), 22, "the unavailable chapter is left out");
+    let odd = f.iter().find(|c| c.lang == "xx").unwrap();
+    assert_eq!((odd.chapter.as_str(), odd.external), ("401", true));
+    assert!(f.iter().any(|c| !c.external && c.chapter.is_empty()), "a fan upload with no chapter number");
+    // English chapters (enough of them): the odd-numbered language and others drop out.
+    let r = feed_releases(&f);
+    assert!(r.iter().all(|x| x.chapter != "401"));
+    assert_eq!(r.iter().filter_map(|x| x.chapter_no()).fold(0.0, f64::max), 368.0);
+    let s = crate::mangaupdates::summarize(&r, crate::time::parse_rfc3339("2026-11-17T12:00:00Z").unwrap());
+    assert_eq!((s.latest.as_deref(), s.cadence.pace), (Some("368"), crate::mangaupdates::Pace::Weekly));
+    assert_eq!(s.latest_at, crate::time::parse_rfc3339("2026-11-10T15:00:00Z"));
+    // Few English chapters: every language counts.
+    let es: Vec<FeedChapter> = f.iter().filter(|c| c.lang != "en").cloned().collect();
+    assert!(feed_releases(&es).iter().any(|x| x.chapter == "401"));
+    assert!(parse_feed("{}").is_err());
+}
+
+#[test]
+fn only_a_series_linking_to_the_id_is_taken() {
+    // Three hits with the title; only the one whose links.mal is 101 counts.
+    let mut c = client(vec![ok(SEARCH_LINKED)]);
+    let h = c.find_linked(Key::Mal(101), &["Goal Line Furnace".to_string()]).unwrap().unwrap();
+    assert_eq!(h.id, "eeeeeeee-0000-4000-8000-000000000005");
+    // No hit links to it: none, never the title match.
+    let mut c = client(vec![ok(SEARCH_LINKED), ok(SEARCH_LINKED)]);
+    assert_eq!(c.find_linked(Key::Mal(7), &["Goal Line Furnace".to_string(), "GLF".to_string()]).unwrap(), None);
+    // AniList ids work too.
+    let mut c = client(vec![ok(SEARCH_LINKED)]);
+    assert!(c.find_linked(Key::AniList(9101), &["Goal Line Furnace".to_string()]).unwrap().is_some());
+    // The feed request asks for external chapters and empty pages, newest readable first.
+    let mut c = client(vec![ok(FEED)]);
+    c.feed("eeeeeeee-0000-4000-8000-000000000005").unwrap();
+    let url = c.transport.seen.borrow()[0].clone();
+    assert!(url.starts_with("https://api.mangadex.org/manga/eeeeeeee-0000-4000-8000-000000000005/feed?"));
+    for p in ["includeExternalUrl=1", "includeEmptyPages=1", "order%5BreadableAt%5D=desc", "contentRating%5B%5D=pornographic"] {
+        assert!(url.contains(p), "{p}");
+    }
+    let mut c = client(vec![ok(MANGA)]);
+    assert_eq!(c.title_of("eeeeeeee-0000-4000-8000-000000000005").unwrap().1, "Goal Line Furnace");
+}
+
+#[test]
+fn mangadex_links() {
+    let id = "eeeeeeee-0000-4000-8000-000000000005";
+    assert_eq!(md_id_from_link(&format!("https://mangadex.org/title/{id}/goal-line-furnace")).as_deref(), Some(id));
+    assert_eq!(md_id_from_link(&format!("mangadex.org/title/{}", id.to_uppercase())).as_deref(), Some(id));
+    assert_eq!(md_id_from_link(id).as_deref(), Some(id));
+    assert_eq!(md_id_from_link("https://mangadex.org/chapter/abc"), None);
+    assert_eq!(md_id_from_link("https://www.mangaupdates.com/series/pb8uwds"), None);
+    assert_eq!(md_url(id), format!("https://mangadex.org/title/{id}"));
+}

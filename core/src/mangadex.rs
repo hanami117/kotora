@@ -244,6 +244,101 @@ impl<T: Transport> Client<T> {
     }
 }
 
+impl<T: Transport> Client<T> {
+    /// The series linking to `key` (its `links.mal` / `links.al`), searched by each of `titles`;
+    /// no title guessing: a series without the link is never taken.
+    pub fn find_linked(&mut self, key: Key, titles: &[String]) -> Result<Option<Hit>, ServiceError> {
+        let mut seen = std::collections::HashSet::new();
+        for t in titles.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).take(3) {
+            if !seen.insert(t.to_lowercase()) {
+                continue;
+            }
+            if let Some(h) = self.search(t)?.into_iter().find(|h| key.matches(&Links { mal: h.mal.map(|n| n.to_string()), al: h.al.map(|n| n.to_string()) })) {
+                return Ok(Some(h));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The newest chapters of series `md_id`, every language, external ones too (official
+    /// releases MangaDex links to, e.g. MANGA Plus), by the time they became readable.
+    pub fn feed(&mut self, md_id: &str) -> Result<Vec<FeedChapter>, ServiceError> {
+        let id: String = md_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let ratings = ["safe", "suggestive", "erotica", "pornographic"].iter().map(|r| format!("&contentRating%5B%5D={r}")).collect::<String>();
+        let url = format!("{API}/manga/{id}/feed?limit=100&order%5BreadableAt%5D=desc&includeExternalUrl=1&includeEmptyPages=1&includeFuturePublishAt=0{ratings}");
+        parse_feed(&self.get(url)?).map_err(ServiceError::Other)
+    }
+
+    /// Series `md_id`'s title (checks a pasted link).
+    pub fn title_of(&mut self, md_id: &str) -> Result<(String, String), ServiceError> {
+        let id: String = md_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let body = self.get(format!("{API}/manga/{id}"))?;
+        let v: Value = serde_json::from_str(&body).map_err(|e| ServiceError::Other(format!("can\u{2019}t read MangaDex\u{2019}s series: {e}")))?;
+        let data = v.get("data").ok_or_else(|| ServiceError::Other("MangaDex has no such series".into()))?;
+        let titles = data.get("attributes").and_then(|a| a.get("title")).and_then(Value::as_object);
+        let title = titles.and_then(|m| m.get("en").or_else(|| m.values().next())).and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((data.get("id").and_then(Value::as_str).unwrap_or(&id).to_string(), title))
+    }
+}
+
+/// One chapter of a series' feed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeedChapter {
+    /// As written ("74", "79.1"); empty for a volume-only entry.
+    pub chapter: String,
+    pub volume: Option<String>,
+    pub lang: String,
+    /// When it became readable (unix seconds).
+    pub at: i64,
+    /// An official release on another site (MANGA Plus, …): MangaDex only links to it.
+    pub external: bool,
+}
+
+/// `/manga/{id}/feed`'s answer. Chapters not readable yet or unavailable are left out.
+pub fn parse_feed(body: &str) -> Result<Vec<FeedChapter>, String> {
+    let v: Value = serde_json::from_str(body).map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s chapters: {e}"))?;
+    let Some(data) = v.get("data").and_then(Value::as_array) else { return Err("MangaDex\u{2019}s chapters answer has no data".into()) };
+    let s = |a: &Value, k: &str| a.get(k).and_then(Value::as_str).map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
+    Ok(data
+        .iter()
+        .filter_map(|c| {
+            let a = c.get("attributes")?;
+            if a.get("isUnavailable").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            let at = s(a, "readableAt").or_else(|| s(a, "publishAt")).and_then(|t| crate::time::parse_rfc3339(&t))?;
+            Some(FeedChapter { chapter: s(a, "chapter").unwrap_or_default(), volume: s(a, "volume"), lang: s(a, "translatedLanguage").unwrap_or_default(), at, external: s(a, "externalUrl").is_some() })
+        })
+        .collect())
+}
+
+/// The feed as releases for the estimate: English chapters when the feed has a few (other
+/// languages are often numbered or timed apart), every language otherwise.
+pub fn feed_releases(feed: &[FeedChapter]) -> Vec<crate::mangaupdates::Release> {
+    let en = feed.iter().filter(|c| c.lang == "en").count() >= 3;
+    feed.iter()
+        .filter(|c| !en || c.lang == "en")
+        .map(|c| crate::mangaupdates::Release { chapter: c.chapter.clone(), volume: c.volume.clone(), day: c.at.div_euclid(86_400) * 86_400, added: c.at })
+        .collect()
+}
+
+/// The series id (a UUID) in a pasted `mangadex.org/title/<uuid>/…` link, or a bare UUID.
+pub fn md_id_from_link(s: &str) -> Option<String> {
+    let s = s.trim().to_ascii_lowercase();
+    let rest = match s.split_once("mangadex.org/") {
+        Some((_, r)) => r.strip_prefix("title/").or_else(|| r.strip_prefix("manga/"))?,
+        None => s.as_str(),
+    };
+    let id: String = rest.chars().take_while(|c| c.is_ascii_hexdigit() || *c == '-').collect();
+    let parts: Vec<usize> = id.split('-').map(str::len).collect();
+    (parts == [8, 4, 4, 4, 12]).then_some(id)
+}
+
+/// A series' page on mangadex.org.
+pub fn md_url(id: &str) -> String {
+    format!("https://mangadex.org/title/{id}")
+}
+
 impl Client<crate::http::UreqTransport> {
     /// The real client (`User-Agent: Kotora/<version>`).
     pub fn online() -> Self {

@@ -901,12 +901,114 @@ pub struct Info {
     pub fetched_at: Option<i64>,
     /// The last lookup's failure, if it failed.
     pub error: Option<String>,
+    /// The same manga on MangaDex (the second source).
+    pub md: MdSide,
+    /// The user's choice of source for this manga.
+    pub pref: Source,
+}
+
+/// Which release data a manga uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+    /// Whichever has the higher latest chapter.
+    #[default]
+    Auto,
+    MangaUpdates,
+    MangaDex,
+}
+
+impl Source {
+    pub const ALL: [Source; 3] = [Source::Auto, Source::MangaUpdates, Source::MangaDex];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Source::Auto => "auto",
+            Source::MangaUpdates => "mu",
+            Source::MangaDex => "md",
+        }
+    }
+
+    pub fn from_word(s: &str) -> Source {
+        Source::ALL.into_iter().find(|x| x.word() == s.trim()).unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Source::Auto => "Auto",
+            Source::MangaUpdates => "MangaUpdates",
+            Source::MangaDex => "MangaDex",
+        }
+    }
+}
+
+/// The release sources turned on (Settings → Manga → Release data; at least one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sources {
+    pub mu: bool,
+    pub md: bool,
+}
+
+impl Default for Sources {
+    fn default() -> Self {
+        Sources { mu: true, md: true }
+    }
+}
+
+/// A manga's series on MangaDex: found only through its MyAnimeList / AniList link there (or
+/// picked by the user), never by title alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MdSide {
+    /// The series id (a UUID).
+    pub id: Option<String>,
+    pub title: String,
+    /// The user pasted its link.
+    pub picked: bool,
+    /// Searched at least once (`id` `None`: none links to this manga).
+    pub looked: bool,
+    pub releases: Vec<Release>,
+    pub fetched_at: Option<i64>,
+    /// Its newest chapter is an official external one (MANGA Plus, …).
+    pub external: bool,
 }
 
 impl Info {
-    /// `list`: the list's status of the manga (finished and hiatus come first from it).
+    /// The summary of the source in use ([`Info::best`], both sources on).
     pub fn summary(&self, now: i64, list: ListRun) -> Option<Summary> {
-        (self.matched.is_some() && self.fetched_at.is_some()).then(|| summarize_with(&self.releases, self.series.as_ref(), list, now))
+        self.best(now, list, Sources::default()).map(|b| b.0)
+    }
+
+    /// The summary of each source turned on and found, and the one used: the user's choice when
+    /// it has data, else the one with the higher latest chapter (a dated one wins a tie).
+    pub fn best(&self, now: i64, list: ListRun, on: Sources) -> Option<(Summary, Source)> {
+        let mu = (on.mu && self.matched.is_some() && self.fetched_at.is_some()).then(|| summarize_with(&self.releases, self.series.as_ref(), list, now));
+        let md = (on.md && self.md.id.is_some() && self.md.fetched_at.is_some()).then(|| summarize_with(&self.md.releases, None, list, now));
+        let rank = |s: &Summary| (s.latest_no.unwrap_or(-1.0), s.latest_at.is_some());
+        match (self.pref, mu, md) {
+            (Source::MangaUpdates, Some(a), _) => Some((a, Source::MangaUpdates)),
+            (Source::MangaDex, _, Some(b)) => Some((b, Source::MangaDex)),
+            (_, Some(a), Some(b)) => {
+                let (ra, rb) = (rank(&a), rank(&b));
+                if rb.0 > ra.0 || (rb.0 == ra.0 && rb.1 && !ra.1) { Some((b, Source::MangaDex)) } else { Some((a, Source::MangaUpdates)) }
+            }
+            (_, Some(a), None) => Some((a, Source::MangaUpdates)),
+            (_, None, Some(b)) => Some((b, Source::MangaDex)),
+            (_, None, None) => None,
+        }
+    }
+
+    /// When either source's releases were last read.
+    pub fn checked_at(&self) -> Option<i64> {
+        self.fetched_at.max(self.md.fetched_at)
+    }
+
+    /// Found on a source turned on.
+    pub fn found(&self, on: Sources) -> bool {
+        (on.mu && self.matched.is_some()) || (on.md && self.md.id.is_some())
+    }
+
+    /// Looked up on every source turned on, and found on none.
+    pub fn not_found(&self, on: Sources) -> bool {
+        !self.found(on) && (!on.mu || self.looked) && (!on.md || self.md.looked)
     }
 }
 
@@ -939,7 +1041,7 @@ pub fn saved(cache: &Cache, key: Key, picked: Option<Matched>) -> Info {
         None => (Vec::new(), None),
     };
     let series = matched.as_ref().and_then(|m| cache.get_series(m.id));
-    Info { matched, looked, releases, series, fetched_at, error: None }
+    Info { matched, looked, releases, series, fetched_at, error: None, ..Info::default() }
 }
 
 /// Whether [`fetch`] would ask MangaUpdates for anything.
@@ -979,7 +1081,7 @@ pub fn fetch<T: Transport>(client: &mut Client<T>, cache: &Cache, key: Key, pick
         && old.is_some()
         && let Some((r, at)) = cache.get_releases(m.id).filter(|(_, at)| releases_fresh(*at, now))
     {
-        return Ok(Info { matched: Some(m), looked: true, releases: r, series: old, fetched_at: Some(at), error: None });
+        return Ok(Info { matched: Some(m), looked: true, releases: r, series: old, fetched_at: Some(at), ..Info::default() });
     }
     let r = client.releases(m.id)?;
     let series = match client.series(m.id) {
@@ -989,7 +1091,7 @@ pub fn fetch<T: Transport>(client: &mut Client<T>, cache: &Cache, key: Key, pick
         Err(_) => old.or_else(|| Some(Series::default())),
     };
     cache.put_releases_with(m.id, &r, series.as_ref(), now);
-    Ok(Info { matched: Some(m), looked: true, releases: r, series, fetched_at: Some(now), error: None })
+    Ok(Info { matched: Some(m), looked: true, releases: r, series, fetched_at: Some(now), ..Info::default() })
 }
 
 /// The new record, with when its latest chapter went up since the saved one (kept from the saved
@@ -1000,6 +1102,169 @@ pub fn went_up(old: Option<&Series>, mut new: Series, now: i64) -> Series {
         _ => old.map_or(0, |o| o.went_up_at),
     };
     new
+}
+
+// --------------------------------------------------------------------- MangaDex, the second source
+
+#[derive(Serialize, Deserialize)]
+struct CachedMd {
+    at: i64,
+    id: Option<String>,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedFeed {
+    at: i64,
+    releases: Vec<Release>,
+    #[serde(default)]
+    external: bool,
+}
+
+impl Cache {
+    /// Kotora's cache folder for MangaDex release data.
+    pub fn mangadex_dir() -> Self {
+        Cache::new(crate::paths::cache_dir().join("mangadex-releases"))
+    }
+
+    fn get_md_match(&self, key: Key) -> Option<(Option<String>, String, i64)> {
+        self.read::<CachedMd>(&format!("md-match-{}-{}.json", key.service.name(), key.media_id)).map(|c| (c.id, c.title, c.at))
+    }
+
+    fn put_md_match(&self, key: Key, id: Option<&str>, title: &str, now: i64) {
+        self.write(&format!("md-match-{}-{}.json", key.service.name(), key.media_id), &CachedMd { at: now, id: id.map(str::to_string), title: title.to_string() });
+    }
+
+    fn get_feed(&self, id: &str) -> Option<(Vec<Release>, bool, i64)> {
+        self.read::<CachedFeed>(&format!("feed-{id}.json")).map(|c| (c.releases, c.external, c.at))
+    }
+
+    fn put_feed(&self, id: &str, releases: &[Release], external: bool, now: i64) {
+        self.write(&format!("feed-{id}.json"), &CachedFeed { at: now, releases: releases.to_vec(), external });
+    }
+}
+
+fn md_kv(key: Key) -> String {
+    format!("{}:md-link:{}", key.service.name(), key.media_id)
+}
+
+fn pref_kv(key: Key) -> String {
+    format!("{}:pub-source:{}", key.service.name(), key.media_id)
+}
+
+/// The MangaDex series the user picked: (id, title).
+pub fn md_picked(store: &crate::store::Store, key: Key) -> Option<(String, String)> {
+    let v = store.kv_get(&md_kv(key)).ok().flatten()?;
+    let (id, title) = v.split_once(' ').map_or((v.as_str(), ""), |(a, b)| (a, b));
+    crate::mangadex::md_id_from_link(id).map(|id| (id, title.to_string()))
+}
+
+pub fn set_md_picked(store: &crate::store::Store, key: Key, m: Option<(&str, &str)>) -> crate::store::Result<()> {
+    match m {
+        Some((id, title)) => store.kv_set(&md_kv(key), &format!("{id} {title}")),
+        None => store.kv_del(&md_kv(key)),
+    }
+}
+
+/// The user's source for a manga (Auto when none was chosen).
+pub fn source_pref(store: &crate::store::Store, key: Key) -> Source {
+    store.kv_get(&pref_kv(key)).ok().flatten().map_or(Source::Auto, |v| Source::from_word(&v))
+}
+
+pub fn set_source_pref(store: &crate::store::Store, key: Key, s: Source) -> crate::store::Result<()> {
+    match s {
+        Source::Auto => store.kv_del(&pref_kv(key)),
+        s => store.kv_set(&pref_kv(key), s.word()),
+    }
+}
+
+/// The saved MangaDex side, without a request.
+fn md_match_fresh(found: bool, at: i64, now: i64) -> bool {
+    now - at < if found { MATCH_TTL } else { MISSING_TTL }
+}
+
+pub fn md_saved(cache: &Cache, key: Key, picked: Option<(String, String)>) -> MdSide {
+    let was_picked = picked.is_some();
+    let (id, title, looked) = match picked {
+        Some((id, title)) => (Some(id), title, true),
+        None => match cache.get_md_match(key) {
+            Some((id, title, _)) => (id, title, true),
+            None => (None, String::new(), false),
+        },
+    };
+    let (releases, external, fetched_at) = match id.as_deref().and_then(|i| cache.get_feed(i)) {
+        Some((r, e, at)) => (r, e, Some(at)),
+        None => (Vec::new(), false, None),
+    };
+    MdSide { id, title, picked: was_picked, looked, releases, fetched_at, external }
+}
+
+/// Whether [`md_fetch`] would ask MangaDex for anything.
+pub fn md_stale(cache: &Cache, key: Key, picked: Option<&(String, String)>, now: i64) -> bool {
+    let id = match picked {
+        Some((id, _)) => Some(id.clone()),
+        None => match cache.get_md_match(key) {
+            Some((id, _, at)) if md_match_fresh(id.is_some(), at, now) => id,
+            Some(_) | None => return true,
+        },
+    };
+    id.is_some_and(|i| cache.get_feed(&i).is_none_or(|(_, _, at)| !releases_fresh(at, now)))
+}
+
+/// Brings the MangaDex side up to date: the picked series, else a fresh saved match, else the
+/// series linking to the manga's MyAnimeList (or AniList) id; then its chapter feed unless fresh.
+#[allow(clippy::too_many_arguments)]
+pub fn md_fetch<T: Transport>(client: &mut crate::mangadex::Client<T>, cache: &Cache, key: Key, picked: Option<(String, String)>, media: &crate::Media, now: i64, force: bool) -> Result<MdSide, ServiceError> {
+    let was_picked = picked.is_some();
+    let (id, title) = match picked {
+        Some((id, title)) => (Some(id), title),
+        None => match cache.get_md_match(key) {
+            Some((id, title, at)) if !(force && id.is_none()) && md_match_fresh(id.is_some(), at, now) => (id, title),
+            _ => {
+                let hit = client.find_linked(crate::mangadex::key_of(key.service, media), &crate::mangadex::titles_of(media))?;
+                let (id, title) = hit.map_or((None, String::new()), |h| (Some(h.id), h.title));
+                cache.put_md_match(key, id.as_deref(), &title, now);
+                (id, title)
+            }
+        },
+    };
+    let Some(id) = id else { return Ok(MdSide { looked: true, ..MdSide::default() }) };
+    if !force && let Some((r, e, at)) = cache.get_feed(&id).filter(|(_, _, at)| releases_fresh(*at, now)) {
+        return Ok(MdSide { id: Some(id), title, picked: was_picked, looked: true, releases: r, fetched_at: Some(at), external: e });
+    }
+    let feed = client.feed(&id)?;
+    let releases = crate::mangadex::feed_releases(&feed);
+    let top = releases.iter().filter_map(|r| r.chapter_no()).fold(f64::NEG_INFINITY, f64::max);
+    let external = feed.iter().any(|c| c.external && number_in(&c.chapter) == Some(top));
+    cache.put_feed(&id, &releases, external, now);
+    Ok(MdSide { id: Some(id), title, picked: was_picked, looked: true, releases, fetched_at: Some(now), external })
+}
+
+/// Everything saved for a manga, from the sources turned on (no request).
+pub fn saved_all(mu: &Cache, md: &Cache, store: &crate::store::Store, key: Key, on: Sources) -> Info {
+    let mut i = if on.mu { saved(mu, key, picked(store, key)) } else { Info::default() };
+    if on.md {
+        i.md = md_saved(md, key, md_picked(store, key));
+    }
+    i.pref = source_pref(store, key);
+    i
+}
+
+/// Whether a pass would ask either source turned on.
+pub fn stale_all(mu: &Cache, md: &Cache, store: &crate::store::Store, key: Key, on: Sources, now: i64) -> bool {
+    (on.mu && stale(mu, key, picked(store, key).as_ref(), now)) || (on.md && md_stale(md, key, md_picked(store, key).as_ref(), now))
+}
+
+/// Both sources turned on, brought up to date (see [`fetch`] and [`md_fetch`]).
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_all<T: Transport, U: Transport>(mu: (&mut Client<T>, &Cache), md: (&mut crate::mangadex::Client<U>, &Cache), store: &crate::store::Store, key: Key, media: &crate::Media, on: Sources, now: i64, force: bool) -> Result<Info, ServiceError> {
+    let mut i = if on.mu { fetch(mu.0, mu.1, key, picked(store, key), media, now, force)? } else { Info::default() };
+    if on.md {
+        i.md = md_fetch(md.0, md.1, key, md_picked(store, key), media, now, force)?;
+    }
+    i.pref = source_pref(store, key);
+    Ok(i)
 }
 
 // ----------------------------------------------------------------------------- notifications

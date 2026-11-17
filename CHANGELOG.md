@@ -25,6 +25,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   chapter shows "date not tracked" and no estimate: "Ongoing, release dates not tracked"). Finished and On hiatus
   come from your list's status (MyAnimeList or AniList) first, then MangaUpdates' status, never from a gap in
   releases alone.
+  MangaDex is a second source (Settings → Manga → Release data, both on by default; one always stays on):
+  its chapter feed includes official chapters it links to (MANGA Plus and others), and a series is used only
+  when it links to the manga's MyAnimeList or AniList id, never by title alone. Each manga uses the source with
+  the higher latest chapter, or the one picked in its panel (Auto / MangaUpdates / MangaDex); the panel says
+  which, and takes a MangaUpdates or MangaDex link. When you've read past every source's latest chapter, the
+  row says "Read 362 · ahead of release data" instead of an old chapter and "Caught up".
 - **Publishing card** on a Reading manga's details page: latest chapter, to read, next release (estimate), the
   MangaUpdates match with its link and the same fix.
 - **New chapter notifications** (Settings → Notifications → Manga, off by default): "New chapter of Title: Ch 75"

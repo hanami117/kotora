@@ -544,3 +544,111 @@ fn fetch_keeps_the_record_and_its_rise() {
     assert!(matches!(fetch(&mut c, &cache, key, Some(m), &salt(), NOW + 3 * RELEASES_TTL, false), Err(ServiceError::Offline(_))));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --------------------------------------------------------- two sources: MangaDex beside MangaUpdates
+
+const MD_FEED: &str = include_str!("../mangadex/fixtures/feed-external.json");
+const MD_SEARCH: &str = include_str!("../mangadex/fixtures/search-linked.json");
+
+fn md_client(answers: Vec<Result<Response, String>>) -> crate::mangadex::Client<Rec> {
+    crate::mangadex::Client::without_sleep(Rec { answers: RefCell::new(answers.into()), ..Rec::default() })
+}
+
+/// The live test's case: MangaUpdates frozen at 272 (record too), read 362; MangaDex lists the
+/// official weekly chapters up to 368.
+fn frozen_both() -> Info {
+    let r = parse_releases(FROZEN).unwrap();
+    let rec = Series { latest_chapter: Some(272), status: "33 Volumes (Ongoing)".into(), ..Series::default() };
+    let md = crate::mangadex::feed_releases(&crate::mangadex::parse_feed(MD_FEED).unwrap());
+    Info {
+        matched: Some(Matched { id: 1, title: "Goal Line Furnace".into(), confidence: Confidence::Sure }),
+        looked: true,
+        releases: r,
+        series: Some(rec),
+        fetched_at: Some(NOW - 60),
+        md: MdSide { id: Some("eeeeeeee-0000-4000-8000-000000000005".into()), title: "Goal Line Furnace".into(), looked: true, releases: md, fetched_at: Some(NOW - 60), external: true, ..MdSide::default() },
+        ..Info::default()
+    }
+}
+
+#[test]
+fn auto_takes_the_source_with_the_higher_latest_chapter() {
+    let i = frozen_both();
+    let (s, used) = i.best(NOW, ListRun::Publishing, Sources::default()).unwrap();
+    assert_eq!((used, s.latest.as_deref(), s.cadence.pace), (Source::MangaDex, Some("368"), Pace::Weekly));
+    assert_eq!(behind(s.latest_no, 362), Some(6));
+    // The user's choice wins while its source has data.
+    let pinned = Info { pref: Source::MangaUpdates, ..i.clone() };
+    assert_eq!(pinned.best(NOW, ListRun::Publishing, Sources::default()).unwrap().1, Source::MangaUpdates);
+    // A source turned off is never used; its data stays saved.
+    let (s, used) = i.best(NOW, ListRun::Publishing, Sources { mu: true, md: false }).unwrap();
+    assert_eq!((used, s.latest.as_deref()), (Source::MangaUpdates, Some("272")));
+    let pick_md = Info { pref: Source::MangaDex, ..i.clone() };
+    assert_eq!(pick_md.best(NOW, ListRun::Publishing, Sources { mu: true, md: false }).unwrap().1, Source::MangaUpdates, "the choice falls back");
+    assert_eq!(i.best(NOW, ListRun::Publishing, Sources { mu: false, md: true }).unwrap().1, Source::MangaDex);
+    // Equal chapters: the dated one (releases) wins over a record's undated chapter.
+    let tie = Info { series: Some(Series { latest_chapter: Some(368), ..Series::default() }), ..i.clone() };
+    assert_eq!(tie.best(NOW, ListRun::Publishing, Sources::default()).unwrap().1, Source::MangaDex);
+    assert_eq!(Source::from_word("md"), Source::MangaDex);
+    assert_eq!(Source::from_word("nonsense"), Source::Auto);
+    assert_eq!(i.checked_at(), Some(NOW - 60));
+}
+
+#[test]
+fn found_and_not_found_across_sources() {
+    let on = Sources::default();
+    let i = Info { looked: true, md: MdSide { looked: true, ..MdSide::default() }, ..Info::default() };
+    assert!(i.not_found(on));
+    let half = Info { looked: true, ..Info::default() };
+    assert!(!half.not_found(on), "MangaDex not looked up yet");
+    assert!(half.not_found(Sources { mu: true, md: false }));
+    let md_only = Info { looked: true, md: MdSide { id: Some("x".into()), looked: true, ..MdSide::default() }, ..Info::default() };
+    assert!(md_only.found(on) && !md_only.found(Sources { mu: true, md: false }));
+}
+
+#[test]
+fn md_fetch_links_by_id_then_reads_the_feed_and_caches() {
+    let (cache, dir) = scratch("md");
+    let key = Key { service: crate::service::ServiceId::Mal, media_id: 101 };
+    let media = crate::Media { kind: crate::Kind::Manga, id: 101, title: "Goal Line Furnace".into(), ..Default::default() };
+    assert!(md_stale(&cache, key, None, NOW));
+    let mut c = md_client(vec![ok(MD_SEARCH), ok(MD_FEED)]);
+    let s = md_fetch(&mut c, &cache, key, None, &media, NOW, false).unwrap();
+    assert_eq!((s.id.as_deref(), s.looked, s.external, s.picked), (Some("eeeeeeee-0000-4000-8000-000000000005"), true, true, false));
+    assert_eq!(s.fetched_at, Some(NOW));
+    assert!(!md_stale(&cache, key, None, NOW + 60));
+    assert_eq!(md_saved(&cache, key, None), s);
+    // Within 4 hours nothing is asked; after, only the feed.
+    let mut c = md_client(vec![]);
+    assert_eq!(md_fetch(&mut c, &cache, key, None, &media, NOW + 3600, false).unwrap(), s);
+    let mut c = md_client(vec![ok(MD_FEED)]);
+    md_fetch(&mut c, &cache, key, None, &media, NOW + RELEASES_TTL, false).unwrap();
+    // No series links to it: looked, none; asked again after 3 days.
+    let other = Key { media_id: 7, ..key };
+    let media7 = crate::Media { id: 7, ..media.clone() };
+    let mut c = md_client(vec![ok(MD_SEARCH)]);
+    let s = md_fetch(&mut c, &cache, other, None, &media7, NOW, false).unwrap();
+    assert_eq!((s.id, s.looked), (None, true));
+    assert!(!md_stale(&cache, other, None, NOW + MISSING_TTL - 1));
+    // A picked series: no search.
+    let picked = Some(("eeeeeeee-0000-4000-8000-000000000005".to_string(), "Goal Line Furnace".to_string()));
+    let mut c = md_client(vec![ok(MD_FEED)]);
+    let s = md_fetch(&mut c, &cache, other, picked, &media7, NOW, false).unwrap();
+    assert!(s.picked && s.id.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn picks_and_the_source_choice_are_kept_per_manga() {
+    let store = crate::store::Store::open_memory().unwrap();
+    let key = Key { service: crate::service::ServiceId::Mal, media_id: 3 };
+    assert_eq!(source_pref(&store, key), Source::Auto);
+    set_source_pref(&store, key, Source::MangaDex).unwrap();
+    assert_eq!(source_pref(&store, key), Source::MangaDex);
+    set_source_pref(&store, key, Source::Auto).unwrap();
+    assert_eq!(source_pref(&store, key), Source::Auto);
+    set_md_picked(&store, key, Some(("eeeeeeee-0000-4000-8000-000000000005", "Goal Line Furnace"))).unwrap();
+    assert_eq!(md_picked(&store, key).map(|p| p.1), Some("Goal Line Furnace".to_string()));
+    set_md_picked(&store, key, None).unwrap();
+    assert_eq!(md_picked(&store, key), None);
+}
