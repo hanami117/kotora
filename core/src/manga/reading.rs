@@ -113,15 +113,59 @@ pub struct Candidate {
     pub score: f32,
 }
 
+/// A different series that shares the start: at most a low suggestion (the picker lists it, the
+/// match never takes it).
+pub const OTHER_SERIES: f32 = 0.6;
+
 fn title_score(series: &str, title: &str) -> f32 {
     let t = normalize(title);
     if t == series {
         1.0
     } else if series.chars().count() >= PREFIX_MIN && t.starts_with(&format!("{series} ")) {
         0.9
+    } else if other_series(series, &t) {
+        similarity(&t, series).min(OTHER_SERIES)
     } else {
         similarity(&t, series)
     }
+}
+
+/// `title` names another series than `series` though they start alike: `title` is `series`
+/// with words missing at the end ("Dragon Ball" for "Dragon Ball Z", "… Super", "… Part 2"), or
+/// both go on with different words ("Dragon Ball Z" and "Dragon Ball Super"). A typo in a word
+/// ("Lanten" for "Lantern") is not another series.
+fn other_series(series: &str, title: &str) -> bool {
+    let (a, b): (Vec<&str>, Vec<&str>) = (series.split(' ').collect(), title.split(' ').collect());
+    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    if common == 0 {
+        return false;
+    }
+    let (ta, tb) = (a[common..].join(" "), b[common..].join(" "));
+    match (ta.is_empty(), tb.is_empty()) {
+        // `title` stops where `series` goes on: "Dragon Ball" for "Dragon Ball Z".
+        (false, true) => true,
+        // Both go on: other words, or the same words misspelt.
+        (false, false) => similarity(&ta, &tb) < 0.5,
+        _ => false,
+    }
+}
+
+/// The main or English title is another series that starts like `series` ([`other_series`]).
+fn names_other_series(series: &str, main: &str, en: Option<&str>) -> bool {
+    std::iter::once(main).chain(en).any(|t| other_series(series, &normalize(t)))
+}
+
+/// How well an entry with these titles matches the normalised series. When its main or English
+/// title is the series with words missing at the end, it is another series ("Dragon Ball" is
+/// not "Dragon Ball Z"), even if a synonym is the very series: MyAnimeList lists "Dragon Ball Z"
+/// among Dragon Ball's other titles.
+fn entry_score<'a>(series: &str, main: &str, en: Option<&str>, all: impl Iterator<Item = &'a str>) -> f32 {
+    let best = all.map(|t| title_score(series, t)).fold(0.0f32, f32::max);
+    let shorter = |t: &str| {
+        let t = normalize(t);
+        !t.is_empty() && series.starts_with(&format!("{t} "))
+    };
+    if shorter(main) || en.is_some_and(shorter) { best.min(OTHER_SERIES) } else { best }
 }
 
 /// Every list entry scored against the series, best first (only those above 0.3). Equal
@@ -134,7 +178,7 @@ pub fn candidates(series: &str, items: &[ListItem]) -> Vec<Candidate> {
     let mut out: Vec<(Candidate, bool)> = items
         .iter()
         .map(|it| {
-            let score = it.media.all_titles().map(|t| title_score(&s, t)).fold(0.0f32, f32::max);
+            let score = entry_score(&s, &it.media.title, it.media.title_en.as_deref(), it.media.all_titles());
             let reading = it.rewatching || it.status == Status::Watching;
             (Candidate { media_id: it.media.id, title: it.media.title.clone(), score }, reading)
         })
@@ -169,19 +213,31 @@ pub fn on_list(series: &str, items: &[ListItem], cached: &crate::recognize::Cach
 
 /// Step 4: a manga search's hits against the list. A hit on the list is unsure; else the
 /// best hit off the list (`NotOnList`), when its title is close enough.
+/// The best hit wins (the service's order breaks ties); a hit that names another series ("Dragon
+/// Ball" for "Dragon Ball Z") is no answer, on the list or not.
 pub fn from_search(series: &str, hits: &[AnimeHit], items: &[ListItem], service: &str) -> Found {
     let s = normalize(series);
+    let score = |h: &AnimeHit| {
+        let all = std::iter::once(h.title.as_str()).chain(h.title_en.as_deref()).chain(h.title_ja.as_deref()).chain(h.synonyms.iter().map(String::as_str)).filter(|t| !t.is_empty());
+        entry_score(&s, &h.title, h.title_en.as_deref(), all)
+    };
+    let mut best: Option<(&AnimeHit, f32)> = None;
     for h in hits {
-        if items.iter().any(|it| it.media.id == h.id) {
-            return Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") };
+        let sc = score(h);
+        if sc >= UNSURE_AT && best.is_none_or(|(_, b)| sc > b) {
+            best = Some((h, sc));
         }
     }
-    let close = |h: &&AnimeHit| {
-        std::iter::once(h.title.as_str()).chain(h.title_en.as_deref()).chain(h.title_ja.as_deref()).chain(h.synonyms.iter().map(String::as_str)).any(|t| title_score(&s, t) >= UNSURE_AT)
-    };
-    match hits.iter().find(close) {
-        Some(h) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
-        None => Found::Nothing,
+    let on_list = |h: &AnimeHit| items.iter().any(|it| it.media.id == h.id);
+    match best {
+        Some((h, _)) if on_list(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
+        Some((h, _)) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
+        // Nothing close by its titles: a hit on the list still counts (the service may know a
+        // title Kotora doesn't), unless it names another series.
+        None => match hits.iter().find(|h| on_list(h) && !names_other_series(&s, &h.title, h.title_en.as_deref())) {
+            Some(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
+            None => Found::Nothing,
+        },
     }
 }
 

@@ -10,6 +10,15 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   --comicId=N`) and looks the comic up in that library's database (read only): it shows at once. A reader
   started on a file (Simple Comic, MComix, …) counts by its command line too; open files stay a second signal.
   Checks every 10 seconds.
+- Reading detection: "Dragon Ball Z v11" was a sure match for Dragon Ball (MyAnimeList lists "Dragon Ball Z"
+  among Dragon Ball's other titles). A list title that is the series with words missing at the end (Z, Super,
+  GT, Part 2), or that goes on with other words, is now another series: at most a suggestion in Wrong manga…,
+  never a match; the search then finds the series itself ("Not on your list: Add as Reading").
+- Closing a comic ends Now Reading and the Discord status at once (the reader's process or file is gone),
+  instead of after 30 minutes. A comic read to the end keeps its question in the banner (and Undo) while closed.
+- Discord on Linux: the socket of newer Flatpak builds (`$XDG_RUNTIME_DIR/.flatpak/com.discordapp.Discord/
+  xdg-run`) is found, and a status that shows is sent again every minute, so it comes back after Discord
+  restarts.
 
 ### Added
 - **Now Reading**: in Manga mode with reading detection on, the sidebar's Now Playing is Now Reading, with a

@@ -300,3 +300,45 @@ fn the_viewers_comic_by_id() {
     let r = t.update(&[crate::manga::openfile::Open { app: "YACReader".into(), path }], 1_800_000_000).unwrap();
     assert_eq!((r.series.as_str(), r.volume, r.volume_file, r.finished, r.source.as_str()), ("Dragon Ball Z", Some(11), true, false, "YACReader"));
 }
+
+/// Live test: "Dragon Ball Z v11" was a sure match for "Dragon Ball" (MyAnimeList lists
+/// "Dragon Ball Z" among Dragon Ball's other titles). The Z is part of the title.
+fn dragon_ball() -> ListItem {
+    let mut it = item(42, "Dragon Ball", None, 0, Some(520));
+    it.media.synonyms = vec!["Dragon Ball Z".into(), "DB".into()];
+    it
+}
+
+#[test]
+fn dragon_ball_is_not_dragon_ball_z_or_super() {
+    let db = dragon_ball();
+    let dbs = item(43, "Dragon Ball Super", None, 0, None);
+    // The same series: sure.
+    assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&db), &None), Some(Found::List { media_id: 42, sure: true, .. })));
+    // Z, Super, GT, Part 2: another series. Not even an unsure match: the search decides.
+    for s in ["Dragon Ball Z", "Dragon Ball Super", "Dragon Ball GT", "Dragon Ball Part 2"] {
+        assert_eq!(on_list(s, std::slice::from_ref(&db), &None), None, "{s}");
+    }
+    let both = vec![db.clone(), dbs.clone()];
+    assert!(matches!(on_list("Dragon Ball Super", &both, &None), Some(Found::List { media_id: 43, sure: true, .. })));
+    assert_eq!(on_list("Dragon Ball Z", &both, &None), None, "Z is neither");
+    // Still a low suggestion for "Wrong manga…".
+    let c = candidates("Dragon Ball Z", &both);
+    assert!(c.iter().any(|c| c.media_id == 42 && c.score <= OTHER_SERIES), "{c:?}");
+    // The shorter file name for a longer title still asks (a series by its start).
+    assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&dbs), &None), Some(Found::List { media_id: 43, sure: false, .. })));
+    // A typo is not another series.
+    assert!(matches!(on_list("Glass Lanten Club", &list(), &None), Some(Found::List { media_id: 1, .. })));
+}
+
+#[test]
+fn the_search_prefers_the_very_series_over_a_shorter_one_on_the_list() {
+    let hit = |id: u32, title: &str, syn: &[&str]| AnimeHit { kind: Kind::Manga, id, title: title.into(), synonyms: syn.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let l = vec![dragon_ball()];
+    // MyAnimeList's order: Dragon Ball (on the list, "Dragon Ball Z" as a synonym) first.
+    let hits = [hit(42, "Dragon Ball", &["Dragon Ball Z"]), hit(9001, "Dragon Ball Z", &[]), hit(9002, "Dragon Ball Super", &[])];
+    assert_eq!(from_search("Dragon Ball Z", &hits, &l, "MyAnimeList"), Found::NotOnList { media_id: 9001, title: "Dragon Ball Z".into() });
+    // Only the shorter one found: nothing (no wrong answer).
+    assert_eq!(from_search("Dragon Ball Z", &hits[..1], &l, "MyAnimeList"), Found::Nothing);
+    assert!(matches!(from_search("Dragon Ball", &hits, &l, "MyAnimeList"), Found::List { media_id: 42, sure: false, .. }));
+}

@@ -326,6 +326,15 @@ pub const SCENES: &[Scene] = &[
         crate::manga::fake(s);
         crate::reading::fake_open(s, "YACReader", "/media/comics/Inkwell Cartographers/Inkwell Cartographers v12 c120.cbz", None);
     }),
+    // The viewer closed a comic read to the end: the question stays (banner, card "Closed"),
+    // Now Reading's sidebar card is gone.
+    ("now-reading-closed-asks", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.reading_open(Vec::new());
+        s.go(Page::NowPlaying);
+    }),
     // Now Reading with nothing read yet.
     ("now-reading-empty", |s| {
         crate::manga::fake(s);

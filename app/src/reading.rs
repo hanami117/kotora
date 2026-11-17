@@ -63,6 +63,8 @@ pub struct Seen {
 #[derive(Debug)]
 pub enum ReadingMsg {
     Seen(Box<Seen>),
+    /// The comics the readers have open now (sent when it changes, before any `Seen`).
+    Open(Vec<std::path::PathBuf>),
     /// The libraries watched, and those that couldn't be read.
     Libs { watched: Vec<String>, errors: Vec<LibState> },
 }
@@ -102,11 +104,14 @@ pub struct Reading {
     /// "Wrong manga…" is open.
     pub picking: bool,
     pub mark: Option<Mark>,
+    /// The reader has it open now (its process and command line, or the file). Closed, it
+    /// stays only while it asks or offers Undo, and is no longer "Now Reading".
+    pub open: bool,
 }
 
 impl Reading {
     fn from_seen(s: Seen) -> Reading {
-        Reading { read: s.read, found: s.found, candidates: s.candidates, cover_url: s.cover_url, dismissed: false, acted: false, marked: None, picking: false, mark: None }
+        Reading { read: s.read, found: s.found, candidates: s.candidates, cover_url: s.cover_url, dismissed: false, acted: false, marked: None, picking: false, mark: None, open: false }
     }
 
     pub fn media_id(&self) -> Option<u32> {
@@ -143,6 +148,8 @@ pub struct ReadingUi {
     /// `[reading] open_minutes`.
     pub minutes: u32,
     pub current: Option<Reading>,
+    /// What the readers have open now (`ReadingMsg::Open`).
+    pub open_now: Vec<std::path::PathBuf>,
     tx: Option<Sender<In>>,
     /// Counts the threads started: a message from a stopped one is dropped.
     epoch: u64,
@@ -164,6 +171,7 @@ impl Default for ReadingUi {
             folder_error: None,
             minutes: 10,
             current: None,
+            open_now: Vec::new(),
             tx: None,
             epoch: 0,
         }
@@ -207,6 +215,7 @@ pub fn forget(s: &mut State) {
     s.reading.tx = None;
     s.reading.watched.clear();
     s.reading.errors.clear();
+    s.reading.open_now.clear();
     s.withdraw_reading_note();
     s.reading.current = None;
 }
@@ -235,6 +244,7 @@ fn stop(s: &mut State) {
     s.reading.tx = None;
     s.reading.watched.clear();
     s.reading.errors.clear();
+    s.reading.open_now.clear();
     if s.reading.current.as_ref().is_some_and(|r| r.marked.is_none()) {
         s.withdraw_reading_note();
         s.reading.current = None;
@@ -277,6 +287,7 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     }
     let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
     let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
+    let mut open_sent: Vec<std::path::PathBuf> = Vec::new();
     let mut yac_cache: Option<(String, i64, String)> = None;
     let mut watch = Watch::new(libs, now_unix());
     let mut store: Option<Store> = None;
@@ -294,7 +305,9 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
         if let Some(sc) = &mut scanner {
             // Command lines every wake (a few names, cached); open files every third (they
             // read every process's descriptors inside comic folders).
-            let opts = kotora_detect::comics::ScanOpts { folders: cfg.folders.clone(), files: cfg.open_files && tick.is_multiple_of(3), yac_args: cfg.yacreader, reader_args: cfg.open_files };
+            // While a file is open, its closing is looked for at every wake.
+            let files = cfg.open_files && (tick.is_multiple_of(3) || !files_kept.is_empty());
+            let opts = kotora_detect::comics::ScanOpts { folders: cfg.folders.clone(), files, yac_args: cfg.yacreader, reader_args: cfg.open_files };
             tick = tick.wrapping_add(1);
             let found = sc.scan_with(&opts);
             let mut open: Vec<kotora_core::manga::openfile::Open> = Vec::new();
@@ -318,6 +331,13 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                         open.push(k.clone());
                     }
                 }
+            }
+            // Open or closed, said first: a `Seen` that follows knows.
+            let mut paths: Vec<std::path::PathBuf> = open.iter().map(|o| std::path::PathBuf::from(&o.path)).collect();
+            paths.sort();
+            if paths != open_sent {
+                open_sent = paths.clone();
+                send(h, ReadingMsg::Open(paths));
             }
             if let Some(r) = tracker.update(&open, now_unix())
                 && last.as_ref() != Some(&r)
@@ -432,12 +452,42 @@ impl State {
                 changed
             }
             ReadingMsg::Seen(seen) => self.reading_seen(*seen),
+            ReadingMsg::Open(paths) => self.reading_open(paths),
         }
+    }
+
+    /// The comic followed now: open in its reader. `None` when it was closed (it may still ask
+    /// in the banner). The sidebar's Now Reading card and Discord show only this.
+    pub fn now_reading(&self) -> Option<&Reading> {
+        self.reading.current.as_ref().filter(|r| r.open)
+    }
+
+    /// Whether a closed comic still has something to say: a question or an Undo.
+    fn reading_asks(&self) -> bool {
+        self.reading.current.as_ref().is_some_and(|r| r.marked.is_some() || (r.read.finished && !r.dismissed && self.reading_offer().is_some()))
+    }
+
+    /// The comics open now. The followed one closed: it is no longer "Now Reading" at once, and
+    /// it goes unless it asks (read to the end) or offers Undo.
+    pub fn reading_open(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
+        self.reading.open_now = paths;
+        let Some(r) = &mut self.reading.current else { return true };
+        let open = self.reading.open_now.contains(&r.read.path);
+        if r.open == open {
+            return true;
+        }
+        r.open = open;
+        if !open && !self.reading_asks() {
+            self.withdraw_reading_note();
+            self.reading.current = None;
+        }
+        true
     }
 
     /// A comic from the thread. The same file keeps its answers (Not now, marked).
     pub fn reading_seen(&mut self, seen: Seen) -> bool {
-        let new = Reading::from_seen(seen);
+        let mut new = Reading::from_seen(seen);
+        new.open = self.reading.open_now.contains(&new.read.path);
         match &mut self.reading.current {
             Some(old) if old.read.path == new.read.path => {
                 let (dismissed, acted, marked, picking, mark) = (old.dismissed, old.acted, old.marked, old.picking, old.mark);
@@ -454,6 +504,10 @@ impl State {
         }
         if !self.recheck_reading() {
             self.act_reading(true);
+        }
+        // Closed with nothing to ask (YACReader's write on close of a half-read comic): gone.
+        if self.reading.current.as_ref().is_some_and(|r| !r.open) && !self.reading_asks() {
+            self.reading.current = None;
         }
         true
     }
@@ -1263,7 +1317,7 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         .grow(1.0)
         .min_w(0.0)
         .gap(4.0)
-        .child(text(format!("{} IN {}", if r.read.weak { "OPEN" } else { "READING" }, r.read.source.to_uppercase())).font(theme::LABEL).color(PAL.accent))
+        .child(text(format!("{} IN {}", if !r.open { "CLOSED" } else if r.read.weak { "OPEN" } else { "READING" }, r.read.source.to_uppercase())).key("rd/state").font(theme::LABEL).color(if r.open { PAL.accent } else { PAL.dim }))
         .child(text(title).font(theme::SECTION).color(PAL.text).truncate())
         .child(text(r.read.label()).font(theme::BODY_MED).color(PAL.text))
         .child(text(r.read.file_name.clone()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate())
@@ -1376,7 +1430,30 @@ pub fn fake(s: &mut State, file: &str, page: i64) {
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
     let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    // Open in its reader (the scenes' comics are being read).
+    if !s.reading.open_now.contains(&read.path) {
+        s.reading.open_now.push(read.path.clone());
+    }
     s.reading_seen(Seen { read, found, candidates, cover_url: None });
+}
+
+/// A made-up comic YACReader wrote on close (`file` at `page` of 40), not open any more.
+#[cfg(test)]
+pub fn fake_closed(s: &mut State, file: &str, page: i64) {
+    let o = kotora_core::manga::yacreader::Opened {
+        rel_path: format!("/{file}"),
+        path: std::path::PathBuf::from("/comics").join(file),
+        parsed: kotora_core::manga::name::parse_path(file),
+        meta_series: None,
+        current_page: page,
+        num_pages: 40,
+        read_flag: false,
+        last_opened: 0,
+    };
+    let read = Read::from_opened(&o);
+    let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
+    let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
+    s.reading_seen(Seen { read, found, candidates: Vec::new(), cover_url: None });
 }
 
 /// A made-up comic open in `app` (stage 2), counted as read when `why` is given.
@@ -1388,6 +1465,10 @@ pub fn fake_open(s: &mut State, app: &str, path: &str, why: Option<&str>) {
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
     let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    // Open in its reader (the scenes' comics are being read).
+    if !s.reading.open_now.contains(&read.path) {
+        s.reading.open_now.push(read.path.clone());
+    }
     s.reading_seen(Seen { read, found, candidates, cover_url: None });
 }
 

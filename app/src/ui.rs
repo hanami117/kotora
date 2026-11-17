@@ -275,7 +275,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
     side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
     // Manga mode: the comic being read; else (or with none) what plays.
-    if let Some(r) = s.reading.current.as_ref().filter(|_| crate::reading::now_reading_mode(s)) {
+    if let Some(r) = s.now_reading().filter(|_| crate::reading::now_reading_mode(s)) {
         side = side.child(crate::reading::mini(s, r, height >= 760.0));
     } else if let Some(now) = &s.now {
         side = side.child(now_mini(s, now, height >= 760.0));

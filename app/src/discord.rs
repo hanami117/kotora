@@ -99,10 +99,6 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
     Some(Activity { kind, details, state, start, end, large, small, button })
 }
 
-/// How long after a comic was last opened or its page saved it still counts as being read.
-/// The readers say nothing when they close, so the status ends by itself after this.
-pub const READING_FRESH_SECS: i64 = 30 * 60;
-
 /// What is playing, or else what is being read. The episode wins when both would show.
 pub fn current(s: &State) -> Option<Input> {
     current_at(s, kotora_core::time::now_unix())
@@ -112,10 +108,11 @@ fn current_at(s: &State, now: i64) -> Option<Input> {
     current_watching(s).or_else(|| current_reading(s, now))
 }
 
-/// The comic reading detection reports, while it is fresh and matched to a manga on the service.
-fn current_reading(s: &State, now: i64) -> Option<Input> {
-    let r = s.reading.current.as_ref()?;
-    if !s.manga.enabled || now - r.read.at > READING_FRESH_SECS {
+/// The comic open in a reader now, matched to a manga on the service. Closed (the viewer
+/// quit, the file was closed): nothing, at once.
+fn current_reading(s: &State, _now: i64) -> Option<Input> {
+    let r = s.now_reading()?;
+    if !s.manga.enabled {
         return None;
     }
     let media_id = match &r.found {
@@ -386,10 +383,13 @@ mod tests {
     }
 
     #[test]
-    fn reading_ends_when_it_goes_stale_or_is_cleared() {
+    fn reading_ends_when_the_comic_is_closed_or_cleared() {
         let mut s = reading_state();
-        assert!(current_at(&s, 1_000 + READING_FRESH_SECS).is_some());
-        assert!(current_at(&s, 1_001 + READING_FRESH_SECS).is_none(), "no signal for 30 minutes: reading stopped");
+        assert!(current_at(&s, 1_000 + 3 * 3600).is_some(), "open for hours: still read");
+        // The reader closed it: the status goes at once (no timeout).
+        s.reading_open(Vec::new());
+        assert!(current_at(&s, 1_001).is_none(), "closed");
+        let mut s = reading_state();
         s.manga.enabled = false;
         assert!(current_at(&s, 1_100).is_none(), "Manga mode off");
         s.manga.enabled = true;

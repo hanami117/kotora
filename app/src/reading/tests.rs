@@ -230,3 +230,43 @@ fn a_comic_folder_must_be_there() {
     remove_comic_folder(&mut s, &p);
     assert!(s.reading.folders.is_empty());
 }
+
+/// Live test: closing the comic must end "Now Reading" (and Discord) at once.
+#[test]
+fn closing_the_comic_clears_now_reading() {
+    let mut s = state();
+    fake_open(&mut s, "YACReader", "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", None);
+    assert!(s.now_reading().is_some());
+    // The viewer quit (its process and command line are gone).
+    s.reading_open(Vec::new());
+    assert!(s.now_reading().is_none() && s.reading.current.is_none(), "nothing to ask: gone");
+    // YACReader's write on close of a half-read comic comes after: it doesn't bring it back.
+    fake_closed(&mut s, "Inkwell Cartographers v12 c120.cbz", 14);
+    assert!(s.reading.current.is_none());
+}
+
+#[test]
+fn a_closed_comic_that_asks_stays_in_the_banner_only() {
+    let mut s = state();
+    fake_open(&mut s, "YACReader", "/comics/Inkwell Cartographers v12 c120.cbz", None);
+    s.reading_open(Vec::new());
+    // Read to the end, saved on close: the question stays, Now Reading doesn't.
+    fake_closed(&mut s, "Inkwell Cartographers v12 c120.cbz", 40);
+    assert!(s.reading_banner());
+    assert!(s.now_reading().is_none());
+    // Marked: Undo stays while closed.
+    s.confirm_reading().unwrap();
+    s.reading_open(Vec::new());
+    assert!(s.reading_banner() && s.reading.current.is_some());
+}
+
+#[test]
+fn opening_again_makes_it_now_reading_again() {
+    let mut s = state();
+    fake_open(&mut s, "Okular", "/srv/manga/Inkwell Cartographers/c120.cbz", None);
+    let p = s.reading.current.as_ref().unwrap().read.path.clone();
+    s.reading_open(vec![p.clone()]);
+    assert!(s.now_reading().is_some());
+    s.reading_open(vec![std::path::PathBuf::from("/srv/manga/Other/c001.cbz")]);
+    assert!(s.now_reading().is_none(), "another file open: this one closed");
+}
