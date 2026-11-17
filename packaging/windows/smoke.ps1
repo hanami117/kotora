@@ -18,6 +18,7 @@ New-Item -ItemType Directory -Force $log | Out-Null
 $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "Kotora.lnk"
 $desktop = Join-Path ([Environment]::GetFolderPath("DesktopDirectory")) "Kotora.lnk"
 $data = @((Join-Path $env:APPDATA "kotora"), (Join-Path $env:LOCALAPPDATA "kotora"))
+$ok = $false
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{17091F1F-7829-4B92-964B-D2AA5E246767}_is1"
 
 function Check([bool]$ok, [string]$what) {
@@ -103,9 +104,12 @@ try {
     Check (-not (Test-Path $dir)) "the install folder is gone again"
     foreach ($d in $data) { Check (-not (Test-Path $d)) "deleted when asked: $d" }
     Write-Host "Install and uninstall: all checks passed."
+    $ok = $true
 }
 finally {
     Write-Host "--- installer logs: $log"
     Get-ChildItem $log -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name) (last lines)"; Get-Content $_.FullName -Tail 15 }
     foreach ($d in $data) { Remove-Item (Join-Path $d "smoke-marker.txt") -ErrorAction SilentlyContinue }
 }
+# `kot status` above failed on purpose and left its exit code behind: say how the checks went.
+if ($ok) { exit 0 } else { exit 1 }
