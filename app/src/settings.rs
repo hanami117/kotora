@@ -1256,7 +1256,8 @@ fn about(s: &State) -> El {
                         .font(theme::LABEL)
                         .color(PAL.dim)
                         .wrap(),
-                ),
+                )
+                .child(text(format!("{}. Free software under the GNU General Public License, version 3 or later.", crate::COPYRIGHT)).key("about-copyright").font(theme::LABEL).color(PAL.faint).wrap()),
         )
 }
 

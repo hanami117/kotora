@@ -77,6 +77,9 @@ use crate::model::State;
 /// Wayland app_id, desktop entry, icon name and macOS bundle id.
 pub const APP_ID: &str = "io.github.hanami117.kotora";
 
+/// The author's copyright line (About, Settings → About, the macOS bundle, the Windows resources).
+pub const COPYRIGHT: &str = "\u{a9} 2026 Thomas Lonigro";
+
 /// The C2 icon (`assets/icons/`), drawn at sidebar size.
 const LOGO: &[u8] = include_bytes!("../../assets/icons/io.github.hanami117.kotora.svg");
 

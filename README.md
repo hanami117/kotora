@@ -197,6 +197,8 @@ Kotora is not affiliated with or endorsed by MyAnimeList, AniList, MangaDex or M
 
 ## License
 
+Copyright © 2026 Thomas Lonigro.
+
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
 ## Credits

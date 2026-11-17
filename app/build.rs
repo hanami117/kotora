@@ -30,7 +30,7 @@ fn resources() {
         .set("ProductName", "Kotora")
         .set("FileDescription", "Kotora")
         .set("CompanyName", "Kotora")
-        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("LegalCopyright", "Copyright (C) 2026 Thomas Lonigro. GPL-3.0-or-later")
         .set("OriginalFilename", "kotora.exe")
         .set("InternalName", "kotora");
     // Never fail the build over the resources: a copy without an icon still runs.

@@ -3113,7 +3113,7 @@ mod tests {
             }
             assert!(rt.find("about-card").is_none(), "one section at a time");
             let rt = render("settings-about", size);
-            for key in ["about-card", "set/licences", "link/source", "link/site"] {
+            for key in ["about-card", "about-copyright", "set/licences", "link/source", "link/site"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }

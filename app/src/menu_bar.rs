@@ -159,7 +159,7 @@ fn about() {
         NSString::from_str("Kotora"),
         NSString::from_str(env!("CARGO_PKG_VERSION")),
         NSString::from_str(&format!("{}{}", kotora_ctl::BUILD, kotora_ctl::dev_suffix())),
-        NSString::from_str("A tribute to Taiga, the Windows anime tracker.\nFree software under the GNU GPL, version 3 or later."),
+        NSString::from_str(&format!("{}\nA tribute to Taiga, the Windows anime tracker.\nFree software under the GNU GPL, version 3 or later.", crate::COPYRIGHT)),
     ];
     let keys: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
     let values: Vec<&NSString> = values.iter().map(|v| &**v).collect();
