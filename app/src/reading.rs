@@ -207,6 +207,41 @@ enum In {
     ListChanged,
     /// Where to continue this manga (`resume`); answered now and again after each change.
     Resume(u32),
+    /// The question about a counted comic was answered: report what is open again.
+    Answered,
+}
+
+/// `kotora: reading: …` on stderr: what detection saw, matched, opened, closed and asked. Only
+/// on a change; file names, never folders. `KOTORA_DEBUG_READING=1` adds every look.
+pub(crate) fn log(msg: impl std::fmt::Display) {
+    if !rune::is_headless() {
+        eprintln!("kotora: reading: {msg}");
+    }
+}
+
+fn debug_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KOTORA_DEBUG_READING").is_some_and(|v| !v.is_empty() && v != "0"))
+}
+
+fn debug(msg: impl std::fmt::Display) {
+    if debug_on() {
+        log(msg);
+    }
+}
+
+/// A path's file name, for the log.
+fn name_of(p: &std::path::Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+fn found_text(f: &Found) -> String {
+    match f {
+        Found::List { media_id, sure, why } => format!("list entry {media_id} ({}: {why})", if *sure { "sure" } else { "unsure" }),
+        Found::NotOnList { media_id, title } => format!("not on the list: {title} ({media_id})"),
+        Found::Ignored => "ignored (not a manga)".into(),
+        Found::Nothing => "no match".into(),
+    }
 }
 
 // ------------------------------------------------------------------------------- the thread
@@ -290,7 +325,20 @@ fn send(o: &Out, m: ReadingMsg) {
     o.h.update_if(move |s, _| s.reading.running() && s.reading.epoch == epoch && s.apply(Msg::Reading(m)));
 }
 
+/// A path with its symlinks resolved (a library or comic folder behind a link: the log and
+/// `/proc` name the real place). Kept as given when it can't be resolved.
+fn real(p: &str) -> String {
+    std::fs::canonicalize(p).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| p.to_string())
+}
+
 fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
+    // Comic folders as the process table names them (symlinks resolved), and as given.
+    let mut folders: Vec<String> = cfg.folders.iter().map(|f| real(f)).collect();
+    for f in &cfg.folders {
+        if !folders.contains(f) {
+            folders.push(f.clone());
+        }
+    }
     let libs = if cfg.yacreader { core_reading::libraries(&cfg.added, cfg.find) } else { Vec::new() };
     send(h, ReadingMsg::Libs { watched: libs.iter().map(|l| l.path.to_string_lossy().into_owned()).collect(), errors: Vec::new() });
     // The process table (macOS, Linux; `None` elsewhere): the YACReader viewer's command line
@@ -302,10 +350,19 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
         return;
     }
     let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
+    log(format_args!(
+        "watching {} YACReader librar{}{}; open files {}",
+        watch_len(&cfg.added, cfg.find, cfg.yacreader),
+        if watch_len(&cfg.added, cfg.find, cfg.yacreader) == 1 { "y" } else { "ies" },
+        if cfg.yacreader { "" } else { " (YACReader off)" },
+        if cfg.open_files { "on" } else { "off" }
+    ));
     // The viewer's own files (a comic opened on its own, not from the library).
     let viewer_dir = if cfg.yacreader { kotora_core::manga::viewer::find_dir() } else { None };
     let mut viewer_log = viewer_dir.as_deref().map(kotora_core::manga::viewer::LogTail::new);
     let mut viewer_file: Option<String> = None;
+    debug(format_args!("viewer log: {}", if viewer_dir.is_some() { "found" } else { "none" }));
+    let mut viewer_since: Option<std::time::Instant> = None;
     // The bookmarks' time now: only a write after this counts.
     let mut bookmarks_seen = viewer_dir.as_ref().and_then(|d| std::fs::metadata(d.join("bookmarks.yacr")).and_then(|m| m.modified()).ok());
     let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
@@ -321,7 +378,12 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     loop {
         let mut errors = Vec::new();
         let mut changed = false;
-        if let Some(r) = watch.poll(&mut errors)
+        // The library's path for the file, links resolved: the same name the viewer's log and
+        // the process table give it.
+        if let Some(r) = watch.poll(&mut errors).map(|mut r| {
+            r.path = std::path::PathBuf::from(real(&r.path.to_string_lossy()));
+            r
+        })
             && last.as_ref() != Some(&r)
         {
             changed = true;
@@ -334,31 +396,43 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             // read every process's descriptors inside comic folders).
             // While a file is open, its closing is looked for at every wake.
             let files = cfg.open_files && (tick.is_multiple_of(3) || !files_kept.is_empty());
-            let opts = kotora_detect::comics::ScanOpts { folders: cfg.folders.clone(), files, yac_args: cfg.yacreader, reader_args: cfg.open_files };
+            let opts = kotora_detect::comics::ScanOpts { folders: folders.clone(), files, yac_args: cfg.yacreader, reader_args: cfg.open_files };
             tick = tick.wrapping_add(1);
             let found = sc.scan_with(&opts);
             let mut open: Vec<kotora_core::manga::openfile::Open> = Vec::new();
+            // The same file by one name: links resolved (the library's own path, the log's, argv's).
+            let found: Vec<_> = found.into_iter().map(|mut o| {
+                if o.yac.is_none() {
+                    o.path = real(&o.path);
+                }
+                o
+            }).collect();
             for o in found {
                 match o.yac {
                     // The viewer: its comic from the library's database (read only).
                     Some(id) => {
                         if let Some(path) = yac_comic(&mut yac_cache, &o.path, id) {
-                            open.push(kotora_core::manga::openfile::Open { app: o.app, path });
+                            open.push(kotora_core::manga::openfile::Open { app: o.app, path: real(&path) });
                         }
                     }
                     None => open.push(kotora_core::manga::openfile::Open { app: o.app, path: o.path }),
                 }
             }
-            // The viewer opened on a file from the Finder: its log names the comic.
-            if sc.bare_viewers > 0
-                && let Some(t) = viewer_log.as_mut()
-            {
-                t.poll();
-                if let Some(p) = t.last.clone().filter(|p| std::path::Path::new(p).is_file()) {
-                    if !open.iter().any(|o| o.path == p) {
-                        open.push(kotora_core::manga::openfile::Open { app: "YACReader".into(), path: p.clone() });
+            // A YACReader viewer runs: its log names the comic opened last. Newer than the viewer's
+            // start, it beats the command line (the next volume opened inside the viewer keeps the
+            // old --comicId); a viewer opened from the Finder has only the log.
+            if sc.viewers == 0 {
+                viewer_since = None;
+            } else {
+                let since = *viewer_since.get_or_insert_with(std::time::Instant::now);
+                if let Some(t) = viewer_log.as_mut() {
+                    t.poll();
+                    let fresh = t.fresh_since(since).map(real);
+                    if let Some(p) = viewer_from_log(&mut open, fresh, t.last.as_deref().map(real), sc.bare_viewers > 0, |p| std::path::Path::new(p).is_file())
+                        && sc.bare_viewers > 0
+                    {
+                        viewer_file = Some(p);
                     }
-                    viewer_file = Some(p);
                 }
             }
             // Closed: the page it was left on, from the viewer's bookmarks (written on close).
@@ -394,6 +468,13 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             paths.sort();
             if paths != open_sent {
                 changed = true;
+                for p in paths.iter().filter(|p| !open_sent.contains(p)) {
+                    let app = open.iter().find(|o| std::path::Path::new(&o.path) == p.as_path()).map(|o| o.app.as_str()).unwrap_or("");
+                    log(format_args!("open in {app}: {}", name_of(p)));
+                }
+                for p in open_sent.iter().filter(|p| !paths.contains(p)) {
+                    log(format_args!("closed: {}", name_of(p)));
+                }
                 open_sent = paths.clone();
                 send(h, ReadingMsg::Open(paths));
             }
@@ -432,6 +513,7 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                 let libs = kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
                 send(h, ReadingMsg::Resume { media_id: id, at: resume_for(&mut store, &libs, id) });
             }
+            Ok(In::Answered) => tracker.release(),
             Ok(In::ListChanged) => {
                 if let Some(r) = &last {
                     send(h, ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))));
@@ -455,6 +537,25 @@ fn viewer_read(dir: &std::path::Path, path: &str) -> Option<Read> {
     r.finished = kotora_core::manga::chapter_read(false, r.page, r.pages);
     r.weak = false;
     Some(r)
+}
+
+/// The viewer's comic from its log: a line newer than the viewer's start (`fresh`) replaces the
+/// comic its command line names (the next volume opened inside it keeps the old --comicId); a
+/// viewer with no comic in its command line (opened from the Finder) takes the log's last line.
+/// Returns the path used.
+fn viewer_from_log(open: &mut Vec<kotora_core::manga::openfile::Open>, fresh: Option<String>, last: Option<String>, bare: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
+    let p = fresh.or(if bare { last } else { None }).filter(|p| exists(p))?;
+    if !open.iter().any(|o| o.path == p) {
+        debug(format_args!("viewer log: {}", name_of(std::path::Path::new(&p))));
+        open.retain(|o| o.app != "YACReader");
+        open.push(kotora_core::manga::openfile::Open { app: "YACReader".into(), path: p.clone() });
+    }
+    Some(p)
+}
+
+/// How many libraries the watch will have (for the start line).
+fn watch_len(added: &[String], find: bool, on: bool) -> usize {
+    if on { core_reading::libraries(added, find).len() } else { 0 }
 }
 
 /// Where to continue manga `id` of the list (its entry and the user's picks from the store).
@@ -540,6 +641,15 @@ fn open(store: &mut Option<Store>) -> Option<&mut Store> {
 }
 
 fn recognise(store: &mut Option<Store>, read: Read) -> Seen {
+    let seen = recognise_quiet(store, read);
+    let r = &seen.read;
+    let state = if r.finished { format!(", read to the end{}", r.why.as_ref().map(|w| format!(" ({w})")).unwrap_or_default()) } else if r.pages > 0 && !r.weak { format!(", page {} of {}", r.page, r.pages) } else { String::new() };
+    let renum = r.renumbered.as_ref().map(|n| format!(" [{n}]")).unwrap_or_default();
+    log(format_args!("{} in {}: \"{}\" {}{renum}{state} → {}", name_of(&r.path), r.source, r.series, r.label(), found_text(&seen.found)));
+    seen
+}
+
+fn recognise_quiet(store: &mut Option<Store>, read: Read) -> Seen {
     let nothing = |read: Read| Seen { read, found: Found::Nothing, candidates: Vec::new(), cover_url: None };
     if read.series.is_empty() {
         return nothing(read);
@@ -696,6 +806,7 @@ impl State {
         if !open && !self.reading_asks() {
             self.withdraw_reading_note();
             self.reading.current = None;
+            debug("closed: Now Reading cleared");
         }
         true
     }
@@ -808,6 +919,7 @@ impl State {
         if let Some(r) = &mut self.reading.current {
             r.acted = true;
         }
+        log(format_args!("{}: {} of {title}", if auto { "marking" } else { "asks" }, o.label()));
         if auto {
             if self.mark_reading(true).is_ok() {
                 self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title);
@@ -840,6 +952,8 @@ impl State {
             r.acted = true;
             r.picking = false;
         }
+        log(format_args!("marked {} of {title}", o.label()));
+        self.reading.send(In::Answered);
         Ok((title, o))
     }
 
@@ -859,23 +973,35 @@ impl State {
         let _ = self.manga_edit(m.id, Change { progress: Some(m.old_chapters), volumes: Some(m.old_volumes), status: Some(m.old_status), ..Default::default() });
         let mark = self.reading_mark();
         self.withdraw_reading_note();
+        log("undone");
         if let Some(r) = &mut self.reading.current {
             r.mark = mark;
             r.marked = None;
             r.dismissed = true;
         }
+        if self.reading.current.as_ref().is_some_and(|r| !r.open) {
+            self.reading.current = None;
+        }
     }
 
     /// Not now (the banner, `kot dismiss`, the notification).
     pub fn dismiss_reading(&mut self) -> bool {
-        match &mut self.reading.current {
+        let open = match &mut self.reading.current {
             Some(r) if !r.dismissed => {
                 r.dismissed = true;
                 r.picking = false;
+                log(format_args!("not now: {}", r.read.file_name));
+                r.open
             }
             _ => return false,
-        }
+        };
         self.withdraw_reading_note();
+        self.reading.send(In::Answered);
+        // Closed and answered: nothing left to show (live test: a closed comic said "not now"
+        // stayed as Now Reading).
+        if !open {
+            self.reading.current = None;
+        }
         true
     }
 
@@ -908,6 +1034,7 @@ impl State {
         r.dismissed = true;
         let key = r.read.key();
         self.reading.send(In::Correct { key, media_id: None });
+        self.reading.send(In::Answered);
         self.withdraw_reading_note();
     }
 
@@ -972,6 +1099,7 @@ impl State {
             note: self.reading_note(),
             recorded: r.marked.map(|m| m.offer.label()),
             dismissed: r.dismissed,
+            open: r.open,
         })
     }
 

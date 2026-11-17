@@ -669,7 +669,8 @@ fn reading_text(r: &ReadingInfo) -> String {
         (Some(p), Some(n)) if n > 0 => format!(" (page {p} of {n})"),
         _ => String::new(),
     };
-    let mut out = format!("Reading in {}: {} {}{pages}\n  {}\n  {}\n", r.reader, r.title, r.label, r.file, r.matched);
+    let lead = if r.open { "Reading in" } else { "Closed in" };
+    let mut out = format!("{lead} {}: {} {}{pages}\n  {}\n  {}\n", r.reader, r.title, r.label, r.file, r.matched);
     out.push_str(&match (&r.recorded, &r.offer) {
         (Some(what), _) => format!("  Marked {what} as read.\n"),
         (None, Some(what)) if r.dismissed => format!("  {what} offered; you said not now (kot confirm marks it).\n"),
@@ -988,6 +989,11 @@ mod tests {
         );
         let done = ReadingInfo { finished: true, ..r.clone() };
         assert!(reading_text(&done).contains("(read to the end)") && reading_text(&done).ends_with("Mark Ch 362 as read? kot confirm\n"));
-        assert!(reading_text(&ReadingInfo { recorded: Some("Ch 362".into()), ..r }).ends_with("Marked Ch 362 as read.\n"));
+        assert!(reading_text(&ReadingInfo { recorded: Some("Ch 362".into()), ..r.clone() }).ends_with("Marked Ch 362 as read.\n"));
+        // Closed, still asking (the question stays in the banner).
+        assert!(reading_text(&ReadingInfo { open: false, finished: true, ..r }).starts_with("Closed in YACReader: "));
+        // An older Kotora sends no `open`: open.
+        let old: ReadingInfo = serde_json::from_str(r#"{"reader":"YACReader"}"#).unwrap();
+        assert!(old.open);
     }
 }

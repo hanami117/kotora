@@ -7,8 +7,10 @@
 //! - It counts as read when the **next file of the same series** opens (a higher chapter or
 //!   volume), or when it has been open for `minutes` (Settings, default 10). Closed sooner: not
 //!   counted.
-//! - A counted comic stays the one reported until another one is counted: a file opened after it
-//!   doesn't push its question away.
+//! - A counted comic stays the one reported while a comic of its series is open (the next
+//!   volume opening doesn't push its question away), until it is answered ([`Tracker::release`])
+//!   or no comic of that series is open any more. Then whatever is open is reported again (live
+//!   test: a counted comic used to pin the report until Kotora restarted).
 //!
 //! These are always weak ([`Read::weak`]): Kotora asks, even with "Update automatically" on.
 
@@ -40,8 +42,9 @@ pub struct Tracker {
     /// When each open path was first seen (gone ones are dropped).
     first: HashMap<String, i64>,
     cur: Option<Current>,
-    /// The last report was a counted comic: an unfinished one doesn't replace it.
-    holding: bool,
+    /// The series of the counted comic last reported: an unfinished comic of that series doesn't
+    /// replace it while one of the series is open.
+    held: Option<String>,
     last: Option<Read>,
 }
 
@@ -76,7 +79,13 @@ fn place(r: &Read) -> (u32, u32) {
 
 impl Tracker {
     pub fn new(minutes: u32) -> Tracker {
-        Tracker { minutes: minutes.clamp(1, 240), first: HashMap::new(), cur: None, holding: false, last: None }
+        Tracker { minutes: minutes.clamp(1, 240), first: HashMap::new(), cur: None, held: None, last: None }
+    }
+
+    /// The counted comic was answered (marked, not now, undone): report what is open again.
+    pub fn release(&mut self) {
+        self.held = None;
+        self.last = None;
     }
 
     pub fn set_minutes(&mut self, minutes: u32) {
@@ -87,6 +96,12 @@ impl Tracker {
     /// differs from the last one reported.
     pub fn update(&mut self, open: &[Open], now: i64) -> Option<Read> {
         self.first.retain(|p, _| open.iter().any(|o| o.path == *p));
+        // The held series is closed: its question no longer blocks what is open now.
+        if let Some(k) = &self.held
+            && !open.iter().any(|o| crate::manga::reading::key(&read_of(o, now).series) == *k)
+        {
+            self.held = None;
+        }
         for o in open {
             self.first.entry(o.path.clone()).or_insert(now);
         }
@@ -122,12 +137,12 @@ impl Tracker {
             out = Some(Read { finished: true, why: Some(format!("open for {} minutes", self.minutes)), ..c.read.clone() });
         }
         if out.is_none()
-            && let Some(c) = self.cur.as_ref().filter(|c| !c.counted && !self.holding)
+            && let Some(c) = self.cur.as_ref().filter(|c| !c.counted && self.held.is_none())
         {
             out = Some(c.read.clone());
         }
         let out = out?;
-        self.holding = out.finished;
+        self.held = out.finished.then(|| crate::manga::reading::key(&out.series));
         if self.last.as_ref() == Some(&out) {
             return None;
         }
@@ -189,6 +204,30 @@ mod tests {
         // A lower chapter of the same series is no "next".
         let r = t.update(&[open("/c/Tsuki no Niwa/c001.cbz")], 3 * M).unwrap();
         assert_eq!((r.chapter, r.finished), (Some(1), false));
+    }
+
+    /// Live test (Arch): after one comic was counted, nothing else was reported until restart.
+    #[test]
+    fn a_counted_comic_holds_only_while_its_series_is_open() {
+        let mut t = Tracker::new(10);
+        t.update(&[open("/c/Glass Lantern Club/c012.cbz")], 0);
+        let r = t.update(&[open("/c/Glass Lantern Club/c013.cbz")], M).unwrap();
+        assert!(r.finished);
+        // Its series closed, another reader opens something else: reported at once.
+        assert_eq!(t.update(&[], 2 * M), None);
+        let r = t.update(&[Open { app: "Okular".into(), path: "/c/Tsuki no Niwa/c003.cbz".into() }], 3 * M).unwrap();
+        assert_eq!((r.series.as_str(), r.finished, r.source.as_str()), ("Tsuki no Niwa", false, "Okular"));
+    }
+
+    #[test]
+    fn an_answer_releases_the_hold() {
+        let mut t = Tracker::new(10);
+        t.update(&[open("/c/Glass Lantern Club/c012.cbz")], 0);
+        assert!(t.update(&[open("/c/Glass Lantern Club/c013.cbz")], M).unwrap().finished);
+        assert_eq!(t.update(&[open("/c/Glass Lantern Club/c013.cbz")], 2 * M), None, "held");
+        t.release();
+        let r = t.update(&[open("/c/Glass Lantern Club/c013.cbz")], 3 * M).unwrap();
+        assert_eq!((r.chapter, r.finished), (Some(13), false));
     }
 
     #[test]

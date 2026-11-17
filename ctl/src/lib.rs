@@ -464,7 +464,7 @@ pub struct NowInfo {
 }
 
 /// The comic a reader has open (or had last), as `kot now` prints it.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReadingInfo {
     /// "YACReader".
@@ -491,6 +491,34 @@ pub struct ReadingInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recorded: Option<String>,
     pub dismissed: bool,
+    /// The reader has it open now (false: closed, still asking or offering Undo). An older
+    /// Kotora sends none: open.
+    #[serde(default = "yes")]
+    pub open: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for ReadingInfo {
+    fn default() -> Self {
+        ReadingInfo {
+            reader: String::new(),
+            file: String::new(),
+            title: String::new(),
+            label: String::new(),
+            page: None,
+            pages: None,
+            finished: false,
+            matched: String::new(),
+            offer: None,
+            note: None,
+            recorded: None,
+            dismissed: false,
+            open: true,
+        }
+    }
 }
 
 /// One list entry, as `kot list` prints it.

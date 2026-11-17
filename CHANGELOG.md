@@ -10,6 +10,20 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   --comicId=N`) and looks the comic up in that library's database (read only): it shows at once. A reader
   started on a file (Simple Comic, MComix, …) counts by its command line too; open files stay a second signal.
   Checks every 10 seconds.
+- Reading detection (live test on Arch): a closed comic answered "Not now" stayed as Now Reading and in `kot
+  now`, and after one comic was counted no other comic (Okular) was reported until a restart. A counted comic
+  now holds only while its series is open or until it is answered; Now Reading shows only what is open (a
+  closed comic that asks is in the banner); `kot now` says "Closed in …" for such a comic.
+- Reading detection: the next volume opened inside a YACReader viewer started by the library was missed (its
+  command line keeps the first `--comicId`). The viewer's log is now read whenever a viewer runs, and a line
+  newer than the viewer's start wins. The Linux log format (`opening archive: "…"`, native and Flatpak) is read
+  too, and the newest of the log folders is used.
+- Reading detection: YACReader's "read" flag, still set from an earlier reading, made a volume left after a
+  few seconds count as read to the end. With a known page count, the page decides.
+- Reading detection: paths behind a symlink (a library or comic folder linked elsewhere) are resolved, so a file
+  has one name whether it comes from the library, the viewer's log or the process table.
+- Reading detection logs what it sees on stderr (`kotora: reading: …`: libraries watched, a comic open or
+  closed, its match, a question, an answer); only changes, file names only. `KOTORA_DEBUG_READING=1` adds more.
 - Reading detection: a comic opened in YACReader from the Finder (not from its library) was not seen: on
   macOS the file comes as an Apple Event, the viewer keeps no file open, and its command line names none.
   Kotora now reads the viewer's own log (`yacreader.log`: "Opened archive file : …") while it runs, and on

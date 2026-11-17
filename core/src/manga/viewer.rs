@@ -3,8 +3,11 @@
 //! arrives as an Apple Event), and it keeps no file open. What it does write (checked against
 //! YACReader 9.x/10.x on macOS, 2026-11-17):
 //!
-//! - `yacreader.log` in its settings folder: `"Opened archive file : <path>"` the moment a comic
-//!   opens. [`LogTail`] reads only what was added since the last look.
+//! - `yacreader.log` in its settings folder, the moment a comic opens: `"Opened archive file :
+//!   <path>"` (macOS) or `opening archive: "<path>"` (Linux, 10.4; native and Flatpak).
+//!   [`LogTail`] reads only what was added since the last look. Also inside a viewer started by
+//!   the library: going to the next volume there keeps the old `--comicId` in its command line,
+//!   but the log names the new file.
 //! - `bookmarks.yacr` beside it, on close: a `QDataStream` of `QMap<QString, Bookmark>` keyed by
 //!   the lower-case file name followed by the file's size, with `lastPage` (from 0), the
 //!   bookmarks and the time ([`bookmarks`], [`bookmark_key`]). It has no page count:
@@ -31,20 +34,25 @@ pub fn dirs() -> Vec<PathBuf> {
     v
 }
 
-/// The first folder that has the viewer's log.
+/// The folder whose viewer log was written last (native and Flatpak may both exist).
 pub fn find_dir() -> Option<PathBuf> {
-    dirs().into_iter().find(|d| d.join("yacreader.log").is_file())
+    dirs()
+        .into_iter()
+        .filter_map(|d| Some((std::fs::metadata(d.join("yacreader.log")).and_then(|m| m.modified()).ok()?, d)))
+        .max_by_key(|(t, _)| *t)
+        .map(|(_, d)| d)
 }
 
-const OPENED: &str = "Opened archive file : ";
+/// The markers before an opened comic's path: macOS, then Linux (YACReader 10.4).
+const OPENED: [&str; 2] = ["Opened archive file : ", "opening archive: "];
 
 /// The comic paths a piece of the log says were opened, in order.
 pub fn opened_in(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|l| {
-            let rest = &l[l.find(OPENED)? + OPENED.len()..];
-            let p = rest.trim().trim_end_matches('"').trim_end();
-            p.starts_with('/').then(|| p.to_string()).or_else(|| (p.len() > 2 && p.as_bytes()[1] == b':').then(|| p.to_string()))
+            let rest = OPENED.iter().find_map(|m| l.find(m).map(|at| &l[at + m.len()..]))?;
+            let p = rest.trim().trim_start_matches('"').trim_end().trim_end_matches('"').trim_end();
+            (p.starts_with('/') || (p.len() > 2 && p.as_bytes()[1] == b':')).then(|| p.to_string())
         })
         .collect()
 }
@@ -53,8 +61,12 @@ pub fn opened_in(text: &str) -> Vec<String> {
 pub struct LogTail {
     path: PathBuf,
     offset: u64,
-    /// The comic the log said was opened last.
+    /// The comic the log said was opened last (also from before Kotora looked).
     pub last: Option<String>,
+    /// The comic the log named after the first look, and when Kotora read that line: newer
+    /// than a viewer's start, it beats the viewer's `--comicId`.
+    pub fresh: Option<(String, std::time::Instant)>,
+    looked: bool,
 }
 
 /// How far back the first look goes.
@@ -62,7 +74,7 @@ const FIRST_LOOK: u64 = 64 * 1024;
 
 impl LogTail {
     pub fn new(dir: &Path) -> LogTail {
-        LogTail { path: dir.join("yacreader.log"), offset: 0, last: None }
+        LogTail { path: dir.join("yacreader.log"), offset: 0, last: None, fresh: None, looked: false }
     }
 
     /// Reads what was added; `true` when it named a newly opened comic.
@@ -84,14 +96,22 @@ impl LogTail {
             return false;
         }
         self.offset = len;
+        let first = !std::mem::replace(&mut self.looked, true);
         match opened_in(&String::from_utf8_lossy(&buf)).pop() {
-            Some(p) if self.last.as_deref() != Some(p.as_str()) => {
+            Some(p) => {
+                if !first {
+                    self.fresh = Some((p.clone(), std::time::Instant::now()));
+                }
                 self.last = Some(p);
                 true
             }
-            Some(_) => true,
             None => false,
         }
+    }
+
+    /// The comic the log named since `since` (a viewer's start), if any.
+    pub fn fresh_since(&self, since: std::time::Instant) -> Option<&str> {
+        self.fresh.as_ref().filter(|(_, at)| *at >= since).map(|(p, _)| p.as_str())
     }
 }
 
@@ -226,6 +246,9 @@ mod tests {
         let log = "DEBUG 2026-11-17T22:30:01.012 \"Opened archive file : /Volumes/Disk/Dragon Ball Z v13 (2003) (Digital) (LuCaZ).cbz\" \n \nWARN  2026-11-17T22:30:39.950 QThread::wait: Thread tried to wait on itself \nDEBUG 2026-11-17T22:30:45.149 \"Opened archive file : /Volumes/Disk/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz\" \n";
         assert_eq!(opened_in(log), ["/Volumes/Disk/Dragon Ball Z v13 (2003) (Digital) (LuCaZ).cbz", "/Volumes/Disk/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"]);
         assert!(opened_in("ERROR Sending Comic Info : unable to connect to the server").is_empty());
+        // Linux, YACReader 10.4 (native and Flatpak).
+        let linux = "DEBUG 2026-11-17T22:54:12.667 opening archive: \"/mnt/data/Manga/All You Need Is Kill v01 (2014) (Digital) (LuCaZ).cbz\"\nDEBUG 2026-11-17T22:54:18.001 opening archive: \"/mnt/data/Manga/All You Need Is Kill v02 (2014) (Digital) (LuCaZ).cbz\"\n";
+        assert_eq!(opened_in(linux), ["/mnt/data/Manga/All You Need Is Kill v01 (2014) (Digital) (LuCaZ).cbz", "/mnt/data/Manga/All You Need Is Kill v02 (2014) (Digital) (LuCaZ).cbz"]);
     }
 
     #[test]
@@ -236,13 +259,17 @@ mod tests {
         let log = dir.join("yacreader.log");
         std::fs::write(&log, "DEBUG x \"Opened archive file : /c/a v01.cbz\" \n").unwrap();
         let mut t = LogTail::new(&dir);
+        let start = std::time::Instant::now();
         assert!(t.poll());
         assert_eq!(t.last.as_deref(), Some("/c/a v01.cbz"));
+        assert_eq!(t.fresh_since(start), None, "from before the first look: not fresh");
         assert!(!t.poll(), "nothing added");
         let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
         std::io::Write::write_all(&mut f, b"WARN y\nDEBUG z \"Opened archive file : /c/a v02.cbz\" \n").unwrap();
         assert!(t.poll());
         assert_eq!(t.last.as_deref(), Some("/c/a v02.cbz"));
+        assert_eq!(t.fresh_since(start), Some("/c/a v02.cbz"), "the next volume, opened in the viewer");
+        assert_eq!(t.fresh_since(std::time::Instant::now()), None, "older than a viewer started now");
         // YACReader started again with a shorter log.
         std::fs::write(&log, "DEBUG \"Opened archive file : /c/b.cbz\"\n").unwrap();
         assert!(t.poll());

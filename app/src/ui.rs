@@ -2501,7 +2501,9 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
     }
     side = side.child(players_status_card(s));
     // Reading detection (Manga): the comic read last, above the rest.
-    let reading = s.reading.current.as_ref().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
+    // Only the comic open now: a closed one that still asks is in the banner (live test: a
+    // closed, answered comic stayed here and hid what Okular had open).
+    let reading = s.now_reading().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
     // Manga mode: Now Reading. The comic first (or how to start), what plays below it.
     if crate::reading::now_reading_mode(s) {
         let mut main = col().gap(16.0).w_full().child(reading.unwrap_or_else(|| crate::reading::empty(s)));

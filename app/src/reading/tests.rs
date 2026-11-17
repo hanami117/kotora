@@ -321,3 +321,64 @@ fn viz_dragon_ball_z_asks_and_offers_the_right_volume() {
     s.pick_manga(42);
     assert!(s.reading.current.as_ref().unwrap().sure());
 }
+
+/// Live test (Arch): closed, then "Not now": Now Reading and kot now kept the closed comic, and
+/// a comic opened in Okular next never showed.
+#[test]
+fn a_closed_comic_answered_not_now_is_gone_and_the_next_one_shows() {
+    let mut s = state();
+    fake_open(&mut s, "YACReader", "/comics/Inkwell Cartographers v12 c120.cbz", None);
+    s.reading_open(Vec::new());
+    fake_closed(&mut s, "Inkwell Cartographers v12 c120.cbz", 40);
+    assert!(s.reading_banner() && s.now_reading().is_none(), "closed: the question in the banner only");
+    assert!(!s.ctl_reading().unwrap().open);
+    s.dismiss_reading();
+    assert!(s.reading.current.is_none() && s.ctl_reading().is_none());
+    fake_open(&mut s, "Okular", "/srv/manga/Paper Wolves of Osaka/c013.cbz", None);
+    assert_eq!(s.now_reading().map(|r| r.read.source.as_str()), Some("Okular"));
+}
+
+/// Live test: v01 left after 6 s with YACReader's read flag still set from before: not read.
+#[test]
+fn a_stale_read_flag_is_not_read_to_the_end() {
+    let mut s = state();
+    let o = kotora_core::manga::yacreader::Opened {
+        id: 1,
+        rel_path: "/Inkwell Cartographers v12 c120.cbz".into(),
+        path: "/comics/Inkwell Cartographers v12 c120.cbz".into(),
+        parsed: kotora_core::manga::name::parse_path("/Inkwell Cartographers v12 c120.cbz"),
+        meta_series: None,
+        current_page: 3,
+        num_pages: 40,
+        read_flag: true,
+        last_opened: 0,
+    };
+    let read = Read::from_opened(&o);
+    assert!(!read.finished);
+    s.reading.open_now.push(read.path.clone());
+    s.reading_seen(Seen { read, found: Found::List { media_id: 1, sure: true, why: String::new() }, candidates: Vec::new(), cover_url: None });
+    assert!(!s.reading_banner());
+}
+
+/// Live test (Arch): v01 opened from the library, then v02 inside the viewer: its command line
+/// still says v01; the log's newer line wins.
+#[test]
+fn the_viewer_log_beats_a_stale_comic_id() {
+    use kotora_core::manga::openfile::Open;
+    let yes = |_: &str| true;
+    let v01 = Open { app: "YACReader".into(), path: "/m/All You Need Is Kill v01.cbz".into() };
+    let mut open = vec![v01.clone(), Open { app: "Okular".into(), path: "/m/x c1.cbz".into() }];
+    let used = viewer_from_log(&mut open, Some("/m/All You Need Is Kill v02.cbz".into()), Some("/m/old.cbz".into()), false, yes);
+    assert_eq!(used.as_deref(), Some("/m/All You Need Is Kill v02.cbz"));
+    assert_eq!(open.iter().map(|o| o.path.as_str()).collect::<Vec<_>>(), ["/m/x c1.cbz", "/m/All You Need Is Kill v02.cbz"]);
+    // No fresh line, a viewer from the library: the command line stands (old lines don't count).
+    let mut open = vec![v01.clone()];
+    assert_eq!(viewer_from_log(&mut open, None, Some("/m/old.cbz".into()), false, yes), None);
+    assert_eq!(open, std::slice::from_ref(&v01));
+    // Opened from the Finder (no comic in argv): the log's last line, also from before.
+    let mut open = Vec::new();
+    assert_eq!(viewer_from_log(&mut open, None, Some("/m/old.cbz".into()), true, yes).as_deref(), Some("/m/old.cbz"));
+    // A file that is gone: nothing.
+    let mut open = vec![v01];
+    assert_eq!(viewer_from_log(&mut open, Some("/m/gone.cbz".into()), None, false, |_| false), None);
+}
