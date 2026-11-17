@@ -1,6 +1,6 @@
 //! The data model the store, the services and the UI share.
 
-use crate::{Kind, Status};
+use crate::{Kind, Score, Status};
 
 /// An anime or a manga, as far as Kotora keeps it: only media on the user's list (no hoarding).
 /// For a manga, `episodes` is the chapter count, `format` the MAL `media_type` (`manga`,
@@ -76,8 +76,8 @@ pub struct ListItem {
     pub media: Media,
     pub status: Status,
     pub progress: u32,
-    /// 1-10; `None`: not scored.
-    pub score: Option<u8>,
+    /// On the 100-point scale; `None`: not scored.
+    pub score: Option<Score>,
     /// Watching a completed anime again (MAL `is_rewatching`; the status stays Completed).
     pub rewatching: bool,
     /// Finished rewatches (MAL `num_times_rewatched`).
@@ -95,8 +95,8 @@ pub struct ListItem {
 pub struct Values {
     pub status: Status,
     pub progress: u32,
-    /// 1-10; `None`: not scored.
-    pub score: Option<u8>,
+    /// On the 100-point scale; `None`: not scored.
+    pub score: Option<Score>,
     pub rewatching: bool,
     pub times_rewatched: u32,
     /// Manga: volumes read; always 0 for anime.
@@ -105,7 +105,7 @@ pub struct Values {
 
 impl Values {
     /// Status, progress and score; not rewatching, never rewatched, no volumes.
-    pub const fn new(status: Status, progress: u32, score: Option<u8>) -> Values {
+    pub const fn new(status: Status, progress: u32, score: Option<Score>) -> Values {
         Values { status, progress, score, rewatching: false, times_rewatched: 0, volumes: 0 }
     }
 }
@@ -116,7 +116,7 @@ pub struct Change {
     pub status: Option<Status>,
     pub progress: Option<u32>,
     /// `Some(None)` removes the score.
-    pub score: Option<Option<u8>>,
+    pub score: Option<Option<Score>>,
     pub rewatching: Option<bool>,
     pub times_rewatched: Option<u32>,
     /// Manga: volumes read.
@@ -173,6 +173,13 @@ impl Change {
             times_rewatched: self.times_rewatched.filter(|n| *n != v.times_rewatched),
             volumes: self.volumes.filter(|n| *n != v.volumes),
         }
+    }
+
+    /// [`Change::without_same`], with the score compared on the 1-10 scale
+    /// ([`Score::same_ten`]): for changes between MyAnimeList and AniList (the mirror, an import
+    /// of a MAL XML file), where a 7 and a 73 are the same score.
+    pub fn without_same_ten(self, v: &Values) -> Change {
+        Change { score: self.score.filter(|s| !crate::score::Score::same_ten(*s, v.score)), ..self.without_same(v) }
     }
 
     pub fn apply(&self, v: Values) -> Values {
@@ -246,9 +253,10 @@ mod to_status_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::score::ten;
 
     fn done(times: u32) -> Values {
-        Values { times_rewatched: times, ..Values::new(Status::Completed, 12, Some(8)) }
+        Values { times_rewatched: times, ..Values::new(Status::Completed, 12, ten(8)) }
     }
 
     #[test]
@@ -282,6 +290,7 @@ mod tests {
 #[cfg(test)]
 mod volume_tests {
     use super::*;
+    use crate::score::ten;
 
     fn manga(chapters: Option<u32>, volumes: Option<u32>) -> Media {
         Media { kind: Kind::Manga, id: 7, title: "Paper Lanterns".into(), episodes: chapters, volumes, format: "manga".into(), ..Default::default() }
@@ -307,7 +316,7 @@ mod volume_tests {
         assert_eq!(m.apply(v), Values { volumes: 3, progress: 12, ..v });
         assert!(Change { volumes: Some(2), ..Change::default() }.without_same(&v).is_empty());
         assert!(a.is_count_only() && m.is_count_only());
-        assert!(!Change { volumes: Some(3), score: Some(Some(8)), ..Change::default() }.is_count_only());
+        assert!(!Change { volumes: Some(3), score: Some(ten(8)), ..Change::default() }.is_count_only());
         assert!(!Change::default().is_count_only());
     }
 }

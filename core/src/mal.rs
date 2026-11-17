@@ -41,10 +41,25 @@ const VERIFIER_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 /// `len` random characters from the PKCE alphabet (RFC 7636), from the OS random source.
 fn random_string(len: usize) -> std::io::Result<String> {
-    use std::io::Read;
     let mut bytes = vec![0u8; len];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    fill_random(&mut bytes)?;
     Ok(bytes.iter().map(|b| VERIFIER_CHARS[*b as usize % VERIFIER_CHARS.len()] as char).collect())
+}
+
+/// Random bytes from the system: `/dev/urandom`.
+#[cfg(not(windows))]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+/// Random bytes from the system: Windows' preferred generator.
+#[cfg(windows)]
+fn fill_random(bytes: &mut [u8]) -> std::io::Result<()> {
+    use windows_sys::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
+    // SAFETY: the buffer is writable for its length; no algorithm handle with this flag.
+    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status == 0 { Ok(()) } else { Err(std::io::Error::other(format!("the system's random generator failed ({status:#x})"))) }
 }
 
 /// One sign-in attempt: the verifier (also the `plain` challenge) and the `state`.
@@ -111,6 +126,8 @@ enum CallError {
     /// 401 on an API call; on the token endpoint the refresh or code was refused.
     Unauthorized,
     RateLimited,
+    /// 404: what was asked for isn't there.
+    NotFound,
     Other(String),
 }
 
@@ -120,6 +137,7 @@ impl From<CallError> for ServiceError {
             CallError::Offline(m) => ServiceError::Offline(m),
             CallError::Unauthorized => ServiceError::SignInAgain,
             CallError::RateLimited => ServiceError::RateLimited,
+            CallError::NotFound => ServiceError::Other("MyAnimeList answered HTTP 404".into()),
             CallError::Other(m) => ServiceError::Other(m),
         }
     }
@@ -167,6 +185,7 @@ impl<T: Transport> Client<T> {
                 401 => return Err(CallError::Unauthorized),
                 s @ 500..=599 => return Err(CallError::Offline(format!("MyAnimeList is having trouble (HTTP {s})"))),
                 403 => return Err(CallError::Other("MyAnimeList refused the request (HTTP 403); it may have blocked us for a while".into())),
+                404 => return Err(CallError::NotFound),
                 s => return Err(CallError::Other(format!("MyAnimeList answered HTTP {s}{}", api_message(&resp.body)))),
             }
         }
@@ -233,7 +252,7 @@ impl<T: Transport> Client<T> {
             pairs.push(("num_watched_episodes", p.to_string()));
         }
         if let Some(sc) = change.score {
-            pairs.push(("score", sc.unwrap_or(0).min(10).to_string()));
+            pairs.push(("score", sc.map_or(0, crate::Score::to_ten).to_string()));
         }
         if let Some(r) = change.rewatching {
             pairs.push(("is_rewatching", r.to_string()));
@@ -249,6 +268,16 @@ impl<T: Transport> Client<T> {
         let r = self.call(&req)?;
         let ls: ListStatus = serde_json::from_str(&r.body).map_err(|e| ServiceError::Other(format!("can't read MyAnimeList's answer ({})", e.classify_name())))?;
         ls.remote().ok_or_else(|| ServiceError::Other("MyAnimeList's answer has no list status".into()))
+    }
+
+    /// Removes one anime from the list (`DELETE /anime/{id}/my_list_status`). MAL answers 404
+    /// when it isn't on the list: that is done too.
+    pub fn delete_entry(&mut self, access: &str, id: u32) -> Result<(), ServiceError> {
+        let req = Request { method: "DELETE", url: format!("{API}/anime/{id}/my_list_status"), bearer: Some(access.to_string()), form: None, json: None };
+        match self.call(&req) {
+            Ok(_) | Err(CallError::NotFound) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// A title search, `GET /anime?q=` (5 results). MAL wants at least 3 characters; the query is
@@ -532,7 +561,7 @@ pub fn parse_details(body: &str) -> Result<Details, String> {
         Some(MyEntry {
             status,
             progress: m.num_episodes_watched,
-            score: (m.score > 0).then_some(m.score.min(10)),
+            score: crate::Score::from_ten(m.score.into()),
             rewatching: m.is_rewatching,
             times_rewatched: m.num_times_rewatched,
             start_date: non_empty(m.start_date),
@@ -625,7 +654,7 @@ fn parse_user(body: &str) -> Option<User> {
     Some(User {
         name: me.name,
         picture: me.picture.filter(|p| p.starts_with("https://")),
-        profile: Profile { joined: me.joined_at.filter(|j| !j.trim().is_empty()), stats },
+        profile: Profile { joined: me.joined_at.filter(|j| !j.trim().is_empty()), stats, ..Profile::default() },
     })
 }
 
@@ -697,7 +726,7 @@ impl ListStatus {
             values: Values {
                 status,
                 progress: self.num_episodes_watched,
-                score: (self.score > 0).then_some(self.score.min(10)),
+                score: crate::Score::from_ten(self.score.into()),
                 rewatching: self.is_rewatching,
                 times_rewatched: self.num_times_rewatched,
                 volumes: 0,
@@ -783,7 +812,7 @@ pub fn parse_list_page(body: &str) -> Result<(Vec<ListItem>, Option<String>), St
             },
             status,
             progress: ls.num_episodes_watched,
-            score: (ls.score > 0).then_some(ls.score.min(10)),
+            score: crate::Score::from_ten(ls.score.into()),
             rewatching: ls.is_rewatching,
             times_rewatched: ls.num_times_rewatched,
             updated_at: ls.updated_at.as_deref().and_then(time::parse_rfc3339).unwrap_or(0),
@@ -890,6 +919,10 @@ impl<T: Transport> ListService for Mal<T> {
         self.authed(|c, a| c.patch_entry(a, media_id, change))
     }
 
+    fn delete_entry(&mut self, media_id: u32) -> Result<(), ServiceError> {
+        self.authed(|c, a| c.delete_entry(a, media_id))
+    }
+
     fn search(&mut self, query: &str) -> Result<Vec<SearchHit>, ServiceError> {
         self.authed(|c, a| c.search_anime(a, query))
     }
@@ -931,6 +964,7 @@ impl<T: Transport> ListService for Mal<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::score::ten;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -1072,7 +1106,7 @@ mod tests {
         assert_eq!(items.len(), 3, "the entry without a list status is skipped");
         assert_eq!(next.as_deref(), Some("https://api.myanimelist.net/v2/users/@me/animelist?offset=100&limit=100"));
         let a = &items[0];
-        assert_eq!((a.media.id, a.media.title.as_str(), a.status, a.progress, a.score), (1001, "Lanterns of Kirigaoka", Status::Watching, 5, Some(8)));
+        assert_eq!((a.media.id, a.media.title.as_str(), a.status, a.progress, a.score), (1001, "Lanterns of Kirigaoka", Status::Watching, 5, ten(8)));
         assert_eq!(a.media.title_en.as_deref(), Some("Lanterns of Kirigaoka (English)"));
         assert_eq!(a.media.title_ja, None, "a blank title counts as none");
         assert_eq!(a.media.synonyms, vec!["Kirigaoka no Tomoshibi"]);
@@ -1211,7 +1245,7 @@ mod tests {
         let (f, seen) = fake(vec![ok(ENTRY), ok(NOT_ON_LIST)]);
         let (mut c, _) = client(f);
         let r = c.fetch_entry("acc", 1001).unwrap().unwrap();
-        assert_eq!(r.values, Values::new(Status::Watching, 5, Some(8)));
+        assert_eq!(r.values, Values::new(Status::Watching, 5, ten(8)));
         assert_eq!(r.updated_at, 1_519_450_460);
         assert_eq!(c.fetch_entry("acc", 1003).unwrap(), None);
         let seen = seen.lock().unwrap();
@@ -1235,6 +1269,21 @@ mod tests {
         assert!(c.patch_entry("acc", 1, &Change::default()).is_err(), "an empty change is never sent");
     }
 
+    /// Remove from list: `DELETE my_list_status`; not on the list (404) is done too, a server
+    /// error waits for a retry.
+    #[test]
+    fn delete_removes_the_entry_and_a_404_is_done() {
+        let status = |n: u16| Ok(Response { status: n, retry_after: None, body: String::new() });
+        let (f, seen) = fake(vec![ok("[]"), status(404), status(503), status(400)]);
+        let (mut c, _) = client(f);
+        assert_eq!(c.delete_entry("acc", 1001), Ok(()));
+        assert_eq!(c.delete_entry("acc", 1001), Ok(()), "already gone");
+        assert!(matches!(c.delete_entry("acc", 1001), Err(ServiceError::Offline(_))));
+        assert!(matches!(c.delete_entry("acc", 1001), Err(ServiceError::Other(_))));
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str(), seen[0].2.as_deref(), seen[0].3.as_deref()), ("DELETE", "https://api.myanimelist.net/v2/anime/1001/my_list_status", Some("acc"), None));
+    }
+
     /// A rewatch goes as MAL's form fields, and its answer is read back.
     #[test]
     fn patch_sends_the_rewatch() {
@@ -1243,7 +1292,7 @@ mod tests {
         let (f, seen) = fake(vec![ok(started), ok(ended)]);
         let (mut c, _) = client(f);
         let r = c.patch_entry("acc", 1001, &Change { progress: Some(0), rewatching: Some(true), ..Default::default() }).unwrap();
-        assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, Some(8)) });
+        assert_eq!(r.values, Values { rewatching: true, times_rewatched: 1, ..Values::new(Status::Completed, 0, ten(8)) });
         let end = Change { status: Some(Status::Completed), progress: Some(12), rewatching: Some(false), times_rewatched: Some(2), score: None, volumes: None };
         let r = c.patch_entry("acc", 1001, &end).unwrap();
         assert_eq!((r.values.rewatching, r.values.times_rewatched, r.values.progress), (false, 2, 12));
@@ -1319,7 +1368,7 @@ mod tests {
         assert_eq!(d.cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001l.jpg"));
         assert_eq!(d.media().cover_url.as_deref(), Some("https://cdn.example.invalid/images/anime/1/9001.jpg"), "rows use the small cover");
         let m = d.mine.unwrap();
-        assert_eq!((m.status(), m.progress, m.score, m.rewatching), (Some(Status::Watching), 5, Some(8), false));
+        assert_eq!((m.status(), m.progress, m.score, m.rewatching), (Some(Status::Watching), 5, ten(8), false));
         assert_eq!((m.start_date.as_deref(), m.finish_date), (Some("2025-10-10"), None));
         // Not on the list: no entry.
         let mut v: serde_json::Value = serde_json::from_str(DETAILS).unwrap();

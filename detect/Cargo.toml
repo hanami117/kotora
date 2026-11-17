@@ -4,14 +4,26 @@ version.workspace = true
 license.workspace = true
 repository.workspace = true
 edition.workspace = true
-description = "Kotora's now-playing sources (MPRIS, mpv IPC, VLC's web interface)"
+description = "Kotora's now-playing sources (MPRIS, mpv IPC, web interfaces, the process table)"
 
 [dependencies]
 serde_json = "1"
-# inotify / kqueue for the mpv socket's folder.
-libc = "0.2"
 # VLC's web interface (macOS). Already in the build for MyAnimeList (core), so no new code.
 ureq = "3"
+
+# inotify / kqueue for the mpv socket's folder; getuid and libproc for the process source.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The players without setup (`winproc.rs`: process list, command line, window titles), mpv's
+# named pipe with a time limit on its reads (`mpv.rs`) and MPC's web interface setting
+# (`mpc.rs`, registry). The windows-sys Rune already builds.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Wdk_System_Threading", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+# The fake mpv of the named-pipe test, and a real window for the title test.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes"] }
 
 # MPRIS on Linux: zbus 5, the copy Rune's AT-SPI accessibility already builds
 # (`async-io`, no tokio), plus its blocking API. No second zbus.

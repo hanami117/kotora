@@ -1,0 +1,293 @@
+# Kotora for Windows: tests on every push, and the release files (installer + zip) on a tag.
+#
+# What runs when:
+#   push to `windows` or `main`   build, all tests, release build, headless snaps, installer + zip,
+#                                 install/uninstall smoke test. Nothing is uploaded to a release: this is the
+#                                 dry run. The files are the workflow artifact `windows-release` (7 days).
+#   push of a tag v<release>      release build from the tag, snaps, installer + zip, smoke test, then `upload`
+#                                 adds the six files to the EXISTING GitHub release of the tag. It waits for
+#                                 the release (packaging/release.sh pushes the tag first, then `gh release
+#                                 create`), never touches another asset, never overwrites, never creates one.
+#   by hand (Actions > windows > Run workflow, or `gh workflow run windows.yml`), once this file is on main:
+#     tag       empty: a dry run of the branch. An existing annotated tag on main (v0.2.1): its sources.
+#     dry_run   true (the default): build and check only. false (with a tag): upload to the tag's release.
+#
+# The six files (packaging/windows/build.ps1), <release> = <version> or <version>-<build>:
+#   Kotora-<release>-windows-x64-setup.exe (+ .sha256)   the installer (per user, no admin)
+#   Kotora-windows-x64-setup.exe (+ .sha256)             the same bytes, stable name: the site's button and
+#                                                        latest.json use releases/latest/download/<this>
+#   Kotora-<release>-windows-x64.zip (+ .sha256)         the programs without an installer
+#
+# UNSIGNED for now. The hook for SignPath is marked "SIGNING HOOK" below, in packaging/windows/build.ps1
+# (Sign-Files) and in packaging/windows/kotora.iss (SignTool).
+#
+# Pins: actions by commit SHA.
+name: windows
+
+on:
+  push:
+    branches: [windows, main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag on main (e.g. v0.2.1). Empty = dry run of this branch
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: Build and check only (no upload to the release)
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event.inputs.tag || github.ref }}
+  # A newer push replaces an older run of a branch; a release build is never cancelled.
+  cancel-in-progress: ${{ github.ref_type != 'tag' && !github.event.inputs.tag }}
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  # The release tag, or empty for a branch build.
+  TAG: ${{ github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+
+jobs:
+  # 1. Build, test, pack, and try the installer. Uploads nothing to a release.
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || '' }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Version (and, for a release, the tag is annotated, on main, and matches the sources)
+        id: v
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          build=$(tr -d '[:space:]' < BUILD)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version in Cargo.toml: $version"; exit 1; }
+          [[ $build =~ ^[1-9][0-9]*$ ]] || { echo "::error::BUILD is not a number: $build"; exit 1; }
+          if [ "$build" = 1 ]; then release=$version; else release=$version-$build; fi
+          if [ -n "$TAG" ]; then
+            [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]] || { echo "::error::'$TAG' is not v<version> or v<version>-<build>"; exit 1; }
+            # checkout may leave a lightweight copy of the tag; fetch the real (annotated) one.
+            git fetch -q -f origin "refs/tags/$TAG:refs/tags/$TAG"
+            [ "$(git cat-file -t "$TAG")" = tag ] || { echo "::error::$TAG is not an annotated tag"; exit 1; }
+            [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "::error::checkout is not the tag"; exit 1; }
+            git fetch -q origin main
+            git merge-base --is-ancestor HEAD origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+            [ "v$release" = "$TAG" ] || { echo "::error::tag $TAG != v$release (Cargo.toml + BUILD)"; exit 1; }
+          fi
+          { echo "version=$version"; echo "build=$build"; echo "release=$release"; } >> "$GITHUB_OUTPUT"
+          echo "Kotora $release for Windows (version $version, build $build), tag: ${TAG:-none (dry run)}" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # A release build skips the debug build and the tests: the same commit ran them on its branch push.
+      - name: cargo build
+        if: env.TAG == ''
+        run: cargo build --workspace --locked
+
+      - name: cargo test
+        if: env.TAG == ''
+        run: cargo test --workspace --locked --no-fail-fast
+
+      # What the players-without-setup scan costs on this machine (it repeats every 5 s).
+      - name: Scan cost
+        if: env.TAG == ''
+        run: cargo test -p kotora-detect --locked scan_cost -- --nocapture
+
+      - name: Release build
+        run: cargo build --release --locked -p kotora -p kotora-ctl
+
+      # The icon, the version details and the manifest are in the programs (app/build.rs, ctl/build.rs).
+      - name: Program resources
+        shell: pwsh
+        env:
+          V: ${{ steps.v.outputs.version }}
+          B: ${{ steps.v.outputs.build }}
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          New-Item -ItemType Directory -Force out | Out-Null
+          foreach ($name in "kotora.exe", "kot.exe") {
+            $exe = (Resolve-Path "target\release\$name").Path
+            $info = (Get-Item $exe).VersionInfo
+            "{0}: product '{1}', description '{2}', file version {3}, {4:N1} MB" -f $name, $info.ProductName, $info.FileDescription, $info.FileVersion, ((Get-Item $exe).Length / 1MB) | Out-Host
+            if ($info.ProductName -ne "Kotora") { throw "$name has no version details" }
+            $want = "$(($env:V -split '-')[0]).$env:B"
+            $have = "{0}.{1}.{2}.{3}" -f $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart
+            if ($have -ne $want) { throw "$name has file version $have, expected $want" }
+            $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+            if ($text -notmatch "longPathAware") { throw "$name has no manifest" }
+            if ($name -eq "kotora.exe" -and $text -notmatch "PerMonitorV2") { throw "kotora.exe's manifest is not per-monitor DPI aware" }
+            # The icon, as Explorer would show it: kept with the snaps to look at.
+            $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+            if ($null -eq $icon) { throw "$name has no icon" }
+            $icon.ToBitmap().Save("$PWD\out\icon-$name.png")
+          }
+
+      # Headless snaps with the program that ships. Kotora is a windowed program: the pipe makes
+      # PowerShell wait for it and show its output. No GPU here, so Windows' software adapter draws.
+      - name: Headless snaps
+        shell: pwsh
+        env:
+          RUNE_GPU_LOG: "1"
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $exe = "target\release\kotora.exe"
+          & $exe --version | Out-Host
+          & $exe --list-scenes | Measure-Object -Line | Out-Host
+          foreach ($scene in "home-covers", "list-covers", "list-grid-covers", "now-playing-offer", "setup-sign-in", "list-editor", "win-players", "win-precise-written", "win-mpc-close-first", "win-mpc-turned-on", "win-now-playing-window", "update-available-windows", "settings-about", "settings-general", "settings-startup-on", "settings-notifications", "settings-notifications-denied") {
+            & $exe --snap "out\$scene.png" --scene $scene --size 1280x800 --scale 1 2>&1 | Out-Host
+            if (-not (Test-Path "out\$scene.png")) { throw "no snap for $scene" }
+          }
+          Get-ChildItem out | Format-Table Name, Length | Out-Host
+
+      # kot with no app running: it must say so, not hang or crash.
+      - name: kot without the app
+        shell: pwsh
+        run: |
+          $said = & target\release\kot.exe status 2>&1 | Out-String
+          $said
+          if ($LASTEXITCODE -eq 0) { throw "kot status succeeded with no app running" }
+          if ($said -notmatch "running") { throw "unexpected answer" }
+          exit 0
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: snaps
+          path: out
+          if-no-files-found: warn
+
+      # SIGNING HOOK (SignPath, later). Today everything is unsigned. With SignPath the order is:
+      #   1. upload target\release\kotora.exe and kot.exe as an artifact, submit it with
+      #      signpath/github-action-submit-signing-request, and put the signed programs back;
+      #   2. run build.ps1 (it packs what is in target\release);
+      #   3. submit the installer the same way (or give iscc a sign tool: see kotora.iss), then make
+      #      the stable-name copy and the .sha256 files again from the signed installer.
+      # The smoke test and the upload job below need no change.
+
+      # The installer (Inno Setup, on the runner image), the zip and the checksums.
+      - name: Installer and zip
+        shell: pwsh
+        env:
+          V: ${{ steps.v.outputs.version }}
+          B: ${{ steps.v.outputs.build }}
+        run: ./packaging/windows/build.ps1 -Version $env:V -Build ([int]$env:B)
+
+      # A real install for this runner's user: silent, into a temp folder, kot --version, the PATH, the
+      # shortcuts, an update over it, uninstall (the user's data stays), and uninstall with /REMOVEDATA.
+      - name: Install and uninstall
+        shell: pwsh
+        env:
+          V: ${{ steps.v.outputs.version }}
+        run: ./packaging/windows/smoke.ps1 -Setup target\windows-release\Kotora-windows-x64-setup.exe -Version $env:V
+
+      - name: The files
+        shell: bash
+        env:
+          R: ${{ steps.v.outputs.release }}
+        run: |
+          cd target/windows-release
+          ls -l
+          [ "$(ls | wc -l)" = 6 ] || { echo "::error::expected exactly 6 files"; exit 1; }
+          for f in "Kotora-$R-windows-x64-setup.exe" Kotora-windows-x64-setup.exe "Kotora-$R-windows-x64.zip"; do
+            sha256sum -c "$f.sha256"
+            [ "$(wc -l < "$f.sha256")" = 1 ] || { echo "::error::$f.sha256 is not one line"; exit 1; }
+          done
+          cmp "Kotora-$R-windows-x64-setup.exe" Kotora-windows-x64-setup.exe
+          unzip -l "Kotora-$R-windows-x64.zip" | tee list
+          for p in kotora.exe kot.exe README-WINDOWS.txt LICENSE.txt THIRD_PARTY_NOTICES.txt; do
+            grep -q " $p\$" list || { echo "::error::$p missing from the zip"; exit 1; }
+          done
+          rm list
+          { echo '### Files (unsigned)'; echo '```'; cat ./*.sha256; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # The six release files, exactly as a release would get them.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-release
+          path: target/windows-release/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The unpacked programs, for a quick try without an installer (the old test download).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Kotora-windows-x64
+          path: target/windows-dist
+          if-no-files-found: error
+
+  # 2. Add the six files to the release that already exists. Never overwrite, never create.
+  upload:
+    needs: build
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.dry_run != 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions: { contents: write }
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ needs.build.outputs.release }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: windows-release, path: '${{ runner.temp }}/windows' }
+      - name: Wait for the release (the tag is pushed before `gh release create`)
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then found=1; break; fi
+            echo "no release $TAG yet ($i/60)"; sleep 30
+          done
+          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create it, then run this workflow by hand (tag $TAG, dry_run false) from main."; exit 1; }
+      - name: Upload the installer, the zip and their checksums
+        run: |
+          cd "$RUNNER_TEMP/windows"
+          ls -l
+          [ "$(ls | wc -l)" = 6 ] || { echo "::error::expected exactly 6 files"; exit 1; }
+          have=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          # Only these names, never a glob.
+          for f in "Kotora-$R-windows-x64-setup.exe" Kotora-windows-x64-setup.exe "Kotora-$R-windows-x64.zip"; do
+            sha256sum -c "$f.sha256"
+            if grep -qxF "$f" <<<"$have"; then
+              # Re-run: fine if it is the very same bytes, an error if not (latest.json pins the sha256).
+              remote=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+                         --jq ".assets[] | select(.name == \"$f\") | .digest | sub(\"^sha256:\"; \"\")")
+              [ "$remote" = "$(sha256sum "$f" | cut -d' ' -f1)" ] ||
+                { echo "::error::$f is already on $TAG with other bytes: never replace a published file. Delete the asset by hand first, if a rebuild is really wanted."; exit 1; }
+              echo "$f is already on $TAG with the same bytes"
+            else
+              # No --clobber: it fails on a name that exists.
+              gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "$f" "$f.sha256"
+            fi
+          done
+      - name: GitHub's digests = the local files, and what latest.json needs
+        run: |
+          cd "$RUNNER_TEMP/windows"
+          for f in "Kotora-$R-windows-x64-setup.exe" Kotora-windows-x64-setup.exe "Kotora-$R-windows-x64.zip"; do
+            remote=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+                       --jq ".assets[] | select(.name == \"$f\") | .digest | sub(\"^sha256:\"; \"\")")
+            [ "$remote" = "$(sha256sum "$f" | cut -d' ' -f1)" ] || { echo "::error::GitHub's digest of $f differs"; exit 1; }
+          done
+          sha=$(sha256sum Kotora-windows-x64-setup.exe | cut -d' ' -f1)
+          {
+            echo "### On the release $TAG"; echo '```'; cat ./*.sha256; echo '```'
+            echo '### For latest.json (`downloads`)'; echo '```json'
+            echo "    \"windows_installer\": \"https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Kotora-windows-x64-setup.exe\","
+            echo "    \"windows_installer_sha256\": \"$sha\""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

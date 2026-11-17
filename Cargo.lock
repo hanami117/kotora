@@ -1426,6 +1426,9 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "rune",
+ "windows",
+ "windows-sys 0.59.0",
+ "winresource",
  "zbus 5.19.0",
 ]
 
@@ -1434,12 +1437,15 @@ name = "kotora-core"
 version = "0.2.0"
 dependencies = [
  "anitomy-ng",
+ "flate2",
  "libc",
+ "roxmltree",
  "rusqlite",
  "serde",
  "serde_json",
  "toml",
  "ureq",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1449,6 +1455,8 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.59.0",
+ "winresource",
 ]
 
 [[package]]
@@ -1458,6 +1466,7 @@ dependencies = [
  "libc",
  "serde_json",
  "ureq",
+ "windows-sys 0.59.0",
  "zbus 5.19.0",
 ]
 
@@ -4198,6 +4207,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bc6d36480b829272a5bdabf08e6dca8004761c1da7e35efef800540c66221b"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]

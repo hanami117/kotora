@@ -80,7 +80,7 @@ impl Library {
 
 /// Where YACReader's `YACReaderLibrary.ini` may be, most likely first.
 pub fn ini_candidates() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = crate::paths::home_dir().unwrap_or_else(std::env::temp_dir);
     let data = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".local/share"));
     let tail = "YACReader/YACReaderLibrary/YACReaderLibrary.ini";
     let mut v = Vec::new();
@@ -286,10 +286,21 @@ pub struct Db {
 /// `file:` URI for `path` with `immutable=1`. Everything but unreserved characters and `/` is
 /// percent-encoded (`?`, `#` and `%` would end or change the path).
 fn immutable_uri(path: &Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().to_vec()
+    };
+    // Windows: `C:\dir\x.ydb` is `file:/C:/dir/x.ydb` (SQLite's own rule for drive letters).
+    #[cfg(not(unix))]
+    let bytes = {
+        let t = path.to_string_lossy().replace('\\', "/");
+        let t = t.strip_prefix("//?/").unwrap_or(&t).to_string();
+        if t.as_bytes().get(1) == Some(&b':') { format!("/{t}") } else { t }.into_bytes()
+    };
     let mut s = String::from("file:");
-    for &b in path.as_os_str().as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~') {
+    for &b in &bytes {
+        if b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~') || (cfg!(windows) && b == b':') {
             s.push(b as char);
         } else {
             s.push_str(&format!("%{b:02X}"));

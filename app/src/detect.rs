@@ -31,6 +31,8 @@ enum In {
     Correct { key: String, media_id: Option<u32> },
     /// A newer anime-relations file was downloaded.
     Relations(Box<Relations>),
+    /// The list gained or lost entries: the playing file is recognised again.
+    ListChanged,
 }
 
 /// The running detection, kept in the state.
@@ -40,8 +42,8 @@ pub struct Glue {
 }
 
 impl Glue {
-    /// For IINA (macOS), which adds its socket to the running detection.
-    #[cfg(target_os = "macos")]
+    /// For IINA (macOS) and mpv's pipe on Windows, which add a socket to the running detection.
+    #[cfg(any(target_os = "macos", windows))]
     pub fn detector(&self) -> Arc<Detector> {
         self.detector.clone()
     }
@@ -58,6 +60,7 @@ pub fn settings(c: &Config) -> Settings {
         vlc_password: c.vlc.password.clone(),
         processes: c.players.process_scan,
         process_minutes: c.players.process_minutes.clamp(1, 180),
+        mpc_port: c.mpc.port,
     }
 }
 
@@ -69,6 +72,7 @@ pub fn start(s: &mut State) {
     crate::settings::load(s, &c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(windows))]
     crate::precise::check_conf(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
     let rtx = tx.clone();
@@ -81,6 +85,9 @@ pub fn start(s: &mut State) {
     // IINA's own settings may name a socket Kotora doesn't watch yet: add it to the running detection.
     #[cfg(target_os = "macos")]
     crate::iina::check(h.clone(), Some(detector.clone()));
+    // Windows: which mpv.conf applies depends on the players that run; a pipe it names is watched.
+    #[cfg(windows)]
+    crate::precise::check_conf_win(h.clone(), detector.clone());
     let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
     s.glue = Some(Glue { tx, detector });
 }
@@ -89,6 +96,14 @@ pub fn start(s: &mut State) {
 pub fn correct(s: &State, key: String, media_id: Option<u32>) {
     if let Some(g) = &s.glue {
         let _ = g.tx.send(In::Correct { key, media_id });
+    }
+}
+
+/// The list gained or lost entries: recognise the playing file again (a match that left the list
+/// is no list match any more; one that joined it is).
+pub fn list_changed(s: &State) {
+    if let Some(g) = &s.glue {
+        let _ = g.tx.send(In::ListChanged);
     }
 }
 
@@ -151,10 +166,13 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
     let mut store: Option<Store> = None;
     let mut current: Option<Current> = None;
     let mut rel: Option<Relations> = None;
+    // The last report of the playing file, to send again after the list changed.
+    let mut last = None;
     for msg in rx {
         match msg {
             In::Report(Report::Now(None)) => {
                 current = None;
+                last = None;
                 send(h, Msg::Now(None));
             }
             In::Report(Report::Now(Some(track))) => {
@@ -164,7 +182,14 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                     current = Some(recognise(&mut store, &file, r));
                 }
                 let Some(c) = &current else { continue };
-                send(h, Msg::Now(Some(Box::new(Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), alt_titles: c.alt_titles.clone(), relation: c.relation.clone() }))));
+                send(h, Msg::Now(Some(Box::new(seen(c, track.clone())))));
+                last = Some(track);
+            }
+            In::ListChanged => {
+                let (Some(c), Some(track)) = (&current, &last) else { continue };
+                let fresh = recognise(&mut store, &c.file, rules(&mut rel, tx, download));
+                send(h, Msg::Now(Some(Box::new(seen(&fresh, track.clone())))));
+                current = Some(fresh);
             }
             In::Report(Report::Reached { key, file }) => send(h, Msg::Reached { key, file }),
             In::Report(Report::Sources(v)) => send(h, Msg::Players(v)),
@@ -198,6 +223,10 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
     }
 }
 
+fn seen(c: &Current, track: kotora_detect::Track) -> Seen {
+    Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), alt_titles: c.alt_titles.clone(), relation: c.relation.clone() }
+}
+
 fn open(store: &mut Option<Store>) -> Option<&mut Store> {
     if store.is_none() {
         *store = Store::open(&paths::db_file()).ok();
@@ -223,14 +252,13 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
     let key = parsed.key();
     let cached = st.recognition(crate::account::name(), &key).ok().flatten();
     let candidates = recognize::candidates(&parsed, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    // A pick `on_list` passed over (another season than the file's): the search may beat it.
+    let pick = cached.as_ref().filter(|(id, src, _)| src == "user" && items.iter().any(|it| it.media.id == *id)).map(|(id, _, _)| *id);
     let found = match recognize::on_list(&parsed, &items, &cached, rel) {
         Some(f) => f,
-        None => match cached.filter(|(_, src, _)| src == "search") {
-            // Searched before (30 days): no second call.
-            Some((0, _, _)) => Found::Nothing,
-            Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
-            Some((id, _, title)) => Found::NotOnList { media_id: id, title },
-            None => search(st, &parsed, &items, &key),
+        None => match cached_search(cached, &items) {
+            Some(f) => f,
+            None => search(st, &parsed, &items, &key, pick),
         },
     };
     let before = found.clone();
@@ -276,16 +304,38 @@ fn not_on_list_details(st: &Store, id: u32) -> (Option<String>, AltTitles) {
     (d.cover_url, AltTitles { en: d.title_en, ja: d.title_ja })
 }
 
-/// The one MAL search (signed in and online only). The answer is cached either way.
-fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &str) -> Found {
+/// A search answer from the cache (30 days: no second call), checked against the list as it is
+/// now. `None`: no search answer, or one that left the list with no title saved (search again).
+fn cached_search(cached: kotora_core::recognize::Cached, items: &[kotora_core::ListItem]) -> Option<Found> {
+    let (id, _, title) = cached.filter(|(_, src, _)| src == "search")?;
+    Some(match id {
+        0 => Found::Nothing,
+        id if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
+        _ if title.is_empty() => return None,
+        id => Found::NotOnList { media_id: id, title },
+    })
+}
+
+/// The one search (signed in and online only). The answer is cached either way, except a pick
+/// that still stands: it stays the cached answer. `pick`: the user's pick of another season
+/// (unsure when the search can't run).
+fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &str, pick: Option<u32>) -> Found {
+    let unsure_pick = || match pick {
+        Some(id) => Found::List { media_id: id, sure: false, why: format!("you picked it, but the file says season {}", recognize::file_season(parsed).unwrap_or(1)) },
+        None => Found::Nothing,
+    };
     if paths::offline_forced() || items.is_empty() {
-        return Found::Nothing;
+        return unsure_pick();
     }
-    let Some(mut svc) = crate::account::open() else { return Found::Nothing };
-    let Ok(hits) = svc.search(&parsed.title) else { return Found::Nothing };
-    let found = recognize::from_search(parsed, &hits, items);
+    let Some(mut svc) = crate::account::open() else { return unsure_pick() };
+    let Ok(hits) = svc.search(&parsed.title) else { return unsure_pick() };
+    let found = recognize::from_search_picked(parsed, &hits, items, pick);
+    if matches!(found, Found::List { media_id, sure: true, .. } if Some(media_id) == pick) {
+        return found;
+    }
+    // The title is kept for a hit on the list too: it may leave the list.
     let (mid, title) = match &found {
-        Found::List { media_id, .. } => (*media_id, String::new()),
+        Found::List { media_id, .. } => (*media_id, hits.iter().find(|h| h.id == *media_id).map(|h| h.title.clone()).unwrap_or_default()),
         Found::NotOnList { media_id, title } => (*media_id, title.clone()),
         _ => (0, String::new()),
     };
@@ -309,6 +359,20 @@ mod tests {
         assert!(s.processes && s.process_minutes == 15);
         let c = Config::parse("[players]\nprocess_scan = false\nprocess_minutes = 0\n").unwrap();
         assert_eq!((settings(&c).processes, settings(&c).process_minutes), (false, 1));
+    }
+
+    /// A search answer cached while its hit was on the list: removed since, it is "not on your
+    /// list" with its title, or searched again when an older row kept no title.
+    #[test]
+    fn a_cached_search_hit_follows_the_list() {
+        let media = kotora_core::Media { id: 7, title: "Lanterns of Kirigaoka".into(), ..Default::default() };
+        let it = kotora_core::ListItem { media, status: kotora_core::Status::Watching, progress: 1, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: 0 };
+        let row = |id: u32, title: &str| Some((id, "search".to_string(), title.to_string()));
+        assert!(matches!(cached_search(row(7, "Lanterns of Kirigaoka"), std::slice::from_ref(&it)), Some(Found::List { media_id: 7, sure: false, .. })));
+        assert_eq!(cached_search(row(7, "Lanterns of Kirigaoka"), &[]), Some(Found::NotOnList { media_id: 7, title: "Lanterns of Kirigaoka".into() }));
+        assert_eq!(cached_search(row(7, ""), &[]), None, "search again");
+        assert_eq!(cached_search(row(0, ""), &[]), Some(Found::Nothing));
+        assert_eq!(cached_search(Some((7, "user".into(), String::new())), &[]), None);
     }
 
     #[test]

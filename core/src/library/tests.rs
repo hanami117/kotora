@@ -70,7 +70,7 @@ fn walk_is_recursive_and_skips() {
     touch(&r.join("Lanterns of Kirigaoka/Extras/Lanterns of Kirigaoka - 01.mkv"));
     touch(&r.join("Lanterns of Kirigaoka/Lanterns of Kirigaoka - NCOP.mkv"));
     touch(&r.join("Lanterns of Kirigaoka/notes.txt"));
-    let mut got: Vec<String> = walk(r).unwrap().into_iter().map(|(p, ..)| p.strip_prefix(r).unwrap().to_string_lossy().into_owned()).collect();
+    let mut got: Vec<String> = walk(r).unwrap().into_iter().map(|(p, ..)| p.strip_prefix(r).unwrap().to_string_lossy().replace('\\', "/")).collect();
     got.sort();
     assert_eq!(got, ["Lanterns of Kirigaoka/Season 2/Lanterns of Kirigaoka S2 - 01.mkv", "Lanterns of Kirigaoka/[Hoshi] Lanterns of Kirigaoka - 01.mkv"]);
 }

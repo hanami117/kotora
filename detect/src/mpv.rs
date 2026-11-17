@@ -9,14 +9,22 @@
 //!
 //! [`Model`] is the parsing, tested on recorded messages; [`run`] is the thread.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
+#[cfg(any(unix, test))]
+use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use serde_json::Value;
 
+#[cfg(unix)]
 use crate::dirwatch::DirWatch;
 use crate::run::Input;
 use crate::{Led, PlayState, Playing, SourceStatus, Switch, Via};
@@ -127,7 +135,7 @@ impl Model {
                     "duration" => self.set(|m| &mut m.duration, data.as_f64()),
                     "working-directory" => {
                         self.cwd = data.as_str().map(str::to_string);
-                        Step { changed: self.path.as_deref().is_some_and(|p| !p.starts_with('/')), ask_time: false }
+                        Step { changed: self.path.as_deref().is_some_and(|p| !crate::is_absolute(p)), ask_time: false }
                     }
                     "pause" => {
                         let pause = data.as_bool().unwrap_or(false);
@@ -183,7 +191,7 @@ impl Model {
         if p.contains("://") {
             return None;
         }
-        if p.starts_with('/') {
+        if crate::is_absolute(p) {
             return Some(p.to_string());
         }
         let cwd = self.cwd.as_deref()?;
@@ -223,7 +231,10 @@ pub fn switch_for(socket: &Path) -> Switch {
 
 /// The socket paths to watch when `config.toml` names none.
 pub fn default_sockets() -> Vec<PathBuf> {
-    if cfg!(target_os = "macos") {
+    if cfg!(windows) {
+        // mpv's manual uses the first name in its example; the second is the other common one.
+        vec![PathBuf::from(r"\\.\pipe\mpvsocket"), PathBuf::from(r"\\.\pipe\mpv")]
+    } else if cfg!(target_os = "macos") {
         vec![PathBuf::from("/tmp/mpv.sock"), PathBuf::from("/tmp/iina.sock")]
     } else {
         let run = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -238,6 +249,7 @@ fn status(switch: Switch, line: String, led: Led) -> Input {
 /// Connects to the socket. The file shows up with `bind` and answers only after `listen`, so a
 /// connect right after the folder woke us can be refused: when the file is there, try again a few
 /// times (about 0.6 s in all, so a stale file costs little).
+#[cfg(unix)]
 fn connect(socket: &Path) -> std::io::Result<UnixStream> {
     let mut wait = Duration::from_millis(5);
     loop {
@@ -254,7 +266,8 @@ fn connect(socket: &Path) -> std::io::Result<UnixStream> {
 
 /// The thread for one socket path: connect, follow, and when there is no mpv, sleep until the
 /// folder changes. Ends only when the folder can't be watched.
-pub fn run(socket: PathBuf, tx: Sender<Input>) {
+#[cfg(unix)]
+pub fn run(socket: PathBuf, tx: Sender<Input>, _players_gone: Arc<AtomicU64>) {
     let switch = switch_for(&socket);
     let shown = socket.display().to_string();
     let dir = socket.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("/"));
@@ -263,7 +276,10 @@ pub fn run(socket: PathBuf, tx: Sender<Input>) {
         match connect(&socket) {
             Ok(stream) => {
                 let _ = tx.send(status(switch, format!("{shown}: running"), Led::Idle));
-                let key = session(stream, &socket, switch, &tx);
+                let key = match stream.try_clone() {
+                    Ok(read) => session(read, stream, &socket, switch, &tx),
+                    Err(_) => Model::new(&socket, switch).key,
+                };
                 if tx.send(Input::Gone(key)).is_err() {
                     return;
                 }
@@ -289,39 +305,287 @@ pub fn run(socket: PathBuf, tx: Sender<Input>) {
     }
 }
 
-/// One connection, until mpv quits. Returns the player's key.
-fn session(stream: UnixStream, socket: &Path, switch: Switch, tx: &Sender<Input>) -> String {
-    let mut model = Model::new(socket, switch);
-    let key = model.key.clone();
-    let Ok(read) = stream.try_clone() else { return key };
-    let mut write = stream;
-    for line in SETUP {
-        if writeln!(write, "{line}").is_err() {
-            return key;
-        }
-    }
+/// How often the Windows thread looks for mpv's pipe while there is no mpv.
+#[cfg(windows)]
+const PIPE_POLL: Duration = Duration::from_secs(3);
+
+/// Windows, while a pipe is connected and silent: how often the thread checks that the player
+/// is still there.
+#[cfg(windows)]
+const PIPE_TICK_MS: u32 = 1000;
+
+/// Windows: mpv's IPC is a named pipe (`input-ipc-server=\\.\pipe\mpvsocket`) with the same JSON
+/// lines. A pipe has no folder to watch, so while there is no mpv the thread looks for the pipe
+/// every [`PIPE_POLL`].
+///
+/// The player going away must never leave its last state on screen, so three things end a
+/// connection (see [`pipe_session`]): the pipe says so (a failed or empty read, a failed
+/// write), the pipe no longer answers a look at it, or the process scan saw the last mpv or
+/// mpv.net process go (`players_gone` counts those moments).
+#[cfg(windows)]
+pub fn run(socket: PathBuf, tx: Sender<Input>, players_gone: Arc<AtomicU64>) {
+    let switch = switch_for(&socket);
     let shown = socket.display().to_string();
-    let mut last_led = Led::Idle;
-    for line in BufReader::new(read).lines() {
-        let Ok(line) = line else { break };
-        let step = model.on_line(&line, crate::clock());
+    let mut said_off = false;
+    loop {
+        match pipe::Conn::open(&socket) {
+            Ok(conn) => {
+                let _ = tx.send(status(switch, format!("{shown}: running"), Led::Idle));
+                let key = pipe_session(conn, &socket, switch, &tx, &players_gone);
+                // The state light goes with the player, at once.
+                said_off = true;
+                if tx.send(Input::Gone(key)).is_err() || tx.send(status(switch, format!("{shown}: not running"), Led::Off)).is_err() {
+                    return;
+                }
+            }
+            Err(_) if !said_off => {
+                said_off = true;
+                if tx.send(status(switch, format!("{shown}: not running"), Led::Off)).is_err() {
+                    return;
+                }
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(PIPE_POLL);
+    }
+}
+
+/// Neither Unix nor Windows: no mpv IPC.
+#[cfg(not(any(unix, windows)))]
+pub fn run(_socket: PathBuf, _tx: Sender<Input>, _players_gone: Arc<AtomicU64>) {}
+
+/// One connection's state: mpv's lines in, hub inputs out.
+struct Follow {
+    model: Model,
+    shown: String,
+    switch: Switch,
+    last_led: Led,
+}
+
+impl Follow {
+    fn new(socket: &Path, switch: Switch) -> Follow {
+        Follow { model: Model::new(socket, switch), shown: socket.display().to_string(), switch, last_led: Led::Idle }
+    }
+
+    /// Asks mpv to report what Kotora follows. `false`: the connection is over.
+    fn setup(&self, write: &mut impl Write) -> bool {
+        SETUP.iter().all(|line| writeln!(write, "{line}").is_ok())
+    }
+
+    /// One line from mpv. `false`: the connection is over (a failed write, or the hub is gone).
+    fn line(&mut self, line: &str, write: &mut impl Write, tx: &Sender<Input>) -> bool {
+        let step = self.model.on_line(line, crate::clock());
         if step.ask_time && writeln!(write, "{ASK_TIME}").is_err() {
-            break;
+            return false;
         }
         if step.changed {
-            let snap = model.snapshot();
+            let snap = self.model.snapshot();
             let led = if snap.state == PlayState::Playing { Led::Playing } else { Led::Idle };
-            if led != last_led {
-                last_led = led;
+            if led != self.last_led {
+                self.last_led = led;
                 let word = if led == Led::Playing { "playing" } else { "running" };
-                let _ = tx.send(status(switch, format!("{shown}: {word}"), led));
+                let _ = tx.send(status(self.switch, format!("{}: {word}", self.shown), led));
             }
             if tx.send(Input::Update(snap)).is_err() {
-                break;
+                return false;
             }
+        }
+        true
+    }
+}
+
+/// One connection, until mpv quits. Returns the player's key.
+#[cfg(unix)]
+fn session(read: impl std::io::Read, mut write: impl Write, socket: &Path, switch: Switch, tx: &Sender<Input>) -> String {
+    let mut follow = Follow::new(socket, switch);
+    let key = follow.model.key.clone();
+    if !follow.setup(&mut write) {
+        return key;
+    }
+    for line in BufReader::new(read).lines() {
+        let Ok(line) = line else { break };
+        if !follow.line(&line, &mut write, tx) {
+            break;
         }
     }
     key
+}
+
+/// Windows: one connection on a named pipe, until the player is gone. Returns the player's key.
+///
+/// mpv says nothing while a file plays on, so a silent pipe is normal and a read may wait for
+/// a long time. It must not wait past the player's end, though: a plain blocking read was seen
+/// to keep waiting after mpv.net's window closed, which left the last episode on screen. So
+/// the read waits at most [`PIPE_TICK_MS`], and each time it comes back empty the thread
+/// checks the pipe itself and the process scan's count. One wake-up a second, and only while
+/// a player is connected.
+#[cfg(windows)]
+fn pipe_session(mut conn: pipe::Conn, socket: &Path, switch: Switch, tx: &Sender<Input>, players_gone: &AtomicU64) -> String {
+    let mut follow = Follow::new(socket, switch);
+    let key = follow.model.key.clone();
+    let gone_before = players_gone.load(Ordering::Relaxed);
+    if !follow.setup(&mut conn) {
+        return key;
+    }
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        match conn.read(PIPE_TICK_MS) {
+            pipe::Read::Data(bytes) => {
+                pending.extend_from_slice(&bytes);
+                while let Some(end) = pending.iter().position(|b| *b == b'\n') {
+                    let raw: Vec<u8> = pending.drain(..=end).collect();
+                    let line = String::from_utf8_lossy(&raw[..end]);
+                    if !follow.line(line.trim_end_matches('\r'), &mut conn, tx) {
+                        return key;
+                    }
+                }
+            }
+            pipe::Read::Quiet => {
+                if !conn.alive() || players_gone.load(Ordering::Relaxed) != gone_before {
+                    return key;
+                }
+            }
+            pipe::Read::Closed => return key,
+        }
+    }
+}
+
+/// A named pipe opened for overlapped I/O, so a read can wait with a time limit and the pipe
+/// can be looked at while that read is still waiting.
+#[cfg(windows)]
+mod pipe {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_IO_PENDING, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_OVERLAPPED, ReadFile, WriteFile};
+    use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+    use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+
+    pub enum Read {
+        Data(Vec<u8>),
+        /// Nothing came within the time given; the read is still waiting.
+        Quiet,
+        /// The other end is gone (a broken pipe, an empty read, any error).
+        Closed,
+    }
+
+    pub struct Conn {
+        file: std::fs::File,
+        read_event: HANDLE,
+        write_event: HANDLE,
+        /// The waiting read's state and buffer: boxed, so they stay put while Windows uses them.
+        read_state: Box<OVERLAPPED>,
+        buf: Box<[u8; 4096]>,
+        reading: bool,
+    }
+
+    // SAFETY: the events and the file belong to this value alone and are used by one thread
+    // at a time; nothing in it is tied to the thread that made it.
+    unsafe impl Send for Conn {}
+
+    fn event() -> std::io::Result<HANDLE> {
+        // SAFETY: a nameless manual-reset event; the handle is checked.
+        let h = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if h.is_null() { Err(std::io::Error::last_os_error()) } else { Ok(h) }
+    }
+
+    impl Conn {
+        pub fn open(path: &Path) -> std::io::Result<Conn> {
+            let file = std::fs::OpenOptions::new().read(true).write(true).custom_flags(FILE_FLAG_OVERLAPPED).open(path)?;
+            let read_event = event()?;
+            let write_event = match event() {
+                Ok(e) => e,
+                Err(e) => {
+                    // SAFETY: the event made just above.
+                    unsafe { CloseHandle(read_event) };
+                    return Err(e);
+                }
+            };
+            // SAFETY: OVERLAPPED is plain data; all zero is its empty state.
+            Ok(Conn { file, read_event, write_event, read_state: Box::new(unsafe { std::mem::zeroed() }), buf: Box::new([0; 4096]), reading: false })
+        }
+
+        fn handle(&self) -> HANDLE {
+            self.file.as_raw_handle() as HANDLE
+        }
+
+        /// Waits up to `timeout_ms` for bytes from the other end.
+        pub fn read(&mut self, timeout_ms: u32) -> Read {
+            // SAFETY: the buffer and the OVERLAPPED are boxed fields that live until the read
+            // has finished or was cancelled (`Drop`); the lengths given are theirs.
+            unsafe {
+                if !self.reading {
+                    *self.read_state = std::mem::zeroed();
+                    self.read_state.hEvent = self.read_event;
+                    if ReadFile(self.handle(), self.buf.as_mut_ptr(), self.buf.len() as u32, std::ptr::null_mut(), &mut *self.read_state) == 0 && GetLastError() != ERROR_IO_PENDING {
+                        return Read::Closed;
+                    }
+                    self.reading = true;
+                }
+                match WaitForSingleObject(self.read_event, timeout_ms) {
+                    WAIT_OBJECT_0 => {
+                        self.reading = false;
+                        let mut n = 0u32;
+                        if GetOverlappedResult(self.handle(), &*self.read_state, &mut n, 0) == 0 || n == 0 {
+                            return Read::Closed;
+                        }
+                        Read::Data(self.buf[..n as usize].to_vec())
+                    }
+                    WAIT_TIMEOUT => Read::Quiet,
+                    _ => Read::Closed,
+                }
+            }
+        }
+
+        /// Whether the other end still holds the pipe. Works while a read is waiting.
+        pub fn alive(&self) -> bool {
+            let mut waiting = 0u32;
+            // SAFETY: only the count of waiting bytes is asked for.
+            unsafe { PeekNamedPipe(self.handle(), std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut waiting, std::ptr::null_mut()) != 0 }
+        }
+    }
+
+    impl std::io::Write for Conn {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            // SAFETY: `state` and `data` outlive the write: a write that doesn't finish at
+            // once is waited for before this returns.
+            unsafe {
+                let mut state: OVERLAPPED = std::mem::zeroed();
+                state.hEvent = self.write_event;
+                if WriteFile(self.handle(), data.as_ptr(), data.len() as u32, std::ptr::null_mut(), &mut state) == 0 && GetLastError() != ERROR_IO_PENDING {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut n = 0u32;
+                if GetOverlappedResult(self.handle(), &state, &mut n, 1) == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(n as usize)
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Drop for Conn {
+        fn drop(&mut self) {
+            // SAFETY: a read that still waits is cancelled and waited for, so Windows no
+            // longer uses the buffer; then the events are closed. The file closes after this.
+            unsafe {
+                if self.reading {
+                    CancelIo(self.handle());
+                    let mut n = 0u32;
+                    GetOverlappedResult(self.handle(), &*self.read_state, &mut n, 1);
+                }
+                CloseHandle(self.read_event);
+                CloseHandle(self.write_event);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -354,7 +618,9 @@ mod tests {
         assert!(steps[8].ask_time && !steps[8].changed, "restart asks for the position");
         let p = m.snapshot();
         assert_eq!(p.key, "mpv:/run/user/1000/mpv.sock");
-        assert_eq!(p.path.as_deref(), Some("/media/anime/Lanterns/[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv"));
+        // mpv's folder and the file name, joined with the system's separator.
+        let joined = Path::new("/media/anime/Lanterns").join("[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv");
+        assert_eq!(p.path.as_deref(), joined.to_str());
         assert_eq!(p.title, None, "a local file goes by its name");
         assert_eq!((p.position, p.duration, p.state, p.at), (Some(12.25), Some(1420.5), PlayState::Playing, 5.0));
     }
@@ -403,6 +669,7 @@ mod tests {
     /// A fake mpv on a temp socket: the thread connects, sends the setup, and reports the file;
     /// when the fake quits, the player is gone.
     #[test]
+    #[cfg(unix)]
     fn talks_to_a_fake_mpv_on_a_temp_socket() {
         use std::os::unix::net::UnixListener;
         use std::sync::mpsc;
@@ -414,7 +681,7 @@ mod tests {
         let listener = UnixListener::bind(&sock).unwrap();
         let (tx, rx) = mpsc::channel();
         let path = sock.clone();
-        std::thread::spawn(move || run(path, tx));
+        std::thread::spawn(move || run(path, tx, Arc::default()));
         let (conn, _) = listener.accept().unwrap();
         let mut lines = BufReader::new(conn.try_clone().unwrap()).lines();
         for want in SETUP {
@@ -446,5 +713,214 @@ mod tests {
         assert_eq!(gone, format!("mpv:{}", sock.display()));
         drop(listener);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// mpv open with nothing loaded, or between two files, is nothing playing: no file, so the
+    /// hub has nothing to show for it.
+    #[test]
+    fn an_idle_mpv_plays_nothing() {
+        let mut m = Model::new(Path::new("/tmp/mpv.sock"), Switch::Mpv);
+        feed(&mut m, RECORDED, 0.0);
+        assert!(m.snapshot().file().is_some());
+        // The file ends and mpv stays open (`--idle`, mpv.net).
+        let s = m.on_line(r#"{"event":"property-change","id":6,"name":"idle-active","data":true}"#, 9.0);
+        assert!(s.changed);
+        let p = m.snapshot();
+        assert_eq!((p.state, p.file(), p.position), (PlayState::Stopped, None, None));
+        // The path alone going away says the same (mpv sends it with no data on its way out).
+        let mut m = Model::new(Path::new("/tmp/mpv.sock"), Switch::Mpv);
+        feed(&mut m, RECORDED, 0.0);
+        assert!(m.on_line(r#"{"event":"property-change","id":1,"name":"path"}"#, 9.0).changed);
+        assert_eq!((m.snapshot().state, m.snapshot().file()), (PlayState::Stopped, None));
+        // And the hub then follows nothing.
+        let mut w = crate::watch::Watch::new(0.8);
+        let mut m = Model::new(Path::new("/tmp/mpv.sock"), Switch::Mpv);
+        feed(&mut m, RECORDED, 0.0);
+        w.update(m.snapshot(), 1.0);
+        assert!(w.current(1.0).is_some());
+        m.on_line(r#"{"event":"property-change","id":6,"name":"idle-active","data":true}"#, 9.0);
+        let reports = w.update(m.snapshot(), 9.0);
+        assert!(reports.contains(&crate::watch::Report::Now(None)), "{reports:?}");
+        assert!(w.current(9.0).is_none());
+    }
+
+    /// A fake mpv on a named pipe (Windows), for the tests below.
+    #[cfg(windows)]
+    mod fake {
+        use super::super::*;
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        use std::sync::mpsc::{self, Receiver};
+        use std::time::Instant;
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+
+        pub fn name(test: &str) -> PathBuf {
+            PathBuf::from(format!(r"\\.\pipe\kot-mpv-{test}-{}", std::process::id()))
+        }
+
+        /// The player's end of the pipe, before anyone connected.
+        pub fn serve(name: &Path) -> std::fs::File {
+            let wide: Vec<u16> = name.as_os_str().encode_wide().chain(Some(0)).collect();
+            // SAFETY: a NUL-terminated name; the handle is owned by the File right away.
+            unsafe {
+                let h = CreateNamedPipeW(wide.as_ptr(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, std::ptr::null());
+                assert_ne!(h, INVALID_HANDLE_VALUE, "{}", std::io::Error::last_os_error());
+                std::fs::File::from_raw_handle(h)
+            }
+        }
+
+        /// Waits for Kotora, reads its setup lines and plays the recorded file.
+        pub fn play(server: &std::fs::File) {
+            // SAFETY: a valid pipe handle; a client that is already there counts as connected.
+            unsafe { ConnectNamedPipe(server.as_raw_handle(), std::ptr::null_mut()) };
+            let mut lines = BufReader::new(server.try_clone().unwrap()).lines();
+            for want in SETUP {
+                assert_eq!(lines.next().unwrap().unwrap(), want);
+            }
+            let mut w = server;
+            for l in super::RECORDED {
+                writeln!(w, "{l}").unwrap();
+            }
+        }
+
+        /// Cuts the connection and keeps the handle (what a player does that closes its window
+        /// and lingers).
+        pub fn disconnect(server: &std::fs::File) {
+            // SAFETY: a valid pipe handle.
+            unsafe { DisconnectNamedPipe(server.as_raw_handle()) };
+        }
+
+        /// Kotora's thread on that pipe, and the count the process scan would move.
+        pub fn kotora(name: &Path) -> (Receiver<Input>, Arc<AtomicU64>) {
+            let (tx, rx) = mpsc::channel();
+            let gone = Arc::new(AtomicU64::new(0));
+            let (path, g) = (name.to_path_buf(), gone.clone());
+            std::thread::spawn(move || run(path, tx, g));
+            (rx, gone)
+        }
+
+        pub fn wait_playing(rx: &Receiver<Input>) -> Playing {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_secs(10) {
+                if let Ok(Input::Update(p)) = rx.recv_timeout(Duration::from_secs(1))
+                    && p.position == Some(12.25)
+                {
+                    return p;
+                }
+            }
+            panic!("no update with the position");
+        }
+
+        /// Waits for "the player is gone" and says how long it took.
+        pub fn wait_gone(rx: &Receiver<Input>, name: &Path) -> Duration {
+            let start = Instant::now();
+            loop {
+                match rx.recv_timeout(Duration::from_secs(10)).expect("the player was never reported gone") {
+                    Input::Gone(k) => {
+                        assert_eq!(k, format!("mpv:{}", name.display()));
+                        return start.elapsed();
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+
+    /// How long "gone" may take: one tick of the pipe check and some slack for a busy machine.
+    #[cfg(windows)]
+    const GONE_WITHIN: Duration = Duration::from_millis(2500);
+
+    /// The player quits mid-session (its end of the pipe closes): gone at once, the state
+    /// light with it, and a player that starts later on the same pipe is found again.
+    #[test]
+    #[cfg(windows)]
+    fn a_player_that_quits_is_gone_and_the_next_one_is_found() {
+        let name = fake::name("quit");
+        let server = fake::serve(&name);
+        let (rx, _) = fake::kotora(&name);
+        fake::play(&server);
+        let p = fake::wait_playing(&rx);
+        assert!(p.path.unwrap().ends_with("Lanterns of Kirigaoka - 06 (1080p).mkv"));
+        assert_eq!(p.state, PlayState::Playing);
+        drop(server);
+        let took = fake::wait_gone(&rx, &name);
+        assert!(took < GONE_WITHIN, "gone after {took:?}");
+        let line = loop {
+            if let Input::Status(s) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break (s.line, s.led);
+            }
+        };
+        assert_eq!(line, (format!("{}: not running", name.display()), Led::Off));
+        // The player starts again: Kotora looks for the pipe every few seconds.
+        let server = fake::serve(&name);
+        fake::play(&server);
+        fake::wait_playing(&rx);
+        drop(server);
+        fake::wait_gone(&rx, &name);
+    }
+
+    /// The player cuts the connection but keeps its end of the pipe: gone all the same.
+    #[test]
+    #[cfg(windows)]
+    fn a_player_that_disconnects_is_gone() {
+        let name = fake::name("disconnect");
+        let server = fake::serve(&name);
+        let (rx, _) = fake::kotora(&name);
+        fake::play(&server);
+        fake::wait_playing(&rx);
+        fake::disconnect(&server);
+        let took = fake::wait_gone(&rx, &name);
+        assert!(took < GONE_WITHIN, "gone after {took:?}");
+        drop(server);
+    }
+
+    /// The pipe stays open and silent (nothing tells the reader the player went), and the
+    /// process scan sees the last mpv process go: gone within a tick. While the process is
+    /// there, a silent pipe is a file playing on: nothing is reported.
+    #[test]
+    #[cfg(windows)]
+    fn a_silent_pipe_ends_when_the_process_scan_says_the_player_went() {
+        use std::sync::atomic::Ordering;
+        let name = fake::name("process");
+        let server = fake::serve(&name);
+        let (rx, gone) = fake::kotora(&name);
+        fake::play(&server);
+        fake::wait_playing(&rx);
+        // Three ticks of silence: still playing, nothing sent.
+        let quiet = std::time::Instant::now();
+        while quiet.elapsed() < Duration::from_secs(3) {
+            if let Ok(i) = rx.recv_timeout(Duration::from_millis(200)) {
+                assert!(!matches!(i, Input::Gone(_)), "a silent pipe was taken for a player that went");
+            }
+        }
+        gone.fetch_add(1, Ordering::Relaxed);
+        let took = fake::wait_gone(&rx, &name);
+        assert!(took < GONE_WITHIN, "gone after {took:?}");
+        drop(server);
+    }
+
+    /// Kotora's end goes while its read still waits: the read is cancelled, nothing hangs or
+    /// crashes, and the player sees its pipe close.
+    #[test]
+    #[cfg(windows)]
+    fn dropping_a_connection_with_a_waiting_read_is_clean() {
+        use std::io::Read;
+        let name = fake::name("drop");
+        let mut server = fake::serve(&name);
+        let mut conn = pipe::Conn::open(&name).unwrap();
+        assert!(matches!(conn.read(50), pipe::Read::Quiet));
+        assert!(conn.alive());
+        writeln!(conn, "hello").unwrap();
+        let mut got = [0u8; 6];
+        server.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"hello\n");
+        writeln!(server, "one\ntwo").unwrap();
+        let pipe::Read::Data(bytes) = conn.read(2000) else { panic!("no data") };
+        assert_eq!(bytes, b"one\ntwo\n");
+        assert!(matches!(conn.read(50), pipe::Read::Quiet));
+        drop(conn);
+        assert_eq!(server.read(&mut got).unwrap_or(0), 0, "the pipe closed");
     }
 }

@@ -64,6 +64,9 @@ pub struct Now {
     pub counted: bool,
     /// The "Episode detected" notification went out for this file.
     pub announced: bool,
+    /// The player is gone (closed, or it stopped the file); the card stays only for the Undo
+    /// of an episode recorded just before. It must not read as "Paused".
+    pub gone: bool,
 }
 
 /// What of the matched entry decides the offer.
@@ -248,6 +251,7 @@ impl Now {
             mark: None,
             counted: false,
             announced: false,
+            gone: false,
         }
     }
 
@@ -340,7 +344,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) -> bool {
 }
 
 fn file_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    kotora_detect::file_name(path).to_string()
 }
 
 impl State {
@@ -400,6 +404,7 @@ impl State {
             if self.now.as_ref().is_some_and(|n| n.recorded.is_some() && !n.dismissed) {
                 if let Some(n) = &mut self.now {
                     n.playing = false;
+                    n.gone = true;
                 }
                 return true;
             }
@@ -419,6 +424,28 @@ impl State {
             self.act(true);
         }
         true
+    }
+
+    /// The list's ids, sorted: [`State::list_changed_under_now`] compares them.
+    pub(crate) fn entry_ids(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.entries.iter().map(|e| e.id).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// The list gained or lost entries (`before`: [`State::entry_ids`] then) while a file plays:
+    /// the file is recognised again. A list match that left the list is no answer meanwhile
+    /// (never "In your list" without its entry).
+    pub(crate) fn list_changed_under_now(&mut self, before: &[u32]) {
+        if self.now.is_none() || self.entry_ids() == before {
+            return;
+        }
+        let gone = self.now.as_ref().and_then(Now::media_id).is_some_and(|id| !self.entries.iter().any(|e| e.id == id));
+        if let Some(n) = self.now.as_mut().filter(|_| gone) {
+            n.found = Found::Nothing;
+            n.recognizing = true;
+        }
+        crate::detect::list_changed(self);
     }
 
     /// The matched entry's [`Mark`] now.
@@ -629,7 +656,17 @@ impl State {
         if self.players == sources {
             return false;
         }
+        // Windows: an mpv or mpv.net that just appeared decides which mpv.conf applies.
+        #[cfg(windows)]
+        let seen_before = self.mpv_process_live();
         self.players = sources;
+        #[cfg(windows)]
+        if !seen_before
+            && self.mpv_process_live()
+            && let (Some(h), Some(g)) = (self.handle.clone(), self.glue.as_ref())
+        {
+            crate::precise::check_conf_win(h, g.detector());
+        }
         true
     }
 
@@ -719,7 +756,7 @@ impl State {
     }
 
     /// "Start in the background", kept in `config.toml` so it stays when the login switch goes off
-    /// and on. Linux writes `--hidden` into the autostart entry; macOS reads it at launch.
+    /// and on. Linux and Windows write `--hidden` into the login entry; macOS reads it at launch.
     /// Settings → Appearance → Startup animation: read at the next start.
     pub fn set_intro(&mut self, on: bool) {
         self.prefs.intro = on;
@@ -729,7 +766,7 @@ impl State {
     pub fn set_background(&mut self, on: bool) {
         self.prefs.background = on;
         crate::detect::save_setting(self, "startup", "background", on.to_string());
-        if self.prefs.login.on && cfg!(target_os = "linux") && !self.prefs.login_busy {
+        if self.prefs.login.on && cfg!(any(target_os = "linux", windows)) && !self.prefs.login_busy {
             self.apply_login(true);
         }
     }
@@ -849,8 +886,9 @@ impl State {
             Some(s) => (format!("{} \u{b7} {}", s.via, s.line), s.led),
             None => (
                 match sw {
-                    Switch::Vlc if cfg!(target_os = "macos") && !self.prefs.vlc_set_up => "web interface \u{b7} not set up (needs VLC's password)".into(),
+                    Switch::Vlc if kotora_detect::VLC_WEB && !self.prefs.vlc_set_up => "web interface \u{b7} not set up (needs VLC's password)".into(),
                     Switch::Mpv | Switch::Iina => "IPC socket \u{b7} not running".into(),
+                    _ if cfg!(windows) => "not running".into(),
                     _ => "MPRIS \u{b7} not running".into(),
                 },
                 kotora_detect::Led::Off,
@@ -1065,9 +1103,9 @@ mod tests {
             id_mal: None,
         };
         let item = |progress, score| kotora_core::ListItem { media: media.clone(), status: Status::Watching, progress, score, rewatching: false, times_rewatched: 0, updated_at: 7, volumes: 0 };
-        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(5, Some(8))], gone: vec![], offline: None });
+        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(5, kotora_core::score::ten(8))], gone: vec![], offline: None });
         assert!(!s.banner(), "same progress: Not now holds");
-        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(6, Some(8))], gone: vec![], offline: None });
+        s.apply(crate::model::Msg::Queue { ops: vec![], items: vec![item(6, kotora_core::score::ten(8))], gone: vec![], offline: None });
         assert!(s.banner());
         assert_eq!(s.offer().map(|(_, ep)| ep), Some(7));
     }
@@ -1326,6 +1364,26 @@ mod tests {
         assert_eq!(offer_for(e, Some(6)), Some(6));
         assert_eq!(offer_for(e, Some(5)), None);
         assert_eq!(offer_for(e, Some(13)), None);
+    }
+
+    /// The player closes right after an episode was recorded: the card stays for its Undo,
+    /// but it says the player is closed, not paused; without a recorded episode it goes.
+    #[test]
+    fn a_closed_player_never_reads_as_paused() {
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        s.record(false).unwrap();
+        assert!(s.now_seen(None));
+        let n = s.now.as_ref().expect("kept for Undo");
+        assert!(n.gone && !n.playing);
+        // The player comes back on the same file: playing again, not "closed".
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, true)));
+        assert!(!s.now.as_ref().unwrap().gone);
+        // Nothing recorded: the page empties at once.
+        let mut s = fresh();
+        s.now_seen(Some(seen("Lanterns of Kirigaoka - 06.mkv", Some(0), true, false)));
+        assert!(s.now_seen(None));
+        assert!(s.now.is_none());
     }
 
     #[test]

@@ -1,0 +1,6 @@
+{"data":{"Page":{"pageInfo":{"hasNextPage":false},"media":[
+ {"id":171001,"idMal":1001,"title":{"romaji":"Harbor Lights","english":"Harbor Lights","native":"港の灯"},"synonyms":[],"format":"TV","episodes":12,"status":"RELEASING","coverImage":{"medium":"https://s4.anilist.example.invalid/media/anime/cover/small/bx171001.jpg"}},
+ {"id":171004,"idMal":1004,"title":{"romaji":"Shizuka na Niwa","english":"Quiet Garden"},"format":"ONA","episodes":13,"status":"FINISHED","coverImage":{}},
+ {"id":179999,"idMal":1004,"title":{"romaji":"Shizuka na Niwa (recap)"},"format":"SPECIAL","episodes":1,"status":"FINISHED","coverImage":{}},
+ {"id":175555,"idMal":5555,"title":{"romaji":"Not Asked"},"format":"TV","coverImage":{}}
+]}}}

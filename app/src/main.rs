@@ -8,6 +8,9 @@
 //! Headless checks (never run the app windowed from an agent):
 //! `kotora --snap /tmp/out.png --scene list --size 1280x800 --scale 1` (`--list-scenes` lists them).
 
+// Windows: a windowed program (no console window); `win::attach_output` gives its text a place.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod account;
 mod airing;
 mod airnotes;
@@ -30,6 +33,7 @@ mod look;
 mod iina;
 #[cfg(target_os = "macos")]
 mod menu_bar;
+mod mirror;
 mod model;
 mod notes;
 mod now;
@@ -38,14 +42,20 @@ mod play;
 mod precise;
 mod profile;
 mod queue;
+mod remove;
 mod scenes;
+mod scores;
 mod search;
 mod settings;
 mod setup;
 mod theme;
+mod transfer;
 mod tray;
 mod ui;
 mod update;
+#[cfg(windows)]
+mod win;
+mod winsetup;
 mod winsize;
 
 use std::io::Write;
@@ -165,11 +175,18 @@ fn log_first_frame() -> impl FnMut(&rune::FrameEncoded) + 'static {
 
 fn main() {
     START.get_or_init(Instant::now);
+    #[cfg(windows)]
+    win::attach_output();
     if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
         println!("kotora {}", kotora_ctl::version_line());
         return;
     }
     rune::set_app_id(APP_ID);
+    // Windows: the same id for the taskbar and the toasts (the installer's shortcut has it too).
+    #[cfg(windows)]
+    if !rune::is_headless() {
+        win::set_app_id();
+    }
     // The window opens at `winsize::DEFAULT` cut to the screen; headless keeps 1280×800 (every
     // snap and script is made for it, and `--size` overrides it).
     let min_size = (960.0, 600.0);
@@ -209,7 +226,7 @@ fn main() {
     // macOS start at login in the background: a login item gets no `--hidden`, so with both
     // switches on (Settings → Startup) Kotora starts windowless and `autostart::watch_launch`
     // opens the window at once unless macOS says this launch is the login one (as Uzumaki does).
-    // Linux writes `--hidden` into the autostart entry instead.
+    // Linux and Windows write `--hidden` into their login entry instead.
     #[cfg(target_os = "macos")]
     let login_check = !hidden
         && !test_instance
@@ -222,6 +239,9 @@ fn main() {
     let app = app.keep_running().on_close(on_close);
     #[cfg(target_os = "macos")]
     let app = app.on_reopen(on_reopen).on_window(on_window);
+    // Windows: the window gets the program's icon (title bar, taskbar, Alt+Tab).
+    #[cfg(windows)]
+    let app = app.on_window(win::on_window);
     let handle = app.handle();
     // The startup intro's clock starts at the first frame presented (`intro::on_frame`); the
     // first-frame log keeps running beside it.

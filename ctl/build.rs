@@ -42,9 +42,41 @@ fn facts() -> Option<String> {
     Some(format!("{branch}\t{hash}\t{}\t{}", dirty as u8, at_tag as u8))
 }
 
+/// Windows only: the icon, the version details and the manifest of `kot.exe` (as `app/build.rs`
+/// does for `kotora.exe`). Never fails the build.
+#[cfg(windows)]
+fn resources() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let dir = "../packaging/windows";
+    for f in ["kotora.ico", "kot.exe.manifest"] {
+        println!("cargo:rerun-if-changed={dir}/{f}");
+    }
+    let build: u64 = std::fs::read_to_string("../BUILD").ok().and_then(|b| b.trim().parse().ok()).unwrap_or(1);
+    let num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    let version = (num("CARGO_PKG_VERSION_MAJOR") << 48) | (num("CARGO_PKG_VERSION_MINOR") << 32) | (num("CARGO_PKG_VERSION_PATCH") << 16) | (build & 0xffff);
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(&format!("{dir}/kotora.ico"))
+        .set_manifest_file(&format!("{dir}/kot.exe.manifest"))
+        .set_version_info(winresource::VersionInfo::FILEVERSION, version)
+        .set_version_info(winresource::VersionInfo::PRODUCTVERSION, version)
+        .set("ProductName", "Kotora")
+        .set("FileDescription", "kot: the command line for Kotora")
+        .set("CompanyName", "Kotora")
+        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("OriginalFilename", "kot.exe")
+        .set("InternalName", "kot");
+    if let Err(e) = res.compile_for("kot") {
+        println!("cargo:warning=no Windows resources in kot.exe: {e}");
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../BUILD");
+    #[cfg(windows)]
+    resources();
     if !own_repo() {
         println!("cargo:rustc-env=KOTORA_GIT=");
         return;

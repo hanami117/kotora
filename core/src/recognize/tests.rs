@@ -267,9 +267,15 @@ fn a_pick_applies_to_its_season_only() {
     let s1 = parse("/v/[Hoshi] Yakusou - S01E08.mkv").unwrap();
     assert_eq!(s1.key(), "yakusou#1");
     assert!(matches!(on_list(&s1, &items, &None, &rel), Some(Found::List { media_id: 11, .. })));
-    // A pick that fits no season entry on the list (no season 4 here) is the user's call: kept.
+    // A pick of another season than the file's (no season 4 on the list here) waits for the
+    // search: a hit naming season 4 beats it, and with none it is the user's call, kept.
     let s4 = parse("/v/[Hoshi] Yakusou - S04E01.mkv").unwrap();
-    assert_eq!(on_list(&s4, &items, &picked(13), &rel), Some(Found::List { media_id: 13, sure: true, why: "you picked it".into() }));
+    assert_eq!(on_list(&s4, &items, &picked(13), &rel), None);
+    let hit = |id, t: &str| SearchHit { id, title: t.into(), other_titles: vec![] };
+    let pick = from_search_picked(&s4, &[hit(11, "Yakusou no Sasayaki"), hit(91, "Yakusou no Sasayaki Movie")], &items, Some(13));
+    assert_eq!(pick, Found::List { media_id: 13, sure: true, why: "you picked it".into() });
+    let s4_hit = from_search_picked(&s4, &[hit(90, "Yakusou no Sasayaki 4th Season")], &items, Some(13));
+    assert_eq!(s4_hit, Found::NotOnList { media_id: 90, title: "Yakusou no Sasayaki 4th Season".into() });
 }
 
 #[test]

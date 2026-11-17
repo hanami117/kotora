@@ -1,0 +1,23 @@
+Kotora for Windows is a preview.
+
+It is new on Windows and has been tried on few PCs so far. Please report what goes wrong at
+https://github.com/hanami117/kotora/issues
+
+Good to know:
+
+- Kotora is installed for you only. Setup never asks for administrator rights.
+
+- The programs are not signed yet. Windows may have said "Windows protected your PC" when
+  you started this Setup; it may say so again for a new version.
+
+- Closing Kotora's window keeps it running in the notification area (next to the clock,
+  maybe behind the ^ arrow), so it can see what you watch. Right-click its icon to quit.
+
+- Your settings, your sign-in and the saved copy of your list are kept in your user profile
+  (%APPDATA%\kotora and %LOCALAPPDATA%\kotora). Uninstalling Kotora keeps them unless you
+  say otherwise.
+
+- Kotora checks once a day whether a new version is out and tells you. It downloads
+  nothing by itself. You can switch the check off in Settings, General.
+
+Kotora is free software under the GNU General Public License, version 3 or later.

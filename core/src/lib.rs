@@ -12,14 +12,17 @@ pub mod config;
 pub mod covers;
 pub mod http;
 pub mod library;
+pub mod listxml;
 pub mod loopback;
 pub mod mal;
 pub mod manga;
+pub mod mirror;
 pub mod model;
 pub mod paths;
 pub mod queue;
 pub mod ratelimit;
 pub mod recognize;
+pub mod score;
 pub mod service;
 pub mod store;
 pub mod sync;
@@ -28,6 +31,7 @@ pub mod tokens;
 pub mod update;
 
 pub use model::{Change, ListItem, Media, Remote, Values};
+pub use score::{Score, ScoreFormat};
 
 /// What a list holds: anime or manga. Part of every key in the store (service + kind + id): MAL
 /// anime and manga ids overlap. Manga counts chapters where anime counts episodes (`progress`,

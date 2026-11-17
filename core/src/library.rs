@@ -146,7 +146,7 @@ pub fn walk(root: &Path) -> Option<Vec<(PathBuf, u64, i64)>> {
             // Links are followed (a folder of links to another drive), loops are not.
             let Ok(m) = std::fs::metadata(entry.path()) else { continue };
             if m.is_dir() {
-                if depth < MAX_DEPTH && !skip_dir(&name) && seen_dirs.insert(dir_id(&m)) {
+                if depth < MAX_DEPTH && !skip_dir(&name) && seen_dirs.insert(dir_id(&entry.path(), &m)) {
                     stack.push((entry.path(), depth + 1));
                 }
             } else if m.is_file() && is_episode_file(&name) {
@@ -165,9 +165,19 @@ pub fn walk(root: &Path) -> Option<Vec<(PathBuf, u64, i64)>> {
 }
 
 #[cfg(unix)]
-fn dir_id(m: &std::fs::Metadata) -> (u64, u64) {
+fn dir_id(_path: &Path, m: &std::fs::Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     (m.dev(), m.ino())
+}
+
+/// Windows has no inode in stable `std`: the folder's real path (links resolved) stands in.
+#[cfg(not(unix))]
+fn dir_id(path: &Path, _m: &std::fs::Metadata) -> (u64, u64) {
+    use std::hash::{Hash, Hasher};
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    real.hash(&mut h);
+    (0, h.finish())
 }
 
 /// The saved rows of one folder.

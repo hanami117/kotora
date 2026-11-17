@@ -83,10 +83,10 @@ impl Section {
         match self {
             Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList]), (Some("Sign-in"), vec![Row::ClientId, Row::Token])],
+            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::Import])],
             Section::Detection => {
                 let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
-                if cfg!(target_os = "macos") {
+                if kotora_detect::VLC_WEB {
                     players.push(Row::VlcWeb);
                 }
                 vec![
@@ -121,6 +121,12 @@ pub enum Row {
     ClientId,
     Token,
     AniList,
+    /// Mirror edits to the other service, and its preview.
+    Mirror,
+    /// Export list… (MyAnimeList XML).
+    Export,
+    /// Import list… and its preview.
+    Import,
     Player(Switch),
     /// macOS: VLC is read through its web interface.
     VlcWeb,
@@ -158,6 +164,9 @@ impl Row {
             Row::ClientId => "client-id",
             Row::Token => "token",
             Row::AniList => "anilist",
+            Row::Mirror => "mirror",
+            Row::Export => "export",
+            Row::Import => "import",
             Row::VlcWeb => "vlc-web",
             Row::Auto => "auto",
             Row::Threshold => "threshold",
@@ -208,11 +217,14 @@ const SPECS: &[Spec] = &[
     spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
     spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
-    spec(Row::VlcWeb, Section::Detection, "VLC web interface", "VLC on the Mac reports through its web interface, with a password.", "vlc web interface http password lua config.toml"),
+    spec(Row::Mirror, Section::Account, "Mirror edits", "Every change also goes to your list on the other service.", "mirror mirroring copy both two accounts sync myanimelist anilist mal al align merge second"),
+    spec(Row::Export, Section::Account, "Export list", "Your anime list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file kitsu taiga move transfer"),
+    spec(Row::Import, Section::Account, "Import list", "Read a MyAnimeList XML export and add it to your list.", "import restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
+    spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
     spec(Row::KeepHigher, Section::Detection, "Keep the higher progress in conflicts", "When only the progress differs and yours is higher, Kotora sends yours.", "conflict conflicts sync queue progress"),
-    spec(Row::ProcessScan, Section::Detection, "Find players by their open files", "No setup, but no position or pause.", "process open files proc lsof scan no setup"),
+    spec(Row::ProcessScan, Section::Detection, if cfg!(windows) { "Find players without setup" } else { "Find players by their open files" }, "No setup, but no position or pause.", "process open files proc lsof scan no setup window title command line zero config"),
     spec(Row::ProcessMinutes, Section::Detection, "Count a file after it stays open", "Minutes, when the episode's length is unknown.", "minutes process time open files duration"),
     spec(Row::Folders, Section::Library, "Folders", crate::library::FOLDERS_NOTE, "library folder folders directory files disk drive rescan scan play next episode"),
     spec(Row::OpenWith, Section::Library, "Open with", crate::library::OPEN_WITH_NOTE, "player play mpv iina vlc default automatic open"),
@@ -234,6 +246,8 @@ fn player_words(sw: Switch) -> &'static str {
         Switch::Vlc => "vlc player mpris web interface",
         Switch::MpcQt => "mpc-qt mpc qt mpris player",
         Switch::OtherMpris => "mpris haruna celluloid smplayer other players",
+        Switch::Mpc => "mpc-hc mpc-be media player classic web interface position player",
+        Switch::PotPlayer => "potplayer pot player daum position",
     }
 }
 
@@ -274,7 +288,7 @@ fn index() -> Vec<Entry> {
             }
         }
         for s in SPECS.iter().filter(|s| s.section == section) {
-            if s.row == Row::VlcWeb && !cfg!(target_os = "macos") {
+            if s.row == Row::VlcWeb && !kotora_detect::VLC_WEB {
                 continue;
             }
             v.push(Entry { row: s.row, section, hay: fold(&format!("{} {} {} {}", section.title(), s.title, s.note, s.words)) });
@@ -775,6 +789,7 @@ fn row_el(s: &State, r: Row) -> El {
                 (Some(why), _) => why.to_string(),
                 (None, true) => "Waiting for your OK in System Settings, General, Login Items.".to_string(),
                 _ if cfg!(target_os = "macos") => "Opens Kotora when you log in to your Mac, so it keeps detecting episodes. Listed in System Settings, General, Login Items.".to_string(),
+                _ if cfg!(windows) => "Kotora keeps detecting episodes from the moment you sign in. Also listed in Windows Settings, Apps, Startup.".to_string(),
                 _ => "Kotora keeps detecting episodes from the moment you log in.".to_string(),
             };
             let sw = switch_if("set/login".into(), "Start Kotora when I log in", l.on, l.available() && !p.login_busy, State::set_login);
@@ -830,10 +845,22 @@ fn row_el(s: &State, r: Row) -> El {
                     ),
             ),
         Row::AniList => account_row(s, ServiceId::AniList),
+        Row::Mirror => crate::mirror::settings_row(s),
+        Row::Export => crate::transfer::export_row(s),
+        Row::Import => crate::transfer::import_row(s),
         Row::Player(sw) => player(s, sw),
+        Row::VlcWeb if cfg!(windows) => block(
+            "VLC web interface",
+            "VLC is seen with no setup by its window, without a position. For the position, turn on its web interface in VLC (Tools \u{2192} Preferences, Show settings: All, Interface \u{2192} Main interfaces: tick Web; then Main interfaces \u{2192} Lua: set a Lua HTTP password), restart VLC, and type the same password here.",
+            row().gap(12.0).center_y().child(crate::winsetup::vlc_field(s).grow(1.0)).child(if p.vlc_set_up { pill("set/vlc-web", "Set up", PAL.ok()) } else { pill("set/vlc-web", "Not set up", PAL.faint) }),
+        ),
         Row::VlcWeb => line(
             "VLC web interface",
-            "VLC on the Mac reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password).",
+            if cfg!(windows) {
+                "VLC reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password) and start Kotora again."
+            } else {
+                "VLC on the Mac reports through its web interface. Turn it on in VLC (Preferences, Show All, Interface, Main interfaces: Web; Lua: a password), then put the password in config.toml ([vlc] password)."
+            },
             if p.vlc_set_up { pill("set/vlc-web", "Set up", PAL.ok()) } else { pill("set/vlc-web", "Not set up", PAL.faint) },
         ),
         Row::Auto => {
@@ -870,6 +897,11 @@ fn row_el(s: &State, r: Row) -> El {
             "When only the progress differs and yours is higher, Kotora sends yours.",
             switch("set/keep-higher".into(), "Keep the higher progress in conflicts", p.keep_higher, State::set_keep_higher),
         ),
+        Row::ProcessScan if cfg!(windows) => line(
+            "Find players without setup",
+            "By their window title and command line: mpv, mpv.net, MPC-HC, MPC-BE, VLC, PotPlayer. No position or pause (PotPlayer gives both): a file counts after it stays open long enough, and Kotora always asks.",
+            switch("set/process-scan".into(), "Find players without setup", p.players.process_scan, State::set_process_scan),
+        ),
         Row::ProcessScan => line(
             "Find players by their open files",
             "No setup, but no position or pause: a file counts after it stays open long enough, and Kotora always asks.",
@@ -902,7 +934,14 @@ fn row_el(s: &State, r: Row) -> El {
             p.notify.detected,
             crate::notes::Kind::Detected,
         ),
-        Row::NotifyOffer => notify("Update offered", "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner.", "set/notify-offer", p.notify.offer, crate::notes::Kind::Offer),
+        Row::NotifyOffer => notify(
+            "Update offered",
+            // The Windows toast answers the question with Yes (`notes/windows.rs`).
+            if cfg!(windows) { "\u{201c}Update to 6?\u{201d} with Yes and Not now, which act as in the banner." } else { "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner." },
+            "set/notify-offer",
+            p.notify.offer,
+            crate::notes::Kind::Offer,
+        ),
         Row::NotifyRecorded => notify("Episode recorded", "\u{201c}Recorded \u{b7} Ep 6\u{201d} with Undo.", "set/notify-recorded", p.notify.recorded, crate::notes::Kind::Recorded),
         Row::NotifyStarted => notify(
             "Started airing",
@@ -943,6 +982,7 @@ fn notify_support(s: &State) -> Option<El> {
     let line = match s.notes.support {
         Support::NoButtons => "Your notification server shows no buttons: answer in Kotora\u{2019}s banner or with kot confirm.",
         Support::Outside => "Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them.",
+        Support::Denied if cfg!(windows) => "Notifications are off for Kotora, or for all apps, in Windows Settings \u{2192} System \u{2192} Notifications.",
         Support::Denied => "Notifications are off for Kotora in System Settings \u{2192} Notifications.",
         Support::Unknown | Support::Buttons => return None,
     };
@@ -998,6 +1038,11 @@ fn player(s: &State, sw: Switch) -> El {
     {
         c = c.child(h);
     }
+    if sw == Switch::Mpc
+        && let Some(h) = crate::winsetup::mpc_hint(s)
+    {
+        c = c.child(h);
+    }
     c
 }
 
@@ -1035,8 +1080,9 @@ fn about(s: &State) -> El {
                         .gap(8.0)
                         .items_end()
                         .child(text("Kotora \u{5c0f}\u{864e}").font(TextStyle::new(17.0, 600.0)).color(PAL.text))
-                        .child(text(format!("Version {}", env!("CARGO_PKG_VERSION"))).font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
+                        .child(text(about_version(cfg!(windows))).key("about-version").font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
                 )
+                .children(cfg!(windows).then(|| text(WINDOWS_PREVIEW).key("about-preview").font(theme::LABEL).color(PAL.dim).wrap()))
                 .child(
                     text("A tribute to Taiga, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.")
                         .font(theme::LABEL)
@@ -1045,6 +1091,14 @@ fn about(s: &State) -> El {
                 ),
         )
 }
+
+/// "Version 0.2.1", and on Windows "Version 0.2.1 · Preview" (the installer says Preview too).
+fn about_version(windows: bool) -> String {
+    format!("Version {}{}", env!("CARGO_PKG_VERSION"), if windows { " \u{b7} Preview" } else { "" })
+}
+
+/// About, on Windows only.
+const WINDOWS_PREVIEW: &str = "Kotora for Windows is a preview: it is new, and not signed yet. Please report what goes wrong on GitHub.";
 
 /// One service of Settings → Account. The active one says how its sign-in stands (Sign in,
 /// Sign out); the other offers "Use …", which switches services and keeps both lists.
@@ -1140,11 +1194,16 @@ mod tests {
             assert!(finds("iina", Row::Player(Switch::Iina)));
             assert!(finds("vlc password", Row::VlcWeb));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
             assert!(finds("haruna", Row::Player(Switch::OtherMpris)));
             assert!(rows("vlc password").is_empty(), "the web interface is the Mac's");
+        }
+        #[cfg(windows)]
+        {
+            assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
+            assert!(finds("vlc password", Row::VlcWeb));
         }
     }
 

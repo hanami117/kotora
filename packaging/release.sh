@@ -177,6 +177,18 @@ NOTES
 # The format of core/src/update.rs (`Latest`); the site's site/latest.json and the update Worker serve it.
 dl=https://github.com/$REPO/releases/download/$tag
 latest=https://github.com/$REPO/releases/latest/download
+# Windows: the installer is built by the `windows` workflow after the tag is pushed, so its checksum is
+# not known here on the first run. Once that workflow is green, run this script again with
+#   WINDOWS_SHA256=<the sha256 in Kotora-windows-x64-setup.exe.sha256 on the release>
+# (or paste the two lines its summary prints into `downloads`). Without it latest.json has no Windows
+# entry, and Kotora on Windows then offers the release page instead of the installer.
+windows_lines=
+if [[ -n ${WINDOWS_SHA256:-} ]]; then
+  [[ $WINDOWS_SHA256 =~ ^[0-9a-f]{64}$ ]] || die "WINDOWS_SHA256 is not 64 lowercase hex digits"
+  windows_lines=$(printf ',\n    "windows_installer": "%s",\n    "windows_installer_sha256": "%s"' "$latest/Kotora-windows-x64-setup.exe" "$WINDOWS_SHA256")
+else
+  warn "latest.json has no Windows entry yet (set WINDOWS_SHA256 once the windows workflow has uploaded the installer)"
+fi
 cat >"$out/latest.json" <<JSON
 {
   "version": "$version",
@@ -187,7 +199,7 @@ cat >"$out/latest.json" <<JSON
   "downloads": {
     "macos_dmg": "$latest/$DMG_LATEST",
     "linux_tarball": "$dl/$src",
-    "aur": "https://aur.archlinux.org/packages/kotora"
+    "aur": "https://aur.archlinux.org/packages/kotora"$windows_lines
   }
 }
 JSON

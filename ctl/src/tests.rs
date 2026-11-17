@@ -1,5 +1,11 @@
 use super::*;
 
+#[cfg(windows)]
+fn temp_socket(name: &str) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\kotora-ctl-test-{}-{name}", std::process::id()))
+}
+
+#[cfg(unix)]
 fn temp_socket(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kotora-ctl-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -39,8 +45,9 @@ fn wire_format_is_readable() {
 
 #[test]
 fn requests_and_replies_round_trip() {
-    let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0), anyway: true };
-    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }] {
+    let set = Request::Set { title: "Lanterns".into(), progress: Some(6), status: None, score: Some(0), score_text: None, anyway: true };
+    let set_text = Request::Set { title: "Lanterns".into(), progress: None, status: None, score: None, score_text: Some("7.5".into()), anyway: false };
+    for req in [Request::Status, Request::Show, Request::Quit, Request::List { status: None }, Request::PlusOne { title: "x".into(), anyway: false }, Request::PlusOne { title: "x".into(), anyway: true }, set, set_text, Request::Queue, Request::Sync, Request::Now, Request::Confirm, Request::Dismiss, Request::SetClientId { id: "0f".into() }, Request::Add { query: "Lanterns".into(), status: Some("plan".into()) }, Request::Add { query: "9001".into(), status: None }, Request::Rewatch { title: "Neon".into() }, Request::Next { title: "Lanterns".into() }, Request::Remove { title: "Neon".into(), yes: false }, Request::Remove { title: "9001".into(), yes: true }, Request::Export { path: "/tmp/list.xml".into() }] {
         let text = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
     }
@@ -102,6 +109,7 @@ fn serve_answers_in_order_and_cleans_up() {
         _ => Reply::Error { message: "nope".into(), anyway: false },
     })
     .unwrap();
+    #[cfg(unix)]
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     let mut c = Client::connect_to(&path).unwrap();
     assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
@@ -109,6 +117,7 @@ fn serve_answers_in_order_and_cleans_up() {
     // A second app on the same path is refused while the first answers: single instance.
     assert_eq!(serve(&path, |_| Reply::Error { message: String::new(), anyway: false }).err().map(|e| e.kind()), Some(io::ErrorKind::AddrInUse));
     drop(server);
+    #[cfg(unix)]
     assert!(!path.exists());
     assert!(Client::connect_to(&path).is_err(), "nobody answers after the app ends");
 }
@@ -116,13 +125,17 @@ fn serve_answers_in_order_and_cleans_up() {
 #[test]
 fn stale_socket_is_replaced_and_bad_lines_get_an_error() {
     let path = temp_socket("stale");
+    #[cfg(unix)]
     {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let _dead = UnixListener::bind(&path).unwrap(); // bound, then dropped: nobody answers
+        assert!(path.exists());
     }
-    assert!(path.exists());
     let _server = serve(&path, |_| Reply::Status(Status::default())).unwrap();
+    #[cfg(unix)]
     let mut s = UnixStream::connect(&path).unwrap();
+    #[cfg(windows)]
+    let mut s = pipe::connect(&path).unwrap();
     s.write_all(b"not json\n").unwrap();
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).unwrap();
@@ -136,7 +149,10 @@ fn the_socket_path_follows_the_override() {
     let p = socket_path();
     match std::env::var_os("KOTORA_CTL_SOCKET").filter(|v| !v.is_empty()) {
         Some(v) => assert_eq!(p, PathBuf::from(v)),
+        #[cfg(unix)]
         None => assert_eq!(p, runtime_dir().join("kotora.sock")),
+        #[cfg(windows)]
+        None => assert!(p.to_string_lossy().starts_with(r"\\.\pipe\io.github.hanami117.kotora-S-1-"), "{}", p.display()),
     }
 }
 
@@ -198,12 +214,13 @@ fn stage_3_wire_format() {
     assert_eq!(serde_json::to_string(&Request::List { status: None }).unwrap(), r#"{"cmd":"list"}"#);
     assert_eq!(serde_json::to_string(&Request::PlusOne { title: "Neon".into(), anyway: false }).unwrap(), r#"{"cmd":"plus_one","title":"Neon"}"#);
     assert_eq!(
-        serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None, anyway: false }).unwrap(),
+        serde_json::to_string(&Request::Set { title: "Neon".into(), progress: Some(3), status: None, score: None, score_text: None, anyway: false }).unwrap(),
         r#"{"cmd":"set","title":"Neon","progress":3}"#
     );
     assert_eq!(serde_json::to_string(&Request::Queue).unwrap(), r#"{"cmd":"queue"}"#);
+    assert_eq!(serde_json::to_string(&Request::Remove { title: "Neon".into(), yes: false }).unwrap(), r#"{"cmd":"remove","title":"Neon"}"#);
     assert_eq!(serde_json::to_string(&Request::Sync).unwrap(), r#"{"cmd":"sync"}"#);
-    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, waiting: None, rewatching: false, times_rewatched: 0 };
+    let e = Entry { id: 7, title: "Neon".into(), status: "Watching".into(), progress: 3, episodes: Some(12), score: None, score_text: None, waiting: None, rewatching: false, times_rewatched: 0 };
     let text = serde_json::to_string(&Reply::Edited { entry: e.clone() }).unwrap();
     assert_eq!(text, r#"{"reply":"edited","entry":{"id":7,"title":"Neon","status":"Watching","progress":3,"episodes":12}}"#);
     assert_eq!(serde_json::from_str::<Reply>(&text).unwrap(), Reply::Edited { entry: e });
@@ -225,6 +242,62 @@ fn an_old_app_refuses_new_requests_plainly() {
     assert!(serde_json::from_str::<OldRequest>(&line).is_err());
     assert!(matches!(serde_json::from_str::<OldRequest>(r#"{"cmd":"quit"}"#), Ok(OldRequest::Quit)));
     let _ = (OldRequest::Status, OldRequest::Show);
+}
+
+/// A `KOTORA_CTL_SOCKET` written like a file path still names a pipe on Windows.
+#[test]
+#[cfg(windows)]
+fn any_path_becomes_a_pipe_name() {
+    assert_eq!(pipe::pipe_name(Path::new(r"\\.\pipe\x")), r"\\.\pipe\x");
+    assert_eq!(pipe::pipe_name(Path::new(r"C:\Temp\kot.sock")), r"\\.\pipe\C--Temp-kot.sock");
+}
+
+/// An app that hangs never holds `kot` for ever: the wait for a reply ends at the time limit,
+/// and the same connection still works afterwards when the app answers in time.
+#[test]
+fn a_hung_app_times_out() {
+    let path = temp_socket("timeout");
+    let slow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let s = slow.clone();
+    let _server = serve(&path, move |_| {
+        if s.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        Reply::Status(sample())
+    })
+    .unwrap();
+    let mut c = Client::connect_to(&path).unwrap();
+    c.set_reply_timeout(std::time::Duration::from_millis(200)).unwrap();
+    let start = std::time::Instant::now();
+    let e = c.request(&Request::Status).unwrap_err();
+    assert!(matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock), "{e:?}");
+    assert!(start.elapsed() < std::time::Duration::from_millis(1200), "gave up at the limit, not when the app answered: {:?}", start.elapsed());
+    // A fresh connection to an app that answers again is fine.
+    slow.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut c = Client::connect_to(&path).unwrap();
+    c.set_reply_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
+}
+
+/// Several clients at once, each with its own pipe instance.
+#[test]
+fn clients_in_parallel_all_get_answers() {
+    let path = temp_socket("parallel");
+    let _server = serve(&path, |_| Reply::Status(sample())).unwrap();
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut c = Client::connect_to(&path).unwrap();
+                for _ in 0..20 {
+                    assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
 }
 
 /// The dashboard request and reply: the wire form, and a new client reading a reply with fields

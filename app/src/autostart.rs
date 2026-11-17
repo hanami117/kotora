@@ -9,13 +9,19 @@
 //!   at launch (`watch_launch`). Before 2026-11-16 Kotora wrote a LaunchAgent plist instead;
 //!   `migrate_old_entry` moves that over once.
 //!
-//! "In the background" is `[startup] background` in `config.toml`: the login start shows only the
-//! tray or menu bar icon, no window. Linux adds `--hidden` to the entry; macOS reads the setting at
-//! launch. Starting Kotora by hand always opens the window.
+//! - Windows (`autostart_win.rs`): a value named Kotora under the current user's Run key
+//!   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), the program's path in quotes. No
+//!   admin rights. Windows' own switch (Settings → Apps → Startup, Task Manager) is read too: an
+//!   entry the user turned off there shows as off here, and turning it on here turns it on there.
 //!
-//! The Linux entry runs the binary that wrote it (`current_exe`); a second copy for tests
-//! (`KOTORA_TEST_INSTANCE`) has a scratch `XDG_CONFIG_HOME`. On macOS a test instance never
-//! touches the login item (`read` says unavailable). Nothing here runs headless.
+//! "In the background" is `[startup] background` in `config.toml`: the login start shows only the
+//! tray or menu bar icon, no window. Linux and Windows add `--hidden` to the entry; macOS reads
+//! the setting at launch. Starting Kotora by hand always opens the window.
+//!
+//! The Linux and Windows entries run the binary that wrote them (`current_exe`); a second copy
+//! for tests (`KOTORA_TEST_INSTANCE`) has a scratch `XDG_CONFIG_HOME`. On macOS and Windows a
+//! test instance never touches the login item (`read` says unavailable). Nothing here runs
+//! headless.
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +32,9 @@ use crate::APP_ID;
 mod imp;
 #[cfg(target_os = "macos")]
 pub use imp::{migrate_old_entry, open_login_items, watch_launch};
+#[cfg(windows)]
+#[path = "autostart_win.rs"]
+mod imp;
 
 /// What the system says about starting at login.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -40,7 +49,7 @@ pub struct Login {
 }
 
 impl Login {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pub fn unavailable(why: &'static str) -> Self {
         Login { unavailable: Some(why), ..Login::default() }
     }
@@ -57,7 +66,11 @@ pub fn read() -> Login {
     {
         imp::read()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        imp::read()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         Login { on: entry_path().is_file(), ..Login::default() }
     }
@@ -71,15 +84,36 @@ pub fn set(on: bool, hidden: bool) -> Result<Login, String> {
         let _ = hidden;
         imp::set(on)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        imp::set(on, hidden)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         set_entry(on, hidden)?;
         Ok(read())
     }
 }
 
+// ---- Windows: the Run key's text (plain rules, tested on every system) ----
+
+/// The Run value: the program in quotes (a path may have spaces), `--hidden` for a background
+/// start. A Windows path can't contain a quote, so there is nothing to escape.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn run_command(exe: &str, hidden: bool) -> String {
+    format!("\"{}\"{}", exe.trim_matches('"'), if hidden { " --hidden" } else { "" })
+}
+
+/// Windows' own startup switch (Settings → Apps → Startup, Task Manager) for an entry, from its
+/// `StartupApproved\Run` value: no value, or a first byte that is even (02, 06), is on; an odd
+/// one (03, 07) is off.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn startup_approved(value: Option<&[u8]>) -> bool {
+    value.and_then(|v| v.first()).is_none_or(|b| b % 2 == 0)
+}
+
 /// Where the Linux autostart entry lives.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 pub fn entry_path() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
@@ -90,11 +124,11 @@ pub fn entry_path() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    kotora_core::paths::home_dir().unwrap_or_default()
 }
 
 /// Writes (on) or removes (off) the Linux autostart entry.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 fn set_entry(on: bool, hidden: bool) -> Result<(), String> {
     let path = entry_path();
     if !on {
@@ -105,6 +139,7 @@ fn set_entry(on: bool, hidden: bool) -> Result<(), String> {
 }
 
 /// Removes a file; one that isn't there is fine.
+#[cfg_attr(windows, allow(dead_code))]
 fn remove(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -113,7 +148,7 @@ fn remove(path: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 fn write(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
@@ -124,7 +159,7 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// An XDG autostart desktop entry. `Exec` quoting follows the Desktop Entry spec.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 pub fn desktop_text(exe: &Path, hidden: bool) -> String {
     let exe = exe.to_string_lossy();
     let needs_quotes = exe.chars().any(|c| c.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(c));
@@ -228,6 +263,23 @@ mod tests {
         let t = desktop_text(Path::new("/opt/a$b/kotora"), false);
         assert!(t.contains("\nExec=\"/opt/a\\\\$b/kotora\"\n"), "{t}");
         assert!(desktop_text(Path::new("/opt/100%/kotora"), false).contains("Exec=/opt/100%%/kotora\n"));
+    }
+
+    #[test]
+    fn the_windows_run_value_quotes_the_program() {
+        assert_eq!(run_command(r"C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe", true), r#""C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe" --hidden"#);
+        assert_eq!(run_command(r"D:\Kotora\kotora.exe", false), r#""D:\Kotora\kotora.exe""#);
+        assert_eq!(run_command(r#""D:\Kotora\kotora.exe""#, false), r#""D:\Kotora\kotora.exe""#, "never quoted twice");
+    }
+
+    #[test]
+    fn windows_own_startup_switch_is_read_from_its_first_byte() {
+        assert!(startup_approved(None), "never touched in Windows' settings");
+        assert!(startup_approved(Some(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+        assert!(startup_approved(Some(&[6, 0, 0, 0])));
+        assert!(!startup_approved(Some(&[3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8])), "switched off in Task Manager");
+        assert!(!startup_approved(Some(&[7])));
+        assert!(startup_approved(Some(&[])));
     }
 
     const OLD_PLIST: &str = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n    <key>Label</key><string>io.github.hanami117.kotora</string>\n    <key>RunAtLoad</key><true/>\n</dict>\n</plist>\n";

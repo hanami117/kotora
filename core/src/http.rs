@@ -58,6 +58,13 @@ impl Transport for UreqTransport {
                 }
                 r.send(body)
             }
+            "DELETE" => {
+                let mut r = self.agent.delete(&req.url);
+                if let Some(a) = &auth {
+                    r = r.header("Authorization", a);
+                }
+                r.call()
+            }
             _ => {
                 let mut r = self.agent.get(&req.url);
                 if let Some(a) = &auth {

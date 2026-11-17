@@ -11,6 +11,10 @@
 //! - [`procfs`] (Linux; macOS through `libproc`): no setup at all. Which video file a known
 //!   player has open, from the process table, every 5 s. No position, so the hub counts the time
 //!   the file stays open, and ignores it when an IPC or MPRIS source shows the same file.
+//! - [`winplayers`] (Windows): no setup either. Windows has no public way to list a process's
+//!   open files, so this reads the player's command line and its window title, every 5 s.
+//!   PotPlayer also answers window messages with its position.
+//! - [`mpc`] (Windows): MPC-HC's and MPC-BE's web interface, polled like VLC's.
 //! - [`mpvconf`]: reads and extends the user's `mpv.conf` for the IPC socket ("precise mode"),
 //!   only when the user asks.
 //! - [`iinaconf`] (macOS): the same for IINA, which reads its own settings and, when set, the
@@ -22,11 +26,13 @@
 //!
 //! Nothing here knows about anime, the list or the UI: the app gets [`Report`]s.
 
+#[cfg(unix)]
 pub mod dirwatch;
 #[cfg(target_os = "macos")]
 pub mod iinaconf;
 #[cfg(target_os = "macos")]
 pub mod libproc;
+pub mod mpc;
 pub mod mpv;
 pub mod mpvconf;
 #[cfg(target_os = "linux")]
@@ -35,8 +41,14 @@ pub mod procfs;
 pub mod run;
 pub mod vlc;
 pub mod watch;
+pub mod winplayers;
+#[cfg(windows)]
+pub mod winproc;
 
 pub use run::{Detector, Settings, start};
+
+/// VLC is followed through its web interface here (macOS and Windows; Linux has MPRIS).
+pub const VLC_WEB: bool = cfg!(any(target_os = "macos", windows));
 pub use watch::{Report, Track};
 
 use std::sync::OnceLock;
@@ -48,7 +60,10 @@ pub enum Via {
     MpvIpc,
     Mpris,
     VlcHttp,
+    /// MPC-HC's and MPC-BE's web interface (Windows).
+    MpcHttp,
     /// The open files of the player's process (`procfs`): no position, duration or pause.
+    /// On Windows the process's command line and window title (`winplayers`).
     Process,
 }
 
@@ -57,7 +72,7 @@ impl Via {
         match self {
             Via::MpvIpc => "IPC socket",
             Via::Mpris => "MPRIS",
-            Via::VlcHttp => "web interface",
+            Via::VlcHttp | Via::MpcHttp => "web interface",
             Via::Process => "process",
         }
     }
@@ -108,10 +123,14 @@ pub enum Switch {
     Vlc,
     MpcQt,
     OtherMpris,
+    /// MPC-HC and MPC-BE (Windows).
+    Mpc,
+    /// PotPlayer (Windows).
+    PotPlayer,
 }
 
 impl Switch {
-    pub const ALL: [Switch; 5] = [Switch::Mpv, Switch::Iina, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris];
+    pub const ALL: [Switch; 7] = [Switch::Mpv, Switch::Iina, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris, Switch::Mpc, Switch::PotPlayer];
 
     /// The key in `config.toml`'s `[players]`.
     pub fn config_key(self) -> &'static str {
@@ -121,6 +140,8 @@ impl Switch {
             Switch::Vlc => "vlc",
             Switch::MpcQt => "mpc_qt",
             Switch::OtherMpris => "other_mpris",
+            Switch::Mpc => "mpc",
+            Switch::PotPlayer => "potplayer",
         }
     }
 
@@ -131,12 +152,19 @@ impl Switch {
             Switch::Vlc => "VLC",
             Switch::MpcQt => "mpc-qt",
             Switch::OtherMpris => "Other MPRIS players",
+            Switch::Mpc => "MPC-HC / MPC-BE",
+            Switch::PotPlayer => "PotPlayer",
         }
     }
 
     /// The switches Settings shows on this system.
     pub fn here() -> &'static [Switch] {
-        if cfg!(target_os = "macos") { &[Switch::Mpv, Switch::Iina, Switch::Vlc] } else { &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris] }
+        if cfg!(windows) {
+            &[Switch::Mpv, Switch::Mpc, Switch::Vlc, Switch::PotPlayer, Switch::MpcQt]
+        } else if cfg!(target_os = "macos") {
+            &[Switch::Mpv, Switch::Iina, Switch::Vlc]
+        } else { &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris]
+        }
     }
 }
 
@@ -167,8 +195,46 @@ pub fn clock() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
-/// `file:///media/b%20c.mkv` → `/media/b c.mkv`; `None` for any other URL.
+/// The file name of a path a player reported: what follows the last `/`, and on Windows the
+/// last `\` too (players there report either).
+pub fn file_name(path: &str) -> &str {
+    file_name_on(path, cfg!(windows))
+}
+
+fn file_name_on(path: &str, windows: bool) -> &str {
+    let cut = if windows { path.rfind(['/', '\\']) } else { path.rfind('/') };
+    cut.map_or(path, |i| &path[i + 1..])
+}
+
+/// Whether a path a player reported is absolute: `/x`, and on Windows `C:\x`, `C:/x` and `\\server\x`.
+pub fn is_absolute(path: &str) -> bool {
+    is_absolute_on(path, cfg!(windows))
+}
+
+fn is_absolute_on(path: &str, windows: bool) -> bool {
+    let b = path.as_bytes();
+    path.starts_with('/') || (windows && (path.starts_with("\\\\") || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))))
+}
+
+/// `file:///media/b%20c.mkv` → `/media/b c.mkv`; `None` for any other URL. On Windows
+/// `file:///C:/v/b.mkv` → `C:\v\b.mkv`.
 pub fn file_url_path(url: &str) -> Option<String> {
+    let path = file_url_path_raw(url)?;
+    Some(if cfg!(windows) { windows_url_path(&path) } else { path })
+}
+
+/// A `file:` URL as a Windows path, on every system (the Windows players' command lines).
+pub(crate) fn windows_file_url(url: &str) -> Option<String> {
+    file_url_path_raw(url).map(|p| windows_url_path(&p))
+}
+
+/// `/C:/v/b.mkv` → `C:\v\b.mkv`; a path with no drive letter keeps its slashes.
+fn windows_url_path(path: &str) -> String {
+    let b = path.as_bytes();
+    if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' { path[1..].replace('/', "\\") } else { path.to_string() }
+}
+
+fn file_url_path_raw(url: &str) -> Option<String> {
     let rest = url.strip_prefix("file://")?;
     // `file://localhost/x` and `file:///x`.
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
@@ -196,6 +262,22 @@ pub fn file_url_path(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_paths_on_both_kinds_of_system() {
+        assert_eq!(file_name_on("/v/Show - 01.mkv", false), "Show - 01.mkv");
+        assert_eq!(file_name_on("Show - 01.mkv", false), "Show - 01.mkv");
+        // A backslash is an ordinary character in a Unix file name.
+        assert_eq!(file_name_on("/v/a\\b.mkv", false), "a\\b.mkv");
+        assert_eq!(file_name_on("D:\\Anime\\Show - 01.mkv", true), "Show - 01.mkv");
+        assert_eq!(file_name_on("D:/Anime/Show - 01.mkv", true), "Show - 01.mkv");
+        assert_eq!(file_name_on("D:\\Anime/Show\\01.mkv", true), "01.mkv");
+        assert!(is_absolute_on("/v/x.mkv", false) && is_absolute_on("/v/x.mkv", true));
+        assert!(!is_absolute_on("C:\\v\\x.mkv", false) && !is_absolute_on("x.mkv", true) && !is_absolute_on("C:x.mkv", true));
+        assert!(is_absolute_on("C:\\v\\x.mkv", true) && is_absolute_on("c:/v/x.mkv", true) && is_absolute_on("\\\\nas\\v\\x.mkv", true));
+        assert_eq!(windows_url_path("/C:/v/A B - 03.mkv"), "C:\\v\\A B - 03.mkv");
+        assert_eq!(windows_url_path("/v/x.mkv"), "/v/x.mkv");
+    }
 
     #[test]
     fn file_urls_decode() {

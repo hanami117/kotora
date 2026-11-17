@@ -28,6 +28,15 @@ image-webp = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
+# Windows glue: the same windows-sys and windows crates Rune already builds.
+# - `win.rs`: the console and log output, ShellExecute, the folder picker (COM), the screen's
+#   work area and scale, the window's icon, the app id of the taskbar and the toasts.
+# - `autostart_win.rs`: the Run key (registry).
+# - `notes/windows.rs`: toast notifications (WinRT).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "Foundation_Collections", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
+
 # macOS only, on the objc2 0.6 stack Rune already builds (no extra frameworks): the menu bar's
 # About panel and app-menu tidy (menu_bar.rs) and the menu bar icon (tray_mac.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -36,3 +45,8 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSDictionary", "NSData", "NSGeometry", "NSObject", "NSBundle", "NSError"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSMenu", "NSMenuItem", "NSImage", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView"] }
+
+# The icon, version details and manifest of the Windows program (`build.rs`). Build-time only, and
+# only when building on Windows: Linux and macOS never compile it.
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1.34", default-features = false }
