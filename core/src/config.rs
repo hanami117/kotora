@@ -47,6 +47,7 @@
 //! theme = "system"             # or "light", "dark"; system follows the desktop (dark when unknown)
 //! intro = true                 # the startup animation when Kotora opens with its window
 //! settings_section = "general" # the Settings section opened last (written by the app)
+//! list_kind = "anime"          # the sidebar's Anime | Manga switch as it was left (written by the app)
 //!
 //! [keys]
 //! pages = "ctrl"               # with 1 to 5, opens the list pages: "ctrl" ("cmd" on macOS) or "alt"
@@ -285,11 +286,13 @@ pub struct Display {
     pub intro: bool,
     /// The Settings section opened last ("general", "detection", …; the app reads it).
     pub settings_section: String,
+    /// The sidebar's Anime | Manga switch, as it was left (`"anime"` or `"manga"`).
+    pub list_kind: crate::Kind,
 }
 
 impl Default for Display {
     fn default() -> Self {
-        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new() }
+        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new(), list_kind: crate::Kind::Anime }
     }
 }
 
@@ -997,6 +1000,8 @@ mod tests {
         assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
         assert!(Config::parse("").unwrap().display.intro, "the startup animation is on by default");
         assert!(!Config::parse("[display]\nintro = false\n").unwrap().display.intro);
+        assert_eq!(Config::parse("").unwrap().display.list_kind, crate::Kind::Anime, "Anime unless the switch was left on Manga");
+        assert_eq!(Config::parse("[display]\nlist_kind = \"manga\"\n").unwrap().display.list_kind, crate::Kind::Manga);
         assert_eq!(Config::parse("").unwrap().display.settings_section, "");
         assert_eq!(Config::parse("[display]\nsettings_section = \"detection\"\n").unwrap().display.settings_section, "detection");
         assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");

@@ -266,7 +266,13 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         anyway: bool,
     },
-    List { entries: Vec<Entry> },
+    /// `note`: a word after the list (`kot list --manga`: the last manga sync failed, the saved
+    /// list shows).
+    List {
+        entries: Vec<Entry>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     /// The entry after an edit; the change waits in the queue.
     Edited { entry: Entry },
     Queue { ops: Vec<QueueItem> },

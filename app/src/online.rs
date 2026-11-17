@@ -82,6 +82,16 @@ pub fn start(s: &mut State) {
                 send(&h, Msg::Cache { items, user, picture, profile, synced_at, ops });
             }
         }
+        // The saved manga list (MyAnimeList only; empty while Manga is off).
+        if svc == ServiceId::Mal.name() {
+            let enabled = store.manga_enabled().unwrap_or(false);
+            let scope = (svc, kotora_core::Kind::Manga);
+            let items = if enabled { store.load_list(scope).unwrap_or_default() } else { Vec::new() };
+            let synced_at = store.synced_at(scope).ok().flatten();
+            if svc == account::name() {
+                send(&h, Msg::Manga(crate::manga::MangaMsg::Cache { enabled, items, synced_at }));
+            }
+        }
         if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
     });
     crate::mirror::load(s);
@@ -122,9 +132,15 @@ fn sync_now(h: &Handle, mut store: Store) {
         // The mirror reads its list now too (edits made on its website), at its own pace.
         crate::mirror::kick(h, true);
         // The manga list, only once Manga mode was turned on (off by default: no request), and
-        // only on MyAnimeList (AniList is anime only for now). A failure never fails the sync.
+        // only on MyAnimeList (AniList is anime only for now). A failure never fails the anime
+        // sync, but it is said on the manga pages and by `kot list --manga`.
         if active == ServiceId::Mal {
-            let _ = kotora_core::sync::sync_manga(service.as_mut(), &mut store, now_unix());
+            let r = kotora_core::sync::sync_manga(service.as_mut(), &mut store, now_unix());
+            if let Some(m) = crate::manga::manga_msg(r, active.title())
+                && account::active() == active
+            {
+                send(h, Msg::Manga(m));
+            }
         }
         for m in refresh_user(service.as_mut(), &store, now_unix()) {
             send(h, m);

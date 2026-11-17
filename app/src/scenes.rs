@@ -61,6 +61,101 @@ pub const SCENES: &[Scene] = &[
         s.prefs.views.set(Status::Watching, ListView::Grid);
         s.set_filter(Filter::Airing);
     }),
+    // Manga mode (MyAnimeList): the switch on Manga, the Reading page, made-up titles. Progress
+    // shows chapters, volumes or both, whichever was read.
+    ("manga-list", manga),
+    ("manga-list-tiles", |s| {
+        crate::manga::fake(s);
+    }),
+    ("manga-list-editor", |s| {
+        manga(s);
+        s.manga_toggle_editor(1);
+    }),
+    // A completed manga's editor: Reread beside the statuses.
+    ("manga-list-editor-completed", |s| {
+        manga(s);
+        s.go(Page::Manga(Status::Completed));
+        s.manga_toggle_editor(9);
+    }),
+    ("manga-list-completed", |s| {
+        manga(s);
+        s.go(Page::Manga(Status::Completed));
+    }),
+    ("manga-list-publishing", |s| {
+        manga(s);
+        s.set_manga_filter(crate::manga::MFilter::Publishing);
+    }),
+    // The filter box looks at every status.
+    ("manga-list-filter", |s| {
+        manga(s);
+        s.manga.query.replace_text("a");
+        s.refresh_manga();
+    }),
+    // Edits waiting in the queue: tags on the rows, the badge.
+    ("manga-list-waiting", |s| {
+        manga(s);
+        let _ = s.manga_plus_one(2);
+        let _ = s.manga_plus_one(6);
+    }),
+    // Manga just turned on: the first read runs.
+    ("manga-loading", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.manga.synced_at = None;
+        s.manga.loading = true;
+        s.refresh_manga();
+    }),
+    // Read, but nothing on the list.
+    ("manga-empty", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.refresh_manga();
+    }),
+    // The last manga sync failed: said over the saved list, and in the sidebar.
+    ("manga-sync-failed", |s| {
+        manga(s);
+        s.manga.error = Some("Your manga list wasn't read: can't reach MyAnimeList.".into());
+    }),
+    // It failed before anything was read.
+    ("manga-sync-failed-first", |s| {
+        crate::manga::fake(s);
+        s.manga.entries.clear();
+        s.manga.synced_at = None;
+        s.manga.error = Some("Your manga list wasn't read: MyAnimeList asked Kotora to slow down. Try again in a minute.".into());
+        s.refresh_manga();
+    }),
+    // A manga's page: the information, the "Your list" card with chapters and volumes.
+    ("manga-details", |s| manga_details(s, 1)),
+    ("manga-details-editor", |s| {
+        manga_details(s, 1);
+        s.manga_toggle_editor(1);
+    }),
+    // Finished, both counts known, reread once.
+    ("manga-details-completed", |s| manga_details(s, 3)),
+    // The sync queue with a manga change beside the anime ones.
+    ("manga-queue", |s| {
+        manga(s);
+        let _ = s.manga_plus_one(2);
+        let mut op = s.ops[1].clone();
+        op.id = 99;
+        op.kind = kotora_core::Kind::Manga;
+        op.media_id = 2;
+        op.title = "Salt & Gears".into();
+        op.episodes = Some(88);
+        op.change = kotora_core::Change { progress: Some(65), volumes: Some(8), ..Default::default() };
+        op.old = kotora_core::Values { volumes: 7, ..kotora_core::Values::new(Status::Watching, 64, None) };
+        op.state = OpState::Queued;
+        s.ops.insert(0, op);
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.go(Page::Queue);
+    }),
+    // Back on Anime: the anime list, Airing back in the sidebar.
+    ("manga-switch-anime", |s| {
+        crate::manga::fake(s);
+        s.set_kind(kotora_core::Kind::Anime);
+    }),
+    // AniList: the switch stays on Anime, with a note.
+    ("manga-anilist", anilist),
     // Home: continue watching, airing this week, plan to watch.
     ("home", home),
     ("home-covers", |s| {
@@ -1477,7 +1572,37 @@ fn details(s: &mut State, id: u32, on_list: bool) {
         d.mean = Some(8.05);
         d.rank = None;
     }
-    s.details_answer(crate::details::Answer { id, result: Ok(d), item: None, done: true });
+    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Anime, result: Ok(d), item: None, done: true });
+}
+
+/// The fake manga list with covers (two keep their tiles), on Reading.
+fn manga(s: &mut State) {
+    crate::manga::fake(s);
+    s.covers.fake();
+    for e in s.manga.entries.iter_mut().filter(|e| e.id % 5 != 2) {
+        e.cover_url = Some(format!("https://cdn.example.invalid/m{}.jpg", e.id));
+    }
+}
+
+/// The details page of the fake manga `id`, answered.
+fn manga_details(s: &mut State, id: u32) {
+    manga(s);
+    let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else { return };
+    let (stub, title) = (crate::manga::stub(e), e.title.clone());
+    let finished = e.run == crate::manga::Run::Finished;
+    s.open_details(stub);
+    let mut d = crate::manga::fake_details(id, &title);
+    d.cover_url = Some(format!("https://cdn.example.invalid/m{id}l.jpg"));
+    if finished {
+        d.air_status = "finished".into();
+        d.episodes = Some(40);
+        d.volumes = Some(5);
+        d.end_date = Some("2024-11".into());
+        d.title_en = None;
+        d.title_ja = None;
+        d.synonyms.clear();
+    }
+    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
 }
 
 /// A completed anime on the list (not rewatched now), the first by id.

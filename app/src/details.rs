@@ -12,7 +12,7 @@
 use kotora_core::service::{AnimeHit, Details};
 use kotora_core::store::Store;
 use kotora_core::time::now_unix;
-use kotora_core::{ListItem, Status, paths};
+use kotora_core::{Kind, ListItem, Status, paths};
 use rune::{Color, El, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
 
 use crate::icons;
@@ -31,15 +31,17 @@ pub struct Stub {
     pub cover_url: Option<String>,
     pub format: String,
     pub episodes: Option<u32>,
+    /// Anime or manga (a manga's page: `manga.rs` draws its "Your list" card).
+    pub kind: Kind,
 }
 
 impl Stub {
     pub fn from_hit(h: &AnimeHit, lang: kotora_core::config::TitleLang) -> Stub {
-        Stub { id: h.id, title: lang.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref()).to_string(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes }
+        Stub { id: h.id, title: lang.pick(&h.title, h.title_en.as_deref(), h.title_ja.as_deref()).to_string(), cover_url: h.cover_url.clone(), format: h.format.clone(), episodes: h.episodes, kind: Kind::Anime }
     }
 
     pub fn from_entry(e: &Entry) -> Stub {
-        Stub { id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), format: String::new(), episodes: e.episodes }
+        Stub { id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), format: String::new(), episodes: e.episodes, kind: Kind::Anime }
     }
 
     pub fn bare(id: u32, title: &str) -> Stub {
@@ -62,12 +64,26 @@ impl Detail {
     pub fn id(&self) -> u32 {
         self.stub.id
     }
+
+    pub fn kind(&self) -> Kind {
+        self.stub.kind
+    }
+
+    pub fn is_manga(&self) -> bool {
+        self.stub.kind == Kind::Manga
+    }
+
+    /// The id the cover cache and the tiles use (manga ids overlap anime ones).
+    pub fn cover_id(&self) -> u32 {
+        if self.is_manga() { crate::manga::cover_id(self.id()) } else { self.id() }
+    }
 }
 
 /// The information page's answer.
 #[derive(Debug)]
 pub struct Answer {
     pub id: u32,
+    pub kind: Kind,
     pub result: Result<Details, String>,
     /// The saved entry, refreshed from the information (on the list only).
     pub item: Option<ListItem>,
@@ -82,44 +98,45 @@ impl State {
             (Page::Details, Some(d)) => d.back,
             (p, _) => *p,
         };
-        let id = stub.id;
+        let (id, kind) = (stub.id, stub.kind);
         self.editor = None;
+        self.manga.editor = None;
         self.online.menu = None;
         self.detail = Some(Detail { stub, back, info: None, loading: self.handle.is_some(), error: None });
         self.go(Page::Details);
-        self.fetch_details(id);
+        self.fetch_details(id, kind);
     }
 
-    fn fetch_details(&mut self, id: u32) {
+    fn fetch_details(&mut self, id: u32, kind: Kind) {
         let Some(h) = self.handle.clone() else { return };
         let send = move |a: Answer| h.update_if(move |s, _| s.details_answer(a));
         std::thread::spawn(move || {
             let store = Store::open(&paths::db_file()).ok();
             let now = now_unix();
-            let saved = store.as_ref().and_then(|st| st.details(crate::account::name(), id).ok().flatten());
+            let saved = store.as_ref().and_then(|st| st.details((crate::account::name(), kind), id).ok().flatten());
             let fresh = saved.as_ref().is_some_and(|(_, at)| now - at < FRESH_SECS);
             let had = saved.is_some();
             if let Some((d, _)) = saved {
-                send(Answer { id, result: Ok(d), item: None, done: fresh });
+                send(Answer { id, kind, result: Ok(d), item: None, done: fresh });
                 if fresh {
                     return;
                 }
             }
             let result = match crate::account::open() {
-                Some(mut mal) => mal.details(id).map_err(crate::online::error_text),
+                Some(mut mal) => mal.details_of(kind, id).map_err(crate::online::error_text),
                 None => Err(format!("Offline or signed out: the information comes from {}.", crate::account::active().title())),
             };
             let mut item = None;
             if let (Ok(d), Some(st)) = (&result, &store) {
                 let _ = st.save_details(crate::account::name(), d, now);
                 if st.refresh_media(crate::account::name(), &d.media(), now).unwrap_or(false) {
-                    item = st.load_item(crate::account::name(), id).ok().flatten();
+                    item = st.load_item((crate::account::name(), kind), id).ok().flatten();
                 }
             }
             match result {
                 // Saved information already shows: a failed refresh only ends the loading.
-                Err(_) if had => send(Answer { id, result: Err(String::new()), item: None, done: true }),
-                result => send(Answer { id, result, item, done: true }),
+                Err(_) if had => send(Answer { id, kind, result: Err(String::new()), item: None, done: true }),
+                result => send(Answer { id, kind, result, item, done: true }),
             }
         });
     }
@@ -127,16 +144,25 @@ impl State {
     /// The fetch's answer; one for another page is dropped.
     pub fn details_answer(&mut self, a: Answer) -> bool {
         // A changed airing status was saved: Started airing may be due.
-        if a.item.is_some() {
+        if a.item.is_some() && a.kind == Kind::Anime {
             self.kick_air_notes();
         }
-        if let Some(it) = &a.item
-            && let Some(e) = self.entries.iter_mut().find(|e| e.id == it.media.id)
-        {
-            let waiting = e.waiting;
-            *e = Entry { waiting, ..Entry::from_item(it, self.prefs.titles) };
+        match &a.item {
+            Some(it) if a.kind == Kind::Manga => {
+                if let Some(e) = self.manga.entries.iter_mut().find(|e| e.id == it.media.id) {
+                    let waiting = e.waiting;
+                    *e = crate::manga::MEntry { waiting, ..crate::manga::MEntry::from_item(it, self.prefs.titles) };
+                }
+            }
+            Some(it) => {
+                if let Some(e) = self.entries.iter_mut().find(|e| e.id == it.media.id) {
+                    let waiting = e.waiting;
+                    *e = Entry { waiting, ..Entry::from_item(it, self.prefs.titles) };
+                }
+            }
+            None => {}
         }
-        let Some(d) = self.detail.as_mut().filter(|d| d.id() == a.id) else { return a.item.is_some() };
+        let Some(d) = self.detail.as_mut().filter(|d| d.id() == a.id && d.kind() == a.kind) else { return a.item.is_some() };
         d.loading = !a.done;
         match a.result {
             Ok(info) => {
@@ -153,6 +179,7 @@ impl State {
     pub fn details_back(&mut self) {
         let back = self.detail.as_ref().map_or(Page::List(Status::Watching), |d| d.back);
         self.editor = None;
+        self.manga.editor = None;
         self.detail = None;
         self.go(back);
     }
@@ -162,8 +189,8 @@ impl State {
         let Some(d) = &mut self.detail else { return };
         d.error = None;
         d.loading = self.handle.is_some();
-        let id = d.id();
-        self.fetch_details(id);
+        let (id, kind) = (d.id(), d.kind());
+        self.fetch_details(id, kind);
     }
 
     /// Now Playing, "Not on your list": add it as Watching at the playing episode (add and
@@ -355,7 +382,7 @@ fn shown_title<'a>(s: &State, d: &'a Detail) -> &'a str {
 }
 
 fn big_cover(s: &State, d: &Detail, w: f32, h: f32) -> El {
-    crate::look::poster(s, d.id(), &d.stub.title, cover_url(d), w, h, theme::R_LG)
+    crate::look::poster(s, d.cover_id(), &d.stub.title, cover_url(d), w, h, theme::R_LG)
         .key("det-cover")
         .border(1.0, crate::look::glass_border())
         .shadow(12.0, 32.0, Color::BLACK.alpha(if PAL.light { 0.22 } else { 0.55 }))
@@ -378,8 +405,37 @@ fn other_titles(s: &State, d: &Detail) -> El {
     c
 }
 
+/// A manga: type, chapters and volumes (when known), where it is in its run.
+fn manga_tags(d: &Detail) -> El {
+    let info = d.info.as_ref();
+    let chip = PAL.bg.alpha(0.6);
+    let mut tags = row().key("det-tags").flex_wrap().gap(6.0);
+    let format = info.map_or(d.stub.format.as_str(), |i| i.format.as_str());
+    if !format.is_empty() {
+        tags = tags.child(tag_tinted(&kotora_core::mal::manga_type_label(format), PAL.text, chip));
+    }
+    let plural = |n: u32, one: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") };
+    if let Some(n) = info.and_then(|i| i.episodes).or(d.stub.episodes).filter(|n| *n > 0) {
+        tags = tags.child(tag_tinted(&plural(n, "chapter"), PAL.text, chip));
+    }
+    if let Some(n) = info.and_then(|i| i.volumes).filter(|n| *n > 0) {
+        tags = tags.child(tag_tinted(&plural(n, "volume"), PAL.text, chip));
+    }
+    if let Some(i) = info {
+        match crate::manga::Run::from_mal(&i.air_status) {
+            crate::manga::Run::Publishing => tags = tags.child(tag("Publishing", PAL.airing, true).fill(chip)),
+            crate::manga::Run::Unknown => {}
+            r => tags = tags.child(tag_tinted(r.label(), PAL.text, chip)),
+        }
+    }
+    tags
+}
+
 /// Type, episodes, airing, season.
 fn tags(d: &Detail) -> El {
+    if d.is_manga() {
+        return manga_tags(d);
+    }
     let info = d.info.as_ref();
     let format = info.map_or(d.stub.format.as_str(), |i| i.format.as_str());
     let episodes = info.and_then(|i| i.episodes).or(d.stub.episodes);
@@ -434,6 +490,37 @@ fn body_cards(d: &Detail, svc: &str) -> El {
                 _ => "Not yet known".into(),
             };
             let fact = |label: &str, v: String| kv(label, text(v).font(theme::BODY).color(PAL.text).wrap());
+            if d.is_manga() {
+                let published = match (i.start_date.as_deref(), i.end_date.as_deref()) {
+                    (Some(a), Some(b)) => format!("{} to {}", date_text(a), date_text(b)),
+                    (Some(a), None) if i.air_status == "currently_publishing" || i.air_status == "on_hiatus" => format!("Since {}", date_text(a)),
+                    (Some(a), None) => date_text(a),
+                    _ => "Not yet known".into(),
+                };
+                facts = facts.child(fact("Published", published));
+                if !i.authors.is_empty() {
+                    let names: Vec<String> = i.authors.iter().map(|a| if a.role.is_empty() { a.name.clone() } else { format!("{} ({})", a.name, a.role) }).collect();
+                    facts = facts.child(fact("Authors", names.join(", ")));
+                }
+                if !i.serialization.is_empty() {
+                    facts = facts.child(fact("Serialization", i.serialization.join(", ")));
+                }
+                if !i.genres.is_empty() {
+                    let mut g = row().flex_wrap().gap(6.0);
+                    for name in &i.genres {
+                        g = g.child(tag_tinted(name, PAL.dim, PAL.raised));
+                    }
+                    facts = facts.child(kv("Genres", g));
+                }
+                let running = matches!(i.air_status.as_str(), "currently_publishing" | "on_hiatus");
+                let count = |n: Option<u32>| match n.filter(|n| *n > 0) {
+                    Some(n) => n.to_string(),
+                    None if running => "Unknown while publishing".into(),
+                    None => "Unknown".into(),
+                };
+                facts = facts.child(fact("Chapters", count(i.episodes))).child(fact("Volumes", count(i.volumes)));
+                return c.child(card("det-facts-card", "Information").child(facts));
+            }
             facts = facts.child(fact("Aired", aired));
             if !i.studios.is_empty() {
                 facts = facts.child(fact("Studios", i.studios.join(", ")));
@@ -539,6 +626,9 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
     let mut c = card("det-mine", "Your list");
     if glass {
         c = c.fill(PAL.bg.alpha(0.55)).border(1.0, crate::look::glass_border());
+    }
+    if d.is_manga() {
+        return crate::manga::mine_card(s, d, c);
     }
     match s.entries.iter().find(|e| e.id == id) {
         Some(e) => {
@@ -655,7 +745,7 @@ fn updating(d: &Detail) -> El {
 }
 
 fn mal_url(d: &Detail, svc: kotora_core::service::ServiceId) -> String {
-    svc.media_url(kotora_core::Kind::Anime, d.id())
+    svc.media_url(d.kind(), d.id())
 }
 
 /// A: the banner, then two columns (cover, title and the information; the entry on the right).
@@ -667,7 +757,7 @@ fn header_wide(s: &State, d: &Detail) -> El {
         .key("det-banner")
         .w_full()
         .h(BANNER_H)
-        .child(crate::look::backdrop(s, d.id(), cover_url(d), scrim))
+        .child(crate::look::backdrop(s, d.cover_id(), cover_url(d), scrim))
         .child(
             row()
                 .key("top")
@@ -704,7 +794,7 @@ fn top_bar(d: &Detail, svc: kotora_core::service::ServiceId) -> El {
         .pt(18.0)
         .pb(14.0)
         .child(back_button(false))
-        .child(text("Anime information").font(theme::SECTION).color(PAL.dim))
+        .child(text(if d.is_manga() { "Manga information" } else { "Anime information" }).font(theme::SECTION).color(PAL.dim))
         .child(spacer())
         .child(updating(d))
         .child(link_button("det/open-mal", &format!("Open on {}", svc.title()), mal_url(d, svc), false))
@@ -720,7 +810,7 @@ fn header_narrow(s: &State, d: &Detail) -> El {
         .radius(16.0)
         .clip_rounded(16.0)
         .border(1.0, PAL.border)
-        .child(crate::look::backdrop(s, d.id(), cover_url(d), scrim))
+        .child(crate::look::backdrop(s, d.cover_id(), cover_url(d), scrim))
         .child(
             row()
                 .key("det-main")
@@ -737,7 +827,7 @@ fn header_narrow(s: &State, d: &Detail) -> El {
         .gap(16.0)
         .pb(theme::PAGE_PAD)
         .child(banner)
-        .children(crate::library::details_block(s, d.id()))
+        .children(if d.is_manga() { None } else { crate::library::details_block(s, d.id()) })
         .child(body_cards(d, s.service.title()).max_w(760.0))
 }
 
@@ -828,8 +918,8 @@ mod tests {
         assert_eq!(s.page, Page::Details);
         // From one details page to another: Back still goes to the list.
         s.open_details(Stub::bare(3, "Slow Life on Hoshizora Island"));
-        assert!(!s.details_answer(Answer { id: 0, result: Ok(fake_details(0, "x", false)), item: None, done: true }));
-        assert!(s.details_answer(Answer { id: 3, result: Ok(fake_details(3, "Slow Life", true)), item: None, done: true }));
+        assert!(!s.details_answer(Answer { id: 0, kind: Kind::Anime, result: Ok(fake_details(0, "x", false)), item: None, done: true }));
+        assert!(s.details_answer(Answer { id: 3, kind: Kind::Anime, result: Ok(fake_details(3, "Slow Life", true)), item: None, done: true }));
         assert!(s.detail.as_ref().unwrap().info.is_some());
         s.details_back();
         assert_eq!(s.page, Page::List(Status::Completed));
@@ -840,13 +930,13 @@ mod tests {
     fn an_answer_refreshes_the_saved_entry_and_add_puts_it_on_the_list() {
         let mut s = State::fake();
         s.open_details(Stub::bare(9001, "Velvet Orchard Chronicle"));
-        s.details_answer(Answer { id: 9001, result: Ok(fake_details(9001, "Velvet Orchard Chronicle", false)), item: None, done: true });
+        s.details_answer(Answer { id: 9001, kind: Kind::Anime, result: Ok(fake_details(9001, "Velvet Orchard Chronicle", false)), item: None, done: true });
         s.add_shown(Status::PlanToWatch);
         let e = s.entries.iter().find(|e| e.id == 9001).unwrap();
         assert_eq!((e.status, e.episodes, e.kind), (Status::PlanToWatch, Some(12), "TV"));
         // A failed refresh over saved information keeps it and stops loading.
         s.detail.as_mut().unwrap().loading = true;
-        s.details_answer(Answer { id: 9001, result: Err(String::new()), item: None, done: true });
+        s.details_answer(Answer { id: 9001, kind: Kind::Anime, result: Err(String::new()), item: None, done: true });
         let d = s.detail.as_ref().unwrap();
         assert!(d.info.is_some() && !d.loading && d.error.is_none());
     }

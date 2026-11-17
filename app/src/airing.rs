@@ -617,7 +617,7 @@ impl State {
     pub fn airing_details(&mut self, id: u32) {
         let Some(i) = self.airing.shown().iter().position(|a| a.id == id) else { return };
         let a = &self.airing.shown()[i];
-        let stub = crate::details::Stub { id, title: self.airing_title(i).to_string(), cover_url: a.cover_url.clone(), format: a.format.clone(), episodes: a.episodes };
+        let stub = crate::details::Stub { id, title: self.airing_title(i).to_string(), cover_url: a.cover_url.clone(), format: a.format.clone(), episodes: a.episodes, kind: kotora_core::Kind::Anime };
         self.open_details(stub);
     }
 

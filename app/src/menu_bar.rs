@@ -69,6 +69,8 @@ pub const ENTRIES: &[Entry] = &[
 
 /// The sidebar's way to a page, so a menu pick and a click do the same.
 fn go(s: &mut State, tx: &mut Tx, page: Page) {
+    // ⌘1 to ⌘5 open the list pages of the sidebar's switch (Anime or Manga).
+    let page = if let Page::List(st) = page { s.list_page(st) } else { page };
     crate::ui::go_to(s, page, tx);
 }
 

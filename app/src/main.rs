@@ -28,6 +28,7 @@ mod icons;
 mod intro;
 mod kanji;
 mod library;
+mod manga;
 mod look;
 #[cfg(target_os = "macos")]
 mod iina;

@@ -206,8 +206,11 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Ok(Reply::List { entries }) => {
+        Ok(Reply::List { entries, note }) => {
             print!("{}", list_text(&entries, matches!(req, Request::List { status: None } | Request::MangaList { status: None })));
+            if let Some(n) = note {
+                eprintln!("kot: {n}");
+            }
             ExitCode::SUCCESS
         }
         Ok(Reply::Edited { entry }) => {
@@ -424,10 +427,67 @@ fn parse_add(words: &[&str]) -> Result<Request, String> {
 fn progress_text(e: &Entry) -> String {
     let n = |c: Option<u32>| c.map_or("?".to_string(), |n| n.to_string());
     match e.volumes {
-        // Manga: chapters, then volumes.
-        Some(v) => format!("ch {} / {}  vol {v} / {}", e.progress, n(e.episodes), n(e.volumes_total)),
+        // Manga: chapters, volumes or both (`manga_shows`).
+        Some(v) => {
+            let (ch, vol) = manga_shows(e.progress, v);
+            let parts = [ch.then(|| format!("ch {} / {}", e.progress, n(e.episodes))), vol.then(|| format!("vol {v} / {}", n(e.volumes_total)))];
+            parts.into_iter().flatten().collect::<Vec<_>>().join("  ")
+        }
         None => format!("{} / {}", e.progress, n(e.episodes)),
     }
+}
+
+/// Which counts a manga shows (the app's rule too): chapters when read, volumes when read, both
+/// when both are; nothing read yet shows chapters.
+fn manga_shows(chapters: u32, volumes: u32) -> (bool, bool) {
+    (chapters > 0 || volumes == 0, volumes > 0)
+}
+
+/// The progress cells of a list, one string each, laid out in columns: episodes right-aligned;
+/// manga as a chapters column and a volumes column (either may be blank on a row), each number
+/// aligned on the slash.
+/// A manga's (read, total) texts of its chapters and volumes, each when shown.
+type MangaParts = [Option<(String, String)>; 2];
+
+fn progress_cells(entries: &[Entry]) -> Vec<String> {
+    let n = |c: Option<u32>| c.map_or("?".to_string(), |n| n.to_string());
+    // (read, total) of a manga's chapters and volumes, when shown.
+    let parts: Vec<Option<MangaParts>> = entries
+        .iter()
+        .map(|e| {
+            let v = e.volumes?;
+            let (ch, vol) = manga_shows(e.progress, v);
+            Some([ch.then(|| (e.progress.to_string(), n(e.episodes))), vol.then(|| (v.to_string(), n(e.volumes_total)))])
+        })
+        .collect();
+    // Per manga column: the widest read count and total, or `None` when no row shows it.
+    let width = |i: usize| -> Option<(usize, usize)> {
+        parts.iter().flatten().filter_map(|p| p[i].as_ref()).map(|(a, b)| (a.chars().count(), b.chars().count())).reduce(|x, y| (x.0.max(y.0), x.1.max(y.1)))
+    };
+    let widths = [width(0), width(1)];
+    let words = ["ch", "vol"];
+    let cells: Vec<String> = entries
+        .iter()
+        .zip(&parts)
+        .map(|(e, p)| match p {
+            None => format!("{} / {}", e.progress, n(e.episodes)),
+            Some(p) => {
+                let mut cols = Vec::new();
+                for i in 0..2 {
+                    let Some((a, b)) = widths[i] else { continue };
+                    let full = words[i].len() + 1 + a + 3 + b;
+                    cols.push(match &p[i] {
+                        Some((r, t)) => format!("{} {r:>a$} / {t:<b$}", words[i]),
+                        None => " ".repeat(full),
+                    });
+                }
+                cols.join("  ")
+            }
+        })
+        .collect();
+    // Right-aligned in one column (episodes and the manga block alike).
+    let w = cells.iter().map(|c| c.chars().count()).max().unwrap_or(0).max(9);
+    cells.into_iter().map(|c| format!("{c:>w$}")).collect()
 }
 
 /// One line per entry: progress, score, title, and the queue state. `grouped` adds a heading
@@ -440,9 +500,8 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
     let mut last = "";
     // The score column fits the widest score ("73", "7.3", "★★★★☆").
     let width = entries.iter().filter_map(score_text).map(|t| t.chars().count()).max().unwrap_or(1).max(2);
-    // The progress column: 9 wide for episodes, wider for manga's chapters and volumes.
-    let pw = entries.iter().map(|e| progress_text(e).chars().count()).max().unwrap_or(0).max(9);
-    for e in entries {
+    let progress = progress_cells(entries);
+    for (e, p) in entries.iter().zip(&progress) {
         if grouped && e.status != last {
             if !last.is_empty() {
                 out.push('\n');
@@ -452,9 +511,9 @@ fn list_text(entries: &[Entry], grouped: bool) -> String {
             last = &e.status;
         }
         let score = score_text(e).unwrap_or_else(|| "\u{2013}".to_string());
-        let mut line = format!("  {:>pw$}  {score:>w$}  {}", progress_text(e), e.title, w = width);
+        let mut line = format!("  {p}  {score:>w$}  {}", e.title, w = width);
         if e.rewatching {
-            line.push_str("  (rewatching)");
+            line.push_str(if e.volumes.is_some() { "  (rereading)" } else { "  (rewatching)" });
         }
         if let Some(w) = &e.waiting {
             line.push_str(&format!("  ({})", w.to_lowercase()));
@@ -618,8 +677,22 @@ mod tests {
         let m = |title: &str, ch: u32, total: Option<u32>, vol: u32, vols: Option<u32>| Entry { title: title.into(), status: "Reading".into(), progress: ch, episodes: total, volumes: Some(vol), volumes_total: vols, ..Default::default() };
         assert_eq!(
             list_text(&[m("Paper Lanterns", 21, None, 3, None), m("Iron Garden", 120, Some(120), 12, Some(12))], false),
-            "       ch 21 / ?  vol 3 / ?   \u{2013}  Paper Lanterns\n  ch 120 / 120  vol 12 / 12   \u{2013}  Iron Garden\n"
+            "  ch  21 / ?    vol  3 / ?    \u{2013}  Paper Lanterns\n  ch 120 / 120  vol 12 / 12   \u{2013}  Iron Garden\n"
         );
+        // Only what was read shows (chapters when nothing was), the columns still line up.
+        let rows = [m("Both", 21, None, 3, None), m("Chapters only", 7, Some(40), 0, Some(4)), m("Volumes only", 0, None, 11, Some(14)), m("Nothing yet", 0, Some(9), 0, None)];
+        assert_eq!(
+            list_text(&rows, false),
+            [
+                "  ch 21 / ?   vol  3 / ?    \u{2013}  Both",
+                "  ch  7 / 40                \u{2013}  Chapters only",
+                "              vol 11 / 14   \u{2013}  Volumes only",
+                "  ch  0 / 9                 \u{2013}  Nothing yet\n",
+            ]
+            .join("\n")
+        );
+        assert_eq!(progress_text(&rows[2]), "vol 11 / 14");
+        assert_eq!(progress_text(&rows[0]), "ch 21 / ?  vol 3 / ?");
         assert_eq!(edited_text(&entries[0]), "Lanterns of Kirigaoka: 5 / 12 · Watching · score 8 (waiting to sync)");
         assert_eq!(edited_text(&entries[1]), "Neon Ronin: 12 / 12 · Completed · no score (synced)");
         // The app's own text in the user's format wins; the column fits the widest.

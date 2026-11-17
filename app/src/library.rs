@@ -498,7 +498,7 @@ impl State {
                 self.grid.sel.filter(|id| self.rows.iter().any(|&k| self.entries[k].id == *id))
             }
             Page::List(_) => self.editor.map(|ed| ed.id).and_then(on_list),
-            Page::Details => self.detail.as_ref().map(|d| d.id()).and_then(on_list),
+            Page::Details => self.detail.as_ref().filter(|d| !d.is_manga()).map(|d| d.id()).and_then(on_list),
             _ => None,
         }
     }

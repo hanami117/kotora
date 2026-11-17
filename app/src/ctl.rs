@@ -161,19 +161,32 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Err(message) => Reply::Error { message, anyway: false },
         },
         // Off the UI thread: the window holds only the anime list; this reads the database.
-        Request::MangaList { status: st } => match on_ui(handle, false, |s| s.has_list()) {
-            Ok(true) => match open_store().and_then(|store| manga_list(&store, crate::account::active(), st.as_deref())) {
+        // The window tells whether the last manga sync failed.
+        Request::MangaList { status: st } => match on_ui(handle, false, |s| (s.has_list(), s.manga.error.clone())) {
+            Ok((true, failed)) => match open_store().and_then(|store| manga_list(&store, crate::account::active(), st.as_deref(), failed)) {
                 Ok(r) => r,
                 Err(message) => Reply::Error { message, anyway: false },
             },
-            Ok(false) => Reply::Error { message: "Not signed in.".into(), anyway: false },
+            Ok((false, _)) => Reply::Error { message: "Not signed in.".into(), anyway: false },
             Err(message) => Reply::Error { message, anyway: false },
         },
         Request::Manga { on } => match open_store().and_then(|store| manga_switch(&store, crate::account::active(), on)) {
             Err(message) => Reply::Error { message, anyway: false },
-            Ok(message) if on != Some(true) => Reply::Done { message },
+            Ok(message) if on != Some(true) => {
+                // Off: the window's switch goes back to Anime.
+                if on == Some(false) {
+                    let _ = on_ui(handle, true, |s| {
+                        s.manga.enabled = false;
+                        if s.manga.mode {
+                            s.set_kind(Kind::Anime);
+                        }
+                    });
+                }
+                Reply::Done { message }
+            }
             // Turned on: one sync now reads the manga list (after the anime list).
             Ok(message) => match on_ui(handle, true, |s| {
+                s.manga.enabled = true;
                 let signed_in = s.has_list();
                 if signed_in {
                     s.sync_now();
@@ -308,7 +321,7 @@ fn list(s: &State, status: Option<&str>) -> Result<Reply, String> {
         rows.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
         entries.extend(rows.into_iter().map(|e| e.ctl(s.score_format())));
     }
-    Ok(Reply::List { entries })
+    Ok(Reply::List { entries, note: None })
 }
 
 fn open_store() -> Result<kotora_core::store::Store, String> {
@@ -317,7 +330,9 @@ fn open_store() -> Result<kotora_core::store::Store, String> {
 
 /// `kot list --manga`: the saved manga list, read only (what the last sync read; nothing is
 /// asked of the service). One status (sidebar order within it: last updated first) or all.
-fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Option<&str>) -> Result<Reply, String> {
+/// `failed`: why the last manga sync failed (from the window), if it did: said instead of the
+/// list when there is none yet, else after it.
+fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Option<&str>, failed: Option<String>) -> Result<Reply, String> {
     if service != ServiceId::Mal {
         return Err(MAL_ONLY.into());
     }
@@ -328,7 +343,10 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
         return Err("Manga is off: turn it on with kot manga on (syncs then read your manga list too).".into());
     }
     if store.synced_at(scope).map_err(err)?.is_none() {
-        return Err("Your manga list wasn't read yet: run kot sync, then try again.".into());
+        return Err(match failed {
+            Some(m) => format!("{m} Try kot sync again later."),
+            None => "Your manga list wasn't read yet: run kot sync, then try again.".into(),
+        });
     }
     let items = store.load_list(scope).map_err(err)?;
     // Open changes (none can be made yet without the UI, but the queue holds both kinds).
@@ -352,7 +370,8 @@ fn manga_list(store: &kotora_core::store::Store, service: ServiceId, status: Opt
             volumes_total: it.media.volumes,
         }));
     }
-    Ok(Reply::List { entries })
+    let note = failed.map(|m| format!("{m} This is the list saved by the last good sync."));
+    Ok(Reply::List { entries, note })
 }
 
 const MAL_ONLY: &str = "Manga lists are MyAnimeList only for now (AniList is anime only in Kotora).";
@@ -409,7 +428,7 @@ mod tests {
 
     fn rows(r: Result<Reply, String>) -> Vec<(String, String, u32, Option<u32>)> {
         match r {
-            Ok(Reply::List { entries }) => entries.into_iter().map(|e| (e.title, e.status, e.progress, e.volumes)).collect(),
+            Ok(Reply::List { entries, .. }) => entries.into_iter().map(|e| (e.title, e.status, e.progress, e.volumes)).collect(),
             other => panic!("not a list: {other:?}"),
         }
     }
@@ -423,24 +442,31 @@ mod tests {
         anime.media.kind = Kind::Anime;
         store.replace_list("mal", &[anime], 1).unwrap();
         assert!(manga_switch(&store, ServiceId::Mal, None).unwrap().starts_with("Manga is off"));
-        assert!(manga_list(&store, ServiceId::Mal, None).unwrap_err().starts_with("Manga is off"));
+        assert!(manga_list(&store, ServiceId::Mal, None, None).unwrap_err().starts_with("Manga is off"));
         assert_eq!(manga_switch(&store, ServiceId::AniList, Some(true)).unwrap_err(), MAL_ONLY);
         assert!(!store.manga_enabled().unwrap(), "AniList: stays off");
         manga_switch(&store, ServiceId::Mal, Some(true)).unwrap();
         assert!(store.manga_enabled().unwrap());
-        assert!(manga_list(&store, ServiceId::Mal, None).unwrap_err().contains("kot sync"), "not read yet");
+        assert!(manga_list(&store, ServiceId::Mal, None, None).unwrap_err().contains("kot sync"), "not read yet");
+        // A failed manga sync is said instead (`kot list --manga` never says "not read yet" then).
+        let failed = || Some("Your manga list wasn't read: can't reach MyAnimeList.".to_string());
+        assert_eq!(manga_list(&store, ServiceId::Mal, None, failed()).unwrap_err(), "Your manga list wasn't read: can't reach MyAnimeList. Try kot sync again later.");
         let list = [manga(2, "Paper Lanterns", Status::Watching, 21, 3, 50), manga(3, "Iron Garden", Status::Completed, 120, 12, 60), manga(4, "Salt Road", Status::Watching, 7, 1, 70)];
         store.replace_list(("mal", Kind::Manga), &list, 100).unwrap();
         assert_eq!(
-            rows(manga_list(&store, ServiceId::Mal, None)),
+            rows(manga_list(&store, ServiceId::Mal, None, None)),
             [("Salt Road".into(), "Reading".into(), 7, Some(1)), ("Paper Lanterns".into(), "Reading".into(), 21, Some(3)), ("Iron Garden".into(), "Completed".into(), 120, Some(12))]
         );
-        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("reading"))).len(), 2);
-        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("completed"))).len(), 1);
-        assert!(rows(manga_list(&store, ServiceId::Mal, Some("plan-to-read"))).is_empty());
-        let Ok(Reply::List { entries }) = manga_list(&store, ServiceId::Mal, Some("completed")) else { panic!() };
+        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("reading"), None)).len(), 2);
+        assert_eq!(rows(manga_list(&store, ServiceId::Mal, Some("completed"), None)).len(), 1);
+        assert!(rows(manga_list(&store, ServiceId::Mal, Some("plan-to-read"), None)).is_empty());
+        let Ok(Reply::List { entries, .. }) = manga_list(&store, ServiceId::Mal, Some("completed"), None) else { panic!() };
+        // After a good sync, a failed one shows the saved list with a note.
+        let Ok(Reply::List { note, entries: saved }) = manga_list(&store, ServiceId::Mal, None, failed()) else { panic!() };
+        assert_eq!(saved.len(), 3);
+        assert!(note.is_some_and(|n| n.ends_with("This is the list saved by the last good sync.")));
         assert_eq!((entries[0].episodes, entries[0].volumes_total, entries[0].score_text.as_deref()), (Some(120), Some(12), Some("8")));
-        assert_eq!(manga_list(&store, ServiceId::AniList, None).unwrap_err(), MAL_ONLY);
+        assert_eq!(manga_list(&store, ServiceId::AniList, None, None).unwrap_err(), MAL_ONLY);
         // Off: syncs stop reading it, the saved copy stays.
         assert!(manga_switch(&store, ServiceId::Mal, Some(false)).unwrap().starts_with("Manga is off"));
         assert_eq!(store.load_list(("mal", Kind::Manga)).unwrap().len(), 3);

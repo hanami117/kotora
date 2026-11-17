@@ -5,9 +5,21 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [Unreleased]
 
 ### Added
-- **Manga (early, no window yet):** `kot manga on` makes syncs also read your MyAnimeList manga list (read only;
-  off by default, so nobody pays extra requests), `kot list --manga [STATUS|all]` shows it with chapters and
-  volumes, `kot manga off` stops it. AniList stays anime only; the account mirror and list export leave manga out.
+- **Manga (MyAnimeList):** an Anime | Manga switch under the account in the sidebar. Its first press turns
+  Manga on (off by default, so nobody pays extra requests): syncs then read your MyAnimeList manga list too.
+  Manga mode has its own Reading, Plan to read, Completed, On hold and Dropped pages (filter box, sort, chips for
+  Publishing, Finished and On hiatus), a details page (authors, serialization, published dates, chapters and
+  volumes) and an editor for status, chapters, volumes, score and rereads. Edits go through the same sync queue
+  as anime. Progress shows chapters, volumes or both, whichever you have read; `+1` steps chapters (volumes for
+  a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing, Airing and Search
+  stay anime only. AniList has no manga in Kotora yet: there the switch stays on Anime, with a note.
+- **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
+  manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror and list
+  export leave manga out.
+
+### Fixed
+- A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list
+  --manga` says why instead of "wasn't read yet".
 
 ## [0.2.1] - 2026-11-17
 
