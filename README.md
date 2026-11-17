@@ -34,7 +34,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
   search, add and remove, and Continue reading on Home. "Fill volumes from chapters" sets volumes read from
   chapters read with [MangaDex](https://mangadex.org/)'s volume tables, after a preview. In Manga mode,
   Publishing (in Airing's place) shows each Reading manga's latest chapter, how many you have left to read and
-  an estimate of the next release, from [MangaUpdates](https://www.mangaupdates.com/); New chapter
+  an estimate of the next release, from [MangaUpdates](https://www.mangaupdates.com/) and MangaDex; New chapter
   notifications are opt-in.
 - Signed in to both services, the mirror (Beta) sends every change you make to the other list too, anime and
   manga, and never overwrites an edit made on the other website (Settings → Account → Mirror edits to …).

@@ -4,6 +4,13 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-17
+
+Release data for manga, and episodes to watch. In Manga mode, Publishing (in Airing's place) shows each Reading
+manga's latest chapter, how many you have left to read and an estimate of the next one, with release data from
+MangaUpdates and MangaDex; New chapter notifications are there too, off until you turn them on. Airing now says
+how many episodes are out that you haven't watched. No database change.
+
 ### Added
 - **Publishing (Manga mode):** the sidebar's Airing becomes Publishing when the switch is on Manga. For each
   manga on Reading it shows the latest chapter out and when ("Ch 74 · 1 day ago"), the chapters you haven't read
