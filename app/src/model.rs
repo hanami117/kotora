@@ -339,6 +339,8 @@ pub fn waiting_label(state: OpState) -> &'static str {
 pub enum Msg {
     /// The manga list (`manga.rs`).
     Manga(crate::manga::MangaMsg),
+    /// Reading detection (`reading.rs`).
+    Reading(crate::reading::ReadingMsg),
     /// The saved list and the queue from the database, at start.
     Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, profile: Option<Box<kotora_core::service::Profile>>, synced_at: Option<i64>, ops: Vec<Op> },
     /// The Profile page's facts, fresh after a sync.
@@ -513,6 +515,8 @@ pub struct State {
     pub mirror: crate::mirror::MirrorUi,
     /// Manga mode: the switch, the manga list and its editor (`manga.rs`).
     pub manga: crate::manga::MangaUi,
+    /// Reading detection (Manga): YACReader's libraries and the comic read last (`reading.rs`).
+    pub reading: crate::reading::ReadingUi,
     /// Volumes from chapters with MangaDex (`volfill.rs`).
     pub volfill: crate::volfill::VolFill,
 }
@@ -592,6 +596,7 @@ impl State {
             transfer: Default::default(),
             mirror: Default::default(),
             manga: Default::default(),
+            reading: Default::default(),
             volfill: Default::default(),
         };
         s.queue_changed();
@@ -1187,7 +1192,15 @@ impl State {
     fn apply_msg(&mut self, msg: Msg) -> bool {
         let service = self.service.title();
         match msg {
-            Msg::Manga(m) => self.apply_manga(m),
+            Msg::Manga(m) => {
+                let mut before: Vec<u32> = self.manga.entries.iter().map(|e| e.id).collect();
+                before.sort_unstable();
+                let r = self.apply_manga(m);
+                self.reading_list_changed(&before);
+                crate::reading::sync(self);
+                r
+            }
+            Msg::Reading(m) => self.apply_reading(m),
             Msg::Cache { items, user, picture, profile, synced_at, ops } => {
                 self.ops = ops;
                 // A sync's answer is newer than the saved one.
@@ -1297,6 +1310,7 @@ impl State {
                 if self.queue > 0 {
                     self.queue_cmd(Cmd::Kick { refresh: false });
                 }
+                crate::reading::sync(self);
                 true
             }
             Msg::SignInUrl { url, opened } => {
@@ -1355,6 +1369,7 @@ impl State {
         self.airing = Default::default();
         self.publishing.stop();
         self.publishing = Default::default();
+        crate::reading::forget(self);
         if self.page == Page::Details {
             self.page = self.lit_page();
         }

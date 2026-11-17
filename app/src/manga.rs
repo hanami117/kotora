@@ -475,6 +475,8 @@ impl State {
         }
         crate::queue::send(self, crate::queue::Cmd::Edit { kind: Kind::Manga, media_id: id, change });
         self.refresh_manga();
+        // The comic being read: a `+1` by hand answers or moves its offer.
+        self.recheck_reading();
         Ok(i)
     }
 

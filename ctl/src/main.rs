@@ -30,7 +30,7 @@ use std::process::ExitCode;
 
 mod dash;
 
-use kotora_ctl::{AiringItem, Client, Entry, NowInfo, PublishingItem, QueueItem, Reply, Request, Status};
+use kotora_ctl::{AiringItem, Client, Entry, NowInfo, PublishingItem, QueueItem, ReadingInfo, Reply, Request, Status};
 
 const HELP: &str = "\
 kot: talk to a running Kotora
@@ -254,8 +254,11 @@ fn main() -> ExitCode {
             print!("{}", queue_text(&ops));
             ExitCode::SUCCESS
         }
-        Ok(Reply::Now { now }) => {
+        Ok(Reply::Now { now, reading }) => {
             print!("{}", now_text(now.as_ref()));
+            if let Some(r) = &reading {
+                print!("{}", reading_text(r));
+            }
             ExitCode::SUCCESS
         }
         Ok(Reply::Airing { items, note }) => {
@@ -659,6 +662,27 @@ fn now_text(now: Option<&NowInfo>) -> String {
     out
 }
 
+/// The comic being read (Manga reading detection), after what plays.
+fn reading_text(r: &ReadingInfo) -> String {
+    let pages = match (r.page, r.pages) {
+        _ if r.finished => " (read to the end)".to_string(),
+        (Some(p), Some(n)) if n > 0 => format!(" (page {p} of {n})"),
+        _ => String::new(),
+    };
+    let mut out = format!("Reading in {}: {} {}{pages}\n  {}\n  {}\n", r.reader, r.title, r.label, r.file, r.matched);
+    out.push_str(&match (&r.recorded, &r.offer) {
+        (Some(what), _) => format!("  Marked {what} as read.\n"),
+        (None, Some(what)) if r.dismissed => format!("  {what} offered; you said not now (kot confirm marks it).\n"),
+        (None, Some(what)) if r.finished => format!("  Mark {what} as read? kot confirm\n"),
+        (None, Some(what)) => format!("  {what} is offered once it is read to the end (kot confirm marks it now).\n"),
+        (None, None) => "  Nothing to mark.\n".into(),
+    });
+    if let (None, Some(note)) = (&r.recorded, &r.note) {
+        out.push_str(&format!("  {note}\n"));
+    }
+    out
+}
+
 /// Grouped by day: "Today", then "  15:00  Mecha Bento Club  ep 11  (in 6 h)".
 fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
     if items.is_empty() {
@@ -943,5 +967,27 @@ mod tests {
         assert!(now_text(Some(&skip)).ends_with("  Update to episode 8? kot confirm\n  Skips episode 7: Kotora asks before it records.\n"));
         assert!(now_text(Some(&NowInfo { recorded: Some(6), ..n.clone() })).ends_with("Recorded episode 6.\n"));
         assert!(now_text(Some(&NowInfo { offer: None, ..n })).ends_with("Nothing to record.\n"));
+    }
+
+    #[test]
+    fn reading_says_what_to_mark() {
+        let r = ReadingInfo {
+            reader: "YACReader".into(),
+            file: "Glass Lantern Club v35 c362.cbz".into(),
+            title: "Glass Lantern Club".into(),
+            label: "Ch 362 (Vol 35)".into(),
+            page: Some(12),
+            pages: Some(40),
+            matched: "In your list (Reading), sure".into(),
+            offer: Some("Ch 362".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            reading_text(&r),
+            "Reading in YACReader: Glass Lantern Club Ch 362 (Vol 35) (page 12 of 40)\n  Glass Lantern Club v35 c362.cbz\n  In your list (Reading), sure\n  Ch 362 is offered once it is read to the end (kot confirm marks it now).\n"
+        );
+        let done = ReadingInfo { finished: true, ..r.clone() };
+        assert!(reading_text(&done).contains("(read to the end)") && reading_text(&done).ends_with("Mark Ch 362 as read? kot confirm\n"));
+        assert!(reading_text(&ReadingInfo { recorded: Some("Ch 362".into()), ..r }).ends_with("Marked Ch 362 as read.\n"));
     }
 }

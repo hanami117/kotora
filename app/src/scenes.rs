@@ -260,6 +260,71 @@ pub const SCENES: &[Scene] = &[
         let stub = crate::manga::stub(e);
         s.open_details(stub);
     }),
+    // Reading detection (Manga): YACReader has chapter 120 of a Reading manga open, page 14.
+    ("now-reading", |s| {
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        s.go(Page::NowPlaying);
+    }),
+    // Read to the end: the banner asks on top of every page, Now Playing shows Mark read.
+    ("now-reading-offer", |s| reading(s, "Inkwell Cartographers v12 c120.cbz", 40)),
+    ("now-reading-offer-page", |s| {
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // "Update automatically" on: marked at once, Undo in the banner.
+    ("now-reading-recorded", |s| {
+        s.prefs.auto = true;
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // Auto on, but chapter 122 at 119 read: it asks and says what it skips.
+    ("now-reading-skip", |s| {
+        s.prefs.auto = true;
+        reading(s, "Inkwell Cartographers - Ch. 122.cbz", 40);
+    }),
+    // A whole-volume file: the volume is offered.
+    ("now-reading-volume", |s| {
+        reading(s, "Night Shift Alchemist/Night Shift Alchemist v04.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // A close title: not sure, Wrong manga… opens the picker.
+    ("now-reading-unsure", |s| {
+        reading(s, "Inkwell Cartographer c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    ("now-reading-picking", |s| {
+        reading(s, "Inkwell Cartographer c120.cbz", 40);
+        s.wrong_manga();
+    }),
+    // A series off the list, found by the search: Add as Reading.
+    ("now-reading-not-on-list", |s| {
+        reading(s, "Tidepool Couriers c007.cbz", 40);
+        if let Some(r) = &mut s.reading.current {
+            r.found = Found::NotOnList { media_id: 501, title: "Tidepool Couriers".into() };
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // An episode plays and a chapter was read: both on Now Playing.
+    ("now-reading-and-playing", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        s.go(Page::NowPlaying);
+    }),
+    // Settings → Manga → Reading detection: a library found in YACReader's settings, one added.
+    ("settings-reading", |s| {
+        crate::manga::fake(s);
+        s.reading.watched = vec!["/media/comics/Manga".into(), "/media/archive/Comics".into()];
+        s.reading.added = vec!["/media/archive/Comics".into()];
+        crate::settings::open(s, Section::Manga);
+    }),
+    ("settings-reading-error", |s| {
+        crate::manga::fake(s);
+        s.reading.watched = vec!["/media/comics/Manga".into()];
+        s.reading.error = Some("No YACReader library at /media/comics/Other (it has no .yacreaderlibrary folder).".into());
+        crate::settings::open(s, Section::Manga);
+    }),
+    // Manga off: the switch is greyed and says why.
+    ("settings-reading-manga-off", |s| crate::settings::open(s, Section::Manga)),
     // Settings → Manga → Release data.
     ("settings-manga", |s| {
         crate::manga::fake(s);
@@ -2067,6 +2132,13 @@ fn reached(s: &mut State) {
         None => return,
     };
     s.now_reached(&key, &file);
+}
+
+/// Manga on, nothing playing, and YACReader shows `file` at `page` of 40.
+fn reading(s: &mut State, file: &str, page: i64) {
+    crate::manga::fake(s);
+    s.now = None;
+    crate::reading::fake(s, file, page);
 }
 
 fn unsure(s: &mut State) {

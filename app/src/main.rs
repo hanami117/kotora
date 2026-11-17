@@ -47,6 +47,7 @@ mod precise;
 mod profile;
 mod publishing;
 mod queue;
+mod reading;
 mod remove;
 mod scenes;
 mod scores;

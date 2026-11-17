@@ -105,7 +105,7 @@ impl Section {
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
                 (Some("Manga"), vec![Row::NotifyChapter]),
             ],
-            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd])],
+            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingLibs])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
         }
     }
@@ -161,6 +161,10 @@ pub enum Row {
     NotifyChapter,
     ReleaseMu,
     ReleaseMd,
+    /// Reading detection: watch YACReader's libraries.
+    ReadingYac,
+    /// Reading detection: the libraries (found and added).
+    ReadingLibs,
     About,
     Licences,
     Links,
@@ -207,6 +211,8 @@ impl Row {
             Row::NotifyChapter => "notify-chapter",
             Row::ReleaseMu => "release-mu",
             Row::ReleaseMd => "release-md",
+            Row::ReadingYac => "reading-yacreader",
+            Row::ReadingLibs => "reading-libraries",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -266,6 +272,8 @@ const SPECS: &[Spec] = &[
     spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
     spec(Row::ReleaseMu, Section::Manga, "MangaUpdates", "Release data for Publishing from MangaUpdates.", "manga release data source sources mangaupdates publishing chapters latest"),
     spec(Row::ReleaseMd, Section::Manga, "MangaDex", "Release data for Publishing from MangaDex, official chapters included.", "manga release data source sources mangadex publishing chapters latest official manga plus"),
+    spec(Row::ReadingYac, Section::Manga, "YACReader", crate::reading::SWITCH_NOTE, "reading detection detect read chapter comic reader yacreader cbz cbr mark as read library"),
+    spec(Row::ReadingLibs, Section::Manga, "YACReader libraries", "Found in YACReader\u{2019}s settings, or added here.", "reading library libraries folder comics yacreader ydb database path"),
     spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
@@ -1023,6 +1031,12 @@ fn row_el(s: &State, r: Row) -> El {
             };
             line("New chapter", note, crate::ui::switch_if("set/notify-chapter".into(), "New chapter", p.notify.new_chapter, s.manga.enabled, |s, v| s.set_notify(crate::notes::Kind::Chapter, v)))
         }
+        Row::ReadingYac => line(
+            "YACReader",
+            crate::reading::switch_row_note(s),
+            crate::ui::switch_if("set/reading-yacreader".into(), "YACReader", s.reading.on, s.manga.enabled, |s, v| s.set_reading_on(v)),
+        ),
+        Row::ReadingLibs => block("Libraries", "Found in YACReader\u{2019}s settings, or added here (the folder with .yacreaderlibrary in it).", crate::reading::libraries_block(s)),
         Row::ReleaseMu | Row::ReleaseMd => {
             let md = r == Row::ReleaseMd;
             let (on, other) = if md { (p.sources.md, p.sources.mu) } else { (p.sources.mu, p.sources.md) };

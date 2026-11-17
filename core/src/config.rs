@@ -44,6 +44,10 @@
 //! mangaupdates = true
 //! mangadex = true
 //!
+//! [reading]                    # reading detection (Manga on)
+//! yacreader = true             # watch YACReader's libraries (found from its settings)
+//! libraries = ["/Volumes/Disk/Comics"]   # more library folders
+//!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
 //!
@@ -104,6 +108,23 @@ pub struct Config {
     pub app: AppSection,
     pub keys: Keys,
     pub release_data: ReleaseData,
+    pub reading: Reading,
+}
+
+/// `[reading]`: reading detection (Manga). It runs only with Manga on.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Reading {
+    /// Watch YACReader's libraries (on by default; nothing runs without a library).
+    pub yacreader: bool,
+    /// Library folders the user added, beside the ones YACReader's settings list.
+    pub libraries: Vec<String>,
+}
+
+impl Default for Reading {
+    fn default() -> Self {
+        Reading { yacreader: true, libraries: Vec::new() }
+    }
 }
 
 /// `[release_data]`: Publishing's release sources (both on by default).
@@ -689,6 +710,7 @@ impl std::fmt::Debug for Config {
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
             .field("keys", &self.keys)
+            .field("reading", &self.reading)
             .finish()
     }
 }
@@ -731,6 +753,8 @@ struct File {
     keys: Keys,
     #[serde(default)]
     release_data: ReleaseData,
+    #[serde(default)]
+    reading: Reading,
 }
 
 #[derive(Deserialize, Default)]
@@ -770,6 +794,7 @@ impl Config {
             keys: f.keys,
             // Both off is not a choice: MangaUpdates comes back on.
             release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
+            reading: f.reading,
         })
     }
 
