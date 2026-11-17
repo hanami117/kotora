@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/banner.jpg" alt="Kotora: a native anime tracker for Linux and macOS"></p>
+<p align="center"><img src="docs/banner.jpg" alt="Kotora: a native anime tracker for Linux, macOS and Windows"></p>
 
 # Kotora 小虎
 
-A native anime tracker for Linux and macOS, written in Rust.
+A native anime tracker for Linux and macOS, with a Windows preview, written in Rust.
 
 Kotora ("little tiger") keeps your [MyAnimeList](https://myanimelist.net) or [AniList](https://anilist.co) list
 up to date. It sees which episode is playing in your media player, and asks before it records it. Your list
@@ -35,12 +35,13 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 ## Supported players
 
-| Linux | macOS |
-|---|---|
-| mpv, VLC, mpc-qt, and other MPRIS players (Celluloid, Haruna, SMPlayer, …) | mpv, IINA, VLC |
+| Linux | macOS | Windows (preview) |
+|---|---|---|
+| mpv, VLC, mpc-qt, and other MPRIS players (Celluloid, Haruna, SMPlayer, …) | mpv, IINA, VLC | mpv, mpv.net, MPC-HC, MPC-BE, VLC, PotPlayer |
 
 Kotora finds a player by the video file it has open, with no setup. For an exact position and pause, mpv
-needs an IPC socket: Kotora offers to add one line to your `mpv.conf` (only when you click). Kotora does not
+needs an IPC socket: Kotora offers to add one line to your `mpv.conf` (only when you click). On Windows the
+same click works for mpv and mpv.net, and one turns on the web interface of MPC-HC and MPC-BE. Kotora does not
 play, download or fetch video. For streaming sites, use [MAL-Sync](https://malsync.moe).
 
 ## Install
@@ -58,7 +59,7 @@ Both install `kotora`, `kot`, the menu entry and the icons, and they conflict wi
 Updates come with your AUR helper. AUR pages: [kotora](https://aur.archlinux.org/packages/kotora) and
 [kotora-bin](https://aur.archlinux.org/packages/kotora-bin).
 
-The 0.1.2 release page has a Linux x86_64 tarball (`kotora-0.1.2-linux-x86_64.tar.gz`). It is built on Arch
+The release page has a Linux x86_64 tarball (`kotora-0.2.1-linux-x86_64.tar.gz`). It is built on Arch
 Linux, so it needs a recent glibc; on other distros, building from source is the safer way.
 
 ### macOS
@@ -73,6 +74,16 @@ link it into your `PATH`:
 ```sh
 ln -s /Applications/Kotora.app/Contents/MacOS/kot /opt/homebrew/bin/kot
 ```
+
+### Windows (preview)
+
+Windows 10 or 11, 64-bit. Download
+[Kotora-windows-x64-setup.exe](https://github.com/hanami117/kotora/releases/latest/download/Kotora-windows-x64-setup.exe)
+and run it. It installs for your account only (no administrator rights), adds a Start menu entry and puts
+`kot` on your PATH. A zip without an installer is on the release page.
+
+Kotora is not signed yet, so Windows SmartScreen says "Windows protected your PC": click **More info**, then
+**Run anyway**. The Windows build is new: please report problems.
 
 ### From source (Linux)
 
