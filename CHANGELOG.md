@@ -4,6 +4,16 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- Discord Rich Presence, off by default (Settings → General → **Show on Discord**, `[discord] enabled` in
+  `config.toml`). Your Discord app shows "Watching Kotora" with the anime, "Episode 7 of 24" and the player's
+  start and end times while it plays; options: the cover as the large image, a "View on AniList" / "View on
+  MyAnimeList" button, hide while paused or idle, and hide the title ("Watching anime"). It uses Discord's
+  local socket (Unix socket, Flatpak and Snap paths, Windows named pipe) on one worker thread that exists only
+  while the switch is on, looks for Discord again every 30 seconds, and clears the status when nothing plays,
+  when you turn it off and when Kotora quits. No new dependency and no connection of Kotora's own. Needs a
+  Discord Application ID: see `docs/DISCORD.md`.
+
 ## [0.3.2] - 2026-11-17
 
 Kotora now opens on Home, and Settings lets you choose what it opens on. Home's Airing this week says the day

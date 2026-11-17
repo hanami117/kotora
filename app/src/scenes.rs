@@ -1090,6 +1090,13 @@ pub const SCENES: &[Scene] = &[
         s.prefs.start_mode = kotora_core::config::StartMode::Manga;
         crate::settings::open(s, Section::General)
     }),
+    // Settings → General → Discord on, with a title hidden and the paused status cleared.
+    ("settings-discord-on", |s| {
+        s.prefs.discord.enabled = true;
+        s.prefs.discord.client_id = "123456789012345678".into();
+        s.prefs.discord.hide_paused = true;
+        crate::settings::open(s, Section::General)
+    }),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
     ("settings-account", |s| crate::settings::open(s, Section::Account)),
     // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
@@ -3114,6 +3121,36 @@ mod tests {
         // Search finds both.
         let rt = render("settings-search", (1360.0, 860.0));
         assert!(rt.find("set/results").is_some());
+    }
+
+    #[test]
+    fn settings_has_the_discord_switches_off_by_default() {
+        let mut rt = render("settings-general", (1360.0, 860.0));
+        assert!(!rt.state.prefs.discord.enabled, "off by default");
+        for k in ["set/row/discord", "set/row/discord-cover", "set/row/discord-buttons", "set/row/discord-hide-paused", "set/row/discord-hide-title"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        // The options are inert while the main switch is off.
+        let (x, y) = rt.find("set/discord-hide-title").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(!rt.state.prefs.discord.hide_title);
+        // The main switch turns on (headless: nothing is started, nothing is written).
+        let (x, y) = rt.find("set/discord").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.prefs.discord.enabled);
+        // With it on, an option works.
+        let mut rt = render("settings-discord-on", (1360.0, 1700.0));
+        let (x, y) = rt.find("set/discord-hide-title").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.prefs.discord.hide_title, "an option works once it is on");
+        let rt = render("settings-discord-on", (960.0, 700.0));
+        assert!(rt.state.prefs.discord.hide_paused && rt.find("set/discord").is_some());
     }
 
     #[test]

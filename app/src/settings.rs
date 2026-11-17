@@ -85,7 +85,7 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Discord"), vec![Row::Discord, Row::DiscordCover, Row::DiscordButtons, Row::DiscordHidePaused, Row::DiscordHideTitle]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
             Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
             Section::Detection => {
@@ -124,6 +124,12 @@ pub enum Row {
     CheckNow,
     /// The modifier with 1 to 5 for the list pages.
     PageKeys,
+    /// Show what you watch on Discord, and its options.
+    Discord,
+    DiscordCover,
+    DiscordButtons,
+    DiscordHidePaused,
+    DiscordHideTitle,
     Theme,
     Titles,
     Intro,
@@ -178,6 +184,11 @@ impl Row {
             Row::CheckUpdates => "check-updates",
             Row::CheckNow => "check-now",
             Row::PageKeys => "page-keys",
+            Row::Discord => "discord",
+            Row::DiscordCover => "discord-cover",
+            Row::DiscordButtons => "discord-buttons",
+            Row::DiscordHidePaused => "discord-hide-paused",
+            Row::DiscordHideTitle => "discord-hide-title",
             Row::Theme => "theme",
             Row::Titles => "titles",
             Row::Intro => "intro",
@@ -239,6 +250,11 @@ const SPECS: &[Spec] = &[
     spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
     spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
     spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
+    spec(Row::Discord, Section::General, "Show on Discord", "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.", "discord rich presence status activity presence taiga show playing watching friends share"),
+    spec(Row::DiscordCover, Section::General, "Show the cover", "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.", "discord cover art poster image picture"),
+    spec(Row::DiscordButtons, Section::General, "Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", "discord button buttons link anilist myanimelist"),
+    spec(Row::DiscordHidePaused, Section::General, "Hide while paused", "Clears the status while the player is paused or idle.", "discord hide paused pause idle stopped clear"),
+    spec(Row::DiscordHideTitle, Section::General, "Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", "discord hide title private privacy secret incognito"),
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
@@ -856,6 +872,19 @@ fn row_el(s: &State, r: Row) -> El {
             "Anime or Manga at start, or as you left it. Manga only when Manga is on; otherwise Anime.",
             choice("set/start-mode", &config::StartMode::ALL, p.start_mode, config::StartMode::label, config::StartMode::key, State::set_start_mode),
         ),
+        Row::Discord => line(
+            "Show on Discord",
+            if crate::discord::needs_client_id(&p.discord) {
+                "Not set up in this build: put your own Discord Application ID in config.toml, [discord] client_id (docs/DISCORD.md). Needs the Discord app on this computer.".to_string()
+            } else {
+                "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.".to_string()
+            },
+            switch("set/discord".into(), "Show on Discord", p.discord.enabled, State::set_discord),
+        ),
+        Row::DiscordCover => line("Show the cover", "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.", switch_if("set/discord-cover".into(), "Show the cover", p.discord.cover, p.discord.enabled, State::set_discord_cover)),
+        Row::DiscordButtons => line("Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", switch_if("set/discord-buttons".into(), "Show a button", p.discord.buttons, p.discord.enabled, State::set_discord_buttons)),
+        Row::DiscordHidePaused => line("Hide while paused", "Clears the status while the player is paused or idle.", switch_if("set/discord-hide-paused".into(), "Hide while paused", p.discord.hide_paused, p.discord.enabled, State::set_discord_hide_paused)),
+        Row::DiscordHideTitle => line("Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", switch_if("set/discord-hide-title".into(), "Hide the title", p.discord.hide_title, p.discord.enabled, State::set_discord_hide_title)),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
         Row::PageKeys => line(
