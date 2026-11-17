@@ -225,6 +225,65 @@ pub const SCENES: &[Scene] = &[
     }),
     // Finished, both counts known, reread once.
     ("manga-details-completed", |s| manga_details(s, 3)),
+    // Publishing (Manga mode's Airing): the Reading manga's latest chapters from MangaUpdates
+    // (made up), sorted by the next estimated release.
+    ("publishing", publishing),
+    ("publishing-behind", |s| {
+        publishing(s);
+        s.set_publishing_sort(crate::publishing::PSort::Behind);
+    }),
+    ("publishing-latest", |s| {
+        publishing(s);
+        s.set_publishing_sort(crate::publishing::PSort::Latest);
+    }),
+    // A row's panel: a guessed match, its releases, the link field.
+    ("publishing-panel", |s| {
+        publishing(s);
+        s.publishing_toggle(2);
+    }),
+    // No series found; a pasted link that isn't one.
+    ("publishing-panel-missing", |s| {
+        publishing(s);
+        s.publishing_toggle(7);
+        s.publishing.link = rune::TextEdit::new("https://www.mangaupdates.com/series.html?id=1234");
+        s.publishing_use_link(7);
+    }),
+    // A picked series (Reset beside Use) after a link was used.
+    ("publishing-panel-picked", |s| {
+        publishing(s);
+        s.publishing_toggle(4);
+        s.publishing.link_note = Some((false, "Now matched with \u{201c}Moth Orchestra\u{201d}.".into()));
+    }),
+    // The first look: most rows still looking, the count in the top bar.
+    ("publishing-loading", |s| {
+        manga(s);
+        s.go(Page::Publishing);
+        let mut info = crate::publishing::fake_info();
+        info.truncate(2);
+        s.publishing_fake(info);
+        s.publishing.busy = Some((2, 6));
+    }),
+    ("publishing-offline", |s| {
+        publishing(s);
+        s.publishing.error = Some("Can\u{2019}t reach MangaUpdates. Showing the saved release data.".into());
+    }),
+    ("publishing-empty", |s| {
+        manga(s);
+        for e in s.manga.entries.iter_mut().filter(|e| e.status == Status::Watching) {
+            e.status = Status::OnHold;
+        }
+        s.go(Page::Publishing);
+        s.publishing_fake(Vec::new());
+    }),
+    // A Reading manga's page: the Publishing card under Your list.
+    ("manga-details-publishing", |s| {
+        manga_details(s, 1);
+        s.publishing_fake(crate::publishing::fake_info());
+    }),
+    ("manga-details-publishing-guess", |s| {
+        manga_details(s, 2);
+        s.publishing_fake(crate::publishing::fake_info());
+    }),
     // The sync queue with a manga change beside the anime ones.
     ("manga-queue", |s| {
         manga(s);
@@ -1688,6 +1747,12 @@ pub const SCENES: &[Scene] = &[
         s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir { file: "~/.config/iina/mpv.conf".into() });
     }),
     // Settings → Notifications as they come (Episode detected off).
+    // Manga on: the New chapter switch can be turned on.
+    ("settings-notifications-manga", |s| {
+        crate::manga::fake(s);
+        s.prefs.notify.new_chapter = true;
+        crate::settings::open(s, Section::Notifications);
+    }),
     ("settings-notifications", |s| {
         crate::settings::open(s, Section::Notifications);
     }),
@@ -1827,6 +1892,13 @@ fn details(s: &mut State, id: u32, on_list: bool) {
 }
 
 /// The fake manga list with covers (two keep their tiles), on Reading.
+/// The Publishing page with the fake manga list and made-up MangaUpdates data.
+fn publishing(s: &mut State) {
+    manga(s);
+    s.go(Page::Publishing);
+    s.publishing_fake(crate::publishing::fake_info());
+}
+
 fn manga(s: &mut State) {
     crate::manga::fake(s);
     s.covers.fake();

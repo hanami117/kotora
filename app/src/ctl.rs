@@ -114,6 +114,21 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             };
             Ok(Reply::Airing { items: s.ctl_airing(), note })
         })),
+        Request::Publishing => reply(on_ui(handle, false, |s| {
+            if !s.has_list() {
+                return Err("Not signed in.".to_string());
+            }
+            if !s.manga.enabled {
+                return Err("Manga is off. Turn it on with: kot manga on".to_string());
+            }
+            // Like opening the page: the saved data, then MangaUpdates for what is old.
+            let first = s.publishing.info.is_empty();
+            s.publishing_kick();
+            s.publishing_rebuild();
+            let note = first.then(|| "Kotora is checking MangaUpdates; try again in a minute.".to_string());
+            let items = if first { Vec::new() } else { s.ctl_publishing() };
+            Ok(Reply::Publishing { items, note })
+        })),
         Request::Dash => reply(on_ui(handle, false, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());
@@ -257,6 +272,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
                 if on == Some(false) {
                     let _ = on_ui(handle, true, |s| {
                         s.manga.enabled = false;
+                        s.publishing.stop();
                         if s.manga.mode {
                             s.set_kind(Kind::Anime);
                         }
@@ -267,6 +283,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             // Turned on: one sync now reads the manga list (after the anime list).
             Ok(message) => match on_ui(handle, true, |s| {
                 s.manga.enabled = true;
+                s.publishing_start();
                 let signed_in = s.has_list();
                 if signed_in {
                     s.sync_now();

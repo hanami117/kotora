@@ -99,6 +99,7 @@ impl Section {
             Section::Notifications => vec![
                 (Some("While you watch"), vec![Row::NotifyDetected, Row::NotifyOffer, Row::NotifyRecorded]),
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
+                (Some("Manga"), vec![Row::NotifyChapter]),
             ],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
         }
@@ -148,6 +149,7 @@ pub enum Row {
     NotifyRecorded,
     NotifyStarted,
     NotifyEpisode,
+    NotifyChapter,
     About,
     Licences,
     Links,
@@ -189,6 +191,7 @@ impl Row {
             Row::NotifyRecorded => "notify-recorded",
             Row::NotifyStarted => "notify-started",
             Row::NotifyEpisode => "notify-episode",
+            Row::NotifyChapter => "notify-chapter",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -244,6 +247,7 @@ const SPECS: &[Spec] = &[
     spec(Row::NotifyOffer, Section::Notifications, "Update offered", "Update to 6? with Update and Not now.", "notification notifications alert popup offer ask"),
     spec(Row::NotifyRecorded, Section::Notifications, "Episode recorded", "Recorded, with Undo.", "notification notifications alert popup recorded undo"),
     spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
+    spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
     spec(Row::Licences, Section::About, "Licences", "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.", "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright"),
@@ -982,9 +986,17 @@ fn row_el(s: &State, r: Row) -> El {
             p.notify.new_episode,
             crate::notes::Kind::Aired,
         ),
+        Row::NotifyChapter => {
+            let note = if s.manga.enabled {
+                "When a manga you\u{2019}re reading gets a new chapter: \u{201c}New chapter of Title: Ch 75\u{201d}. Kotora checks MangaUpdates every few hours while this is on. Off by default."
+            } else {
+                "For manga you\u{2019}re reading, from MangaUpdates. Turn Manga on first (the Anime | Manga switch in the sidebar)."
+            };
+            line("New chapter", note, crate::ui::switch_if("set/notify-chapter".into(), "New chapter", p.notify.new_chapter, s.manga.enabled, |s, v| s.set_notify(crate::notes::Kind::Chapter, v)))
+        }
         Row::About => about(s),
         Row::Licences => col().key("set/licences").w_full().gap(3.0).py(12.0).child(text("Licences").font(theme::BODY_MED).color(PAL.text)).child(
-            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Volume data for \u{201c}Fill volumes from chapters\u{201d}: MangaDex. Not affiliated with MyAnimeList, AniList or MangaDex.")
+            text("Kotora is GPL-3.0-or-later. File names are read with anitomy (MPL-2.0, through anitomy-ng); split seasons are mapped with anime-relations (CC0), both by Taiga\u{2019}s author. \u{5c0f}\u{864e} is drawn from Noto Sans JP (OFL 1.1). Volume data for \u{201c}Fill volumes from chapters\u{201d}: MangaDex. Release data for Publishing: MangaUpdates. Not affiliated with MyAnimeList, AniList, MangaDex or MangaUpdates.")
                 .font(theme::LABEL)
                 .color(PAL.dim)
                 .wrap(),
@@ -1218,6 +1230,7 @@ mod tests {
             ("folder", Row::Folders),
             ("open with", Row::OpenWith),
             ("new episode", Row::NotifyEpisode),
+            ("new chapter", Row::NotifyChapter),
             ("license", Row::Licences),
             ("licence", Row::Licences),
             ("github", Row::Links),

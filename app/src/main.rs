@@ -45,6 +45,7 @@ mod online;
 mod play;
 mod precise;
 mod profile;
+mod publishing;
 mod queue;
 mod remove;
 mod scenes;
@@ -299,6 +300,8 @@ fn main() {
         chrome::follow(s.prefs.theme);
         // Started airing and New episode notifications, from the saved list (no requests).
         airnotes::start(&mut s);
+        // New chapter notifications (Manga on and the switch on only; MangaUpdates, `publishing.rs`).
+        s.publishing_start();
         // macOS: the old LaunchAgent moves over to the login item, once (a worker thread; never
         // in a test instance, which has its own scratch setup).
         #[cfg(target_os = "macos")]

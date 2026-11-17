@@ -44,6 +44,8 @@ pub enum Page {
     Airing,
     /// A manga list page (`manga.rs`; the sidebar's switch on Manga).
     Manga(Status),
+    /// Manga mode's Airing: the latest chapters of Reading manga (`publishing.rs`).
+    Publishing,
 }
 
 /// The chips above the list.
@@ -484,6 +486,7 @@ pub struct State {
     pub library: crate::library::Library,
     /// Started airing and New episode notifications (`airnotes.rs`).
     pub airnotes: crate::airnotes::AirNotes,
+    pub publishing: crate::publishing::Publishing,
     /// The update check and its banner (`update.rs`).
     pub update: crate::update::Updates,
     /// The list's grid views: the keyboard selection (`grid.rs`).
@@ -572,6 +575,7 @@ impl State {
             tick: None,
             library: Default::default(),
             airnotes: Default::default(),
+            publishing: Default::default(),
             update: Default::default(),
             grid: Default::default(),
             main_size: Default::default(),
@@ -1313,6 +1317,8 @@ impl State {
         self.online = Default::default();
         self.airing.cancel();
         self.airing = Default::default();
+        self.publishing.stop();
+        self.publishing = Default::default();
         if self.page == Page::Details {
             self.page = self.lit_page();
         }

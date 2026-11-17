@@ -302,6 +302,7 @@ impl State {
     /// manga list from then on) and reads it now. The choice is kept (`[display] list_kind`).
     pub fn set_kind(&mut self, kind: Kind) {
         let manga = kind == Kind::Manga;
+        let calendar = matches!(self.lit_page(), Page::Airing | Page::Publishing);
         let st = match self.lit_page() {
             Page::List(st) | Page::Manga(st) => st,
             _ => Status::Watching,
@@ -316,7 +317,12 @@ impl State {
         if self.page == Page::Details {
             self.detail = None;
         }
-        self.go(self.list_page(st));
+        // Airing and Publishing are one place in the sidebar: the switch keeps it.
+        match (calendar, manga) {
+            (true, true) => self.open_publishing(),
+            (true, false) => self.open_airing(),
+            _ => self.go(self.list_page(st)),
+        }
         if changed {
             crate::detect::save_setting(self, "display", "list_kind", kotora_core::config::quote(kind.name()));
         }
@@ -378,6 +384,10 @@ impl State {
 
     /// Rebuilds the manga page's rows (status, chip, filter box, sort).
     pub fn refresh_manga(&mut self) {
+        // The Publishing page shows the Reading manga too.
+        if self.page == Page::Publishing || self.publishing.open.is_some() {
+            self.publishing_rebuild();
+        }
         // The search page in Manga mode: every manga matching its field, Reading's first.
         let (st, q) = match self.page {
             Page::Manga(st) => (st, self.manga.query.text.trim().to_lowercase()),
@@ -608,12 +618,15 @@ impl State {
                         self.go(Page::List(st));
                     }
                 }
+                self.publishing_start();
             }
             MangaMsg::Synced { items, synced_at } => {
                 self.set_manga_items(&items);
                 self.manga.synced_at = Some(synced_at);
                 self.manga.loading = false;
                 self.manga.error = None;
+                // New Reading manga, or progress from the website: the notifier looks again.
+                self.publishing_start();
             }
             MangaMsg::Failed(m) => {
                 self.manga.loading = false;
@@ -635,7 +648,10 @@ impl State {
                 self.manga_queue_changed();
                 self.refresh_manga();
             }
-            MangaMsg::Enabled(Ok(())) => self.sync_manga(),
+            MangaMsg::Enabled(Ok(())) => {
+                self.sync_manga();
+                self.publishing_start();
+            }
             MangaMsg::Enabled(Err(m)) => {
                 self.manga.enabled = false;
                 self.manga.loading = false;

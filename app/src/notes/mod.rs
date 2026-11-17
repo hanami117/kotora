@@ -6,6 +6,8 @@
 //! - **New episode**: "Title · Ep 7 is out" for a Watching show, by the estimated broadcast
 //!   time, with **Play** when the library has the file. On. A click opens the details page.
 //!   Decided off the UI thread from the saved list (`airnotes.rs`, core `airnotes`), once each.
+//! - **New chapter**: "New chapter of Title: Ch 75" for a Reading manga, from MangaUpdates'
+//!   releases (`publishing.rs`). Off by default; only with Manga on. A click opens the page.
 //!
 //! The buttons act directly, through the same paths as the banner and `kot confirm` /
 //! `kot dismiss` ([`State::note_action`](crate::model::State)). Never spam: one notification
@@ -50,6 +52,8 @@ pub enum Kind {
     Aired,
     /// The same with Play (the library has the next file).
     AiredPlay,
+    /// "New chapter of Title: Ch 75" (Publishing, MangaUpdates).
+    Chapter,
 }
 
 impl Kind {
@@ -64,13 +68,14 @@ impl Kind {
             Kind::Started => "started",
             Kind::Aired => "aired",
             Kind::AiredPlay => "aired-play",
+            Kind::Chapter => "chapter",
         }
     }
 
     /// The buttons, in order.
     pub fn actions(self) -> &'static [(Act, &'static str)] {
         match self {
-            Kind::Detected | Kind::Started | Kind::Aired => &[],
+            Kind::Detected | Kind::Started | Kind::Aired | Kind::Chapter => &[],
             Kind::Offer => &[(Act::Update, "Update"), (Act::NotNow, "Not now")],
             Kind::Rewatch => &[(Act::Update, "Start rewatch"), (Act::NotNow, "Not now")],
             Kind::Recorded => &[(Act::Undo, "Undo")],
@@ -276,11 +281,11 @@ impl State {
             Kind::Offer | Kind::Rewatch => self.prefs.notify.offer,
             Kind::Recorded => self.prefs.notify.recorded,
             // Not about the playing episode: `air_notes`.
-            Kind::Started | Kind::Aired | Kind::AiredPlay => false,
+            Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter => false,
         };
         let Some(id) = self.note_id().filter(|_| on) else { return };
         let tail = match kind {
-            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay => None,
+            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter => None,
             Kind::Offer | Kind::Rewatch => Some(ANSWER.to_string()),
             Kind::Recorded => Some("Undo is in Kotora's banner.".to_string()),
         };
@@ -338,6 +343,11 @@ impl State {
             self.air_note_action(media, act);
             return true;
         }
+        // New chapter: the manga's page.
+        if let Some(media) = self.chapter_note_media(id) {
+            self.chapter_note_action(media, act);
+            return true;
+        }
         let recorded = self.now.as_ref().is_some_and(|n| n.recorded.is_some());
         let asks = !recorded && (self.offer().is_some() || self.rewatch_offer().is_some());
         match act {
@@ -387,6 +397,11 @@ impl State {
             Kind::Aired | Kind::AiredPlay => {
                 self.prefs.notify.new_episode = on;
                 "new_episode"
+            }
+            Kind::Chapter => {
+                self.prefs.notify.new_chapter = on;
+                self.publishing_notify_changed();
+                "new_chapter"
             }
         };
         crate::detect::save_setting(self, "notifications", key, on.to_string());

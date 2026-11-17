@@ -202,7 +202,9 @@ pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
     tx.instant();
     match page {
         Page::Search => s.open_search(),
-        Page::Airing => s.open_airing(),
+        // Manga mode has Publishing in Airing's place (also the Go menu's Airing).
+        Page::Airing | Page::Publishing if s.manga.mode => s.open_publishing(),
+        Page::Airing | Page::Publishing => s.open_airing(),
         _ => s.go(page),
     }
 }
@@ -251,7 +253,11 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     nav = nav.child(nav_heading("Kotora").mt(12.0));
     nav = nav
         .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
-        .children((!manga).then(|| nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)))
+        .child(if manga {
+            nav_item("publishing", NavMark::Icon(&icons::CALENDAR), "Publishing", None, lit == Page::Publishing, Page::Publishing)
+        } else {
+            nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)
+        })
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -580,6 +586,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::Search => search_view(s, wide),
         Page::Airing if !s.has_list() => welcome(s),
         Page::Airing => crate::airing::page(s, width),
+        Page::Publishing if !s.has_list() => welcome(s),
+        Page::Publishing => crate::publishing::page(s),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).

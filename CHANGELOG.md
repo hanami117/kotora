@@ -4,6 +4,28 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Added
+- **Publishing (Manga mode):** the sidebar's Airing becomes Publishing when the switch is on Manga. For each
+  manga on Reading it shows the latest chapter out and when ("Ch 74 · 1 day ago"), the chapters you haven't read
+  yet ("10 to read", or Caught up), and an estimate of the next one from the gaps between past releases
+  ("Weekly, next ~Thu", "Every 2 weeks", "Monthly", "Irregular", "On hiatus" after a long quiet spell, "late"
+  when one is overdue). Sort by next release, most to read or latest release; `+1` on each row; the title opens
+  the manga's page. Release data comes from MangaUpdates' public API (no account): Kotora finds each series by
+  title (MangaUpdates has no MyAnimeList or AniList ids), and marks a doubtful match "Check match". A row's
+  panel shows the match, the recent releases and a field for the right mangaupdates.com/series/… link, which
+  Kotora remembers (Reset goes back to the search). Odd chapter names ("Bone 67", "Night 259", "79.1") and
+  volume-only series work. MangaUpdates is asked only with Manga on, only for Reading manga, at most every 4
+  hours per series (Refresh asks now), 20 requests a minute at most; answers are saved, so the page works
+  offline. Dates are estimates: MangaUpdates lists scanlation and official English releases as groups report
+  them.
+- **Publishing card** on a Reading manga's details page: latest chapter, to read, next release (estimate), the
+  MangaUpdates match with its link and the same fix.
+- **New chapter notifications** (Settings → Notifications → Manga, off by default): "New chapter of Title: Ch 75"
+  for a Reading manga, once per chapter, only when it is new (the last two days) and past what you've read. With
+  it on, Kotora checks MangaUpdates every 30 minutes for series older than 4 hours. Linux, macOS and Windows,
+  like the airing notifications; a click opens the manga's page.
+- **`kot publishing`** (also `kot chapters`): the Publishing page in the terminal.
+
 ## [0.3.0] - 2026-11-17
 
 Manga. Your MyAnimeList or AniList manga list now lives in Kotora next to your anime: list pages, posters,

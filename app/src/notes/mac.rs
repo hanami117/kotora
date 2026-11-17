@@ -85,7 +85,7 @@ fn install() {
         return;
     };
     let mut categories: Vec<Retained<AnyObject>> = Vec::new();
-    for kind in [Kind::Detected, Kind::Offer, Kind::Rewatch, Kind::Recorded, Kind::Started, Kind::Aired, Kind::AiredPlay] {
+    for kind in [Kind::Detected, Kind::Offer, Kind::Rewatch, Kind::Recorded, Kind::Started, Kind::Aired, Kind::AiredPlay, Kind::Chapter] {
         // SAFETY: the documented factory methods, with NSString / NSArray arguments and option
         // masks of 0 (no foreground launch, no authentication, not destructive).
         unsafe {

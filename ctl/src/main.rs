@@ -9,6 +9,7 @@
 //! kot queue      changes waiting to sync
 //! kot sync       send the queue now, then read the list again
 //! kot airing     your anime airing in the next 7 days (also `kot schedule`)
+//! kot publishing your Reading manga's latest chapters (MangaUpdates; also `kot chapters`)
 //! kot now        what plays, and the episode Kotora offers to record
 //! kot confirm    record the offered episode (the banner's Update)
 //! kot dismiss    not now
@@ -29,7 +30,7 @@ use std::process::ExitCode;
 
 mod dash;
 
-use kotora_ctl::{AiringItem, Client, Entry, NowInfo, QueueItem, Reply, Request, Status};
+use kotora_ctl::{AiringItem, Client, Entry, NowInfo, PublishingItem, QueueItem, Reply, Request, Status};
 
 const HELP: &str = "\
 kot: talk to a running Kotora
@@ -61,6 +62,8 @@ Commands:
   sync                  send the queue now, then read the list again
   now                   what plays, and the episode Kotora offers
   airing, schedule      your anime airing in the next 7 days (estimated)
+  publishing, chapters  your Reading manga: latest chapter, to read, next
+                        release (estimated). Release data: MangaUpdates
   confirm               record the offered episode
   dismiss               not now: hide the offer for this file
   rewatch TITLE|ID      watch a completed anime again from episode 1
@@ -119,6 +122,7 @@ fn main() -> ExitCode {
         ["sync"] => Request::Sync,
         ["now"] => Request::Now,
         ["airing" | "schedule"] => Request::Airing,
+        ["publishing" | "chapters"] => Request::Publishing,
         ["confirm"] => Request::Confirm,
         ["dismiss"] => Request::Dismiss,
         ["list", "--manga"] | ["--manga", "list"] => Request::MangaList { status: Some("watching".into()) },
@@ -256,6 +260,10 @@ fn main() -> ExitCode {
         }
         Ok(Reply::Airing { items, note }) => {
             print!("{}", airing_text(&items, note.as_deref()));
+            ExitCode::SUCCESS
+        }
+        Ok(Reply::Publishing { items, note }) => {
+            print!("{}", publishing_text(&items, note.as_deref()));
             ExitCode::SUCCESS
         }
         Ok(Reply::Done { message }) => {
@@ -671,6 +679,35 @@ fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
     out
 }
 
+fn publishing_text(items: &[PublishingItem], note: Option<&str>) -> String {
+    if items.is_empty() {
+        return format!("{}\n", note.unwrap_or("No manga in Reading."));
+    }
+    let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
+    let w = items.iter().map(|i| i.title.chars().count()).max().unwrap_or(0).min(36);
+    let lw = items.iter().map(|i| i.latest.chars().count()).max().unwrap_or(0).max(6);
+    let mut out = String::from("Reading, by the next release (Release data: MangaUpdates; next dates are estimates):\n");
+    for i in items {
+        let latest = if i.latest.is_empty() { "\u{2013}".to_string() } else { i.latest.clone() };
+        let when = if i.when.is_empty() { String::new() } else { format!(" ({})", i.when) };
+        let behind = match i.behind {
+            Some(0) => "caught up".to_string(),
+            Some(n) => format!("{n} to read"),
+            None => String::new(),
+        };
+        let pace = match (i.pace.as_str(), i.next.as_str()) {
+            ("", _) => String::new(),
+            (p, "") => p.to_string(),
+            (p, n) => format!("{p}, {n}"),
+        };
+        let flag = if i.flag.is_empty() { String::new() } else { format!("  [{}]", i.flag) };
+        let line = format!("  {:<w$}  {latest:<lw$}{when:<16}  {behind:<11}  {pace}{flag}", cut(&i.title, 36));
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 fn sync_text(st: &Status) -> String {
     if st.offline {
         return "Offline: the queue is kept and goes out when your list service can be reached.".into();
@@ -830,6 +867,22 @@ mod tests {
         // Not signed in: no mirror name in the account part.
         let st = Status { account: None, ..st };
         assert!(status_short(&st).starts_with("not signed in · "));
+    }
+
+    #[test]
+    fn publishing_reads_plainly() {
+        let items = [
+            PublishingItem { title: "Inkwell Cartographers".into(), latest: "Ch 121".into(), when: "23 h ago".into(), behind: Some(2), pace: "Weekly".into(), next: "next ~Thu".into(), flag: String::new() },
+            PublishingItem { title: "Moth Orchestra".into(), latest: "Night 259".into(), when: "4 months ago".into(), behind: Some(0), pace: "On hiatus".into(), next: String::new(), flag: "check match".into() },
+            PublishingItem { title: "Kumo Atelier".into(), flag: "no match".into(), ..Default::default() },
+        ];
+        let t = publishing_text(&items, None);
+        let lines: Vec<&str> = t.lines().collect();
+        assert!(lines[0].contains("MangaUpdates") && lines[0].contains("estimates"));
+        assert_eq!(lines[1], "  Inkwell Cartographers  Ch 121    (23 h ago)       2 to read    Weekly, next ~Thu");
+        assert_eq!(lines[2], "  Moth Orchestra         Night 259 (4 months ago)   caught up    On hiatus  [check match]");
+        assert_eq!(lines[3], "  Kumo Atelier           \u{2013}                                         [no match]");
+        assert_eq!(publishing_text(&[], Some("Turn Manga on first.")), "Turn Manga on first.\n");
     }
 
     #[test]

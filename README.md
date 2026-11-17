@@ -32,7 +32,10 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 - Manga (from 0.3, off until you turn it on): an Anime | Manga switch in the sidebar gives your MyAnimeList or
   AniList manga list its own pages (Reading, Plan to read, …), with chapters, volumes, score and rereads,
   search, add and remove, and Continue reading on Home. "Fill volumes from chapters" sets volumes read from
-  chapters read with [MangaDex](https://mangadex.org/)'s volume tables, after a preview.
+  chapters read with [MangaDex](https://mangadex.org/)'s volume tables, after a preview. In Manga mode,
+  Publishing (in Airing's place) shows each Reading manga's latest chapter, how many you have left to read and
+  an estimate of the next release, from [MangaUpdates](https://www.mangaupdates.com/); New chapter
+  notifications are opt-in.
 - Signed in to both services, the mirror (Beta) sends every change you make to the other list too, anime and
   manga, and never overwrites an edit made on the other website (Settings → Account → Mirror edits to …).
 - Import a MyAnimeList XML export (anime or manga) into either service, with a preview first; export a MyAnimeList anime or manga list as one (Settings → Account → Import anime list… / Import manga list…, Export anime list… / Export manga list…).
@@ -167,6 +170,7 @@ kot set --manga TITLE|ID [CH] [--volumes N] [--status S] [--score N|none]
 kot add --manga QUERY|ID | kot remove --manga TITLE|ID
 kot fill-volumes [--yes]   volumes read from chapters read (MangaDex), after a preview
 kot airing | schedule   your anime airing in the next 7 days
+kot publishing | chapters   your Reading manga's latest chapters (MangaUpdates)
 kot now                what plays, and the episode Kotora offers
 kot confirm            record the offered episode
 kot dismiss            not now
@@ -182,7 +186,7 @@ kot show | kot quit
 Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. Kotora shares no
 code with Taiga.
 
-Kotora is not affiliated with or endorsed by MyAnimeList, AniList or MangaDex. Third-party licences are in
+Kotora is not affiliated with or endorsed by MyAnimeList, AniList, MangaDex or MangaUpdates. Third-party licences are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
@@ -200,3 +204,5 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
   in the sidebar and the startup animation.
 - [MangaDex](https://mangadex.org/): volume data for "Fill volumes from chapters" (its public API, asked only
   when you use it, within its rate limit).
+- [MangaUpdates](https://www.mangaupdates.com/): release data for Publishing and New chapter notifications
+  (its public API, only with Manga on, for Reading manga, cached, at most every 4 hours per series).

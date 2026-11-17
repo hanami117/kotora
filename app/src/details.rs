@@ -105,6 +105,9 @@ impl State {
         self.detail = Some(Detail { stub, back, info: None, loading: self.handle.is_some(), error: None });
         self.go(Page::Details);
         self.fetch_details(id, kind);
+        if kind == Kind::Manga {
+            self.publishing_for_details(id);
+        }
     }
 
     fn fetch_details(&mut self, id: u32, kind: Kind) {
@@ -638,7 +641,12 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
         c = c.fill(PAL.bg.alpha(0.55)).border(1.0, crate::look::glass_border());
     }
     if d.is_manga() {
-        return crate::manga::mine_card(s, d, c);
+        let mine = crate::manga::mine_card(s, d, c);
+        // A Reading manga: its releases (MangaUpdates) under the list card.
+        return match crate::publishing::details_card(s, id) {
+            Some(p) => col().key("det-mine-col").gap(16.0).child(mine.w_full()).child(p.w_full()),
+            None => mine,
+        };
     }
     match s.entries.iter().find(|e| e.id == id) {
         Some(e) => {

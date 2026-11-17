@@ -218,6 +218,9 @@ pub enum Request {
     },
     /// Episodes of the user's list that air in the next 7 days (estimated). Replies `Airing`.
     Airing,
+    /// Reading manga: latest chapter, chapters to read, the next release (estimated), from
+    /// MangaUpdates. Replies `Publishing`.
+    Publishing,
     /// Opens the next episode's file (progress + 1) from the library folders in the player of
     /// Settings → Library. Replies `Done`, or `Error` with why not.
     Next { title: String },
@@ -323,6 +326,12 @@ pub enum Reply {
         note: Option<String>,
     },
     Dash(Dashboard),
+    /// The Publishing page's rows, in its order; `note` says why there are none (yet).
+    Publishing {
+        items: Vec<PublishingItem>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 /// What `kot` shows with no command. Every field has a default, so an older or newer app's reply
@@ -365,6 +374,26 @@ pub struct DashRow {
     pub air_slot: String,
     /// The next episode has aired (by the estimate) but isn't on disk.
     pub aired: bool,
+}
+
+/// One Reading manga in `kot publishing`, in words as the page shows it.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PublishingItem {
+    pub title: String,
+    /// "Ch 74", "Bone 67", "Vol 9"; empty when unknown.
+    pub latest: String,
+    /// "1 day ago".
+    pub when: String,
+    /// Chapters out but not read (`None`: unknown).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u32>,
+    /// "Weekly", "On hiatus".
+    pub pace: String,
+    /// "next ~Mon", "late".
+    pub next: String,
+    /// "check match", "no match", "looking": empty when matched by title or picked.
+    pub flag: String,
 }
 
 /// One episode in `kot airing`. The app writes the day and time in its (the user's) zone.
