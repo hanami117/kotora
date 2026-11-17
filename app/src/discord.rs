@@ -422,10 +422,8 @@ mod tests {
         let s = State::fake();
         sync(&s);
         assert!(LINK.lock().unwrap().is_none());
-        // On with the placeholder id starts nothing either.
-        assert!(needs_client_id(&on()));
-        apply(&on());
-        assert!(LINK.lock().unwrap().is_none() && !ON.load(Ordering::Relaxed));
+        // The built-in id is a real Application ID, so a fresh install never asks for one.
+        assert!(!needs_client_id(&on()));
         shutdown();
     }
 }

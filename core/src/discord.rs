@@ -27,7 +27,7 @@ pub const MIN_GAP: Duration = Duration::from_secs(15);
 /// The Discord Application ID built in (a placeholder). TODO(release): create the Application at
 /// discord.com/developers, upload the assets named in `docs/DISCORD.md`, paste its ID here.
 /// `[discord] client_id` in `config.toml` wins over it.
-pub const DEFAULT_CLIENT_ID: &str = "0";
+pub const DEFAULT_CLIENT_ID: &str = "1572355618591871087";
 
 /// The asset key of Kotora's icon, uploaded to the Application (Rich Presence → Art Assets).
 pub const ICON_ASSET: &str = "kotora";
