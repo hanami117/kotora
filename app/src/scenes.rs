@@ -2849,3 +2849,85 @@ mod tests {
         assert!(narrow.find("thead/type").is_none());
     }
 }
+
+/// A press on a row opens its editor; with an editor open, a press on another row's title moves
+/// the editor there (no details page), in the anime list and the manga list alike. The blank
+/// part of the title column is the row's, not the title link's.
+#[cfg(test)]
+mod row_presses {
+    use super::*;
+    use rune::{Env, Runtime};
+
+    fn rt(name: &str) -> Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    fn tap(rt: &mut Runtime<State>, x: f32, y: f32) {
+        rt.pointer_move(x, y);
+        rt.frame(1.0 / 60.0);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+    }
+
+    /// The middle of the title link of `title` (its label is "About TITLE").
+    fn title_at(rt: &Runtime<State>, title: &str) -> (f32, f32) {
+        let label = format!("About {title}");
+        let e = rt.elements().into_iter().find(|e| e.label.as_deref() == Some(label.as_str()) && !e.exiting).unwrap_or_else(|| panic!("{title}"));
+        let [x, y, w, h] = e.rect;
+        (x + w / 2.0, y + h / 2.0)
+    }
+
+    /// Row A by its title (editor), then row B by its title: the editor moves to B.
+    fn check(scene: &str, a: &str, b: &str, editor: fn(&State) -> Option<u32>, id: fn(&State, &str) -> u32) {
+        let mut r = rt(scene);
+        // Row A: the blank part of its title column opens the editor.
+        let (_, ya) = title_at(&r, a);
+        tap(&mut r, 600.0, ya);
+        assert_eq!(editor(&r.state), Some(id(&r.state, a)), "{scene}: the row's editor");
+        assert_ne!(r.state.page, Page::Details);
+        // Row B's title: the editor moves, no details page.
+        let (xb, yb) = title_at(&r, b);
+        tap(&mut r, xb, yb);
+        assert_ne!(r.state.page, Page::Details, "{scene}: no details page with an editor open");
+        assert_eq!(editor(&r.state), Some(id(&r.state, b)), "{scene}: the editor moved to B");
+        // With no editor open, the title opens the details page as before.
+        let mut r = rt(scene);
+        let (xa, ya) = title_at(&r, a);
+        tap(&mut r, xa, ya);
+        assert_eq!(r.state.page, Page::Details, "{scene}: the title opens the details page");
+    }
+
+    /// The link hugs a short title and still stops at its column with a long one (truncated).
+    #[test]
+    fn the_title_link_is_as_wide_as_the_title_within_its_column() {
+        let mut s = State::fake();
+        s.entries[0].title = "An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill".into();
+        s.refresh();
+        let mut rt = Runtime::new(s, crate::ui::view, (1000.0, 760.0), Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        let els = rt.elements();
+        let link = |t: &str| els.iter().find(|e| e.label.as_deref() == Some(&format!("About {t}"))).map(|e| e.rect).unwrap();
+        let plus = els.iter().find(|e| e.key.as_deref() == Some("plus")).map(|e| e.rect).unwrap();
+        let long = link("An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill");
+        assert!(long[0] + long[2] < plus[0], "the long title stays in its column: {long:?}");
+        let short = link("Neon Ronin 2099");
+        assert!(short[2] < long[2] / 2.0, "a short title's link is about as wide as its text: {short:?}");
+    }
+
+    #[test]
+    fn a_title_pressed_with_an_editor_open_moves_the_editor() {
+        check("list", "Lanterns of Kirigaoka", "Starfall Delivery Service", |s| s.editor.map(|e| e.id), |s, t| s.entries.iter().find(|e| e.title == t).unwrap().id);
+        check("manga-list", "Inkwell Cartographers", "Salt & Gears", |s| s.manga.editor.map(|e| e.id), |s, t| s.manga.entries.iter().find(|e| e.title == t).unwrap().id);
+    }
+}

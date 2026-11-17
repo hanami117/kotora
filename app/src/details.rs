@@ -831,9 +831,30 @@ fn header_narrow(s: &State, d: &Detail) -> El {
         .child(body_cards(d, s.service.title()).max_w(760.0))
 }
 
+impl State {
+    /// A title pressed while a list row's editor is open on another entry of the same list: the
+    /// editor moves to this one, as a press on the row does (not the details page). Returns
+    /// whether it moved.
+    pub fn move_editor_to(&mut self, stub: &Stub) -> bool {
+        match (stub.kind, self.page) {
+            (Kind::Anime, Page::List(_)) if self.editor.is_some_and(|ed| ed.id != stub.id) && self.entries.iter().any(|e| e.id == stub.id) => {
+                self.toggle_editor(stub.id);
+                true
+            }
+            (Kind::Manga, Page::Manga(_)) if self.manga.editor.is_some_and(|ed| ed.id != stub.id) && self.manga.entries.iter().any(|e| e.id == stub.id) => {
+                self.manga_toggle_editor(stub.id);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// The title of a list row or the Now Playing card as a link to the details page.
 pub fn title_link(label: El, stub: Stub) -> El {
-    row()
+    // The link is as wide as the title (it shrinks and truncates in a narrow column); the rest
+    // of the column is the row's, so a press there opens the editor.
+    let link = row()
         .key("title-link")
         .role("link")
         .label(format!("About {}", stub.title))
@@ -842,9 +863,13 @@ pub fn title_link(label: El, stub: Stub) -> El {
         .hover_group()
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
+            if s.move_editor_to(&stub) {
+                return;
+            }
             s.open_details(stub.clone());
         })
-        .child(label)
+        .child(label);
+    row().w_full().min_w(0.0).child(link.shrink())
 }
 
 /// A made-up information page for the scenes (the fake list's first title, invented facts).
