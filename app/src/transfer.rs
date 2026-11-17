@@ -582,7 +582,11 @@ fn preview(s: &State, p: &Preview) -> El {
         box_ = box_.child(group("set/import-list-unknown", "Left out".into(), unknown));
     }
     let count_rule = if manga { "A higher chapter or volume count wins" } else { "A higher episode count wins" };
-    let mut notes = vec![format!("Changes go through the sync queue to {service} at its pace, and wait there while you are offline. {count_rule}; a score fills an empty one.")];
+    let to = match s.mirror_target() {
+        Some(m) => format!("{service}, and to {m} (the mirror), at each service\u{2019}s pace"),
+        None => format!("{service} at its pace"),
+    };
+    let mut notes = vec![format!("Changes go through the sync queue to {to}, and wait there while you are offline. {count_rule}; a score fills an empty one.")];
     if p.plan.other > 0 {
         let verb = if p.plan.other == 1 { "is" } else { "are" };
         let (what, hint) = if manga { (plural(p.plan.other, "anime entry", "anime entries"), "Import anime list\u{2026}") } else { (plural(p.plan.other, "manga entry", "manga entries"), "Import manga list\u{2026}") };
@@ -624,11 +628,10 @@ fn pick_status(s: &mut State, id: u32, file: bool) {
 }
 
 fn done_view(s: &State, d: &Done) -> El {
-    let service = s.service.title();
     let (msg, can_undo) = match d.undone {
         Some(n) => (format!("Took back {} that hadn\u{2019}t been sent yet.", plural(n, "change", "changes")), false),
         None if d.queued == 0 => ("Nothing to change: your list already has everything in the file.".to_string(), false),
-        None => (format!("Queued {} for {service}. They go out at its pace; the Queue page shows them.", plural(d.queued, "change", "changes")), true),
+        None => (s.queued_text(d.queued, "change", "changes"), true),
     };
     let mut r = row().key("set/import-done").w_full().gap(8.0).pb(12.0).center_y().flex_wrap().child(text(msg).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0));
     if can_undo {

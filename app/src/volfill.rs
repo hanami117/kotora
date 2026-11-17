@@ -229,7 +229,7 @@ pub fn settings_row(s: &State) -> El {
     if let Some((n, _)) = &v.done {
         let (msg, can_undo) = match v.undone {
             Some(u) => (format!("Took back {} that hadn\u{2019}t been sent yet.", plural(u, "change", "changes")), false),
-            None => (format!("Queued {} for {}. They go out at its pace; the Queue page shows them.", plural(*n, "volume change", "volume changes"), s.service.title()), true),
+            None => (s.queued_text(*n, "volume change", "volume changes"), true),
         };
         let mut r = row().key("set/fill-volumes-done").w_full().gap(8.0).pb(12.0).center_y().flex_wrap().child(text(msg).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0));
         if can_undo {
@@ -422,6 +422,19 @@ mod tests {
         let before = s.manga.editor.map(|e| e.volumes);
         fill_editor(&mut s);
         assert_eq!(s.manga.editor.map(|e| e.volumes), before);
+    }
+
+    /// The done line names the mirror when it is on (a fill is mirrored like any import).
+    #[test]
+    fn the_done_line_says_where_the_changes_go() {
+        let mut s = State::fake();
+        assert_eq!(s.queued_text(3, "volume change", "volume changes"), "Queued 3 volume changes for MyAnimeList. They go out at its pace; the Queue page shows them.");
+        crate::mirror::fake_on(&mut s);
+        assert_eq!(
+            s.queued_text(3, "volume change", "volume changes"),
+            "Queued 3 volume changes for MyAnimeList, mirrored to AniList. They go out at each service\u{2019}s pace; the Queue page shows them."
+        );
+        assert!(s.queued_text(1, "change", "changes").starts_with("Queued 1 change for MyAnimeList, mirrored to AniList."));
     }
 
     #[test]

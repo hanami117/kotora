@@ -37,6 +37,17 @@ impl State {
         Some(q)
     }
 
+    /// "Queued 3 volume changes for MyAnimeList." and when they go out; with the mirror on,
+    /// ", mirrored to AniList" and each service's pace (the mirror follows every queued change).
+    pub fn queued_text(&self, n: usize, one: &str, many: &str) -> String {
+        let what = crate::transfer::plural(n, one, many);
+        let main = self.service.title();
+        match self.mirror_target() {
+            Some(to) => format!("Queued {what} for {main}, mirrored to {to}. They go out at each service\u{2019}s pace; the Queue page shows them."),
+            None => format!("Queued {what} for {main}. They go out at its pace; the Queue page shows them."),
+        }
+    }
+
     /// With the mirror on: the other service's name (a removal goes there too).
     pub fn mirror_target(&self) -> Option<&'static str> {
         self.mirror.link.filter(|l| l.main == self.service).map(|l| l.to.title())

@@ -905,3 +905,30 @@ fn manga_lists_can_be_aligned_later() {
     assert!(!store.mirror_manga_aligned().unwrap());
     assert!(store.align_mirror(&[], &[], 50).is_err());
 }
+
+/// "Fill volumes from chapters" goes as an import of volume changes: with the mirror on, each
+/// is queued for AniList too (in the same transaction), and only what AniList doesn't have.
+#[test]
+fn a_volumes_fill_is_mirrored() {
+    let (mut store, mut mal, mut al) = manga_lists();
+    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    // Manga 3: MAL and AniList at volume 5; manga 2: MAL 3, AniList 4; manga 1: not on AniList.
+    let fill = |id: u32, vol: u32| Action::Update { kind: Kind::Manga, media_id: id, change: Change { volumes: Some(vol), ..Change::default() } };
+    let ids = store.import("mal", &[fill(2, 5), fill(1, 3)], 30).unwrap();
+    assert_eq!(ids.len(), 2);
+    let ops = store.queue("anilist", 30).unwrap();
+    assert_eq!(ops.len(), 1, "manga 2 now; manga 1 waits for its AniList id");
+    assert_eq!((ops[0].kind, ops[0].media_id, ops[0].change), (Kind::Manga, 2 + AL, Change { volumes: Some(5), ..Change::default() }));
+    assert!(store.mirror_waits().unwrap().iter().any(|w| w.kind == Kind::Manga && w.mal_id == 1));
+    assert_eq!(map_waits(&mut al, &mut store, 35).unwrap(), 1);
+    drain(&mut store, &mut mal, 40);
+    drain(&mut store, &mut al, 40);
+    assert_eq!(mal.manga_values(2).map(|v| v.volumes), Some(5));
+    assert_eq!(al.manga_values(2).map(|v| v.volumes), Some(5), "mirrored");
+    assert_eq!(al.manga_values(1).map(|v| (v.volumes, v.progress)), Some((3, 12)), "added on AniList with its chapters and volumes");
+    // Undo before anything is sent takes back the mirror's change too.
+    let ids = store.import("mal", &[fill(3, 5), fill(2, 6)], 50).unwrap();
+    assert_eq!(store.open_count("anilist").unwrap(), 1, "manga 3 already at 5 on AniList: nothing for it");
+    store.undo_import("mal", &ids, 51).unwrap();
+    assert_eq!(store.open_count("anilist").unwrap(), 0);
+}
