@@ -35,7 +35,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   local socket (Unix socket, Flatpak and Snap paths, Windows named pipe) on one worker thread that exists only
   while the switch is on, looks for Discord again every 30 seconds, and clears the status when nothing plays,
   when you turn it off and when Kotora quits. No new dependency and no connection of Kotora's own. Needs a
-  Discord Application ID: see `docs/DISCORD.md`.
+  Discord Application ID: see `docs/DISCORD.md`. A comic reading detection reports (YACReader or an open
+  file) shows as "Playing Kotora" with the manga and "Chapter N", until it goes quiet for 30 minutes; an
+  episode that plays wins.
 
 ## [0.3.2] - 2026-11-17
 

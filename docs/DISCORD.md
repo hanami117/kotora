@@ -12,9 +12,12 @@ when it is off, Kotora starts nothing for it.
 - One worker thread, started only while the switch is on. Discord not running: it looks again every 30 seconds,
   quietly. Updates go out at most every 15 seconds (Discord's limit).
 - Watching an episode: "Watching Kotora", the title, "Episode 7 of 24", and the player's start and end times
-  while it plays ("Paused" and no clock while it is paused). Reading a chapter (when reading detection reports
-  one): the title and "Chapter 362" (Discord has no reading type, so it shows as "Playing Kotora").
-- The status is cleared when nothing plays, when you turn the switch off and when Kotora quits.
+  while it plays ("Paused" and no clock while it is paused). Reading a chapter (reading detection in YACReader
+  or an open comic file, Manga mode on): the title and "Chapter 362" or "Volume 35", with the cover and a
+  "View on ..." button to the manga (Discord has no reading type, so it shows as "Playing Kotora"; "Reading
+  manga" when the title is hidden). Readers say nothing when they close, so it ends 30 minutes after the comic was
+  last opened or its page saved, or when reading detection stops. An episode that plays wins over a comic.
+- The status is cleared when nothing plays or is read, when you turn the switch off and when Kotora quits.
 - Options: show the cover; show a button ("View on AniList" or "View on MyAnimeList"; you don't see your own
   buttons, others do); hide while paused or idle; hide the title (shows "Watching anime", no cover, no button).
 - `config.toml`:

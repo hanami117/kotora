@@ -26,10 +26,8 @@ use crate::model::State;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Watching { title: String, episode: Option<u32>, total: Option<u32>, media_id: Option<u32>, cover: Option<String>, playing: bool, position: Option<f64>, duration: Option<f64>, rate: f64 },
-    /// A chapter read to the end in a reader (reading detection; not wired in this build, see
-    /// `docs/DISCORD.md`).
-    #[allow(dead_code)]
-    Reading { title: String, chapter: Option<u32>, media_id: Option<u32>, cover: Option<String> },
+    /// A comic being read (reading detection: YACReader or an open file), see [`current_reading`].
+    Reading { title: String, chapter: Option<u32>, volume: Option<u32>, media_id: Option<u32>, cover: Option<String> },
 }
 
 /// The link to the Discord app's page for an entry on the user's service.
@@ -76,7 +74,14 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
             });
             (3, title, state, *media_id, cover, false, times)
         }
-        Input::Reading { title, chapter, media_id, cover } => (0, title, chapter.map(|c| format!("Chapter {c}")), *media_id, cover, true, None),
+        Input::Reading { title, chapter, volume, media_id, cover } => {
+            let state = match (chapter, volume) {
+                (Some(c), _) => Some(format!("Chapter {c}")),
+                (None, Some(v)) => Some(format!("Volume {v}")),
+                _ => None,
+            };
+            (0, title, state, *media_id, cover, true, None)
+        }
     };
     let private = o.hide_title;
     let details = if private { if manga { "Reading manga".to_string() } else { "Watching anime".to_string() } } else { title.clone() };
@@ -94,8 +99,39 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
     Some(Activity { kind, details, state, start, end, large, small, button })
 }
 
-/// What is playing, from the state: a recognised file (on the list or found by search).
+/// How long after a comic was last opened or its page saved it still counts as being read.
+/// The readers say nothing when they close, so the status ends by itself after this.
+pub const READING_FRESH_SECS: i64 = 30 * 60;
+
+/// What is playing, or else what is being read. The episode wins when both would show.
 pub fn current(s: &State) -> Option<Input> {
+    current_at(s, kotora_core::time::now_unix())
+}
+
+fn current_at(s: &State, now: i64) -> Option<Input> {
+    current_watching(s).or_else(|| current_reading(s, now))
+}
+
+/// The comic reading detection reports, while it is fresh and matched to a manga on the service.
+fn current_reading(s: &State, now: i64) -> Option<Input> {
+    let r = s.reading.current.as_ref()?;
+    if !s.manga.enabled || now - r.read.at > READING_FRESH_SECS {
+        return None;
+    }
+    let media_id = match &r.found {
+        Found::List { media_id, .. } | Found::NotOnList { media_id, .. } => *media_id,
+        _ => return None,
+    };
+    let title = s.reading_title(r);
+    if title.is_empty() || (r.read.chapter.is_none() && r.read.volume.is_none()) {
+        return None;
+    }
+    let cover = s.manga.entries.iter().find(|e| e.id == media_id).and_then(|e| e.cover_url.clone()).or_else(|| r.cover_url.clone());
+    Some(Input::Reading { title, chapter: r.read.chapter, volume: r.read.volume, media_id: Some(media_id), cover })
+}
+
+/// What is playing, from the state: a recognised file (on the list or found by search).
+fn current_watching(s: &State) -> Option<Input> {
     let n = s.now.as_ref().filter(|n| !n.gone)?;
     let media_id = match n.found {
         Found::List { media_id, .. } | Found::NotOnList { media_id, .. } => media_id,
@@ -304,7 +340,7 @@ mod tests {
 
     #[test]
     fn a_chapter() {
-        let r = Input::Reading { title: "Blue Lock".into(), chapter: Some(362), media_id: Some(99), cover: None };
+        let r = Input::Reading { title: "Blue Lock".into(), chapter: Some(362), volume: None, media_id: Some(99), cover: None };
         let a = activity(&r, &on(), ServiceId::AniList, 5).unwrap();
         assert_eq!((a.kind, a.details.as_str(), a.state.as_deref()), (0, "Blue Lock", Some("Chapter 362")));
         assert_eq!(a.button.unwrap().1, "https://anilist.co/manga/99");
@@ -327,6 +363,55 @@ mod tests {
             let mut s = State::fake();
             s.now = Some(crate::now::Now { gone: true, ..n });
             assert!(current(&s).is_none(), "a player that is gone shows nothing");
+        }
+    }
+
+    fn reading_state() -> State {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        s.now = None;
+        crate::reading::fake(&mut s, "Inkwell Cartographers v12 c120.cbz", 14);
+        s.reading.current.as_mut().unwrap().read.at = 1_000;
+        s
+    }
+
+    #[test]
+    fn a_comic_being_read_is_shown() {
+        let s = reading_state();
+        let Some(Input::Reading { title, chapter, volume, media_id, .. }) = current_at(&s, 1_100) else { panic!("{:?}", current_at(&s, 1_100)) };
+        assert_eq!((title.as_str(), chapter, volume, media_id), ("Inkwell Cartographers", Some(120), Some(12), Some(1)));
+        let a = activity(&current_at(&s, 1_100).unwrap(), &on(), ServiceId::Mal, 1_100).unwrap();
+        assert_eq!((a.kind, a.details.as_str(), a.state.as_deref()), (0, "Inkwell Cartographers", Some("Chapter 120")));
+        assert_eq!(a.button.unwrap().1, "https://myanimelist.net/manga/1");
+    }
+
+    #[test]
+    fn reading_ends_when_it_goes_stale_or_is_cleared() {
+        let mut s = reading_state();
+        assert!(current_at(&s, 1_000 + READING_FRESH_SECS).is_some());
+        assert!(current_at(&s, 1_001 + READING_FRESH_SECS).is_none(), "no signal for 30 minutes: reading stopped");
+        s.manga.enabled = false;
+        assert!(current_at(&s, 1_100).is_none(), "Manga mode off");
+        s.manga.enabled = true;
+        s.reading.current = None;
+        assert!(current_at(&s, 1_100).is_none(), "the watch stopped or was reset");
+        // A file that matches nothing shows nothing.
+        crate::reading::fake(&mut s, "Nothing Known Anywhere c5.cbz", 14);
+        s.reading.current.as_mut().unwrap().read.at = 1_000;
+        assert!(current_at(&s, 1_100).is_none());
+    }
+
+    #[test]
+    fn the_episode_wins_over_the_comic() {
+        let mut s = reading_state();
+        s.now = State::fake().now;
+        match current_at(&s, 1_100) {
+            Some(Input::Watching { .. }) => {}
+            other => assert!(s.now.as_ref().is_none_or(|n| n.gone) || current_watching(&s).is_none(), "{other:?}"),
+        }
+        let w = current_watching(&s);
+        if w.is_some() {
+            assert!(matches!(current_at(&s, 1_100), Some(Input::Watching { .. })));
         }
     }
 
