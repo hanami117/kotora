@@ -57,6 +57,10 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **A file's season beats an old pick.** A file naming season 3 no longer matches the season 1 you once picked for
   the same title: the list's season 3 wins, else a search hit for that season ("not on your list: add?"). Files
   without a season keep their picks.
+- **The Linux tray's Play next works on KDE Plasma.** Episodes showed as bold section headers or greyed out, the
+  long ones lost their episode number, and picking one didn't play it. Every episode is now a plain item that
+  plays like the Up next button, long titles are shortened with "…" and keep " · Ep N", and Show and Quit sit
+  above the Play next list.
 - **Now Playing follows list changes.** When an entry is added or removed (a sync, the queue) while a file plays,
   Kotora recognises the file again instead of showing "In your list ()" with no status or cover.
 

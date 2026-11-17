@@ -17,6 +17,13 @@ mod imp;
 
 pub use imp::TrayCtl;
 
+/// The Linux tray's menu model also builds and is tested on macOS (Rune's tray types exist
+/// everywhere; only the D-Bus part is Linux's).
+#[cfg(all(test, target_os = "macos"))]
+#[path = "tray_linux.rs"]
+#[allow(dead_code)]
+mod linux_menu;
+
 use crate::model::{Handle, State};
 
 /// Shows the window and, on macOS, the Dock icon that closing to the menu bar hid. The Dock
