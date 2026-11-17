@@ -919,7 +919,14 @@ fn row_el(s: &State, r: Row) -> El {
             p.notify.detected,
             crate::notes::Kind::Detected,
         ),
-        Row::NotifyOffer => notify("Update offered", "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner.", "set/notify-offer", p.notify.offer, crate::notes::Kind::Offer),
+        Row::NotifyOffer => notify(
+            "Update offered",
+            // The Windows toast answers the question with Yes (`notes/windows.rs`).
+            if cfg!(windows) { "\u{201c}Update to 6?\u{201d} with Yes and Not now, which act as in the banner." } else { "\u{201c}Update to 6?\u{201d} with Update and Not now, which act as in the banner." },
+            "set/notify-offer",
+            p.notify.offer,
+            crate::notes::Kind::Offer,
+        ),
         Row::NotifyRecorded => notify("Episode recorded", "\u{201c}Recorded \u{b7} Ep 6\u{201d} with Undo.", "set/notify-recorded", p.notify.recorded, crate::notes::Kind::Recorded),
         Row::NotifyStarted => notify(
             "Started airing",
