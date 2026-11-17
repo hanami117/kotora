@@ -125,10 +125,17 @@ pub struct Publishing {
     pub tz: Option<i64>,
     tx: Option<Sender<Cmd>>,
     notify: Arc<AtomicBool>,
+    /// The app is offline (forced or the network failed): the worker asks nothing.
+    offline: Arc<AtomicBool>,
     note_ids: Vec<(String, u32)>,
 }
 
 impl Publishing {
+    /// The app's offline state, for the worker (set after every message the app applies).
+    pub fn note_offline(&self, offline: bool) {
+        self.offline.store(offline, Ordering::SeqCst);
+    }
+
     /// Drops the worker (Manga off, sign out): the thread ends.
     pub fn stop(&mut self) {
         self.tx = None;
@@ -175,12 +182,63 @@ impl State {
     }
 
     /// `kot publishing`'s rows, in the page's order.
+    #[cfg(test)]
     pub fn ctl_publishing(&self) -> Vec<kotora_ctl::PublishingItem> {
-        self.publishing
-            .rows
-            .iter()
+        ctl_items(&self.manga.entries, &self.publishing.rows)
+    }
+
+    /// `kot publishing`'s snapshot (UI thread): the Reading manga, what is in memory, and the
+    /// rest the caller reads from the saved files ([`ctl_reply`]).
+    pub fn ctl_publishing_snapshot(&self) -> CtlSnapshot {
+        let entries: Vec<crate::manga::MEntry> = self.manga.entries.iter().filter(|e| e.status == Status::Watching).cloned().collect();
+        let info = entries.iter().filter_map(|e| self.publishing.info.get(&e.id).map(|i| (e.id, i.clone()))).collect();
+        let now = self.clock();
+        CtlSnapshot { entries, info, sort: self.publishing.sort, now, today: self.publishing_today(now), offline: self.publishing_offline(), error: self.publishing.error.clone(), busy: self.publishing.busy.is_some() }
+    }
+}
+
+/// See [`State::ctl_publishing_snapshot`].
+pub struct CtlSnapshot {
+    pub entries: Vec<crate::manga::MEntry>,
+    pub info: HashMap<u32, Info>,
+    pub sort: PSort,
+    pub now: i64,
+    pub today: i64,
+    pub offline: bool,
+    pub error: Option<String>,
+    pub busy: bool,
+}
+
+/// `kot publishing`'s answer, off the UI thread: the saved files fill in what memory lacks
+/// (never a request), then the same rows and notice as the page. Returns the saved infos read,
+/// for the page.
+pub fn ctl_reply(mut snap: CtlSnapshot, cache: &Cache, store: Option<&Store>, svc: kotora_core::service::ServiceId) -> (Vec<kotora_ctl::PublishingItem>, Option<String>, Vec<(u32, Info)>) {
+    let mut read = Vec::new();
+    for e in &snap.entries {
+        if snap.info.contains_key(&e.id) {
+            continue;
+        }
+        let key = Key { service: svc, media_id: e.id };
+        let i = mu::saved(cache, key, store.and_then(|st| mu::picked(st, key)));
+        if i.looked {
+            snap.info.insert(e.id, i.clone());
+            read.push((e.id, i));
+        }
+    }
+    let checked = snap.info.values().filter_map(|i| i.fetched_at).max();
+    let rows = build_rows(&snap.entries, &snap.info, snap.sort, snap.now, snap.today);
+    let items = ctl_items(&snap.entries, &rows);
+    let note = notice(snap.offline, snap.error.as_deref(), checked, snap.now).or_else(|| {
+        (snap.busy || snap.info.values().all(|i| i.fetched_at.is_none())).then(|| "Kotora is checking MangaUpdates; run it again in a minute for the rest.".to_string())
+    });
+    (items, note.filter(|_| !snap.entries.is_empty()), read)
+}
+
+/// The rows as `kot` prints them.
+fn ctl_items(entries: &[crate::manga::MEntry], rows: &[PRow]) -> Vec<kotora_ctl::PublishingItem> {
+    rows.iter()
             .filter_map(|r| {
-                let e = self.manga.entries.iter().find(|e| e.id == r.id)?;
+                let e = entries.iter().find(|e| e.id == r.id)?;
                 let flag = match r.look {
                     Look::Pending => "looking",
                     Look::NotFound => "no match",
@@ -190,9 +248,10 @@ impl State {
                 };
                 Some(kotora_ctl::PublishingItem { title: e.title.clone(), latest: r.latest.clone(), when: r.when.clone(), behind: r.behind, pace: r.pace.clone(), next: r.next.clone(), flag: flag.into() })
             })
-            .collect()
-    }
+        .collect()
+}
 
+impl State {
     /// Refresh: asks MangaUpdates again for every Reading manga.
     pub fn publishing_refresh(&mut self) {
         self.publishing.error = None;
@@ -229,6 +288,7 @@ impl State {
         let Some(h) = self.handle.clone() else { return };
         let p = &mut self.publishing;
         p.notify.store(self.prefs.notify.new_chapter, Ordering::SeqCst);
+        p.offline.store(self.offline || paths::offline_forced(), Ordering::SeqCst);
         let cmd = match &p.tx {
             Some(tx) => match tx.send(cmd) {
                 Ok(()) => return,
@@ -240,8 +300,8 @@ impl State {
         let (tx, rx) = mpsc::channel();
         let _ = tx.send(cmd);
         p.tx = Some(tx);
-        let notify = p.notify.clone();
-        let _ = std::thread::Builder::new().name("kotora-publishing".into()).spawn(move || run(&h, &rx, &notify));
+        let (notify, offline) = (p.notify.clone(), p.offline.clone());
+        let _ = std::thread::Builder::new().name("kotora-publishing".into()).spawn(move || run(&h, &rx, &notify, &offline));
     }
 
     /// The worker's answer.
@@ -295,15 +355,17 @@ impl State {
     pub fn publishing_rebuild(&mut self) {
         let now = self.clock();
         let today = self.publishing_today(now);
-        let p = &self.publishing;
-        let mut rows: Vec<PRow> = self.manga.entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, p.info.get(&e.id), now, today)).collect();
-        let title = |id: u32| self.manga.entries.iter().find(|e| e.id == id).map_or_else(String::new, |e| e.title.to_lowercase());
-        match p.sort {
-            PSort::Next => rows.sort_by_cached_key(|r| (r.next_key, title(r.id))),
-            PSort::Behind => rows.sort_by_cached_key(|r| (std::cmp::Reverse(r.behind.map_or(-1, i64::from)), r.next_key, title(r.id))),
-            PSort::Latest => rows.sort_by_cached_key(|r| (std::cmp::Reverse(r.latest_key), title(r.id))),
-        }
-        self.publishing.rows = rows;
+        self.publishing.rows = build_rows(&self.manga.entries, &self.publishing.info, self.publishing.sort, now, today);
+    }
+
+    /// Offline: forced, or the app's last request found no network.
+    pub fn publishing_offline(&self) -> bool {
+        self.offline || paths::offline_forced()
+    }
+
+    /// The notice over the page, the details card and `kot publishing` ([`notice`]).
+    pub fn publishing_notice(&self) -> Option<String> {
+        notice(self.publishing_offline(), self.publishing.error.as_deref(), self.publishing.checked_at, self.clock())
     }
 
     fn publishing_today(&self, now: i64) -> i64 {
@@ -333,8 +395,8 @@ impl State {
             self.publishing.link_note = Some((true, "That isn\u{2019}t a MangaUpdates series link. Open the series on mangaupdates.com and copy the address (mangaupdates.com/series/\u{2026}).".into()));
             return;
         };
-        if paths::offline_forced() {
-            self.publishing.link_note = Some((true, "Offline: the link is checked with MangaUpdates first.".into()));
+        if self.publishing_offline() {
+            self.publishing.link_note = Some((true, "Offline: the link is checked with MangaUpdates first; try again when online.".into()));
             return;
         }
         self.publishing.linking = true;
@@ -344,6 +406,10 @@ impl State {
 
     /// The panel's Reset: forget the picked series, search again.
     pub fn publishing_unpick(&mut self, media_id: u32) {
+        if self.publishing_offline() {
+            self.publishing.link_note = Some((true, "Offline: Reset searches MangaUpdates again; try again when online.".into()));
+            return;
+        }
         self.publishing.linking = true;
         self.publishing.link_note = None;
         self.publishing_send(Cmd::Unpick { media_id });
@@ -386,12 +452,58 @@ impl State {
         }
     }
 
+    /// Tests: `kot`'s snapshot of the fake manga list, offline, nothing in memory.
+    #[cfg(test)]
+    pub fn fake_publishing_offline_snapshot() -> CtlSnapshot {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        s.offline = true;
+        s.ctl_publishing_snapshot()
+    }
+
     /// Scenes and tests: data as if MangaUpdates had answered.
     pub fn publishing_fake(&mut self, info: Vec<(u32, Info)>) {
         self.publishing.info = info.into_iter().collect();
         self.publishing.tz = Some(0);
         self.publishing.checked_at = self.publishing.info.values().filter_map(|i| i.fetched_at).max();
         self.publishing_rebuild();
+    }
+}
+
+/// The rows of the Reading manga in `entries`, sorted.
+pub fn build_rows(entries: &[crate::manga::MEntry], info: &HashMap<u32, Info>, sort: PSort, now: i64, today: i64) -> Vec<PRow> {
+    let mut rows: Vec<PRow> = entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, info.get(&e.id), now, today)).collect();
+    let title = |id: u32| entries.iter().find(|e| e.id == id).map_or_else(String::new, |e| e.title.to_lowercase());
+    match sort {
+        PSort::Next => rows.sort_by_cached_key(|r| (r.next_key, title(r.id))),
+        PSort::Behind => rows.sort_by_cached_key(|r| (std::cmp::Reverse(r.behind.map_or(-1, i64::from)), r.next_key, title(r.id))),
+        PSort::Latest => rows.sort_by_cached_key(|r| (std::cmp::Reverse(r.latest_key), title(r.id))),
+    }
+    rows
+}
+
+/// What the page says about its data, as the Airing page does:
+/// - offline with saved data: its age, and that it can't refresh;
+/// - offline with nothing saved: where the data comes from;
+/// - a failed refresh: the error, and that the saved releases show (when there are some).
+pub fn notice(offline: bool, error: Option<&str>, checked_at: Option<i64>, now: i64) -> Option<String> {
+    if offline {
+        return Some(match checked_at {
+            Some(at) => format!("Offline: MangaUpdates data from {}; can\u{2019}t refresh now.", ago_long(at, now)),
+            None => "Offline: release data comes from MangaUpdates.".into(),
+        });
+    }
+    let e = error?;
+    Some(if checked_at.is_some() { format!("{e} Showing the saved releases.") } else { e.to_string() })
+}
+
+/// "3 hours ago", "2 days ago", "less than an hour ago".
+fn ago_long(at: i64, now: i64) -> String {
+    let a = kotora_core::time::age(at, now);
+    match a.split_once(' ') {
+        None => "less than an hour ago".into(),
+        Some((n, "h")) => format!("{n} {} ago", if n == "1" { "hour" } else { "hours" }),
+        Some(_) => format!("{a} ago"),
     }
 }
 
@@ -458,15 +570,25 @@ fn row_of(id: u32, read: u32, info: Option<&Info>, now: i64, today: i64) -> PRow
 
 // ------------------------------------------------------------------------------------ worker
 
-fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool) {
+/// The worker may ask MangaUpdates: not offline (forced, or the app found no network).
+fn online(offline: &AtomicBool) -> bool {
+    !offline.load(Ordering::SeqCst) && !paths::offline_forced()
+}
+
+/// Whether the notifications' timer makes a pass: switch on and online.
+fn timer_pass(notify: bool, online: bool) -> bool {
+    notify && online
+}
+
+fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool, offline: &AtomicBool) {
     let cache = Cache::default_dir();
     let mut client = mu::Client::online();
     loop {
         let cmd = if notify.load(Ordering::SeqCst) {
             match rx.recv_timeout(EVERY) {
                 Ok(c) => c,
-                // Turned off meanwhile: back to waiting without a timer.
-                Err(RecvTimeoutError::Timeout) if !notify.load(Ordering::SeqCst) => continue,
+                // Turned off meanwhile, or offline: no check (the next timer, or the page, looks again).
+                Err(RecvTimeoutError::Timeout) if !timer_pass(notify.load(Ordering::SeqCst), online(offline)) => continue,
                 Err(RecvTimeoutError::Timeout) => Cmd::Pass { force: false, only: None },
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -492,6 +614,10 @@ fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool) {
                         Some((f, o)) => (f || force, if o.is_none() || only.is_none() { None } else { o.or(only) }),
                     });
                 }
+                Cmd::Pick { media_id, .. } | Cmd::Unpick { media_id } if !online(offline) => {
+                    let result = Err("Offline: try again when online.".to_string());
+                    h.update_if(move |s, _| s.publishing_answer(Answer::Picked { media_id, result }));
+                }
                 Cmd::Pick { media_id, series } => {
                     let result = pick(&mut client, &cache, &store, Key { service: svc, media_id }, Some(series));
                     h.update_if(move |s, _| s.publishing_answer(Answer::Picked { media_id, result }));
@@ -504,7 +630,7 @@ fn run(h: &crate::model::Handle, rx: &Receiver<Cmd>, notify: &AtomicBool) {
         }
         if let Some((force, only)) = pass {
             let send = |a: Answer| h.update_if(move |s, _| s.publishing_answer(a));
-            one_pass(&mut client, &cache, &store, svc, force, only, kotora_core::time::now_unix, !paths::offline_forced(), &send);
+            one_pass(&mut client, &cache, &store, svc, force, only, kotora_core::time::now_unix, online(offline), &send);
         }
     }
 }
@@ -538,8 +664,8 @@ pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cac
                 }
                 Err(e @ (ServiceError::Offline(_) | ServiceError::RateLimited)) => {
                     error = Some(match e {
-                        ServiceError::RateLimited => "MangaUpdates asked Kotora to slow down. The rest comes on the next refresh.".to_string(),
-                        _ => "Can\u{2019}t reach MangaUpdates. Showing the saved release data.".to_string(),
+                        ServiceError::RateLimited => "MangaUpdates asked Kotora to slow down; the rest comes on the next refresh.".to_string(),
+                        _ => "Can\u{2019}t reach MangaUpdates.".to_string(),
                     });
                     break;
                 }
@@ -551,12 +677,11 @@ pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cac
                 }
             }
         }
-    } else if infos.values().all(|i| i.fetched_at.is_none()) && !items.is_empty() {
-        error = Some("Offline: release data comes from MangaUpdates.".into());
     }
+    // Offline the page says so itself ([`notice`]); no announcements from old data either.
     let t = now();
     let mut dues = Vec::new();
-    for it in &items {
+    for it in items.iter().filter(|_| online) {
         let Some(s) = infos.get(&it.media.id).and_then(|i| i.summary(t)) else { continue };
         if let Some(n) = mu::new_chapter(&s, it.progress, t)
             && store.announce_once(svc.name(), it.media.id, What::Chapter(n), t).unwrap_or(false)
@@ -682,9 +807,14 @@ pub fn page(s: &State) -> El {
         );
     }
     let mut page = col().key("page/publishing").w_full().h_full().child(head);
-    if let Some(e) = &p.error {
-        let retry = action("pub/retry".into(), "Retry", false, |s: &mut State, _| s.publishing_refresh());
-        page = page.child(alert("pub/error", PAL.status(Status::Dropped), e.clone(), Some(retry)));
+    let offline = s.publishing_offline();
+    if let Some(n) = s.publishing_notice() {
+        page = page.child(if offline {
+            alert("pub/offline", PAL.warn(), n, None)
+        } else {
+            let retry = action("pub/retry".into(), "Retry", false, |s: &mut State, _| s.publishing_refresh());
+            alert("pub/error", PAL.status(Status::Dropped), n, Some(retry))
+        });
     }
     if n == 0 {
         return page.child(
@@ -705,17 +835,18 @@ pub fn page(s: &State) -> El {
                 n,
                 theme::ROW_H,
                 |s: &State, i| s.publishing.rows.get(i).map_or_else(|| format!("gone-{i}").into(), |r| format!("p{}", r.id).into()),
-                |s: &State, i| s.publishing.rows.get(i).map_or_else(el, |r| list_row(s, r)),
+                |s: &State, i| s.publishing.rows.get(i).map_or_else(el, |r| list_row(s, r, s.publishing_offline())),
             ),
         ),
     )
     .child(footer())
 }
 
-fn latest_cell(r: &PRow) -> El {
+fn latest_cell(r: &PRow, offline: bool) -> El {
     if r.latest.is_empty() {
         let t = match r.look {
-            Look::Pending => "Looking\u{2026}",
+            // Offline nothing is looked up: no promise of it.
+            Look::Pending if !offline => "Looking\u{2026}",
             _ => "\u{2013}",
         };
         return text(t).font(theme::LABEL).color(PAL.faint);
@@ -747,7 +878,7 @@ fn next_cell(r: &PRow) -> El {
     c
 }
 
-fn list_row(s: &State, r: &PRow) -> El {
+fn list_row(s: &State, r: &PRow, offline: bool) -> El {
     let id = r.id;
     let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else { return el() };
     let mut sub = row().w_full().min_w(0.0).gap(8.0).center_y().clip_fade(0.0, 0.0, 16.0, 0.0);
@@ -791,7 +922,7 @@ fn list_row(s: &State, r: &PRow) -> El {
         })
         .child(crate::manga::row_cover(s, e))
         .child(title)
-        .child(latest_cell(r).w(COL_LATEST))
+        .child(latest_cell(r, offline).w(COL_LATEST))
         .child(behind_cell(r).w(COL_BEHIND))
         .child(next_cell(r).w(COL_NEXT))
         .child(if plus { plus_one(id, e.plus_unit()) } else { el().size(38.0, 26.0) });
@@ -932,13 +1063,18 @@ pub fn details_card(s: &State, id: u32) -> Option<El> {
     let r = row_of(id, e.chapters, info, now, s.publishing_today(now));
     let mut c = crate::ui::card("det-publishing", "Publishing");
     let kv = |k: &str, v: El| crate::ui::kv(k, v);
-    let latest = if r.latest.is_empty() { text(if r.look == Look::Pending { "Looking\u{2026}" } else { "\u{2013}" }).font(theme::LABEL_NUM).color(PAL.dim) } else { text(format!("{} \u{b7} {}", r.latest, r.when)).font(theme::LABEL_NUM).color(PAL.text) };
+    let looking = r.look == Look::Pending && !s.publishing_offline();
+    let latest = if r.latest.is_empty() { text(if looking { "Looking\u{2026}" } else { "\u{2013}" }).font(theme::LABEL_NUM).color(PAL.dim) } else { text(format!("{} \u{b7} {}", r.latest, r.when)).font(theme::LABEL_NUM).color(PAL.text) };
     let behind = match r.behind {
         Some(0) => "Caught up".to_string(),
         Some(n) => format!("{n} to read"),
         None => "\u{2013}".into(),
     };
     let next = if r.pace.is_empty() { "\u{2013}".to_string() } else if r.next.is_empty() { r.pace.clone() } else { format!("{}, {}", r.pace, r.next) };
+    if let Some(n) = s.publishing_notice() {
+        let fg = if s.publishing_offline() { PAL.warn() } else { PAL.err() };
+        c = c.child(text(n).key("det-publishing/notice").font(theme::LABEL).color(fg).wrap().pb(4.0));
+    }
     c = c
         .child(col().pt(4.0).child(kv("Latest", latest)).child(kv("To read", text(behind).font(theme::LABEL_NUM).color(PAL.text))).child(kv("Next (estimate)", text(next).font(theme::LABEL_NUM).color(PAL.text))))
         .child(el().h(6.0))
@@ -1075,6 +1211,164 @@ mod tests {
         assert_eq!((items[0].title.as_str(), items[0].latest.as_str(), items[0].behind), ("Inkwell Cartographers", "Ch 121", Some(2)));
         assert!(items.iter().any(|i| i.flag == "check match"));
         assert!(items.iter().any(|i| i.flag == "no match"));
+    }
+
+    #[test]
+    fn the_offline_notice_matches_the_airing_page() {
+        let now = 1_800_000_000;
+        assert_eq!(notice(true, None, Some(now - 3 * 3600), now).as_deref(), Some("Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 3600), now).as_deref(), Some("Offline: MangaUpdates data from 1 hour ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 600), now).as_deref(), Some("Offline: MangaUpdates data from less than an hour ago; can\u{2019}t refresh now."));
+        assert_eq!(notice(true, None, Some(now - 2 * DAY), now).as_deref(), Some("Offline: MangaUpdates data from 2 days ago; can\u{2019}t refresh now."));
+        // Offline wins over a refresh's error.
+        assert_eq!(notice(true, Some("Can\u{2019}t reach MangaUpdates."), None, now).as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        assert_eq!(notice(false, Some("Can\u{2019}t reach MangaUpdates."), Some(now), now).as_deref(), Some("Can\u{2019}t reach MangaUpdates. Showing the saved releases."));
+        assert_eq!(notice(false, Some("Can\u{2019}t reach MangaUpdates."), None, now).as_deref(), Some("Can\u{2019}t reach MangaUpdates."));
+        assert_eq!(notice(false, None, Some(now), now), None);
+    }
+
+    #[test]
+    fn offline_the_page_and_card_say_so_and_keep_the_saved_rows() {
+        // KOTORA_OFFLINE=1 (the Docker check) forces offline: the online parts can't hold there.
+        let forced = paths::offline_forced();
+        let mut s = page();
+        if !forced {
+            assert_eq!(s.publishing_notice(), None);
+        }
+        s.offline = true;
+        s.publishing.checked_at = Some(s.clock() - 3 * 3600);
+        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now."));
+        assert_eq!(row(&s, 1).latest, "Ch 121", "the saved data shows");
+        // No link check offline.
+        s.publishing_toggle(2);
+        s.publishing.link = TextEdit::new("https://www.mangaupdates.com/series/pb8uwds/x");
+        s.publishing_use_link(2);
+        assert!(s.publishing.link_note.as_ref().is_some_and(|(f, t)| *f && t.starts_with("Offline")));
+        assert!(!s.publishing.linking);
+        s.publishing_unpick(2);
+        assert!(!s.publishing.linking);
+        // Nothing saved: where the data comes from.
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        s.offline = true;
+        s.publishing_fake(Vec::new());
+        assert_eq!(s.publishing_notice().as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        assert!(!s.publishing.rows.is_empty(), "the Reading manga still list");
+        // The details card has the same words.
+        let mut s = page();
+        s.offline = true;
+        assert!(details_card(&s, 1).is_some());
+        // A failed refresh online: the error and the saved releases.
+        s.offline = false;
+        s.publishing.error = Some("Can\u{2019}t reach MangaUpdates.".into());
+        if !forced {
+            assert_eq!(s.publishing_notice().as_deref(), Some("Can\u{2019}t reach MangaUpdates. Showing the saved releases."));
+        }
+    }
+
+    /// A transport that counts requests and has no answers (any request fails).
+    struct Never(std::rc::Rc<std::cell::Cell<usize>>);
+    impl kotora_core::http::Transport for Never {
+        fn send(&self, _: &kotora_core::http::Request) -> Result<kotora_core::http::Response, String> {
+            self.0.set(self.0.get() + 1);
+            Err("no network in tests".into())
+        }
+    }
+
+    fn label(a: Answer) -> String {
+        match a {
+            Answer::Saved(v) => format!("saved {}", v.len()),
+            Answer::Started(n) => format!("started {n}"),
+            Answer::One { media_id, .. } => format!("one {media_id}"),
+            Answer::Done { error, dues } => format!("done {error:?} {dues:?}"),
+            Answer::Picked { .. } => "picked".into(),
+        }
+    }
+
+    /// Saved data for Salt & Gears (id 2, read 64): chapter 65 added a minute before `now`.
+    fn saved_scratch(name: &str, now: i64) -> (Cache, Store, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("kotora-pub-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = Cache::new(dir.clone());
+        let mut store = Store::open_memory().unwrap();
+        let mut items = crate::manga::fake_items();
+        items.retain(|it| it.media.id == 2);
+        store.replace_list(Scope::new("mal", Kind::Manga), &items, 1).unwrap();
+        let key = Key { service: kotora_core::service::ServiceId::Mal, media_id: 2 };
+        cache.put_match(key, Some(&Matched { id: 5, title: "Salt & Gears".into(), confidence: Confidence::Sure }), now - 60);
+        let rel = |ch: u32, d: i64| mu::Release { chapter: ch.to_string(), volume: None, day: (now - d * DAY).div_euclid(DAY) * DAY, added: now - d * DAY - 60 };
+        cache.put_releases(5, &[rel(65, 0), rel(64, 7), rel(63, 14), rel(62, 21)], now - 60);
+        (cache, store, dir)
+    }
+
+    #[test]
+    fn offline_a_pass_asks_nothing_and_announces_nothing() {
+        fn at() -> i64 {
+            1_794_916_800
+        }
+        let (cache, store, dir) = saved_scratch("offline", at());
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut client = mu::Client::without_sleep(Never(asked.clone()));
+        let got = std::cell::RefCell::new(Vec::new());
+        let send = |a: Answer| got.borrow_mut().push(label(a));
+        let svc = kotora_core::service::ServiceId::Mal;
+        // Offline, even forced: the saved data at once, no request, no notification.
+        one_pass(&mut client, &cache, &store, svc, true, None, at, false, &send);
+        assert_eq!(*got.borrow(), ["saved 1", "done None []"]);
+        assert_eq!(asked.get(), 0);
+        // Back online (the data is fresh): still no request, and now the chapter is announced, once.
+        got.borrow_mut().clear();
+        one_pass(&mut client, &cache, &store, svc, false, None, at, true, &send);
+        assert_eq!(*got.borrow(), ["saved 1", "done None [(2, 65, \"Ch 65\")]"]);
+        assert_eq!(asked.get(), 0);
+        // A refresh online that fails: the error, the saved data kept.
+        got.borrow_mut().clear();
+        one_pass(&mut client, &cache, &store, svc, true, None, at, true, &send);
+        assert_eq!(*got.borrow(), ["saved 1", "started 1", "done Some(\"Can\u{2019}t reach MangaUpdates.\") []"]);
+        assert_eq!(mu::saved(&cache, Key { service: svc, media_id: 2 }, None).releases.len(), 4, "the saved releases stay");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn kot_reads_the_saved_files_and_says_offline() {
+        let now = 1_794_916_800;
+        let (cache, store, dir) = saved_scratch("kot", now);
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        s.fixed_now = Some(now);
+        s.offline = true;
+        // Nothing in memory yet: kot fills in from the saved files (no request is possible here).
+        let snap = s.ctl_publishing_snapshot();
+        let (items, note, read) = ctl_reply(snap, &cache, Some(&store), kotora_core::service::ServiceId::Mal);
+        assert_eq!(read.len(), 1, "Salt & Gears was saved");
+        let salt = items.iter().find(|i| i.title == "Salt & Gears").unwrap();
+        assert_eq!((salt.latest.as_str(), salt.behind), ("Ch 65", Some(1)));
+        assert_eq!(note.as_deref(), Some("Offline: MangaUpdates data from less than an hour ago; can\u{2019}t refresh now."));
+        // The page gets what kot read.
+        s.publishing_answer(Answer::Saved(read));
+        assert!(s.publishing.info.contains_key(&2));
+        // Nothing saved at all, offline.
+        let empty = Cache::new(dir.join("none"));
+        let (items, note, read) = ctl_reply(State::fake_publishing_offline_snapshot(), &empty, None, kotora_core::service::ServiceId::Mal);
+        assert!(read.is_empty());
+        assert!(!items.is_empty(), "the Reading manga still list");
+        assert_eq!(note.as_deref(), Some("Offline: release data comes from MangaUpdates."));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_timer_checks_nothing_offline() {
+        assert!(timer_pass(true, true));
+        assert!(!timer_pass(true, false), "offline: no check");
+        assert!(!timer_pass(false, true), "switch off: no check");
+        // The flag the worker reads follows the app's offline state.
+        let mut s = page();
+        s.offline = true;
+        s.publishing.note_offline(s.publishing_offline());
+        assert!(!online(&s.publishing.offline));
+        s.offline = false;
+        s.publishing.note_offline(s.publishing_offline());
+        assert_eq!(online(&s.publishing.offline), !paths::offline_forced());
     }
 
     #[test]

@@ -1149,6 +1149,8 @@ impl State {
         }
         let changed = self.apply_msg(msg);
         self.sync_tray();
+        // Publishing's worker asks nothing while the app is offline.
+        self.publishing.note_offline(self.publishing_offline());
         changed
     }
 

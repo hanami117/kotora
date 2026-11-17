@@ -263,9 +263,29 @@ pub const SCENES: &[Scene] = &[
         s.publishing_fake(info);
         s.publishing.busy = Some((2, 6));
     }),
+    // Offline with saved data: it shows, with its age; no Retry.
     ("publishing-offline", |s| {
         publishing(s);
-        s.publishing.error = Some("Can\u{2019}t reach MangaUpdates. Showing the saved release data.".into());
+        s.offline = true;
+        s.publishing.checked_at = Some(s.clock() - 3 * 3600);
+    }),
+    // Offline with nothing saved: the rows, no "Looking…", and where the data comes from.
+    ("publishing-offline-empty", |s| {
+        manga(s);
+        s.offline = true;
+        s.go(Page::Publishing);
+        s.publishing_fake(Vec::new());
+    }),
+    // Online, a refresh failed: the error, and the saved releases still show.
+    ("publishing-failed", |s| {
+        publishing(s);
+        s.publishing.error = Some("Can\u{2019}t reach MangaUpdates.".into());
+    }),
+    ("manga-details-publishing-offline", |s| {
+        manga_details(s, 1);
+        s.offline = true;
+        s.publishing_fake(crate::publishing::fake_info());
+        s.publishing.checked_at = Some(s.clock() - 3 * 3600);
     }),
     ("publishing-empty", |s| {
         manga(s);

@@ -686,7 +686,8 @@ fn publishing_text(items: &[PublishingItem], note: Option<&str>) -> String {
     let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
     let w = items.iter().map(|i| i.title.chars().count()).max().unwrap_or(0).min(36);
     let lw = items.iter().map(|i| i.latest.chars().count()).max().unwrap_or(0).max(6);
-    let mut out = String::from("Reading, by the next release (Release data: MangaUpdates; next dates are estimates):\n");
+    let mut out = note.map_or_else(String::new, |n| format!("{n}\n"));
+    out.push_str("Reading, by the next release (Release data: MangaUpdates; next dates are estimates):\n");
     for i in items {
         let latest = if i.latest.is_empty() { "\u{2013}".to_string() } else { i.latest.clone() };
         let when = if i.when.is_empty() { String::new() } else { format!(" ({})", i.when) };
@@ -883,6 +884,12 @@ mod tests {
         assert_eq!(lines[2], "  Moth Orchestra         Night 259 (4 months ago)   caught up    On hiatus  [check match]");
         assert_eq!(lines[3], "  Kumo Atelier           \u{2013}                                         [no match]");
         assert_eq!(publishing_text(&[], Some("Turn Manga on first.")), "Turn Manga on first.\n");
+        // Offline with saved data: the notice, then the saved rows.
+        let t = publishing_text(&items[..1], Some("Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now."));
+        let lines: Vec<&str> = t.lines().collect();
+        assert_eq!(lines[0], "Offline: MangaUpdates data from 3 hours ago; can\u{2019}t refresh now.");
+        assert!(lines[1].starts_with("Reading, by the next release"));
+        assert!(lines[2].contains("Inkwell Cartographers"));
     }
 
     #[test]

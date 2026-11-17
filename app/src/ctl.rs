@@ -114,21 +114,32 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             };
             Ok(Reply::Airing { items: s.ctl_airing(), note })
         })),
-        Request::Publishing => reply(on_ui(handle, false, |s| {
-            if !s.has_list() {
-                return Err("Not signed in.".to_string());
+        Request::Publishing => {
+            let snap = on_ui(handle, false, |s| {
+                if !s.has_list() {
+                    return Err("Not signed in.".to_string());
+                }
+                if !s.manga.enabled {
+                    return Err("Manga is off. Turn it on with: kot manga on".to_string());
+                }
+                // Like opening the page: a pass for what is old (none offline).
+                s.publishing_kick();
+                Ok(s.ctl_publishing_snapshot())
+            });
+            match snap {
+                Ok(Ok(snap)) => {
+                    // The saved files fill in what the window hasn't read yet (this thread, no request).
+                    let store = kotora_core::store::Store::open(&kotora_core::paths::db_file()).ok();
+                    let cache = kotora_core::mangaupdates::Cache::default_dir();
+                    let (items, note, read) = crate::publishing::ctl_reply(snap, &cache, store.as_ref(), crate::account::active());
+                    if !read.is_empty() {
+                        handle.update_if(move |s, _| s.publishing_answer(crate::publishing::Answer::Saved(read)));
+                    }
+                    Reply::Publishing { items, note }
+                }
+                Ok(Err(message)) | Err(message) => Reply::Error { message, anyway: false },
             }
-            if !s.manga.enabled {
-                return Err("Manga is off. Turn it on with: kot manga on".to_string());
-            }
-            // Like opening the page: the saved data, then MangaUpdates for what is old.
-            let first = s.publishing.info.is_empty();
-            s.publishing_kick();
-            s.publishing_rebuild();
-            let note = first.then(|| "Kotora is checking MangaUpdates; try again in a minute.".to_string());
-            let items = if first { Vec::new() } else { s.ctl_publishing() };
-            Ok(Reply::Publishing { items, note })
-        })),
+        }
         Request::Dash => reply(on_ui(handle, false, |s| {
             if !s.has_list() {
                 return Err("Not signed in.".to_string());

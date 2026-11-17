@@ -17,7 +17,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   volume-only series work. MangaUpdates is asked only with Manga on, only for Reading manga, at most every 4
   hours per series (Refresh asks now), 20 requests a minute at most; answers are saved, so the page works
   offline. Dates are estimates: MangaUpdates lists scanlation and official English releases as groups report
-  them.
+  them. Offline (forced, or no network) the page shows the saved releases at once with their age ("Offline:
+  MangaUpdates data from 3 hours ago; can't refresh now."), asks nothing and announces nothing; a refresh that
+  fails says why and keeps the saved releases. The details card and `kot publishing` say the same.
 - **Publishing card** on a Reading manga's details page: latest chapter, to read, next release (estimate), the
   MangaUpdates match with its link and the same fix.
 - **New chapter notifications** (Settings → Notifications → Manga, off by default): "New chapter of Title: Ch 75"
