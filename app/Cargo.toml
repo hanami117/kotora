@@ -35,7 +35,7 @@ zbus = { version = "5.19", default-features = false, features = ["async-io", "bl
 # - `notes/windows.rs`: toast notifications (WinRT).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "Foundation_Collections", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell"] }
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "Foundation_Collections", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
 
 # macOS only, on the objc2 0.6 stack Rune already builds (no extra frameworks): the menu bar's
 # About panel and app-menu tidy (menu_bar.rs) and the menu bar icon (tray_mac.rs).

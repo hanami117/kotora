@@ -140,7 +140,8 @@ pub fn export(s: &mut State) {
 const EXPORT_PROMPT: &str = "Export your anime list as a MyAnimeList XML file";
 const IMPORT_PROMPT: &str = "Choose a MyAnimeList list export (.xml or .xml.gz)";
 
-/// The system's file dialog; `done` gets the path (on the UI thread on macOS, a thread on Linux).
+/// The system's file dialog; `done` gets the path (on the UI thread on macOS, a thread on Linux
+/// and Windows).
 fn pick(prompt: &str, save: Option<&str>, done: impl Fn(Option<String>) + Send + 'static) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -161,8 +162,14 @@ fn pick(prompt: &str, save: Option<&str>, done: impl Fn(Option<String>) + Send +
     }
 }
 
+/// Windows: its own Save and Open dialogs (`win::pick_file`).
+#[cfg(windows)]
+fn pick_linux(prompt: &str, save: Option<&str>) -> Result<Option<String>, String> {
+    crate::win::pick_file(prompt, save)
+}
+
 /// `zenity` or `kdialog`, as the library folder picker.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn pick_linux(prompt: &str, save: Option<&str>) -> Result<Option<String>, String> {
     let title = format!("--title={prompt}");
     let tries: Vec<(&str, Vec<String>)> = match save {

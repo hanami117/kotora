@@ -117,6 +117,54 @@ pub fn pick_folder(title: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// The system's file dialog for the list export and import (Settings → Account → Your list).
+/// `save`: the suggested file name, for a Save dialog that asks before it overwrites; `None`:
+/// an Open dialog for an existing file. `Ok(None)`: cancelled. Call it on a worker thread: it
+/// blocks until the dialog closes.
+pub fn pick_file(title: &str, save: Option<&str>) -> Result<Option<String>, String> {
+    use windows::Win32::Foundation::ERROR_CANCELLED;
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FileOpenDialog, FileSaveDialog, IFileDialog, SIGDN_FILESYSPATH};
+    use windows::core::{HRESULT, HSTRING, w};
+
+    // SAFETY: as in `pick_folder`; the filter strings are static and outlive the dialog.
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let picked = (|| -> windows::core::Result<Option<String>> {
+            let all = COMDLG_FILTERSPEC { pszName: w!("All files"), pszSpec: w!("*.*") };
+            let dialog: IFileDialog = match save {
+                Some(name) => {
+                    let d: IFileDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+                    d.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("MyAnimeList XML (*.xml)"), pszSpec: w!("*.xml") }, all])?;
+                    d.SetFileName(&HSTRING::from(name))?;
+                    d.SetDefaultExtension(w!("xml"))?;
+                    d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
+                    d
+                }
+                None => {
+                    let d: IFileDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+                    d.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("MyAnimeList export (*.xml, *.gz)"), pszSpec: w!("*.xml;*.gz") }, all])?;
+                    d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
+                    d
+                }
+            };
+            dialog.SetTitle(&HSTRING::from(title))?;
+            if let Err(e) = dialog.Show(None) {
+                return if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) { Ok(None) } else { Err(e) };
+            }
+            let name = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+            let path = name.to_string().ok();
+            CoTaskMemFree(Some(name.0 as *const _));
+            Ok(path)
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        picked.map_err(|e| format!("The file dialog didn't open: {e}"))
+    }
+}
+
 /// The 256 px app icon, written beside the database so Windows can draw it on toasts.
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/256x256/apps/io.github.hanami117.kotora.png");
 
