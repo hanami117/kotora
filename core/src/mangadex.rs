@@ -348,8 +348,10 @@ pub struct FillPlan {
     pub fill: Vec<FillRow>,
     /// Titles MangaDex has no linked series (or no volume numbers) for.
     pub not_found: Vec<String>,
-    /// Already right, or higher than MangaDex says: left alone (volumes are never lowered).
-    pub already: Vec<FillRow>,
+    /// Already what MangaDex says.
+    pub same: Vec<FillRow>,
+    /// Higher than MangaDex says: left alone (volumes are never lowered).
+    pub higher: Vec<FillRow>,
 }
 
 /// The preview from the looked-up entries (`None`: not looked up, left out). Never lowers.
@@ -366,10 +368,15 @@ pub fn plan_fill(rows: &[(crate::ListItem, Option<Lookup>)]) -> FillPlan {
             to = to.min(n);
         }
         let row = FillRow { media_id: it.media.id, title: it.media.title.clone(), chapters: it.progress, from: it.volumes, to };
-        if to > it.volumes { p.fill.push(row) } else { p.already.push(row) }
+        match to.cmp(&it.volumes) {
+            std::cmp::Ordering::Greater => p.fill.push(row),
+            std::cmp::Ordering::Equal => p.same.push(row),
+            std::cmp::Ordering::Less => p.higher.push(row),
+        }
     }
-    p.fill.sort_by_cached_key(|r| r.title.to_lowercase());
-    p.already.sort_by_cached_key(|r| r.title.to_lowercase());
+    for list in [&mut p.fill, &mut p.same, &mut p.higher] {
+        list.sort_by_cached_key(|r| r.title.to_lowercase());
+    }
     p.not_found.sort_by_cached_key(|t| t.to_lowercase());
     p
 }

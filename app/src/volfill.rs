@@ -243,14 +243,17 @@ pub fn settings_row(s: &State) -> El {
 /// The preview: counts, what goes up, what MangaDex doesn't have, what stays; the credit.
 fn preview(s: &State, p: &FillPlan) -> El {
     let mut b = col().key("set/fill-volumes-preview").w_full().gap(12.0).padding(14.0).mb(12.0).radius(theme::R_MD).fill(PAL.field).border(1.0, PAL.border);
+    // "go up" always; the other chips only when they count something.
+    let chip = |key: &str, n: usize, word: &str, c: rune::Color| (n > 0).then(|| count_pill(key, n, word, c));
     b = b.child(
         row()
             .key("set/fill-volumes-counts")
             .gap(6.0)
             .flex_wrap()
             .child(count_pill("set/fill-volumes-up", p.fill.len(), "volumes go up", PAL.status(kotora_core::Status::Watching)))
-            .child(count_pill("set/fill-volumes-already", p.already.len(), "already right or higher", PAL.status(kotora_core::Status::Completed)))
-            .child(count_pill("set/fill-volumes-missing", p.not_found.len(), "not found on MangaDex", PAL.faint)),
+            .children(chip("set/fill-volumes-same", p.same.len(), "already right", PAL.status(kotora_core::Status::Completed)))
+            .children(chip("set/fill-volumes-higher", p.higher.len(), "higher than MangaDex (left alone)", PAL.status(kotora_core::Status::OnHold)))
+            .children(chip("set/fill-volumes-missing", p.not_found.len(), "not found on MangaDex", PAL.faint)),
     );
     let line = |r: &mangadex::FillRow| format!("{}: Ch {} \u{2192} Vol {} \u{2192} {}", r.title, r.chapters, r.from, r.to);
     if !p.fill.is_empty() {
@@ -259,15 +262,25 @@ fn preview(s: &State, p: &FillPlan) -> El {
     if !p.not_found.is_empty() {
         b = b.child(group("set/fill-volumes-list-missing", "Not found on MangaDex".into(), p.not_found.clone()));
     }
-    if !p.already.is_empty() {
-        let already = p.already.iter().map(|r| format!("{}: Vol {} (MangaDex: {})", r.title, r.from, r.to)).collect();
-        b = b.child(group("set/fill-volumes-list-already", "Already right or higher (left alone)".into(), already));
+    if !p.higher.is_empty() {
+        let higher = p.higher.iter().map(|r| format!("{}: Vol {} (MangaDex: {})", r.title, r.from, r.to)).collect();
+        b = b.child(group("set/fill-volumes-list-higher", "Higher than MangaDex (left alone)".into(), higher));
+    }
+    if !p.same.is_empty() {
+        let same = p.same.iter().map(|r| format!("{}: Vol {}", r.title, r.from)).collect();
+        b = b.child(group("set/fill-volumes-list-same", "Already right".into(), same));
+    }
+    let n = p.fill.len();
+    if n == 0 {
+        // Nothing goes up: say so, and only Close.
+        b = b.child(text("Nothing to change.").key("set/fill-volumes-nothing").font(theme::BODY_MED).color(PAL.text));
+        b = b.child(text(CREDIT).key("set/fill-volumes-credit").font(theme::LABEL).color(PAL.faint));
+        return b.child(row().key("set/fill-volumes-actions").child(small_button("set/fill-volumes-close-preview", "Close", false, Some(close as fn(&mut State)))));
     }
     let mirror = s.mirror.link.map(|l| format!(" With the mirror on, {} gets them too.", l.to.title())).unwrap_or_default();
     b = b.child(text(format!("Only volumes change, through the sync queue to {} at its pace; Undo takes back what hasn\u{2019}t been sent.{mirror}", s.service.title())).font(theme::LABEL).color(PAL.dim).wrap());
     b = b.child(text(CREDIT).key("set/fill-volumes-credit").font(theme::LABEL).color(PAL.faint));
-    let n = p.fill.len();
-    let fill: Option<fn(&mut State)> = (n > 0 && !s.volfill.applying).then_some(apply);
+    let fill: Option<fn(&mut State)> = (!s.volfill.applying).then_some(apply);
     b.child(
         row()
             .key("set/fill-volumes-actions")
@@ -424,6 +437,34 @@ mod tests {
         assert_eq!(s.manga.editor.map(|e| e.volumes), before);
     }
 
+    fn keys(name: &str) -> rune::Runtime<State> {
+        let mut s = State::fake();
+        (crate::scenes::SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1360.0, 1400.0), rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    /// "Already right" and "Higher than MangaDex" apart; chips at 0 hidden but "go up"; with
+    /// nothing going up, "Nothing to change." and Close only.
+    #[test]
+    fn the_preview_splits_right_and_higher_and_says_when_nothing_changes() {
+        let rt = keys("settings-fill-volumes-preview");
+        for k in ["set/fill-volumes-up", "set/fill-volumes-same", "set/fill-volumes-higher", "set/fill-volumes-missing", "set/fill-volumes-list-same", "set/fill-volumes-list-higher", "set/fill-volumes-apply", "set/fill-volumes-cancel"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        assert!(rt.find("set/fill-volumes-nothing").is_none());
+        let rt = keys("settings-fill-volumes-nothing");
+        for k in ["set/fill-volumes-up", "set/fill-volumes-same", "set/fill-volumes-higher", "set/fill-volumes-nothing", "set/fill-volumes-close-preview"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        for k in ["set/fill-volumes-missing", "set/fill-volumes-apply", "set/fill-volumes-cancel"] {
+            assert!(rt.find(k).is_none(), "{k}: hidden");
+        }
+    }
+
     /// The done line names the mirror when it is on (a fill is mirrored like any import).
     #[test]
     fn the_done_line_says_where_the_changes_go() {
@@ -445,7 +486,7 @@ mod tests {
         let p = s.volfill.preview.as_ref().unwrap();
         assert!(p.fill.iter().any(|r| r.title == "Salt & Gears" && r.from == 0 && r.to == 6));
         assert!(p.not_found.contains(&"Moth Orchestra".to_string()));
-        assert!(p.fill.iter().chain(&p.already).all(|r| r.to <= 20));
+        assert!(p.fill.iter().chain(&p.same).chain(&p.higher).all(|r| r.to <= 20));
         // No app handle: nothing is looked up or queued.
         close(&mut s);
         start(&mut s);

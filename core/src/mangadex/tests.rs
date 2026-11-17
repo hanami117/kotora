@@ -160,8 +160,9 @@ fn the_plan_never_lowers_volumes() {
     let p = plan_fill(&rows);
     let fill: Vec<(u32, u32, u32)> = p.fill.iter().map(|r| (r.media_id, r.from, r.to)).collect();
     assert_eq!(fill, [(5, 1, 4), (1, 0, 5)], "sorted by title; the total caps it (5 -> 4)");
-    let already: Vec<(u32, u32, u32)> = p.already.iter().map(|r| (r.media_id, r.from, r.to)).collect();
-    assert_eq!(already, [(2, 3, 3), (3, 4, 1)], "the same, and higher than MangaDex: left alone");
+    let ids = |rows: &[FillRow]| rows.iter().map(|r| (r.media_id, r.from, r.to)).collect::<Vec<_>>();
+    assert_eq!(ids(&p.same), [(2, 3, 3)], "already what MangaDex says");
+    assert_eq!(ids(&p.higher), [(3, 4, 1)], "higher than MangaDex: left alone, never lowered");
     assert_eq!(p.not_found, ["Kite Post"]);
     let actions = fill_actions(&p);
     assert_eq!(actions.len(), 2);

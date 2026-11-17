@@ -1094,6 +1094,16 @@ pub const SCENES: &[Scene] = &[
     ("settings-fill-volumes", |s| fill_volumes(s, |_| {})),
     ("settings-fill-volumes-busy", |s| fill_volumes(s, |s| s.volfill.busy = Some((7, 18)))),
     ("settings-fill-volumes-preview", |s| fill_volumes(s, crate::volfill::fake_preview)),
+    // Nothing goes up: "Nothing to change." and Close only (one already right, one higher).
+    ("settings-fill-volumes-nothing", |s| {
+        fill_volumes(s, |s| {
+            crate::volfill::fake_preview(s);
+            if let Some(p) = &mut s.volfill.preview {
+                p.fill.clear();
+                p.not_found.clear();
+            }
+        })
+    }),
     ("settings-fill-volumes-done", |s| fill_volumes(s, |s| s.volfill.done = Some((4, vec![1, 2, 3, 4])))),
     ("settings-fill-volumes-offline", |s| {
         fill_volumes(s, |s| s.volfill.error = Some("Can\u{2019}t reach MangaDex: volumes from chapters need the network. Nothing was changed.".into()))
