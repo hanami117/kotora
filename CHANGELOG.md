@@ -6,6 +6,7 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ### Added
 - **Linux and Windows:** Ctrl Q quits Kotora, even from the tray, also while you type in a search box. (macOS has ⌘Q.)
+- **Support Kotora** (Settings → About): a heart, one line and a button that opens Kotora's Ko-fi page. Kotora stays free, and nothing else asks.
 
 ## [0.4.0] - 2026-11-17
 

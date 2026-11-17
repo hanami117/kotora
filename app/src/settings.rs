@@ -106,7 +106,7 @@ impl Section {
                 (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
             Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
-            Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
+            Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links]), (None, vec![Row::Support])],
         }
     }
 }
@@ -182,6 +182,7 @@ pub enum Row {
     About,
     Licences,
     Links,
+    Support,
 }
 
 impl Row {
@@ -241,6 +242,7 @@ impl Row {
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
+            Row::Support => "support",
         };
         format!("set/row/{slug}")
     }
@@ -315,6 +317,7 @@ const SPECS: &[Spec] = &[
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
     spec(Row::Licences, Section::About, "Licences", "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.", "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright"),
     spec(Row::Links, Section::About, "Links", "kotora.moe and the source code.", "website site github source code links kotora.moe"),
+    spec(Row::Support, Section::About, "Support Kotora", "Kotora is free. You can support it on Ko-fi.", "support donate donation kofi ko-fi tip heart"),
 ];
 
 /// A player row's search words beyond its name.
@@ -1137,6 +1140,7 @@ fn row_el(s: &State, r: Row) -> El {
             "The website, and the source code on GitHub.",
             row().gap(16.0).child(link("link/site", "kotora.moe", "https://kotora.moe")).child(link("link/source", "Source code", "https://github.com/hanami117/kotora")),
         ),
+        Row::Support => support(),
     }
 }
 
@@ -1224,6 +1228,33 @@ fn link(key: &str, label: &str, url: &'static str) -> El {
         .color(PAL.accent_hi)
         .cursor(rune::Cursor::Pointer)
         .on_press(move |s: &mut State| crate::online::open_link(s, url))
+}
+
+/// Where "Support on Ko-fi" goes.
+pub const SUPPORT_URL: &str = "https://ko-fi.com/hanami117";
+
+/// About → Support: one quiet card, a heart, a line and a button. Nothing else asks.
+fn support() -> El {
+    row()
+        .key("set/support")
+        .w_full()
+        .gap(12.0)
+        .py(12.0)
+        .items_start()
+        .child(icon(&icons::HEART, 18.0).color(PAL.accent_hi).mt(1.0))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(10.0)
+                .child(
+                    col()
+                        .gap(3.0)
+                        .child(text("Support Kotora").font(theme::BODY_MED).color(PAL.text).wrap())
+                        .child(text("Kotora is free and built in my spare time. If you enjoy it, you can support it on Ko-fi.").key("support-note").font(theme::LABEL).color(PAL.dim).wrap()),
+                )
+                .child(row().child(small_button("set/support-kofi", "Support on Ko-fi", false, Some(|s: &mut State| crate::online::open_link(s, SUPPORT_URL))))),
+        )
 }
 
 fn about(s: &State) -> El {
@@ -1418,6 +1449,13 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), INDEX.len(), "the search has no row the sections don't show");
+    }
+
+    #[test]
+    fn support_is_in_about_and_points_at_kofi() {
+        assert_eq!(SUPPORT_URL, "https://ko-fi.com/hanami117");
+        assert!(Section::About.groups().iter().any(|(_, rows)| rows.contains(&Row::Support)));
+        assert!(finds("donate", Row::Support) && finds("ko-fi", Row::Support));
     }
 
     #[test]

@@ -51,6 +51,8 @@ line_icon!(BOOK, "book", r#"<path d="M12 6.5C10 5 7 4.5 4 5v13c3-.5 6 0 8 1.5 2-
 line_icon!(BELL, "bell", r#"<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
 line_icon!(INFO, "info", r#"<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5.5M12 7.8v.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
 
+line_icon!(HEART, "heart", r#"<path d="M12 19.5S4 14.8 4 9.3A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 8 2.3c0 5.5-8 10.2-8 10.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>"#);
+
 // Score smileys (AniList's 3-point format).
 line_icon!(FACE_SAD, "face-sad", r#"<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="10" r="1.1" fill="currentColor"/><circle cx="15" cy="10" r="1.1" fill="currentColor"/><path d="M8.5 16.2a4.5 4.5 0 0 1 7 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
 line_icon!(FACE_NEUTRAL, "face-neutral", r#"<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="10" r="1.1" fill="currentColor"/><circle cx="15" cy="10" r="1.1" fill="currentColor"/><path d="M8.8 15h6.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>"#);
