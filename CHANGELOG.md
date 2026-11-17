@@ -10,6 +10,17 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   --comicId=N`) and looks the comic up in that library's database (read only): it shows at once. A reader
   started on a file (Simple Comic, MComix, …) counts by its command line too; open files stay a second signal.
   Checks every 10 seconds.
+- Reading detection: a comic opened in YACReader from the Finder (not from its library) was not seen: on
+  macOS the file comes as an Apple Event, the viewer keeps no file open, and its command line names none.
+  Kotora now reads the viewer's own log (`yacreader.log`: "Opened archive file : …") while it runs, and on
+  close the page from its `bookmarks.yacr` (page count from the `.cbz`). Read only.
+- Reading detection: VIZ's "Dragon Ball Z v11" was matched to the movie manga "Dragon Ball Z: Fukkatsu no
+  'F'". A search hit with words added to the series is never the match; a cached answer is checked again.
+  MyAnimeList has no separate Dragon Ball Z manga (it lists "Dragon Ball Z" among Dragon Ball's titles), so
+  the file now asks "Is this Dragon Ball?" (never marks by itself), with a small renumbering table: "Dragon
+  Ball Z v11 = Dragon Ball vol 27" (VIZ's Dragon Ball Z: +16 volumes, +194 chapters).
+- Now Reading shows the cover of the manga it matched or found (saved details, or one fetch), and no longer
+  shows anime's "Up next" in Manga mode.
 - Reading detection: "Dragon Ball Z v11" was a sure match for Dragon Ball (MyAnimeList lists "Dragon Ball Z"
   among Dragon Ball's other titles). A list title that is the series with words missing at the end (Z, Super,
   GT, Part 2), or that goes on with other words, is now another series: at most a suggestion in Wrong manga…,

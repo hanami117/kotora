@@ -302,6 +302,12 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
         return;
     }
     let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
+    // The viewer's own files (a comic opened on its own, not from the library).
+    let viewer_dir = if cfg.yacreader { kotora_core::manga::viewer::find_dir() } else { None };
+    let mut viewer_log = viewer_dir.as_deref().map(kotora_core::manga::viewer::LogTail::new);
+    let mut viewer_file: Option<String> = None;
+    // The bookmarks' time now: only a write after this counts.
+    let mut bookmarks_seen = viewer_dir.as_ref().and_then(|d| std::fs::metadata(d.join("bookmarks.yacr")).and_then(|m| m.modified()).ok());
     let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
     let mut open_sent: Vec<std::path::PathBuf> = Vec::new();
     // "Continue reading": the manga asked about, answered again after each change.
@@ -341,6 +347,36 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                         }
                     }
                     None => open.push(kotora_core::manga::openfile::Open { app: o.app, path: o.path }),
+                }
+            }
+            // The viewer opened on a file from the Finder: its log names the comic.
+            if sc.bare_viewers > 0
+                && let Some(t) = viewer_log.as_mut()
+            {
+                t.poll();
+                if let Some(p) = t.last.clone().filter(|p| std::path::Path::new(p).is_file()) {
+                    if !open.iter().any(|o| o.path == p) {
+                        open.push(kotora_core::manga::openfile::Open { app: "YACReader".into(), path: p.clone() });
+                    }
+                    viewer_file = Some(p);
+                }
+            }
+            // Closed: the page it was left on, from the viewer's bookmarks (written on close).
+            if let (Some(dir), Some(p)) = (&viewer_dir, &viewer_file)
+                && sc.bare_viewers == 0
+            {
+                let m = std::fs::metadata(dir.join("bookmarks.yacr")).and_then(|m| m.modified()).ok();
+                if m.is_some() && m != bookmarks_seen {
+                    bookmarks_seen = m;
+                    if let Some(r) = viewer_read(dir, p)
+                        && last.as_ref() != Some(&r)
+                    {
+                        let seen = recognise(&mut store, r.clone());
+                        last = Some(r);
+                        changed = true;
+                        send(h, ReadingMsg::Seen(Box::new(seen)));
+                    }
+                    viewer_file = None;
                 }
             }
             // Between file scans, the files seen last stand (the tracker counts from them).
@@ -405,6 +441,20 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// A comic the viewer had open on its own, after it was closed: its page from `bookmarks.yacr`
+/// (from 0), the count from the `.cbz`. A strong signal: read to the end counts.
+fn viewer_read(dir: &std::path::Path, path: &str) -> Option<Read> {
+    use kotora_core::manga::viewer;
+    let p = std::path::Path::new(path);
+    let bm = *viewer::read_bookmarks(dir).get(&viewer::bookmark_key(p)?)?;
+    let mut r = kotora_core::manga::openfile::read_of(&kotora_core::manga::openfile::Open { app: "YACReader".into(), path: path.into() }, now_unix());
+    r.page = bm.last_page + 1;
+    r.pages = viewer::zip_pages(p).unwrap_or(0);
+    r.finished = kotora_core::manga::chapter_read(false, r.page, r.pages);
+    r.weak = false;
+    Some(r)
 }
 
 /// Where to continue manga `id` of the list (its entry and the user's picks from the store).
@@ -506,7 +556,9 @@ fn recognise(store: &mut Option<Store>, read: Read) -> Seen {
         None => match cached.filter(|(_, src, _)| src == "search") {
             Some((0, _, _)) => Found::Nothing,
             Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
-            Some((id, _, title)) if !title.is_empty() => Found::NotOnList { media_id: id, title },
+            // An answer cached before today's rules ("Dragon Ball Z: Fukkatsu no F" for "Dragon
+            // Ball Z") is searched again.
+            Some((id, _, title)) if !title.is_empty() && core_reading::title_fits(&read.series, &title) => Found::NotOnList { media_id: id, title },
             _ => {
                 let (f, url) = search(st, &read.series, &items, &key);
                 cover_url = url;
@@ -514,7 +566,38 @@ fn recognise(store: &mut Option<Store>, read: Read) -> Seen {
             }
         },
     };
+    // A known release that numbers on its own: the entry's numbers ("DBZ v11 = Dragon Ball vol 27").
+    let mut read = read;
+    let main = match &found {
+        Found::List { media_id, .. } => items.iter().find(|it| it.media.id == *media_id).map(|it| it.media.title.clone()),
+        Found::NotOnList { title, .. } => Some(title.clone()),
+        _ => None,
+    };
+    if let Some(m) = main {
+        core_reading::renumber(&mut read, &m);
+    }
+    // The cover of a manga off the list: the search's, else its saved details, else one fetch.
+    if cover_url.is_none()
+        && let Found::NotOnList { media_id, .. } = &found
+    {
+        cover_url = manga_cover(st, *media_id);
+    }
     Seen { read, found, candidates, cover_url }
+}
+
+/// A manga's cover from its saved details page, or one details fetch (signed in, online), saved
+/// like the details page's.
+fn manga_cover(st: &Store, id: u32) -> Option<String> {
+    let svc = crate::account::name();
+    if let Some((d, _)) = st.details(Scope::new(svc, Kind::Manga), id).ok().flatten() {
+        return d.cover_url;
+    }
+    if kotora_core::paths::offline_forced() {
+        return None;
+    }
+    let d = crate::account::open()?.details_of(Kind::Manga, id).ok()?;
+    let _ = st.save_details(svc, &d, now_unix());
+    d.cover_url
 }
 
 /// The one manga search for a series off the list (signed in, online), cached 30 days.
@@ -1282,7 +1365,7 @@ pub fn now_reading_mode(s: &State) -> bool {
 pub fn empty(s: &State) -> El {
     let mut how = Vec::new();
     if s.reading.on {
-        how.push("YACReader: open a comic in a library Kotora watches (Settings \u{2192} Manga); it shows here within seconds, and Kotora asks once it is read to the end.".to_string());
+        how.push("YACReader: open a comic, from its library or the Finder; it shows here within seconds, and Kotora asks once it is read to the end.".to_string());
     }
     if s.reading.open_files && OPEN_FILES_HERE {
         how.push(format!("Any reader: open a comic file; Kotora asks when the next chapter opens or after {} minutes.", s.reading.minutes));
@@ -1481,6 +1564,24 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         .child(text(r.read.file_name.clone()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate())
         .child(row().gap(10.0).mt(4.0).center_y().child(bar.grow(1.0)).child(text(progress).key("rd/progress").font(theme::LABEL).color(PAL.dim)))
         .child(text(s.reading_match_text(r)).key("rd/match").font(theme::LABEL).color(if r.sure() { PAL.dim } else { PAL.warn() }).wrap().mt(4.0));
+    // A release numbered on its own: what the file's numbers are on the list.
+    if let Some(n) = &r.read.renumbered {
+        info = info.child(text(n.clone()).key("rd/renumbered").font(theme::LABEL).color(PAL.dim).wrap());
+    }
+    // Unsure ("Dragon Ball Z" is another title of Dragon Ball): ask, one press answers.
+    if let (Found::List { media_id, sure: false, .. }, None) = (&r.found, r.marked) {
+        let id = *media_id;
+        let title = s.manga.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
+        info = info.child(
+            row()
+                .key("rd/ask")
+                .gap(10.0)
+                .mt(6.0)
+                .center_y()
+                .child(text(format!("Is this {title}?")).font(theme::BODY_MED).color(PAL.text))
+                .child(action("rd/yes".into(), "Yes, that one", false, move |s, _| s.pick_manga(id)).h(28.0).px(10.0)),
+        );
+    }
     let mut acts = row().gap(8.0).mt(8.0);
     if let Some(m) = r.marked {
         acts = acts.child(text(format!("Marked {} as read.", m.offer.label())).font(theme::LABEL).color(PAL.ok())).child(button("rd/undo", "Undo", false, Some(State::undo_reading)));
@@ -1636,6 +1737,39 @@ pub fn fake_resume(s: &mut State, id: u32, page: i64, next: bool) {
         next,
     };
     s.apply_reading(ReadingMsg::Resume { media_id: id, at: Some(r) });
+}
+
+/// Dragon Ball on the made-up list ("Dragon Ball Z" among its titles, volume 26 of 42), and
+/// VIZ's "Dragon Ball Z v11" open in YACReader, as in the live test.
+pub fn fake_dbz(s: &mut State) {
+    let mut items = crate::manga::fake_items();
+    let media = kotora_core::Media {
+        id: 42,
+        kind: Kind::Manga,
+        title: "Dragon Ball".into(),
+        synonyms: vec!["Dragon Ball Z".into()],
+        episodes: Some(520),
+        volumes: Some(42),
+        format: "manga".into(),
+        air_status: "finished".into(),
+        cover_url: Some("https://cdn.example.invalid/m42.jpg".into()),
+        ..Default::default()
+    };
+    items.push(kotora_core::ListItem { media, status: Status::Watching, progress: 300, score: None, rewatching: false, times_rewatched: 0, volumes: 26, updated_at: crate::model::FAKE_NOW - 60 });
+    s.set_manga_items(&items);
+    let path = "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz";
+    let mut read = kotora_core::manga::openfile::read_of(&kotora_core::manga::openfile::Open { app: "YACReader".into(), path: path.into() }, 0);
+    let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
+    if let Found::List { media_id, .. } = &found
+        && let Some(it) = items.iter().find(|it| it.media.id == *media_id)
+    {
+        core_reading::renumber(&mut read, &it.media.title);
+    }
+    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    if !s.reading.open_now.contains(&read.path) {
+        s.reading.open_now.push(read.path.clone());
+    }
+    s.reading_seen(Seen { read, found, candidates, cover_url: None });
 }
 
 /// A made-up comic open in `app` (stage 2), counted as read when `why` is given.

@@ -65,6 +65,7 @@ pub fn read_of(open: &Open, at: i64) -> Read {
         source: open.app.clone(),
         weak: true,
         why: None,
+        renumbered: None,
     }
 }
 

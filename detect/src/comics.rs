@@ -157,11 +157,14 @@ enum Seen {
 pub struct ComicScanner<P: Procs> {
     procs: P,
     seen: HashMap<u32, Seen>,
+    /// YACReader viewers at the last scan whose command line names no comic (opened on a file
+    /// by Finder: the path came as an Apple Event). The app asks the viewer's log then.
+    pub bare_viewers: u32,
 }
 
 impl<P: Procs> ComicScanner<P> {
     pub fn new(procs: P) -> ComicScanner<P> {
-        ComicScanner { procs, seen: HashMap::new() }
+        ComicScanner { procs, seen: HashMap::new(), bare_viewers: 0 }
     }
 
     /// The comics open now, one per path (the lowest pid's), sorted by path. Open files only,
@@ -172,6 +175,7 @@ impl<P: Procs> ComicScanner<P> {
 
     pub fn scan_with(&mut self, o: &ScanOpts) -> Vec<OpenComic> {
         let folders = &o.folders;
+        self.bare_viewers = 0;
         let pids = self.procs.pids();
         let live: HashSet<u32> = pids.iter().copied().collect();
         self.seen.retain(|p, _| live.contains(p));
@@ -194,7 +198,11 @@ impl<P: Procs> ComicScanner<P> {
                 Seen::Reader(r) => {
                     let yac = r == "YACReader";
                     if (yac && o.yac_args) || (!yac && o.reader_args) {
-                        for (c, id) in from_args(r, &self.procs.args(pid)) {
+                        let named = from_args(r, &self.procs.args(pid));
+                        if yac && named.is_empty() {
+                            self.bare_viewers += 1;
+                        }
+                        for (c, id) in named {
                             if !out.iter().any(|x| x.path == c && x.yac == id) {
                                 out.push(OpenComic { pid, app: r.to_string(), path: c, yac: id });
                             }
@@ -378,6 +386,20 @@ mod tests {
         assert!(got.iter().all(|o| o.app == "YACReader"));
         let all = s.scan_with(&ScanOpts { files: true, yac_args: true, reader_args: true, folders: vec![] });
         assert!(all.iter().any(|o| o.app == "Simple Comic") && all.iter().any(|o| o.yac == Some(1)));
+        assert_eq!(s.bare_viewers, 0);
+    }
+
+    /// macOS, a comic opened from the Finder: the viewer runs with no comic in its arguments.
+    #[test]
+    fn a_viewer_with_no_comic_in_its_arguments_is_counted() {
+        let mut t = table();
+        t.procs.push((30, "YACReader", true, vec![]));
+        t.args = vec![(30, vec!["/Applications/YACReader.app/Contents/MacOS/YACReader", "-psn_0_123"])];
+        let mut s = ComicScanner::new(t);
+        assert!(s.scan_with(&ScanOpts { yac_args: true, ..Default::default() }).is_empty());
+        assert_eq!(s.bare_viewers, 1);
+        assert!(s.scan_with(&ScanOpts::default()).is_empty());
+        assert_eq!(s.bare_viewers, 0, "not looked at with YACReader detection off");
     }
 
     /// Linux: `/proc/PID/cmdline` is NUL-separated (and NUL-ended).

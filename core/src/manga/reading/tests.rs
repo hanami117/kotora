@@ -311,35 +311,75 @@ fn dragon_ball() -> ListItem {
 }
 
 #[test]
-fn dragon_ball_is_not_dragon_ball_z_or_super() {
+fn dragon_ball_z_is_an_unsure_dragon_ball_and_super_is_not() {
     let db = dragon_ball();
     let dbs = item(43, "Dragon Ball Super", None, 0, None);
     // The same series: sure.
     assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&db), &None), Some(Found::List { media_id: 42, sure: true, .. })));
-    // Z, Super, GT, Part 2: another series. Not even an unsure match: the search decides.
-    for s in ["Dragon Ball Z", "Dragon Ball Super", "Dragon Ball GT", "Dragon Ball Part 2"] {
+    // "Dragon Ball Z" is one of Dragon Ball's titles (VIZ's numbering of the same manga): asks.
+    assert_eq!(
+        on_list("Dragon Ball Z", std::slice::from_ref(&db), &None),
+        Some(Found::List { media_id: 42, sure: false, why: "\u{201c}Dragon Ball Z\u{201d} is another title of Dragon Ball".into() })
+    );
+    // Super, GT, Part 2 are not among its titles: no match, the search decides.
+    for s in ["Dragon Ball Super", "Dragon Ball GT", "Dragon Ball Part 2"] {
         assert_eq!(on_list(s, std::slice::from_ref(&db), &None), None, "{s}");
     }
     let both = vec![db.clone(), dbs.clone()];
     assert!(matches!(on_list("Dragon Ball Super", &both, &None), Some(Found::List { media_id: 43, sure: true, .. })));
-    assert_eq!(on_list("Dragon Ball Z", &both, &None), None, "Z is neither");
-    // Still a low suggestion for "Wrong manga…".
-    let c = candidates("Dragon Ball Z", &both);
-    assert!(c.iter().any(|c| c.media_id == 42 && c.score <= OTHER_SERIES), "{c:?}");
+    assert!(matches!(on_list("Dragon Ball Z", &both, &None), Some(Found::List { media_id: 42, sure: false, .. })), "never Super");
     // The shorter file name for a longer title still asks (a series by its start).
     assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&dbs), &None), Some(Found::List { media_id: 43, sure: false, .. })));
     // A typo is not another series.
     assert!(matches!(on_list("Glass Lanten Club", &list(), &None), Some(Found::List { media_id: 1, .. })));
 }
 
+/// Live test: the search's "Dragon Ball Z: Fukkatsu no 'F'" (the movie manga) was taken for
+/// "Dragon Ball Z". A hit with words added to the series is never the answer.
 #[test]
-fn the_search_prefers_the_very_series_over_a_shorter_one_on_the_list() {
+fn the_search_never_takes_a_title_with_words_added() {
     let hit = |id: u32, title: &str, syn: &[&str]| AnimeHit { kind: Kind::Manga, id, title: title.into(), synonyms: syn.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let fukkatsu = hit(9100, "Dragon Ball Z: Fukkatsu no \"F\"", &[]);
+    let super_ = hit(9002, "Dragon Ball Super", &[]);
+    // Off the list: Fukkatsu and Super are no answer.
+    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu.clone(), super_.clone()], &[], "MyAnimeList"), Found::Nothing);
+    // Dragon Ball itself (with "Dragon Ball Z" among its titles) is, unsure, off the list…
+    let db = hit(42, "Dragon Ball", &["Dragon Ball Z"]);
+    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu.clone(), db.clone()], &[], "MyAnimeList"), Found::NotOnList { media_id: 42, title: "Dragon Ball".into() });
+    // … and on it.
     let l = vec![dragon_ball()];
-    // MyAnimeList's order: Dragon Ball (on the list, "Dragon Ball Z" as a synonym) first.
-    let hits = [hit(42, "Dragon Ball", &["Dragon Ball Z"]), hit(9001, "Dragon Ball Z", &[]), hit(9002, "Dragon Ball Super", &[])];
-    assert_eq!(from_search("Dragon Ball Z", &hits, &l, "MyAnimeList"), Found::NotOnList { media_id: 9001, title: "Dragon Ball Z".into() });
-    // Only the shorter one found: nothing (no wrong answer).
-    assert_eq!(from_search("Dragon Ball Z", &hits[..1], &l, "MyAnimeList"), Found::Nothing);
-    assert!(matches!(from_search("Dragon Ball", &hits, &l, "MyAnimeList"), Found::List { media_id: 42, sure: false, .. }));
+    assert!(matches!(from_search("Dragon Ball Z", &[fukkatsu.clone(), db], &l, "MyAnimeList"), Found::List { media_id: 42, sure: false, .. }));
+    // A list hit whose title adds words is no fallback either.
+    let mut on = item(9100, "Dragon Ball Z: Fukkatsu no \"F\"", None, 0, None);
+    on.media.id = 9100;
+    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu], &[on], "MyAnimeList"), Found::Nothing);
+    // A real series with its exact title still wins over a list hit.
+    let hits = [hit(9001, "Glass Lantern Club", &[])];
+    assert_eq!(from_search("Glass Lantern Club", &hits, &[], "MyAnimeList"), Found::NotOnList { media_id: 9001, title: "Glass Lantern Club".into() });
+}
+
+#[test]
+fn viz_dragon_ball_z_is_renumbered_to_dragon_ball() {
+    let mut r = read_of("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
+    renumber(&mut r, "Dragon Ball");
+    assert_eq!((r.volume, r.volume_file), (Some(27), true));
+    assert_eq!(r.renumbered.as_deref(), Some("Dragon Ball Z v11 = Dragon Ball vol 27"));
+    assert_eq!(offer(0, Some(520), 26, Some(42), &r), Some(Offer { chapter: None, volume: Some(27) }));
+    let mut c = read_of("Dragon Ball Z - Chapter 001.cbz");
+    renumber(&mut c, "Dragon Ball");
+    assert_eq!(c.chapter, Some(195));
+    // Dragon Ball's own numbering, and other titles, stay as they are.
+    let mut d = read_of("Dragon Ball v13.cbz");
+    renumber(&mut d, "Dragon Ball");
+    assert_eq!((d.volume, d.renumbered.clone()), (Some(13), None));
+    let mut e = read_of("Dragon Ball Z v11.cbz");
+    renumber(&mut e, "Dragon Ball Super");
+    assert_eq!(e.volume, Some(11));
+}
+
+#[test]
+fn an_old_cached_answer_is_checked_again() {
+    assert!(!title_fits("Dragon Ball Z", "Dragon Ball Z: Fukkatsu no \"F\""));
+    assert!(!title_fits("Dragon Ball Z", "Dragon Ball Super"));
+    assert!(title_fits("Glass Lantern Club", "Glass Lantern Club"));
 }

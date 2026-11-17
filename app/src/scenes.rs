@@ -360,6 +360,13 @@ pub const SCENES: &[Scene] = &[
         s.reading_open(Vec::new());
         s.go(Page::NowPlaying);
     }),
+    // Live test: VIZ's Dragon Ball Z v11 open in YACReader: "Is this Dragon Ball?", vol 27.
+    ("now-reading-dbz", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake_dbz(s);
+        s.go(Page::NowPlaying);
+    }),
     // Now Reading with nothing read yet.
     ("now-reading-empty", |s| {
         crate::manga::fake(s);
@@ -3806,6 +3813,15 @@ mod manga_polish {
         assert!(r.find("ctx/continue").is_none(), "unknown: hidden");
         let r = rt("now-reading-continue");
         assert!(r.find("rd-resume/go").is_some());
+    }
+
+    /// Manga mode's Now Reading never shows anime's Up next; Anime mode's Now Playing does.
+    #[test]
+    fn now_reading_has_no_anime_up_next() {
+        let r = rt("now-reading-empty");
+        assert!(r.find("np-up-next").is_none());
+        let r = rt("now-reading-dbz");
+        assert!(r.find("rd/ask").is_some() && r.find("rd/renumbered").is_some() && r.find("np-up-next").is_none());
     }
 }
 

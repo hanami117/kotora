@@ -299,3 +299,25 @@ fn a_closed_comic_leaves_continue_reading_in_now_reading() {
     assert_eq!(s.reading.last_media, Some(1));
     assert!(resume_line(&s, 1).is_some());
 }
+
+/// Live test: VIZ's "Dragon Ball Z v11" is Dragon Ball volume 27. Kotora asks "Is this Dragon
+/// Ball?" and never marks it by itself.
+#[test]
+fn viz_dragon_ball_z_asks_and_offers_the_right_volume() {
+    let mut s = state();
+    s.prefs.auto = true;
+    fake_dbz(&mut s);
+    let r = s.reading.current.as_ref().unwrap();
+    assert!(matches!(r.found, Found::List { media_id: 42, sure: false, .. }));
+    assert_eq!((r.read.volume, r.read.renumbered.as_deref()), (Some(27), Some("Dragon Ball Z v11 = Dragon Ball vol 27")));
+    assert_eq!(s.reading_offer().map(|(_, o)| o), Some(Offer { chapter: None, volume: Some(27) }));
+    // Read to the end, auto on: still asks.
+    let mut done = r.read.clone();
+    done.finished = true;
+    let (found, candidates) = (r.found.clone(), r.candidates.clone());
+    s.reading_seen(Seen { read: done, found, candidates, cover_url: None });
+    assert!(s.reading.current.as_ref().unwrap().marked.is_none() && s.reading_banner());
+    // "Yes, that one": remembered, sure.
+    s.pick_manga(42);
+    assert!(s.reading.current.as_ref().unwrap().sure());
+}

@@ -65,7 +65,10 @@ fn is_of(o: &Opened, item: &ListItem, picked: &[String]) -> bool {
     if series.is_empty() {
         return false;
     }
-    picked.contains(&reading::key(series)) || matches!(reading::on_list(series, std::slice::from_ref(item), &None), Some(Found::List { sure: true, .. }))
+    // Sure, or the series is one of the manga's own titles (VIZ's "Dragon Ball Z" is Dragon Ball).
+    picked.contains(&reading::key(series))
+        || matches!(reading::on_list(series, std::slice::from_ref(item), &None), Some(Found::List { sure: true, .. }))
+        || reading::candidates(series, std::slice::from_ref(item)).first().is_some_and(|c| c.score >= reading::ALT_TITLE)
 }
 
 fn resume_of(lib: &Library, o: &Opened, next: bool) -> Resume {

@@ -53,6 +53,8 @@ pub struct Read {
     pub weak: bool,
     /// Why a weak signal counts it as read: "Ch 13 opened next", "open for 10 minutes".
     pub why: Option<String>,
+    /// The numbers were moved to the entry's own ([`renumber`]): what the file says and what it is.
+    pub renumbered: Option<String>,
 }
 
 fn whole(n: f64) -> Option<u32> {
@@ -78,6 +80,7 @@ impl Read {
             source: "YACReader".into(),
             weak: false,
             why: None,
+            renumbered: None,
         }
     }
 
@@ -116,6 +119,17 @@ pub struct Candidate {
 /// A different series that shares the start: at most a low suggestion (the picker lists it, the
 /// match never takes it).
 pub const OTHER_SERIES: f32 = 0.6;
+
+/// The series is another title of a list entry whose main title is shorter ("Dragon Ball Z" is
+/// one of Dragon Ball's titles on MyAnimeList): unsure, so Kotora asks "Is this Dragon Ball?"
+/// and never marks by itself.
+pub const ALT_TITLE: f32 = 0.8;
+
+/// A title that is the series with words added ("Dragon Ball Z: Fukkatsu no F" for "Dragon Ball
+/// Z"): another work.
+fn longer(series: &str, title: &str) -> bool {
+    title.starts_with(&format!("{series} "))
+}
 
 fn title_score(series: &str, title: &str) -> f32 {
     let t = normalize(title);
@@ -165,7 +179,21 @@ fn entry_score<'a>(series: &str, main: &str, en: Option<&str>, all: impl Iterato
         let t = normalize(t);
         !t.is_empty() && series.starts_with(&format!("{t} "))
     };
-    if shorter(main) || en.is_some_and(shorter) { best.min(OTHER_SERIES) } else { best }
+    if shorter(main) || en.is_some_and(shorter) {
+        if best >= 1.0 { ALT_TITLE } else { best.min(OTHER_SERIES) }
+    } else {
+        best
+    }
+}
+
+/// A search hit's score: as [`entry_score`], but a title with words added to the series never
+/// counts (the movie manga "Dragon Ball Z: Fukkatsu no F" is not "Dragon Ball Z").
+fn hit_score(series: &str, h: &AnimeHit) -> f32 {
+    let all = || std::iter::once(h.title.as_str()).chain(h.title_en.as_deref()).chain(h.title_ja.as_deref()).chain(h.synonyms.iter().map(String::as_str)).filter(|t| !t.is_empty());
+    if longer(series, &normalize(&h.title)) && all().all(|t| normalize(t) != series) {
+        return 0.0;
+    }
+    entry_score(series, &h.title, h.title_en.as_deref(), all().filter(|t| !longer(series, &normalize(t))))
 }
 
 /// Every list entry scored against the series, best first (only those above 0.3). Equal
@@ -203,6 +231,7 @@ pub fn on_list(series: &str, items: &[ListItem], cached: &crate::recognize::Cach
     let ties = c.iter().filter(|x| x.score >= best.score).count();
     let sure = best.score >= 1.0 && ties == 1;
     let why = match (sure, ties) {
+        _ if (best.score - ALT_TITLE).abs() < f32::EPSILON => format!("\u{201c}{series}\u{201d} is another title of {}", best.title),
         (true, _) => "same title in your list".to_string(),
         (false, n) if n > 1 && best.score >= 1.0 => format!("{n} titles in your list match"),
         (false, _) if best.score >= 0.9 => format!("a title in your list starts with \u{201c}{series}\u{201d}"),
@@ -211,19 +240,23 @@ pub fn on_list(series: &str, items: &[ListItem], cached: &crate::recognize::Cach
     Some(Found::List { media_id: best.media_id, sure, why })
 }
 
+/// Whether a title (a cached search answer's) can stand for the series by today's rules: not
+/// with words added, not another series. A cache written before a rule changed is checked again.
+pub fn title_fits(series: &str, title: &str) -> bool {
+    let s = normalize(series);
+    let h = AnimeHit { title: title.to_string(), ..Default::default() };
+    hit_score(&s, &h) >= UNSURE_AT
+}
+
 /// Step 4: a manga search's hits against the list. A hit on the list is unsure; else the
 /// best hit off the list (`NotOnList`), when its title is close enough.
 /// The best hit wins (the service's order breaks ties); a hit that names another series ("Dragon
 /// Ball" for "Dragon Ball Z") is no answer, on the list or not.
 pub fn from_search(series: &str, hits: &[AnimeHit], items: &[ListItem], service: &str) -> Found {
     let s = normalize(series);
-    let score = |h: &AnimeHit| {
-        let all = std::iter::once(h.title.as_str()).chain(h.title_en.as_deref()).chain(h.title_ja.as_deref()).chain(h.synonyms.iter().map(String::as_str)).filter(|t| !t.is_empty());
-        entry_score(&s, &h.title, h.title_en.as_deref(), all)
-    };
     let mut best: Option<(&AnimeHit, f32)> = None;
     for h in hits {
-        let sc = score(h);
+        let sc = hit_score(&s, h);
         if sc >= UNSURE_AT && best.is_none_or(|(_, b)| sc > b) {
             best = Some((h, sc));
         }
@@ -233,12 +266,43 @@ pub fn from_search(series: &str, hits: &[AnimeHit], items: &[ListItem], service:
         Some((h, _)) if on_list(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
         Some((h, _)) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
         // Nothing close by its titles: a hit on the list still counts (the service may know a
-        // title Kotora doesn't), unless it names another series.
-        None => match hits.iter().find(|h| on_list(h) && !names_other_series(&s, &h.title, h.title_en.as_deref())) {
+        // title Kotora doesn't), unless it names another series or adds words to it.
+        None => match hits.iter().find(|h| on_list(h) && !names_other_series(&s, &h.title, h.title_en.as_deref()) && !longer(&s, &normalize(&h.title))) {
             Some(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
             None => Found::Nothing,
         },
     }
+}
+
+/// A release that numbers a series on its own: VIZ's "Dragon Ball Z" is the same manga as
+/// Dragon Ball from volume 17 and chapter 195 on (MyAnimeList has no separate Dragon Ball Z
+/// manga). Data only; Dragon Ball's own volumes 1-16 need no entry.
+pub struct Renumber {
+    /// The release's series, normalised.
+    pub alias: &'static str,
+    /// The list entry's main title, normalised.
+    pub main: &'static str,
+    pub volumes: u32,
+    pub chapters: u32,
+}
+
+pub const RENUMBER: &[Renumber] = &[Renumber { alias: "dragon ball z", main: "dragon ball", volumes: 16, chapters: 194 }];
+
+/// Moves `read`'s numbers to the entry's own when a known release numbers on its own, and says
+/// so: "Dragon Ball Z v11 = Dragon Ball vol 27".
+pub fn renumber(read: &mut Read, entry_main_title: &str) {
+    let (alias, main) = (key(&read.series), normalize(entry_main_title));
+    let Some(r) = RENUMBER.iter().find(|r| r.alias == alias && r.main == main) else { return };
+    let mut said = Vec::new();
+    if let Some(v) = read.volume {
+        said.push(format!("{} v{v} = {entry_main_title} vol {}", read.series, v + r.volumes));
+        read.volume = Some(v + r.volumes);
+    }
+    if let Some(c) = read.chapter {
+        said.push(format!("ch {c} = ch {}", c + r.chapters));
+        read.chapter = Some(c + r.chapters);
+    }
+    read.renumbered = (!said.is_empty()).then(|| said.join(", "));
 }
 
 /// What finishing the file marks: a chapter, a volume, or both.

@@ -2485,7 +2485,8 @@ fn now_empty() -> El {
 
 fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
     let mut side = col().gap(16.0);
-    if s.now.is_none() {
+    // Anime's "Up next" only in Anime mode: Manga mode's Now Reading has Continue reading.
+    if s.now.is_none() && !crate::reading::now_reading_mode(s) {
         side = side.children(crate::library::up_next_card(s));
     }
     if let Some(n) = &s.now {

@@ -594,7 +594,7 @@ impl State {
         }
     }
 
-    fn set_manga_items(&mut self, items: &[ListItem]) {
+    pub(crate) fn set_manga_items(&mut self, items: &[ListItem]) {
         let lang = self.prefs.titles;
         self.manga.entries = items.iter().map(|it| MEntry::from_item(it, lang)).collect();
         if self.manga.editor.is_some_and(|ed| !self.manga.entries.iter().any(|e| e.id == ed.id)) {
