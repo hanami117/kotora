@@ -1,0 +1,6 @@
+{"total_hits": 4, "page": 1, "per_page": 40, "results": [
+ {"record": {"id": 4, "title": "Moth Orchestra", "volume": "22", "chapter": "Night 259", "release_date": "2026-05-20"}},
+ {"record": {"id": 3, "title": "Moth Orchestra", "volume": null, "chapter": "Night 258", "release_date": "2026-04-20"}},
+ {"record": {"id": 2, "title": "Moth Orchestra", "volume": null, "chapter": "Night 257", "release_date": "2026-03-20"}},
+ {"record": {"id": 1, "title": "Moth Orchestra", "volume": null, "chapter": "Night 256", "release_date": "2026-02-19"}}
+]}

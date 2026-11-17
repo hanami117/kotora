@@ -38,6 +38,7 @@
 //! recorded = true              # an episode was recorded, with Undo
 //! started_airing = true        # a Plan to watch show started airing
 //! new_episode = true           # the next episode of a Watching show is out (estimated)
+//! new_chapter = false          # a new chapter of a Reading manga (MangaUpdates; Manga on)
 //!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
@@ -126,11 +127,14 @@ pub struct Notifications {
     pub started_airing: bool,
     /// The next episode of a Watching show is out, by the estimated broadcast time.
     pub new_episode: bool,
+    /// A new chapter of a Reading manga is on MangaUpdates (Manga on). Off by default: it is
+    /// the one switch that makes Kotora ask a third service in the background.
+    pub new_chapter: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true }
+        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false }
     }
 }
 
@@ -969,7 +973,8 @@ mod tests {
     #[test]
     fn notifications_offer_and_recorded_on_detected_off() {
         let n = Config::parse("").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true });
+        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false });
+        assert!(Config::parse("[notifications]\nnew_chapter = true\n").unwrap().notifications.new_chapter);
         let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
         assert_eq!(n, Notifications { detected: true, offer: false, ..Notifications::default() });
         let n = Config::parse("[notifications]\nstarted_airing = false\nnew_episode = false\n").unwrap().notifications;

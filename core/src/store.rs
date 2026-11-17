@@ -712,6 +712,11 @@ impl Store {
         Ok(())
     }
 
+    pub fn kv_del(&self, key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM kv WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
     /// The user's profile picture URL (`None`: none set or not asked yet) and when it was last
     /// asked for. Kept in `kv`, so sign out deletes it with the rest.
     pub fn picture(&self, service: &str) -> Result<(Option<String>, Option<i64>)> {

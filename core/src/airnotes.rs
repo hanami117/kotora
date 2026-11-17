@@ -32,6 +32,8 @@ pub enum What {
     Started,
     /// Episode N is out.
     Episode(u32),
+    /// Manga: chapter N is out (Publishing, `mangaupdates::new_chapter`).
+    Chapter(u32),
 }
 
 impl What {
@@ -40,6 +42,8 @@ impl What {
         match self {
             What::Started => "started".into(),
             What::Episode(n) => format!("ep{n}"),
+            // "m": manga ids are another set than anime ids.
+            What::Chapter(n) => format!("mch{n}"),
         }
     }
 }

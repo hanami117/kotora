@@ -1,0 +1,16 @@
+{"total_hits": 14, "page": 1, "per_page": 40, "results": [
+ {"record": {"id": 14, "title": "Salt & Gears", "volume": null, "chapter": "74", "groups": [{"name": "Group A", "group_id": 1}], "release_date": "2026-11-15", "time_added": {"timestamp": 1794790800, "as_rfc3339": "x", "as_string": "x"}}, "metadata": {}},
+ {"record": {"id": 13, "title": "Salt & Gears", "volume": null, "chapter": "73", "groups": [{"name": "Group B"}], "release_date": "2026-11-09", "time_added": {"timestamp": 1794200000}}},
+ {"record": {"id": 12, "title": "Salt & Gears", "volume": null, "chapter": "73", "groups": [{"name": "Group A"}], "release_date": "2026-11-08", "time_added": {"timestamp": 1794186000}}},
+ {"record": {"id": 11, "title": "Salt & Gears", "volume": "8", "chapter": "1-20", "groups": [{"name": "Backfill Crew"}], "release_date": "2026-11-05", "time_added": {"timestamp": 1793900000}}},
+ {"record": {"id": 10, "title": "Salt & Gears", "volume": null, "chapter": "72", "groups": [{"name": "Group A"}], "release_date": "2026-11-01", "time_added": {"timestamp": 1793581200}}},
+ {"record": {"id": 9, "title": "Salt & Gears", "volume": null, "chapter": "71.1", "groups": [{"name": "Group A"}], "release_date": "2026-10-25", "time_added": {"timestamp": 1792976400}}},
+ {"record": {"id": 8, "title": "Salt & Gears", "volume": null, "chapter": "71", "groups": [{"name": "Group A"}], "release_date": "2026-10-25", "time_added": {"timestamp": 1792976000}}},
+ {"record": {"id": 7, "title": "Salt & Gears", "volume": null, "chapter": "70", "groups": [{"name": "Group A"}], "release_date": "2026-10-18", "time_added": {"timestamp": 1792371600}}},
+ {"record": {"id": 6, "title": "Salt & Gears", "volume": null, "chapter": "69", "groups": [{"name": "Group A"}], "release_date": "2026-10-11", "time_added": {"timestamp": 1791766800}}},
+ {"record": {"id": 5, "title": "Salt & Gears", "volume": null, "chapter": "68", "groups": [{"name": "Group A"}], "release_date": "2026-10-04", "time_added": {"timestamp": 1791162000}}},
+ {"record": {"id": 4, "title": "Salt & Gears", "volume": null, "chapter": "", "groups": [{"name": "Group A"}], "release_date": "2026-10-01"}},
+ {"record": {"id": 3, "title": "Salt & Gears", "volume": null, "chapter": "67", "groups": [{"name": "Group A"}], "release_date": "2026-09-27", "time_added": {"timestamp": 0}}},
+ {"record": {"id": 2, "title": "Salt & Gears", "volume": null, "chapter": "66", "groups": [], "release_date": ""}},
+ {"record": {"id": 1, "title": "Salt & Gears", "volume": null, "chapter": "65", "groups": [], "release_date": "2026-09-13"}}
+]}

@@ -1,0 +1,7 @@
+{"total_hits": 5, "page": 1, "per_page": 40, "results": [
+ {"record": {"id": 5, "title": "Paper Wolves of Osaka", "volume": null, "chapter": "Bone 67", "release_date": "2026-11-12"}},
+ {"record": {"id": 4, "title": "Paper Wolves of Osaka", "volume": null, "chapter": "Bone 66", "release_date": "2026-10-29"}},
+ {"record": {"id": 3, "title": "Paper Wolves of Osaka", "volume": null, "chapter": "Bone 65", "release_date": "2026-10-15"}},
+ {"record": {"id": 2, "title": "Paper Wolves of Osaka", "volume": null, "chapter": "Bone 64", "release_date": "2026-10-01"}},
+ {"record": {"id": 1, "title": "Paper Wolves of Osaka", "volume": null, "chapter": "Bone 63", "release_date": "2026-09-17"}}
+]}

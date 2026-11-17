@@ -17,6 +17,7 @@ pub mod loopback;
 pub mod mal;
 pub mod manga;
 pub mod mangadex;
+pub mod mangaupdates;
 pub mod mirror;
 pub mod model;
 pub mod paths;
