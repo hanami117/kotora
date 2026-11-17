@@ -20,6 +20,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   them. Offline (forced, or no network) the page shows the saved releases at once with their age ("Offline:
   MangaUpdates data from 3 hours ago; can't refresh now."), asks nothing and announces nothing; a refresh that
   fails says why and keeps the saved releases. The details card and `kot publishing` say the same.
+  Kotora also reads each series' MangaUpdates record: the latest chapter is the higher of the record and the
+  releases (scanlation release lists stop when an official simulpub starts, so the record is often ahead; its
+  chapter shows "date not tracked" and no estimate: "Ongoing, release dates not tracked"). Finished and On hiatus
+  come from your list's status (MyAnimeList or AniList) first, then MangaUpdates' status, never from a gap in
+  releases alone.
 - **Publishing card** on a Reading manga's details page: latest chapter, to read, next release (estimate), the
   MangaUpdates match with its link and the same fix.
 - **New chapter notifications** (Settings → Notifications → Manga, off by default): "New chapter of Title: Ch 75"

@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use kotora_core::airnotes::What;
-use kotora_core::mangaupdates::{self as mu, Cache, Confidence, Info, Key, Matched, Pace};
+use kotora_core::mangaupdates::{self as mu, Cache, Confidence, Info, Key, ListRun, Matched, Pace};
 use kotora_core::service::ServiceError;
 use kotora_core::store::Store;
 use kotora_core::time::Clock;
@@ -97,6 +97,7 @@ pub struct PRow {
     /// Out in the last two days and not read (lit).
     pub fresh: bool,
     pub hiatus: bool,
+    pub finished: bool,
     pub error: Option<String>,
     next_key: i64,
     latest_key: i64,
@@ -472,7 +473,7 @@ impl State {
 
 /// The rows of the Reading manga in `entries`, sorted.
 pub fn build_rows(entries: &[crate::manga::MEntry], info: &HashMap<u32, Info>, sort: PSort, now: i64, today: i64) -> Vec<PRow> {
-    let mut rows: Vec<PRow> = entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, info.get(&e.id), now, today)).collect();
+    let mut rows: Vec<PRow> = entries.iter().filter(|e| e.status == Status::Watching).map(|e| row_of(e.id, e.chapters, list_run(e), info.get(&e.id), now, today)).collect();
     let title = |id: u32| entries.iter().find(|e| e.id == id).map_or_else(String::new, |e| e.title.to_lowercase());
     match sort {
         PSort::Next => rows.sort_by_cached_key(|r| (r.next_key, title(r.id))),
@@ -529,15 +530,26 @@ fn day_words(day: i64, today: i64) -> String {
     }
 }
 
-fn row_of(id: u32, read: u32, info: Option<&Info>, now: i64, today: i64) -> PRow {
-    let mut r = PRow { id, latest: String::new(), when: String::new(), behind: None, pace: String::new(), next: String::new(), look: Look::Pending, fresh: false, hiatus: false, error: None, next_key: i64::MAX, latest_key: i64::MIN };
+/// The list's own status of a manga, for finished and hiatus ([`mu::run_of`]).
+pub fn list_run(e: &crate::manga::MEntry) -> ListRun {
+    use crate::manga::Run;
+    match e.run {
+        Run::Publishing => ListRun::Publishing,
+        Run::Finished | Run::Discontinued => ListRun::Finished,
+        Run::Hiatus => ListRun::Hiatus,
+        Run::NotYet | Run::Unknown => ListRun::Unknown,
+    }
+}
+
+fn row_of(id: u32, read: u32, list: ListRun, info: Option<&Info>, now: i64, today: i64) -> PRow {
+    let mut r = PRow { id, latest: String::new(), when: String::new(), behind: None, pace: String::new(), next: String::new(), look: Look::Pending, fresh: false, hiatus: false, finished: false, error: None, next_key: i64::MAX, latest_key: i64::MIN };
     let Some(info) = info else { return r };
     r.error = info.error.clone();
     let Some(m) = &info.matched else {
         r.look = if info.looked { Look::NotFound } else { Look::Pending };
         return r;
     };
-    let Some(s) = info.summary(now) else {
+    let Some(s) = info.summary(now, list) else {
         r.look = Look::NoReleases;
         return r;
     };
@@ -550,14 +562,20 @@ fn row_of(id: u32, read: u32, info: Option<&Info>, now: i64, today: i64) -> PRow
     if let Some(at) = s.latest_at {
         r.when = ago(at, now);
         r.latest_key = at;
+    } else if s.from_record {
+        // The series record's chapter: its date isn't known (none is invented).
+        r.when = "date not tracked".into();
     }
     r.behind = mu::behind(s.latest_no, read);
-    r.fresh = r.behind.is_some_and(|b| b > 0) && s.latest_at.is_some_and(|at| now - at < mu::NEW_FOR);
+    let new_at = if s.from_record { Some(s.went_up_at).filter(|t| *t > 0) } else { s.latest_at };
+    r.fresh = r.behind.is_some_and(|b| b > 0) && new_at.is_some_and(|at| now - at < mu::NEW_FOR);
     let c = s.cadence;
     r.pace = c.pace.label();
     r.hiatus = c.pace == Pace::Hiatus;
+    r.finished = c.pace == Pace::Finished;
     r.next = match (c.pace, c.next) {
-        (Pace::Hiatus | Pace::Unknown, _) => String::new(),
+        (Pace::Untracked, _) => "release dates not tracked".into(),
+        (Pace::Hiatus | Pace::Unknown | Pace::Finished, _) => String::new(),
         (Pace::Irregular(d), _) => format!("about every {d} days"),
         (_, Some(n)) if n.div_euclid(DAY) <= today => "due today".into(),
         (_, Some(n)) => format!("next {}", day_words(n, today)),
@@ -682,7 +700,7 @@ pub fn one_pass<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cac
     let t = now();
     let mut dues = Vec::new();
     for it in items.iter().filter(|_| online) {
-        let Some(s) = infos.get(&it.media.id).and_then(|i| i.summary(t)) else { continue };
+        let Some(s) = infos.get(&it.media.id).and_then(|i| i.summary(t, ListRun::from_word(&it.media.air_status))) else { continue };
         if let Some(n) = mu::new_chapter(&s, it.progress, t)
             && store.announce_once(svc.name(), it.media.id, What::Chapter(n), t).unwrap_or(false)
         {
@@ -699,7 +717,7 @@ fn pick<T: kotora_core::http::Transport>(client: &mut mu::Client<T>, cache: &Cac
     let now = kotora_core::time::now_unix();
     let picked = match series {
         Some(id) => {
-            let (id, title) = client.series(id).map_err(|e| match e {
+            let (id, title, _) = client.series(id).map_err(|e| match e {
                 ServiceError::Other(m) if m.contains("no such") => "MangaUpdates has no series with that link.".to_string(),
                 e => crate::online::error_text(e),
             })?;
@@ -869,7 +887,13 @@ fn next_cell(r: &PRow) -> El {
     if r.pace.is_empty() {
         return el();
     }
-    let pace_c = if r.hiatus { PAL.st_dropped } else { PAL.text };
+    let pace_c = if r.hiatus {
+        PAL.st_dropped
+    } else if r.finished {
+        PAL.dim
+    } else {
+        PAL.text
+    };
     let mut c = col().gap(1.0).child(text(r.pace.clone()).font(theme::LABEL).color(pace_c));
     if !r.next.is_empty() {
         let fg = if r.next == "late" { PAL.warn() } else if r.next == "due today" { PAL.accent_hi } else { PAL.dim };
@@ -997,14 +1021,31 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
         (None, false) => row().child(text("Not looked up yet.").font(theme::LABEL).color(PAL.dim)),
     };
     c = c.child(what);
-    if let Some(sum) = info.and_then(|i| i.summary(now)) {
+    let list = s.manga.entries.iter().find(|e| e.id == id).map_or(ListRun::Unknown, list_run);
+    if let Some(status) = info.and_then(|i| i.series.as_ref()).map(|x| x.status.clone()).filter(|t| !t.is_empty()) {
+        c = c.child(text(format!("Status on MangaUpdates: {status}")).key("pub/mu-status").font(theme::LABEL).color(PAL.dim).wrap());
+    }
+    if let Some(sum) = info.and_then(|i| i.summary(now, list)) {
+        if sum.from_record && sum.stale && sum.run == mu::Run::Ongoing {
+            c = c.child(
+                text("The latest chapter is from MangaUpdates\u{2019} series record. Its release list stopped (often when an official release starts), so there are no dates to estimate from.")
+                    .key("pub/stale")
+                    .font(theme::LABEL)
+                    .color(PAL.dim)
+                    .wrap(),
+            );
+        }
         let mut rel = if wide { row().gap(14.0).flex_wrap() } else { col().gap(3.0) };
         for (label, day) in sum.recent.iter().take(if wide { 6 } else { 4 }) {
-            let (_, m, d) = kotora_core::time::civil_from_days(day.div_euclid(DAY));
-            rel = rel.child(row().gap(6.0).child(text(label.clone()).font(theme::LABEL_NUM).color(PAL.text)).child(text(format!("{} {d}", MONTHS[(m as usize + 11) % 12])).font(theme::LABEL_NUM).color(PAL.dim)));
+            let (y, m, d) = kotora_core::time::civil_from_days(day.div_euclid(DAY));
+            // The year when it isn't this one (a stale history's last releases).
+            let this_year = kotora_core::time::civil_from_days(now.div_euclid(DAY)).0;
+            let date = if y == this_year { format!("{} {d}", MONTHS[(m as usize + 11) % 12]) } else { format!("{} {d}, {y}", MONTHS[(m as usize + 11) % 12]) };
+            rel = rel.child(row().gap(6.0).child(text(label.clone()).font(theme::LABEL_NUM).color(PAL.text)).child(text(date).font(theme::LABEL_NUM).color(PAL.dim)));
         }
         if !sum.recent.is_empty() {
-            c = c.child(col().gap(4.0).child(text("RECENT RELEASES").font(theme::CAPTION).color(PAL.faint)).child(rel));
+            let head = if sum.stale { "LAST RELEASES LISTED" } else { "RECENT RELEASES" };
+            c = c.child(col().gap(4.0).child(text(head).font(theme::CAPTION).color(PAL.faint)).child(rel));
         }
     }
     if let Some(e) = info.and_then(|i| i.error.as_ref()) {
@@ -1060,7 +1101,7 @@ pub fn details_card(s: &State, id: u32) -> Option<El> {
         return None;
     }
     let now = s.clock();
-    let r = row_of(id, e.chapters, info, now, s.publishing_today(now));
+    let r = row_of(id, e.chapters, list_run(e), info, now, s.publishing_today(now));
     let mut c = crate::ui::card("det-publishing", "Publishing");
     let kv = |k: &str, v: El| crate::ui::kv(k, v);
     let looking = r.look == Look::Pending && !s.publishing_offline();
@@ -1092,7 +1133,7 @@ pub fn fake_info() -> Vec<(u32, Info)> {
     let rel = |ch: &str, days_ago: i64| mu::Release { chapter: ch.into(), volume: None, day: today - days_ago * DAY, added: today - days_ago * DAY + 9 * 3600 };
     let weekly = |last: u32, ago: i64, n: u32| (0..n).map(|k| rel(&(last - k).to_string(), ago + 7 * i64::from(k))).collect::<Vec<_>>();
     let m = |id: u64, title: &str, c: Confidence| Some(Matched { id, title: title.into(), confidence: c });
-    let info = |matched, releases| Info { matched, looked: true, releases, fetched_at: Some(now - 40 * 60), error: None };
+    let info = |matched, releases| Info { matched, looked: true, releases, series: None, fetched_at: Some(now - 40 * 60), error: None };
     vec![
         // Inkwell Cartographers: read 119, weekly, 121 out yesterday.
         (1, info(m(81_000_000_001, "Inkwell Cartographers", Confidence::Sure), weekly(121, 1, 12))),
@@ -1105,8 +1146,47 @@ pub fn fake_info() -> Vec<(u32, Info)> {
         // Night Shift Alchemist (a light novel): volumes only.
         (6, info(m(81_000_000_006, "Night Shift Alchemist", Confidence::Sure), [(9, 20), (8, 140), (7, 262)].iter().map(|(v, d)| mu::Release { chapter: String::new(), volume: Some(v.to_string()), day: today - d * DAY, added: 0 }).collect())),
         // Kumo Atelier: no series found.
-        (7, Info { matched: None, looked: true, releases: Vec::new(), fetched_at: None, error: None }),
+        (7, Info { matched: None, looked: true, releases: Vec::new(), series: None, fetched_at: None, error: None }),
     ]
+}
+
+/// Made-up look-alikes of a live list whose scanlation histories went stale (scenes and tests):
+/// official simulpubs the groups stopped for, finished series, a real hiatus, a normal weekly.
+/// Each: (id, title, MAL status word, chapters read, releases (last chapter, days ago, weekly
+/// count), series record (latest chapter, status, completely scanlated)).
+pub fn fake_stale(s: &mut State) {
+    use kotora_core::{ListItem, Media};
+    let now = crate::model::FAKE_NOW;
+    let today = now.div_euclid(DAY) * DAY;
+    #[allow(clippy::type_complexity)]
+    let rows: [(u32, &str, &str, u32, (u32, i64, u32), Option<(u32, &str, bool)>); 9] = [
+        // Simulpub: groups stopped two years ago at 272; the record says 368.
+        (101, "Goal Line Furnace", "currently_publishing", 368, (272, 730, 10), Some((368, "33 Volumes (Ongoing)", false))),
+        (102, "Scrapyard Saints", "currently_publishing", 170, (86, 700, 10), Some((174, "15 Volumes (Ongoing)", false))),
+        // Monthly, official English since last year.
+        (103, "Crimson Harvest", "currently_publishing", 85, (85, 400, 6), Some((97, "15 Volumes (Ongoing)", false))),
+        (104, "Witch Hat Sketchbook", "currently_publishing", 68, (68, 1100, 8), Some((80, "14 Volumes (Ongoing)", false))),
+        (105, "Firefly Bride", "currently_publishing", 15, (15, 1100, 6), Some((33, "6 Volumes (Ongoing)", false))),
+        // Finished: MangaUpdates says Complete; the list says finished.
+        (106, "The Lone Ridge", "currently_publishing", 170, (170, 5100, 4), Some((170, "17 Volumes (Complete)", true))),
+        (107, "Cursed Modulo", "finished", 25, (25, 240, 8), Some((25, "3 Volumes (Ongoing)", false))),
+        // A real hiatus (status), and a normal weekly series.
+        (108, "Lantern Cartel", "currently_publishing", 140, (140, 300, 8), Some((140, "16 Volumes (Hiatus)", false))),
+        (109, "Harbor Relay", "currently_publishing", 55, (57, 2, 10), Some((57, "6 Volumes (Ongoing)", false))),
+    ];
+    let lang = s.prefs.titles;
+    for (id, title, run, read, (last, ago, n), rec) in rows {
+        let it = ListItem { media: Media { kind: Kind::Manga, id, title: title.into(), format: "manga".into(), air_status: run.into(), ..Default::default() }, status: Status::Watching, progress: read, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: now - DAY };
+        s.manga.entries.push(crate::manga::MEntry::from_item(&it, lang));
+        let releases = (0..n).map(|k| mu::Release { chapter: (last - k).to_string(), volume: None, day: today - (ago + 7 * i64::from(k)) * DAY, added: 0 }).collect();
+        let series = rec.map(|(c, st, done)| mu::Series { latest_chapter: Some(c), status: st.into(), completed: done, last_updated: now - 2 * DAY, went_up_at: 0 });
+        let m = Some(Matched { id: 70_000_000_000 + u64::from(id), title: title.into(), confidence: Confidence::Sure });
+        s.publishing.info.insert(id, Info { matched: m, looked: true, releases, series, fetched_at: Some(now - 40 * 60), error: None });
+    }
+    s.manga.entries.retain(|e| e.id > 100 || e.status != Status::Watching);
+    s.publishing.tz = Some(0);
+    s.publishing.checked_at = Some(now - 40 * 60);
+    s.publishing_rebuild();
 }
 
 #[cfg(test)]
@@ -1297,7 +1377,8 @@ mod tests {
         let key = Key { service: kotora_core::service::ServiceId::Mal, media_id: 2 };
         cache.put_match(key, Some(&Matched { id: 5, title: "Salt & Gears".into(), confidence: Confidence::Sure }), now - 60);
         let rel = |ch: u32, d: i64| mu::Release { chapter: ch.to_string(), volume: None, day: (now - d * DAY).div_euclid(DAY) * DAY, added: now - d * DAY - 60 };
-        cache.put_releases(5, &[rel(65, 0), rel(64, 7), rel(63, 14), rel(62, 21)], now - 60);
+        let series = mu::Series { latest_chapter: Some(65), status: "8 Volumes (Ongoing)".into(), ..mu::Series::default() };
+        cache.put_releases_with(5, &[rel(65, 0), rel(64, 7), rel(63, 14), rel(62, 21)], Some(&series), now - 60);
         (cache, store, dir)
     }
 
@@ -1372,6 +1453,39 @@ mod tests {
     }
 
     #[test]
+    fn stale_histories_finished_and_hiatus_read_right() {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        s.page = Page::Publishing;
+        fake_stale(&mut s);
+        let items = s.ctl_publishing();
+        let get = |t: &str| items.iter().find(|i| i.title == t).cloned().unwrap();
+        // Simulpub: the record's chapter, no date, no estimate, never "hiatus".
+        let g = get("Goal Line Furnace");
+        assert_eq!((g.latest.as_str(), g.when.as_str(), g.behind), ("Ch 368", "date not tracked", Some(0)));
+        assert_eq!((g.pace.as_str(), g.next.as_str()), ("Ongoing", "release dates not tracked"));
+        assert_eq!(get("Scrapyard Saints").behind, Some(4));
+        assert_eq!((get("Crimson Harvest").latest.as_str(), get("Crimson Harvest").behind), ("Ch 97", Some(12)));
+        assert_eq!(get("Witch Hat Sketchbook").pace, "Ongoing");
+        // Finished, by MangaUpdates' status or by the list's.
+        let l = get("The Lone Ridge");
+        assert_eq!((l.pace.as_str(), l.behind), ("Finished", Some(0)));
+        assert_eq!(get("Cursed Modulo").pace, "Finished");
+        // A real hiatus, and a normal weekly with its estimate.
+        assert_eq!(get("Lantern Cartel").pace, "On hiatus");
+        let h = get("Harbor Relay");
+        assert_eq!((h.latest.as_str(), h.behind, h.pace.as_str()), ("Ch 57", Some(2), "Weekly"));
+        assert!(h.next.starts_with("next ~"), "{}", h.next);
+        // No row says hiatus but the one whose status says so.
+        assert_eq!(items.iter().filter(|i| i.pace == "On hiatus").count(), 1);
+        // The weekly sorts first (the only estimate); untracked, finished and hiatus after.
+        assert_eq!(items[0].title, "Harbor Relay");
+        for i in &items {
+            println!("kot| {:<22} {:<8} {:<18} {:<11} {}{}", i.title, i.latest, i.when, i.behind.map_or(String::new(), |b| if b == 0 { "caught up".into() } else { format!("{b} to read") }), i.pace, if i.next.is_empty() { String::new() } else { format!(", {}", i.next) });
+        }
+    }
+
+    #[test]
     fn days_in_words() {
         let today = 20_000;
         assert_eq!(day_words(today * DAY, today), "today");
@@ -1409,7 +1523,7 @@ mod tests {
         let search = r#"{"results":[{"record":{"series_id":5,"title":"Salt & Gears","type":"Manhwa","year":""},"hit_title":"Salt & Gears"}]}"#;
         let rel = |ch: u32, d: i64| format!(r#"{{"record":{{"chapter":"{ch}","release_date":"{}","time_added":{{"timestamp":{}}}}}}}"#, date(now - d * DAY), now - d * DAY);
         let releases = format!(r#"{{"results":[{},{},{},{}]}}"#, rel(65, 0), rel(64, 7), rel(63, 14), rel(62, 21));
-        let mut client = mu::Client::without_sleep(Rec(RefCell::new(Vec::new()), RefCell::new([search.to_string(), releases].into())));
+        let mut client = mu::Client::without_sleep(Rec(RefCell::new(Vec::new()), RefCell::new([search.to_string(), releases, r#"{"series_id":5,"title":"Salt & Gears","latest_chapter":65,"status":"8 Volumes (Ongoing)"}"#.to_string()].into())));
         let got = RefCell::new(Vec::new());
         let send = |a: Answer| {
             got.borrow_mut().push(match a {

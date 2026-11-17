@@ -143,16 +143,93 @@ pub fn parse_search(body: &str) -> Result<Vec<Hit>, String> {
         .collect())
 }
 
-/// `GET /series/{id}`: the series' title (a pasted link is checked with it).
-pub fn parse_series(body: &str) -> Result<(u64, String), String> {
+/// What the series record says of the run (`GET /series/{id}`). The release history alone goes
+/// stale once groups stop (an official simulpub, a finished series): the record's latest
+/// chapter and status don't.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Series {
+    /// The latest chapter MangaUpdates knows of.
+    pub latest_chapter: Option<u32>,
+    /// The status text, e.g. "33 Volumes (Ongoing)", "17 Volumes (Complete)", "(Hiatus)".
+    pub status: String,
+    /// Completely scanlated.
+    pub completed: bool,
+    /// When the record last changed (unix seconds; 0 unknown).
+    pub last_updated: i64,
+    /// When Kotora saw `latest_chapter` go up between two looks (0: never; the first look
+    /// doesn't count, so a series' first record never notifies).
+    pub went_up_at: i64,
+}
+
+/// `GET /series/{id}`: the id, the title (a pasted link is checked with it) and the record.
+pub fn parse_series(body: &str) -> Result<(u64, String, Series), String> {
     #[derive(Deserialize)]
     struct Rec {
         series_id: u64,
         #[serde(default)]
         title: String,
+        #[serde(default)]
+        latest_chapter: Option<i64>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        completed: Option<bool>,
+        #[serde(default)]
+        last_updated: Option<Value>,
     }
     let r: Rec = serde_json::from_str(body).map_err(|e| format!("can\u{2019}t read MangaUpdates\u{2019} series: {e}"))?;
-    Ok((r.series_id, html_unescape(&r.title)))
+    let series = Series {
+        latest_chapter: r.latest_chapter.filter(|n| *n > 0).and_then(|n| u32::try_from(n).ok()),
+        status: r.status.unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" "),
+        completed: r.completed.unwrap_or(false),
+        last_updated: r.last_updated.as_ref().and_then(|v| v.get("timestamp")).and_then(Value::as_i64).unwrap_or(0).max(0),
+        went_up_at: 0,
+    };
+    Ok((r.series_id, html_unescape(&r.title), series))
+}
+
+/// The list's own status of the manga (MyAnimeList's words; AniList's are mapped to them).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ListRun {
+    Publishing,
+    Finished,
+    Hiatus,
+    #[default]
+    Unknown,
+}
+
+impl ListRun {
+    pub fn from_word(s: &str) -> ListRun {
+        match s {
+            "currently_publishing" => ListRun::Publishing,
+            "finished" | "discontinued" => ListRun::Finished,
+            "on_hiatus" => ListRun::Hiatus,
+            _ => ListRun::Unknown,
+        }
+    }
+}
+
+/// Where the series is in its run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Run {
+    Ongoing,
+    Finished,
+    Hiatus,
+}
+
+/// Finished or on hiatus by the list's status (reliable on MyAnimeList and AniList), else by
+/// MangaUpdates' status text or its completed flag; else ongoing. Never from a gap in releases.
+pub fn run_of(series: Option<&Series>, list: ListRun) -> Run {
+    let text = series.map(|s| s.status.to_lowercase()).unwrap_or_default();
+    let complete = series.is_some_and(|s| s.completed) || (text.contains("complete") && !text.contains("incomplete"));
+    match list {
+        ListRun::Finished => Run::Finished,
+        ListRun::Hiatus => Run::Hiatus,
+        _ if complete => Run::Finished,
+        _ if text.contains("hiatus") => Run::Hiatus,
+        _ => Run::Ongoing,
+    }
 }
 
 /// MangaUpdates sends a few titles with HTML entities in them.
@@ -360,6 +437,14 @@ pub struct Summary {
     pub cadence: Cadence,
     /// The newest release days with what they brought, newest first (the row's panel).
     pub recent: Vec<(String, i64)>,
+    pub run: Run,
+    /// The latest chapter comes from the series record, past the release history: its date
+    /// isn't known.
+    pub from_record: bool,
+    /// The release history stopped (groups gave up after an official release, say): no estimate.
+    pub stale: bool,
+    /// When the record's latest chapter was seen going up (notifications; 0 never).
+    pub went_up_at: i64,
 }
 
 /// The release days that moved the series on: oldest first, each with the highest number it
@@ -389,8 +474,19 @@ fn new_highs(releases: &[Release]) -> (Vec<(i64, f64, usize)>, bool) {
     (out, chapters)
 }
 
-/// The latest chapter, its date, the estimate and the recent releases.
+/// [`summarize_with`] with no series record and no list status.
 pub fn summarize(releases: &[Release], now: i64) -> Summary {
+    summarize_with(releases, None, ListRun::Unknown, now)
+}
+
+/// The record ahead of the releases by more than this many chapters: the history is stale.
+const AHEAD: f64 = 2.0;
+
+/// The latest chapter (the higher of the releases and the series record), its date when the
+/// releases have it, the run (finished, on hiatus, ongoing: [`run_of`]), and the estimate. A
+/// release history the record has left behind, or with nothing for a long time on an ongoing
+/// series, is stale: no estimate ([`Pace::Untracked`]), never a hiatus by itself.
+pub fn summarize_with(releases: &[Release], series: Option<&Series>, list: ListRun, now: i64) -> Summary {
     let (highs, chapters) = new_highs(releases);
     let last = highs.last().map(|&(_, _, i)| &releases[i]);
     let recent = highs
@@ -403,7 +499,7 @@ pub fn summarize(releases: &[Release], now: i64) -> Summary {
             (label, day.max(0))
         })
         .collect();
-    Summary {
+    let mut s = Summary {
         latest: last.filter(|_| chapters).map(|r| r.chapter.clone()),
         latest_no: highs.last().filter(|_| chapters).map(|h| h.1),
         latest_at: last.map(Release::at),
@@ -411,7 +507,35 @@ pub fn summarize(releases: &[Release], now: i64) -> Summary {
         volume_only: last.filter(|_| !chapters).and_then(|r| r.volume.clone()),
         cadence: cadence_of(&highs.iter().map(|h| h.0).collect::<Vec<_>>(), now),
         recent,
+        run: run_of(series, list),
+        from_record: false,
+        stale: false,
+        went_up_at: series.map_or(0, |s| s.went_up_at),
+    };
+    let rel_high = s.latest_no;
+    if let Some(n) = series.and_then(|x| x.latest_chapter).map(f64::from)
+        && rel_high.is_none_or(|h| n > h)
+    {
+        s.stale = rel_high.is_none_or(|h| n - h > AHEAD) || s.cadence.overdue || s.cadence.pace == Pace::Hiatus;
+        s.latest = Some(format!("{n}"));
+        s.latest_no = Some(n);
+        s.latest_at = None;
+        s.latest_added = 0;
+        s.volume_only = None;
+        s.from_record = true;
     }
+    // A long quiet spell is a stale history, not a hiatus: only a status says hiatus.
+    if s.cadence.pace == Pace::Hiatus {
+        s.stale = true;
+    }
+    let c = &mut s.cadence;
+    match s.run {
+        Run::Finished => *c = Cadence { pace: Pace::Finished, gap_days: 0, next: None, overdue: false, last: c.last },
+        Run::Hiatus => *c = Cadence { pace: Pace::Hiatus, gap_days: 0, next: None, overdue: false, last: c.last },
+        Run::Ongoing if s.stale => *c = Cadence { pace: Pace::Untracked, gap_days: 0, next: None, overdue: false, last: c.last },
+        Run::Ongoing => {}
+    }
+    s
 }
 
 /// "Ch 74" for a plain number, the text as written otherwise ("Bone 67", "Ch 10-12").
@@ -434,8 +558,13 @@ pub enum Pace {
     Every(u32),
     /// No clear rhythm; about every so many days.
     Irregular(u32),
-    /// Nothing for a long time.
+    /// On hiatus (the series' status says so; [`cadence_of`] alone also says it after a long
+    /// quiet spell, which [`summarize_with`] turns into [`Pace::Untracked`]).
     Hiatus,
+    /// The series is finished.
+    Finished,
+    /// Ongoing, but the release history stopped: no dates to estimate from.
+    Untracked,
     /// Too few releases to tell.
     Unknown,
 }
@@ -453,6 +582,8 @@ impl Pace {
             Pace::Every(d) => format!("Every {d} days"),
             Pace::Irregular(_) => "Irregular".into(),
             Pace::Hiatus => "On hiatus".into(),
+            Pace::Finished => "Finished".into(),
+            Pace::Untracked => "Ongoing".into(),
             Pace::Unknown => "Too few releases".into(),
         }
     }
@@ -479,7 +610,7 @@ impl Cadence {
     pub fn sort_key(&self) -> i64 {
         match (self.pace, self.next, self.last) {
             (_, Some(n), _) => n,
-            (Pace::Hiatus | Pace::Unknown, _, _) => i64::MAX,
+            (Pace::Hiatus | Pace::Unknown | Pace::Finished | Pace::Untracked, _, _) => i64::MAX,
             (_, None, Some(l)) if self.overdue => l + i64::from(self.gap_days) * DAY,
             (_, None, Some(l)) => l + i64::from(self.gap_days.max(1)) * DAY,
             _ => i64::MAX,
@@ -600,8 +731,8 @@ impl<T: Transport> Client<T> {
         parse_releases(&self.send("POST", format!("{API}/releases/search"), Some(body))?).map_err(ServiceError::Other)
     }
 
-    /// Series `id`'s title (checks a pasted link).
-    pub fn series(&mut self, id: u64) -> Result<(u64, String), ServiceError> {
+    /// Series `id`: its id, title (a pasted link is checked with it) and record.
+    pub fn series(&mut self, id: u64) -> Result<(u64, String, Series), ServiceError> {
         parse_series(&self.send("GET", format!("{API}/series/{id}"), None)?).map_err(ServiceError::Other)
     }
 
@@ -651,6 +782,9 @@ struct CachedMatch {
 struct CachedReleases {
     at: i64,
     releases: Vec<Release>,
+    /// The series record read with them (files from before it have none: read again).
+    #[serde(default)]
+    series: Option<Series>,
 }
 
 /// The manga a match belongs to: the service and its id there.
@@ -712,7 +846,17 @@ impl Cache {
     }
 
     pub fn put_releases(&self, id: u64, releases: &[Release], now: i64) {
-        self.write(&format!("rel-{id}.json"), &CachedReleases { at: now, releases: releases.to_vec() });
+        self.put_releases_with(id, releases, None, now);
+    }
+
+    /// The releases with the series record.
+    pub fn put_releases_with(&self, id: u64, releases: &[Release], series: Option<&Series>, now: i64) {
+        self.write(&format!("rel-{id}.json"), &CachedReleases { at: now, releases: releases.to_vec(), series: series.cloned() });
+    }
+
+    /// The series record saved with the releases.
+    pub fn get_series(&self, id: u64) -> Option<Series> {
+        self.read::<CachedReleases>(&format!("rel-{id}.json")).and_then(|c| c.series)
     }
 }
 
@@ -751,6 +895,8 @@ pub struct Info {
     /// Searched at least once (a `None` match means "not found").
     pub looked: bool,
     pub releases: Vec<Release>,
+    /// The series record read with them.
+    pub series: Option<Series>,
     /// When the releases were read (`None`: never).
     pub fetched_at: Option<i64>,
     /// The last lookup's failure, if it failed.
@@ -758,8 +904,9 @@ pub struct Info {
 }
 
 impl Info {
-    pub fn summary(&self, now: i64) -> Option<Summary> {
-        (self.matched.is_some() && self.fetched_at.is_some()).then(|| summarize(&self.releases, now))
+    /// `list`: the list's status of the manga (finished and hiatus come first from it).
+    pub fn summary(&self, now: i64, list: ListRun) -> Option<Summary> {
+        (self.matched.is_some() && self.fetched_at.is_some()).then(|| summarize_with(&self.releases, self.series.as_ref(), list, now))
     }
 }
 
@@ -791,7 +938,8 @@ pub fn saved(cache: &Cache, key: Key, picked: Option<Matched>) -> Info {
         Some((r, at)) => (r, Some(at)),
         None => (Vec::new(), None),
     };
-    Info { matched, looked, releases, fetched_at, error: None }
+    let series = matched.as_ref().and_then(|m| cache.get_series(m.id));
+    Info { matched, looked, releases, series, fetched_at, error: None }
 }
 
 /// Whether [`fetch`] would ask MangaUpdates for anything.
@@ -804,7 +952,8 @@ pub fn stale(cache: &Cache, key: Key, picked: Option<&Matched>, now: i64) -> boo
         },
     };
     match m {
-        Some(m) => cache.get_releases(m.id).is_none_or(|(_, at)| !releases_fresh(at, now)),
+        // Saved before the series record was read: read again.
+        Some(m) => cache.get_releases(m.id).is_none_or(|(_, at)| !releases_fresh(at, now)) || cache.get_series(m.id).is_none(),
         None => false,
     }
 }
@@ -825,12 +974,32 @@ pub fn fetch<T: Transport>(client: &mut Client<T>, cache: &Cache, key: Key, pick
         },
     };
     let Some(m) = matched else { return Ok(Info { looked: true, ..Info::default() }) };
-    if !force && let Some((r, at)) = cache.get_releases(m.id).filter(|(_, at)| releases_fresh(*at, now)) {
-        return Ok(Info { matched: Some(m), looked: true, releases: r, fetched_at: Some(at), error: None });
+    let old = cache.get_series(m.id);
+    if !force
+        && old.is_some()
+        && let Some((r, at)) = cache.get_releases(m.id).filter(|(_, at)| releases_fresh(*at, now))
+    {
+        return Ok(Info { matched: Some(m), looked: true, releases: r, series: old, fetched_at: Some(at), error: None });
     }
     let r = client.releases(m.id)?;
-    cache.put_releases(m.id, &r, now);
-    Ok(Info { matched: Some(m), looked: true, releases: r, fetched_at: Some(now), error: None })
+    let series = match client.series(m.id) {
+        Ok((_, _, s)) => Some(went_up(old.as_ref(), s, now)),
+        Err(e @ (ServiceError::Offline(_) | ServiceError::RateLimited)) => return Err(e),
+        // No record (an odd answer): the releases alone, asked again next time.
+        Err(_) => old.or_else(|| Some(Series::default())),
+    };
+    cache.put_releases_with(m.id, &r, series.as_ref(), now);
+    Ok(Info { matched: Some(m), looked: true, releases: r, series, fetched_at: Some(now), error: None })
+}
+
+/// The new record, with when its latest chapter went up since the saved one (kept from the saved
+/// one otherwise; never on a first look).
+pub fn went_up(old: Option<&Series>, mut new: Series, now: i64) -> Series {
+    new.went_up_at = match (old.and_then(|o| o.latest_chapter), new.latest_chapter) {
+        (Some(a), Some(b)) if b > a => now,
+        _ => old.map_or(0, |o| o.went_up_at),
+    };
+    new
 }
 
 // ----------------------------------------------------------------------------- notifications
@@ -839,11 +1008,18 @@ pub fn fetch<T: Transport>(client: &mut Client<T>, cache: &Cache, key: Key, pick
 pub const NEW_FOR: i64 = 2 * 86_400;
 
 /// The chapter to announce for a manga read up to `read`: the latest one, when it is past the
-/// progress and MangaUpdates got it in the last [`NEW_FOR`] seconds (no flood of old chapters
-/// on the first look, or after a long time off). Its whole number (the announcement's key).
+/// progress and is new: a release MangaUpdates got in the last [`NEW_FOR`] seconds, or the series
+/// record's latest chapter seen going up between two looks that recently. A record that is simply
+/// ahead of a stale history (the first look) never counts. Its whole number (the key).
 pub fn new_chapter(s: &Summary, read: u32, now: i64) -> Option<u32> {
     let n = behind(s.latest_no, read).filter(|b| *b > 0).map(|_| s.latest_no.unwrap_or(0.0).floor() as u32)?;
-    let at = if s.latest_added > 0 { s.latest_added } else { s.latest_at? };
+    let at = if s.from_record {
+        Some(s.went_up_at).filter(|t| *t > 0)?
+    } else if s.latest_added > 0 {
+        s.latest_added
+    } else {
+        s.latest_at?
+    };
     (at <= now + 3600 && now - at < NEW_FOR).then_some(n)
 }
 

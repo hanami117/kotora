@@ -14,6 +14,16 @@ const WEEKLY: &str = include_str!("fixtures/releases-weekly.json");
 const BONE: &str = include_str!("fixtures/releases-bone.json");
 const NIGHT: &str = include_str!("fixtures/releases-night.json");
 const VOLUMES: &str = include_str!("fixtures/releases-volumes.json");
+const SERIES_WEEKLY: &str = include_str!("fixtures/series-weekly.json");
+const SERIES_FROZEN: &str = include_str!("fixtures/series-frozen.json");
+const FROZEN: &str = include_str!("fixtures/releases-frozen.json");
+const SERIES_COMPLETE: &str = include_str!("fixtures/series-complete.json");
+const COMPLETE: &str = include_str!("fixtures/releases-complete.json");
+const SERIES_HIATUS: &str = include_str!("fixtures/series-hiatus.json");
+
+fn record(body: &str) -> Series {
+    parse_series(body).unwrap().2
+}
 
 /// A transport that answers from a list and keeps what was asked.
 #[derive(Default)]
@@ -104,7 +114,9 @@ fn search_answers_and_titles() {
     assert_eq!(normalize("Salt &amp; Gears!"), normalize("salt and amp gears"), "entities are unescaped before");
     assert_eq!(normalize("Salt & Gears!"), "salt and gears");
     assert_eq!(normalize("  The  Quiet—Foundry "), "the quiet foundry");
-    assert_eq!(parse_series(SERIES).unwrap(), (81_020_304_051, "Salt & Gears".into()));
+    let (id, title, s) = parse_series(SERIES).unwrap();
+    assert_eq!((id, title.as_str()), (81_020_304_051, "Salt & Gears"));
+    assert_eq!(s, Series { latest_chapter: Some(74), status: "74 Chapters (Ongoing)".into(), completed: false, last_updated: 0, went_up_at: 0 });
 }
 
 #[test]
@@ -212,12 +224,19 @@ fn named_chapters_every_two_weeks() {
 }
 
 #[test]
-fn a_monthly_series_gone_quiet_is_on_hiatus() {
+fn a_quiet_spell_is_a_hiatus_only_when_a_status_says_so() {
     let r = parse_releases(NIGHT).unwrap();
+    // Monthly, nothing since May: by the gap alone only "not tracked", never a hiatus.
     let s = summarize(&r, NOW);
     assert_eq!(s.latest.as_deref(), Some("Night 259"));
-    assert_eq!(s.cadence.pace, Pace::Hiatus, "monthly, nothing since May");
+    assert_eq!((s.cadence.pace, s.stale, s.run), (Pace::Untracked, true, Run::Ongoing));
     assert_eq!(s.cadence.next, None);
+    assert_eq!(s.cadence.pace.label(), "Ongoing");
+    // MangaUpdates' status says hiatus: on hiatus.
+    let s = summarize_with(&r, Some(&record(SERIES_HIATUS)), ListRun::Unknown, NOW);
+    assert_eq!((s.cadence.pace, s.run, s.latest.as_deref()), (Pace::Hiatus, Run::Hiatus, Some("Night 259")));
+    // So does the list's own status (MyAnimeList / AniList), even with no record.
+    assert_eq!(summarize_with(&r, None, ListRun::Hiatus, NOW).cadence.pace, Pace::Hiatus);
     // In June it was simply monthly.
     let june = day("2026-06-02");
     let s = summarize(&r, june);
@@ -342,25 +361,30 @@ fn fetch_searches_once_then_only_releases_and_only_when_stale() {
     assert!(stale(&cache, key, None, NOW));
     assert_eq!(saved(&cache, key, None), Info::default(), "never looked");
     // First time: two searches (romaji finds nothing), then the releases.
-    let mut c = client(vec![ok(SEARCH_NONE), ok(SEARCH), ok(WEEKLY)]);
+    let mut c = client(vec![ok(SEARCH_NONE), ok(SEARCH), ok(WEEKLY), ok(SERIES_WEEKLY)]);
     let i = fetch(&mut c, &cache, key, None, &salt(), NOW, false).unwrap();
     assert_eq!(i.matched.as_ref().map(|m| (m.id, m.confidence)), Some((81_020_304_051, Confidence::Sure)));
     assert_eq!((i.fetched_at, i.releases.len()), (Some(NOW), 13));
-    assert_eq!(c.transport.seen.borrow().len(), 3);
+    assert_eq!(i.series.as_ref().and_then(|s| s.latest_chapter), Some(74), "the series record is read with the releases");
+    assert_eq!(c.transport.seen.borrow().len(), 4);
+    assert_eq!(c.transport.seen.borrow()[3].0, "GET https://api.mangaupdates.com/v1/series/81020304051");
     assert!(!stale(&cache, key, None, NOW + 60));
     // Within 4 hours: nothing asked. The saved files say the same offline.
     let mut c = client(vec![]);
     assert_eq!(fetch(&mut c, &cache, key, None, &salt(), NOW + 3600, false).unwrap(), i);
     assert_eq!(saved(&cache, key, None), i);
-    // After 4 hours: only the releases.
+    // After 4 hours: only the releases and the record.
     assert!(stale(&cache, key, None, NOW + RELEASES_TTL));
-    let mut c = client(vec![ok(WEEKLY)]);
+    let mut c = client(vec![ok(WEEKLY), ok(SERIES_WEEKLY)]);
     fetch(&mut c, &cache, key, None, &salt(), NOW + RELEASES_TTL, false).unwrap();
     assert!(c.transport.seen.borrow()[0].0.ends_with("/releases/search"));
-    // Refresh asks for the releases even when fresh, never a sure match again.
-    let mut c = client(vec![ok(WEEKLY)]);
+    // Refresh asks for them even when fresh, never a sure match again.
+    let mut c = client(vec![ok(WEEKLY), ok(SERIES_WEEKLY)]);
     fetch(&mut c, &cache, key, None, &salt(), NOW + RELEASES_TTL + 60, true).unwrap();
-    assert_eq!(c.transport.seen.borrow().len(), 1);
+    assert_eq!(c.transport.seen.borrow().len(), 2);
+    // Releases saved before the record was read (an older Kotora): asked again at once.
+    cache.put_releases(81_020_304_051, &parse_releases(WEEKLY).unwrap(), NOW + RELEASES_TTL + 60);
+    assert!(stale(&cache, key, None, NOW + RELEASES_TTL + 120));
     // Not found: saved, not searched again for 3 days.
     let other = Key { media_id: 3, ..key };
     let mut c = client(vec![ok(SEARCH_NONE), ok(SEARCH_NONE)]);
@@ -381,7 +405,7 @@ fn a_picked_series_wins_and_is_kept_in_the_store() {
     set_picked(&store, key, Some(&m)).unwrap();
     assert_eq!(picked(&store, key), Some(m.clone()));
     // No search: straight to its releases.
-    let mut c = client(vec![ok(NIGHT)]);
+    let mut c = client(vec![ok(NIGHT), ok(SERIES_HIATUS)]);
     let i = fetch(&mut c, &cache, key, picked(&store, key), &salt(), NOW, false).unwrap();
     assert_eq!(i.matched, Some(m.clone()));
     assert!(c.transport.seen.borrow()[0].0.ends_with("/releases/search"));
@@ -416,4 +440,107 @@ fn a_new_chapter_is_announced_only_while_new_and_unread() {
     assert_eq!(new_chapter(&s, 0, day("2026-09-30") + 60), None);
     // The announcement key is apart from anime episodes.
     assert_eq!(crate::airnotes::What::Chapter(74).key(), "mch74");
+}
+
+// ------------------------------------------------- stale histories (the live test's cases)
+
+#[test]
+fn a_simulpub_froze_the_scanlation_history_the_record_has_the_latest() {
+    // Groups stopped at 272 two years ago; the record says 368, ongoing (an official simulpub).
+    let r = parse_releases(FROZEN).unwrap();
+    let rec = record(SERIES_FROZEN);
+    let s = summarize_with(&r, Some(&rec), ListRun::Publishing, NOW);
+    assert_eq!((s.latest.as_deref(), s.latest_no), (Some("368"), Some(368.0)));
+    assert_eq!((s.from_record, s.stale, s.run), (true, true, Run::Ongoing));
+    assert_eq!(s.latest_at, None, "no date is invented for the record's chapter");
+    assert_eq!((s.cadence.pace, s.cadence.next), (Pace::Untracked, None), "no estimate from a frozen history");
+    assert_eq!(s.cadence.sort_key(), i64::MAX);
+    assert_eq!(behind(s.latest_no, 272), Some(96), "to read from the record, not 'caught up'");
+    assert_eq!(behind(s.latest_no, 368), Some(0));
+    // Without the record (a failed request), the old history still never says hiatus.
+    assert_eq!(summarize_with(&r, None, ListRun::Publishing, NOW).cadence.pace, Pace::Untracked);
+    // The record one or two chapters ahead of fresh weekly releases: the latest from the
+    // record, the weekly estimate kept.
+    let w = parse_releases(WEEKLY).unwrap();
+    let ahead = Series { latest_chapter: Some(75), status: "8 Volumes (Ongoing)".into(), ..Series::default() };
+    let s = summarize_with(&w, Some(&ahead), ListRun::Publishing, NOW);
+    assert_eq!((s.latest_no, s.from_record, s.stale, s.cadence.pace), (Some(75.0), true, false, Pace::Weekly));
+}
+
+#[test]
+fn finished_series_say_finished_with_the_count_to_read() {
+    // MangaUpdates' status "(Complete)", releases ending "163-170 (end)" fourteen years ago.
+    let r = parse_releases(COMPLETE).unwrap();
+    let s = summarize_with(&r, Some(&record(SERIES_COMPLETE)), ListRun::Unknown, NOW);
+    assert_eq!((s.run, s.cadence.pace, s.cadence.pace.label()), (Run::Finished, Pace::Finished, "Finished".to_string()));
+    assert_eq!((s.latest.as_deref(), s.latest_no), (Some("163-170 (end)"), Some(170.0)));
+    assert_eq!(chapter_label(s.latest.as_deref().unwrap()), "Ch 163-170 (end)");
+    assert_eq!(behind(s.latest_no, 120), Some(50), "still counted");
+    // The list says finished (MyAnimeList "finished", AniList FINISHED): finished, whatever
+    // MangaUpdates' text (a 25-chapter series whose groups stopped 8 months ago).
+    let ongoing = Series { latest_chapter: Some(25), status: "3 Volumes (Ongoing)".into(), ..Series::default() };
+    let short: Vec<Release> = (0..6).map(|k| Release { chapter: (25 - k).to_string(), volume: None, day: day("2026-03-10") - k as i64 * 7 * DAY, added: 0 }).collect();
+    let s = summarize_with(&short, Some(&ongoing), ListRun::from_word("finished"), NOW);
+    assert_eq!((s.cadence.pace, behind(s.latest_no, 25)), (Pace::Finished, Some(0)));
+    // The flags and words.
+    assert_eq!(run_of(Some(&Series { completed: true, ..Series::default() }), ListRun::Unknown), Run::Finished);
+    assert_eq!(run_of(Some(&Series { status: "Incomplete (Ongoing)".into(), ..Series::default() }), ListRun::Unknown), Run::Ongoing);
+    assert_eq!(run_of(None, ListRun::from_word("discontinued")), Run::Finished);
+    assert_eq!(run_of(Some(&record(SERIES_HIATUS)), ListRun::Finished), Run::Finished, "finished wins");
+    assert_eq!(ListRun::from_word("currently_publishing"), ListRun::Publishing);
+}
+
+#[test]
+fn a_normal_weekly_series_is_unchanged_by_its_record() {
+    let s = summarize_with(&parse_releases(WEEKLY).unwrap(), Some(&record(SERIES_WEEKLY)), ListRun::Publishing, NOW);
+    assert_eq!((s.latest.as_deref(), s.from_record, s.stale), (Some("74"), false, false));
+    assert_eq!((s.cadence.pace, s.cadence.next), (Pace::Weekly, Some(day("2026-11-22"))));
+    assert!(s.latest_at.is_some());
+}
+
+#[test]
+fn the_record_jump_never_notifies_only_a_rise_between_two_looks() {
+    let r = parse_releases(FROZEN).unwrap();
+    // First look: 368 in the record, the user at 360: not "new" (no release, no rise seen).
+    let first = went_up(None, record(SERIES_FROZEN), NOW);
+    assert_eq!(first.went_up_at, 0);
+    let s = summarize_with(&r, Some(&first), ListRun::Publishing, NOW);
+    assert_eq!(new_chapter(&s, 360, NOW), None);
+    // Same record four hours later: still nothing.
+    let same = went_up(Some(&first), record(SERIES_FROZEN), NOW + RELEASES_TTL);
+    assert_eq!(same.went_up_at, 0);
+    // The record goes to 369 at the next look: chapter 369, once (the announcement key does once).
+    let next = went_up(Some(&same), Series { latest_chapter: Some(369), ..record(SERIES_FROZEN) }, NOW + 2 * RELEASES_TTL);
+    assert_eq!(next.went_up_at, NOW + 2 * RELEASES_TTL);
+    let s = summarize_with(&r, Some(&next), ListRun::Publishing, NOW + 2 * RELEASES_TTL + 60);
+    assert_eq!(new_chapter(&s, 368, NOW + 2 * RELEASES_TTL + 60), Some(369));
+    assert_eq!(new_chapter(&s, 369, NOW + 2 * RELEASES_TTL + 60), None, "read already");
+    // The rise is kept while unchanged, and gets old.
+    let later = went_up(Some(&next), Series { latest_chapter: Some(369), ..record(SERIES_FROZEN) }, NOW + 3 * RELEASES_TTL);
+    assert_eq!(later.went_up_at, next.went_up_at);
+    let s = summarize_with(&r, Some(&later), ListRun::Publishing, next.went_up_at + NEW_FOR);
+    assert_eq!(new_chapter(&s, 368, next.went_up_at + NEW_FOR), None);
+}
+
+#[test]
+fn fetch_keeps_the_record_and_its_rise() {
+    let (cache, dir) = scratch("record");
+    let key = Key { service: crate::service::ServiceId::Mal, media_id: 9 };
+    let m = Matched { id: 70_000_000_001, title: "Goal Line Furnace".into(), confidence: Confidence::Picked };
+    let mut c = client(vec![ok(FROZEN), ok(SERIES_FROZEN)]);
+    let i = fetch(&mut c, &cache, key, Some(m.clone()), &salt(), NOW, false).unwrap();
+    assert_eq!(i.series.as_ref().map(|s| (s.latest_chapter, s.went_up_at)), Some((Some(368), 0)));
+    assert_eq!(saved(&cache, key, Some(m.clone())).series, i.series);
+    // 4 hours later the record says 369: the rise is noted.
+    let up = SERIES_FROZEN.replace("\"latest_chapter\": 368", "\"latest_chapter\": 369");
+    let mut c = client(vec![ok(FROZEN), ok(&up)]);
+    let i = fetch(&mut c, &cache, key, Some(m.clone()), &salt(), NOW + RELEASES_TTL, false).unwrap();
+    assert_eq!(i.series.as_ref().map(|s| (s.latest_chapter, s.went_up_at)), Some((Some(369), NOW + RELEASES_TTL)));
+    // A record that can't be read keeps the saved one; offline stops the fetch.
+    let mut c = client(vec![ok(FROZEN), status(500)]);
+    let i = fetch(&mut c, &cache, key, Some(m.clone()), &salt(), NOW + 2 * RELEASES_TTL, false).unwrap();
+    assert_eq!(i.series.as_ref().and_then(|s| s.latest_chapter), Some(369));
+    let mut c = client(vec![ok(FROZEN), Err("dns".into())]);
+    assert!(matches!(fetch(&mut c, &cache, key, Some(m), &salt(), NOW + 3 * RELEASES_TTL, false), Err(ServiceError::Offline(_))));
+    let _ = std::fs::remove_dir_all(&dir);
 }

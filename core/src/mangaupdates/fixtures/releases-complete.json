@@ -1,0 +1,5 @@
+{"total_hits": 3, "page": 1, "per_page": 40, "results": [
+ {"record": {"id": 3, "title": "The Lone Ridge", "volume": "17", "chapter": "163-170 (end)", "release_date": "2012-08-01"}},
+ {"record": {"id": 2, "title": "The Lone Ridge", "volume": "16", "chapter": "153-162", "release_date": "2012-03-01"}},
+ {"record": {"id": 1, "title": "The Lone Ridge", "volume": "15", "chapter": "143-152", "release_date": "2011-10-01"}}
+]}

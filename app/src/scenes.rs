@@ -236,6 +236,16 @@ pub const SCENES: &[Scene] = &[
         publishing(s);
         s.set_publishing_sort(crate::publishing::PSort::Latest);
     }),
+    // Stale scanlation histories (official simulpubs), finished series, a real hiatus, a weekly.
+    ("publishing-stale", |s| {
+        publishing(s);
+        crate::publishing::fake_stale(s);
+    }),
+    ("publishing-stale-panel", |s| {
+        publishing(s);
+        crate::publishing::fake_stale(s);
+        s.publishing_toggle(101);
+    }),
     // A row's panel: a guessed match, its releases, the link field.
     ("publishing-panel", |s| {
         publishing(s);
