@@ -80,6 +80,15 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             set(s, &title, change, anyway)
         })),
         Request::Remove { title, yes } => reply(on_ui(handle, true, move |s| remove(s, &title, yes))),
+        Request::MangaSet { title, progress, volumes, status: st, score_text } => reply(on_ui(handle, true, move |s| {
+            manga_ready(s)?;
+            let status = match st.as_deref() {
+                Some(name) => Some(parse_status(name)?),
+                None => None,
+            };
+            let change = Change { status, progress, volumes, score: score_of(s, None, score_text.as_deref())?, ..Default::default() };
+            manga_set(s, &title, change)
+        })),
         Request::Rewatch { title } => reply(on_ui(handle, true, move |s| {
             // A MyAnimeList id, or a part of the title.
             let i = match title.trim().parse::<u32>().ok().and_then(|id| s.entries.iter().position(|e| e.id == id)) {
@@ -340,6 +349,18 @@ fn set(s: &mut State, title: &str, mut change: Change, anyway: bool) -> Result<R
     Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
 }
 
+/// `kot set --manga`: the manga `title` names ([`State::find_manga_strict`]), then the change
+/// through the manga editor's own path (`manga_edit`: the queue, the mirror, Undo in the Queue).
+fn manga_set(s: &mut State, title: &str, mut change: Change) -> Result<Reply, String> {
+    let i = s.find_manga_strict(title)?;
+    let id = s.manga.entries[i].id;
+    if let Some(sc) = change.score {
+        change.score = Some(s.score_format().pick(s.manga.entries[i].score, sc));
+    }
+    let i = s.manga_edit(id, change)?;
+    Ok(Reply::Edited { entry: s.manga_ctl(i) })
+}
+
 /// `kot add`: a MyAnimeList id (its information page), or a search that must find one anime:
 /// a title that matches one result exactly, or a single result. Runs on the connection's thread.
 /// `kot add --manga` and `kot remove --manga` need a signed-in list service with Manga on.
@@ -542,6 +563,34 @@ mod tests {
         s.remove_manga(2).unwrap();
         assert!(s.find_manga("salt").is_err());
         assert!(s.entries.iter().any(|e| e.id == 2), "the anime 2 stays");
+    }
+
+    /// `kot set --manga`: a title or a bare id; chapters, volumes, status and score through the
+    /// manga edit path (queued, the editor's rules: the last chapter completes).
+    #[test]
+    fn kot_sets_a_manga_by_title_or_id() {
+        let mut s = State::fake();
+        assert!(manga_ready(&mut s).is_err(), "Manga off");
+        crate::manga::fake(&mut s);
+        let Reply::Edited { entry } = manga_set(&mut s, "salt", Change { progress: Some(70), volumes: Some(7), ..Default::default() }).unwrap() else { panic!() };
+        assert_eq!((entry.title.as_str(), entry.progress, entry.volumes, entry.waiting.as_deref()), ("Salt & Gears", 70, Some(7), Some("Waiting to sync")));
+        // A bare number is the id: manga 2, never a title search.
+        let Reply::Edited { entry } = manga_set(&mut s, "2", Change { progress: Some(71), ..Default::default() }).unwrap() else { panic!() };
+        assert_eq!((entry.id, entry.progress), (2, 71));
+        assert!(manga_set(&mut s, "999", Change { progress: Some(1), ..Default::default() }).unwrap_err().contains("id 999"));
+        // The editor's rules: the last chapter completes it; a count past the total is refused.
+        let Reply::Edited { entry } = manga_set(&mut s, "Salt & Gears", Change { progress: Some(88), ..Default::default() }).unwrap() else { panic!() };
+        assert_eq!(entry.status, "Completed");
+        assert!(manga_set(&mut s, "2", Change { progress: Some(89), ..Default::default() }).is_err());
+        // Status and score.
+        let Reply::Edited { entry } = manga_set(&mut s, "Moth", Change { status: Some(Status::OnHold), score: Some(kotora_core::score::ten(7)), ..Default::default() }).unwrap() else { panic!() };
+        assert_eq!((entry.status.as_str(), entry.score), ("On hold", Some(7)));
+        // An anime with the same id is untouched.
+        assert!(s.entries.iter().find(|e| e.id == 2).is_none_or(|e| e.progress != 71));
+        // AniList: a bare number also finds the MyAnimeList id (idMal).
+        s.manga.entries[0].id_mal = Some(4242);
+        let first = s.manga.entries[0].id;
+        assert_eq!(s.find_manga_strict("4242").map(|i| s.manga.entries[i].id), Ok(first));
     }
 
     #[test]

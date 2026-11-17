@@ -834,6 +834,26 @@ impl State {
         }
     }
 
+    /// `kot set --manga`'s rule, with no guessing: a TITLE made only of digits is an id (the
+    /// active service's; on AniList also the MyAnimeList id, `idMal`), never a title; anything
+    /// else is a whole title, or a part of one that matches one manga.
+    pub fn find_manga_strict(&self, q: &str) -> Result<usize, String> {
+        if !self.has_list() {
+            return Err("Not signed in.".into());
+        }
+        let q = q.trim();
+        if !q.is_empty() && q.bytes().all(|b| b.is_ascii_digit()) {
+            let id: u32 = q.parse().map_err(|_| format!("\u{201c}{q}\u{201d} is not an id."))?;
+            let es = &self.manga.entries;
+            return es
+                .iter()
+                .position(|e| e.id == id)
+                .or_else(|| es.iter().position(|e| e.id_mal == Some(id)))
+                .ok_or_else(|| format!("No manga on your list has the id {id} (a number alone is read as an id; add more of the title for a title made of digits)."));
+        }
+        self.find_manga(q)
+    }
+
     /// The manga `q` names: its id, a whole title, or a part of one that matches one manga.
     pub fn find_manga(&self, q: &str) -> Result<usize, String> {
         if !self.has_list() {

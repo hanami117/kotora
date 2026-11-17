@@ -63,6 +63,9 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   chapter, or volume). The manga Grid and Large views take the arrow keys, Enter, and + / − like the anime ones
   (which gain + / − too). `kot fill-volumes [--yes]` prints the volume preview and fills only after a yes, and
   the preview has "Look up again" to ask MangaDex anew instead of using its saved answers.
+- **`kot set --manga TITLE|ID [CH] [--volumes N] [--status S] [--score SCORE|none]`**: a manga's chapters,
+  volumes, status or score from the terminal, as the manga editor does (sync queue, mirror). A TITLE made only of
+  digits is the manga's id (`kot set --manga 24 258`: manga 24, chapter 258).
 
 ### Changed
 - Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import

@@ -252,6 +252,20 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         yes: bool,
     },
+    /// `kot set --manga`: chapters (`progress`), volumes, status or score of a manga (as `Set`,
+    /// a separate command so an older app refuses instead of editing an anime). `title`: a
+    /// title, or the manga's id when it is only digits. Replies `Edited`.
+    MangaSet {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        progress: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        volumes: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        score_text: Option<String>,
+    },
     /// `kot remove --manga`: as `Remove`, from the manga list.
     MangaRemove {
         title: String,

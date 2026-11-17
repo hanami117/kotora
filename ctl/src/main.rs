@@ -47,6 +47,14 @@ Commands:
       [--status STATUS] [--score SCORE|none]
                         SCORE in your score format: 7 (MyAnimeList),
                         or on AniList 73, 7.3, *** (stars), :) (smileys)
+  set --manga TITLE|ID [CH]
+      [--volumes N] [--status STATUS] [--score SCORE|none]
+                        set a manga's chapters read (CH), volumes, status
+                        or score; at least one. TITLE|ID: a title, or the
+                        manga's id when it is only digits (your list
+                        service's id; on AniList also the MyAnimeList id).
+                        The last word is CH when it is a number:
+                        kot set --manga 24 258 = manga 24, chapter 258
   --anyway              with +1 and set: mark an episode that hasn't
                         aired yet (by the estimate) without asking
   queue                 changes waiting to sync
@@ -401,9 +409,16 @@ fn status_short(st: &Status) -> String {
 /// The score goes as typed: the app reads it in the user's score format.
 fn parse_set(words: &[&str]) -> Result<Request, String> {
     let (mut title, mut progress, mut status, mut score_text, mut anyway) = (Vec::new(), None, None, None, false);
+    let (mut manga, mut volumes) = (false, None);
     let mut i = 0;
     while i < words.len() {
         match words[i] {
+            "--manga" => manga = true,
+            "--volumes" | "--vol" => {
+                let v = words.get(i + 1).ok_or("--volumes needs a number")?;
+                volumes = Some(v.parse::<u32>().map_err(|_| format!("--volumes needs a number, not \u{201c}{v}\u{201d}"))?);
+                i += 1;
+            }
             "--status" => {
                 status = Some(words.get(i + 1).ok_or("--status needs a status")?.to_string());
                 i += 1;
@@ -427,6 +442,15 @@ fn parse_set(words: &[&str]) -> Result<Request, String> {
     }
     if title.is_empty() {
         return Err("set needs a title".into());
+    }
+    if volumes.is_some() && !manga {
+        return Err("--volumes is for manga: add --manga".into());
+    }
+    if manga {
+        if progress.is_none() && volumes.is_none() && status.is_none() && score_text.is_none() {
+            return Err("set --manga needs a chapter number, --volumes, --status or --score".into());
+        }
+        return Ok(Request::MangaSet { title: title.join(" "), progress, volumes, status, score_text });
     }
     if progress.is_none() && status.is_none() && score_text.is_none() {
         return Err("set needs an episode number, --status or --score".into());
@@ -687,6 +711,15 @@ mod tests {
     fn add_reads_the_query_and_the_status() {
         assert_eq!(parse_add(&["Velvet", "Orchard"]), Ok(Request::Add { query: "Velvet Orchard".into(), status: None }));
         assert_eq!(parse_add(&["9001", "--status", "plan"]), Ok(Request::Add { query: "9001".into(), status: Some("plan".into()) }));
+        // kot set --manga: a title or a bare id, the last number the chapter, --volumes.
+        let ms = |title: &str, progress: Option<u32>, volumes: Option<u32>, status: Option<&str>, score: Option<&str>| Request::MangaSet { title: title.into(), progress, volumes, status: status.map(Into::into), score_text: score.map(Into::into) };
+        assert_eq!(parse_set(&["--manga", "Drama", "Queen", "40"]), Ok(ms("Drama Queen", Some(40), None, None, None)));
+        assert_eq!(parse_set(&["--manga", "24", "258"]), Ok(ms("24", Some(258), None, None, None)), "id 24, chapter 258");
+        assert_eq!(parse_set(&["24", "--manga", "--volumes", "3"]), Ok(ms("24", None, Some(3), None, None)), "a lone number is the id, not a chapter");
+        assert_eq!(parse_set(&["--manga", "Salt", "--status", "reading", "--score", "8", "--vol", "2"]), Ok(ms("Salt", None, Some(2), Some("reading"), Some("8"))));
+        assert!(parse_set(&["--manga", "Salt"]).is_err(), "nothing to set");
+        assert!(parse_set(&["Salt", "--volumes", "2"]).unwrap_err().contains("--manga"));
+        assert!(parse_set(&["--manga", "Salt", "--volumes", "x"]).is_err());
         assert_eq!(parse_add(&["--manga", "Salt", "Road", "--status", "reading"]), Ok(Request::MangaAdd { query: "Salt Road".into(), status: Some("reading".into()) }));
         assert_eq!(parse_remove(&["Salt", "--manga", "--yes"]), Ok(Request::MangaRemove { title: "Salt".into(), yes: true }));
         assert_eq!(parse_remove(&["Salt"]), Ok(Request::Remove { title: "Salt".into(), yes: false }));
