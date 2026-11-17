@@ -9,6 +9,11 @@
 //! - any other process of the user: only inside the comic folders the user named (with none
 //!   named, other processes are not looked at, which keeps the scan to the readers' files).
 //!
+//! Readers that load an archive into memory and close it (the YACReader viewer does) have no
+//! file open while you read: their **command line** says it instead. The YACReader viewer runs
+//! as `YACReader <library folder> --comicId=N --libraryId=M` ([`OpenComic::yac`]: the app looks
+//! comic N up in that library's database); a reader started on a file has its path there.
+//!
 //! Indexers, backup and sync tools that open every file (Spotlight, Tracker, Baloo, Dropbox, …)
 //! are never taken. Process names are read once per process; the open files of the processes
 //! taken, at each scan. The app scans every 30 s, and only while the user turned it on.
@@ -96,8 +101,49 @@ pub struct OpenComic {
     pub pid: u32,
     /// The reader's name, or the process name.
     pub app: String,
-    /// The comic file, or the folder of the image open.
+    /// The comic file, or the folder of the image open. For [`OpenComic::yac`], the library.
     pub path: String,
+    /// The YACReader viewer showing comic `id` of the library at `path`: the app reads its file
+    /// from the library's database.
+    pub yac: Option<i64>,
+}
+
+/// What a reader's command line names: a comic file (or a page image's folder), or YACReader's
+/// `<library> --comicId=N`.
+pub fn from_args(app: &str, args: &[String]) -> Vec<(String, Option<i64>)> {
+    let rest = args.get(1..).unwrap_or(&[]);
+    let mut out = Vec::new();
+    if app == "YACReader" {
+        let id = rest.iter().find_map(|a| a.strip_prefix("--comicId=")).and_then(|n| n.trim().parse::<i64>().ok());
+        let lib = rest.iter().find(|a| a.starts_with('/') && !a.starts_with("--"));
+        if let (Some(id), Some(lib)) = (id, lib)
+            && comic_of(lib).is_none()
+        {
+            out.push((lib.trim_end_matches('/').to_string(), Some(id)));
+            return out;
+        }
+    }
+    for a in rest.iter().filter(|a| a.starts_with('/')) {
+        if let Some(c) = comic_of(a)
+            && !out.iter().any(|(p, _)| *p == c)
+        {
+            out.push((c, None));
+        }
+    }
+    out
+}
+
+/// What [`ComicScanner::scan`] looks at.
+#[derive(Clone, Debug, Default)]
+pub struct ScanOpts {
+    /// Other processes' files count inside these.
+    pub folders: Vec<String>,
+    /// Open files (stage 2, `[reading] open_files`).
+    pub files: bool,
+    /// The YACReader viewer's command line (`[reading] yacreader`).
+    pub yac_args: bool,
+    /// Other known readers' command lines (with `files`).
+    pub reader_args: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -118,8 +164,14 @@ impl<P: Procs> ComicScanner<P> {
         ComicScanner { procs, seen: HashMap::new() }
     }
 
-    /// The comics open now, one per path (the lowest pid's), sorted by path.
+    /// The comics open now, one per path (the lowest pid's), sorted by path. Open files only,
+    /// as stage 2 began; [`ComicScanner::scan_with`] adds command lines.
     pub fn scan(&mut self, folders: &[String]) -> Vec<OpenComic> {
+        self.scan_with(&ScanOpts { folders: folders.to_vec(), files: true, yac_args: false, reader_args: false })
+    }
+
+    pub fn scan_with(&mut self, o: &ScanOpts) -> Vec<OpenComic> {
+        let folders = &o.folders;
         let pids = self.procs.pids();
         let live: HashSet<u32> = pids.iter().copied().collect();
         self.seen.retain(|p, _| live.contains(p));
@@ -139,7 +191,21 @@ impl<P: Procs> ComicScanner<P> {
             };
             let (app, anywhere) = match seen {
                 Seen::Skip => continue,
-                Seen::Reader(r) => (r.to_string(), true),
+                Seen::Reader(r) => {
+                    let yac = r == "YACReader";
+                    if (yac && o.yac_args) || (!yac && o.reader_args) {
+                        for (c, id) in from_args(r, &self.procs.args(pid)) {
+                            if !out.iter().any(|x| x.path == c && x.yac == id) {
+                                out.push(OpenComic { pid, app: r.to_string(), path: c, yac: id });
+                            }
+                        }
+                    }
+                    if !o.files {
+                        continue;
+                    }
+                    (r.to_string(), true)
+                }
+                Seen::Other(_) if !o.files => continue,
                 // Other processes only matter inside the comic folders.
                 Seen::Other(_) if folders.is_empty() => continue,
                 Seen::Other(n) => (n, false),
@@ -150,7 +216,7 @@ impl<P: Procs> ComicScanner<P> {
                     continue;
                 }
                 if !out.iter().any(|o| o.path == c) {
-                    out.push(OpenComic { pid, app: app.clone(), path: c });
+                    out.push(OpenComic { pid, app: app.clone(), path: c, yac: None });
                 }
             }
         }
@@ -203,6 +269,7 @@ mod tests {
     struct Fake {
         procs: Vec<(u32, &'static str, bool, Vec<&'static str>)>,
         names_read: Cell<u32>,
+        args: Vec<(u32, Vec<&'static str>)>,
     }
 
     impl Procs for Fake {
@@ -219,6 +286,9 @@ mod tests {
         fn files(&self, pid: u32) -> Vec<(i32, String)> {
             self.procs.iter().find(|p| p.0 == pid).map(|p| p.3.iter().enumerate().map(|(i, f)| (i as i32, f.to_string())).collect()).unwrap_or_default()
         }
+        fn args(&self, pid: u32) -> Vec<String> {
+            self.args.iter().find(|a| a.0 == pid).map(|a| a.1.iter().map(|s| s.to_string()).collect()).unwrap_or_default()
+        }
     }
 
     fn table() -> Fake {
@@ -232,6 +302,7 @@ mod tests {
                 (15, "mpv", true, vec!["/srv/anime/a.mkv"]),
             ],
             names_read: Cell::new(0),
+            args: Vec::new(),
         }
     }
 
@@ -279,4 +350,44 @@ mod tests {
         assert_eq!(reader_of("YACReader"), Some("YACReader"));
         assert!(ignored("mdworker_shared") && ignored("tracker-miner-fs-3") && !ignored("okular"));
     }
+
+    /// The YACReader viewer as macOS runs it: the library, the comic's id, no file open.
+    const YAC: &[&str] = &["/Applications/YACReader.app/Contents/MacOS/YACReader", "/Volumes/Disk/Movies", "--comicId=1", "--libraryId=1"];
+
+    #[test]
+    fn the_yacreader_viewer_is_read_from_its_command_line() {
+        let args: Vec<String> = YAC.iter().map(|s| s.to_string()).collect();
+        assert_eq!(from_args("YACReader", &args), [("/Volumes/Disk/Movies".to_string(), Some(1))]);
+        let file: Vec<String> = ["/Applications/YACReader.app/Contents/MacOS/YACReader", "/Volumes/Disk/Dragon Ball Z v11.cbz"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(from_args("YACReader", &file), [("/Volumes/Disk/Dragon Ball Z v11.cbz".to_string(), None)]);
+        let sc: Vec<String> = ["/Applications/Simple Comic.app/Contents/MacOS/Simple Comic", "-psn_0_1", "/srv/manga/Glass Lantern Club c012.cbr", "/etc/hosts"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(from_args("Simple Comic", &sc), [("/srv/manga/Glass Lantern Club c012.cbr".to_string(), None)]);
+        assert!(from_args("YACReader", &args[..1]).is_empty(), "the library app alone");
+    }
+
+    #[test]
+    fn two_viewer_processes_give_one_comic_and_files_stay_optional() {
+        let mut t = table();
+        t.procs.push((20, "YACReader", true, vec![]));
+        t.procs.push((21, "YACReader", true, vec![]));
+        t.args = vec![(20, YAC.to_vec()), (21, YAC.to_vec())];
+        let mut s = ComicScanner::new(t);
+        let got = s.scan_with(&ScanOpts { yac_args: true, ..Default::default() });
+        assert_eq!(got, [OpenComic { pid: 20, app: "YACReader".into(), path: "/Volumes/Disk/Movies".into(), yac: Some(1) }]);
+        // Open files off: the other readers' files are not looked at.
+        assert!(got.iter().all(|o| o.app == "YACReader"));
+        let all = s.scan_with(&ScanOpts { files: true, yac_args: true, reader_args: true, folders: vec![] });
+        assert!(all.iter().any(|o| o.app == "Simple Comic") && all.iter().any(|o| o.yac == Some(1)));
+    }
+
+    /// Linux: `/proc/PID/cmdline` is NUL-separated (and NUL-ended).
+    #[test]
+    fn linux_cmdline_splits() {
+        let b = b"/usr/bin/YACReader\0/srv/comics\0--comicId=3\0--libraryId=1\0";
+        let args = crate::procfs::split_nul(b);
+        assert_eq!(from_args("YACReader", &args), [("/srv/comics".to_string(), Some(3))]);
+        let b = b"mcomix\0/srv/manga/Glass Lantern Club/c012.cbz\0";
+        assert_eq!(from_args("MComix", &crate::procfs::split_nul(b)), [("/srv/manga/Glass Lantern Club/c012.cbz".to_string(), None)]);
+    }
 }
+

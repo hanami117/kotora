@@ -2,9 +2,10 @@
 //! for an episode played in a player.
 //!
 //! - A thread (`kotora-reading`) runs only while Manga is on, Settings → Manga → Reading detection
-//!   is on, and the user is signed in. Every 30 s it `stat`s each YACReader library database
-//!   (`kotora_core::manga::reading::Watch`); a changed one is read read-only and lock-free, and
-//!   the newest comic opened is recognised (the name parser, the manga list, remembered picks,
+//!   is on, and the user is signed in. Every 10 s it reads the YACReader viewer's command line
+//!   (`<library> --comicId=N`: the comic open now, which YACReader writes to its database only on
+//!   close) and `stat`s each YACReader library database (`kotora_core::manga::reading::Watch`);
+//!   a changed one is read read-only and lock-free. The comic is recognised (the name parser, the manga list, remembered picks,
 //!   one search for a series off the list) and sent here.
 //! - Here (UI thread) it becomes [`Reading`]: Now Playing shows it, and once it is read to the
 //!   end the banner and a notification ask "Mark Ch N of X as read?" (Mark read / Not now /
@@ -30,7 +31,7 @@ use crate::theme::{self, PAL};
 use crate::ui::{action, button, cover, field_hint, ghost, mix};
 
 /// How often the libraries are looked at.
-const POLL: Duration = Duration::from_secs(30);
+const POLL: Duration = Duration::from_secs(10);
 
 /// How the comic counts as read: "Read to the end in YACReader", "Ch 13 opened next in Simple
 /// Comic", "Open for 10 minutes in Okular".
@@ -266,15 +267,17 @@ fn send(o: &Out, m: ReadingMsg) {
 fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     let libs = if cfg.yacreader { core_reading::libraries(&cfg.added, cfg.find) } else { Vec::new() };
     send(h, ReadingMsg::Libs { watched: libs.iter().map(|l| l.path.to_string_lossy().into_owned()).collect(), errors: Vec::new() });
-    // Stage 2: the open comic files (macOS, Linux; `None` elsewhere or when off).
-    let mut scanner = if cfg.open_files { kotora_detect::comics::system() } else { None };
-    // The YACReader viewer's files come from its database when that is watched: not twice.
-    let skip_yac = !libs.is_empty();
+    // The process table (macOS, Linux; `None` elsewhere): the YACReader viewer's command line
+    // (it keeps no file open) and, with stage 2 on, open comic files.
+    let mut scanner = if cfg.open_files || cfg.yacreader { kotora_detect::comics::system() } else { None };
+    let mut tick: u32 = 0;
     // Nothing to watch until a setting changes (that starts a new thread).
     if libs.is_empty() && scanner.is_none() {
         return;
     }
     let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
+    let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
+    let mut yac_cache: Option<(String, i64, String)> = None;
     let mut watch = Watch::new(libs, now_unix());
     let mut store: Option<Store> = None;
     let mut last: Option<Read> = None;
@@ -289,8 +292,33 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             send(h, ReadingMsg::Seen(Box::new(seen)));
         }
         if let Some(sc) = &mut scanner {
-            let open: Vec<kotora_core::manga::openfile::Open> =
-                sc.scan(&cfg.folders).into_iter().filter(|o| !(skip_yac && o.app == "YACReader")).map(|o| kotora_core::manga::openfile::Open { app: o.app, path: o.path }).collect();
+            // Command lines every wake (a few names, cached); open files every third (they
+            // read every process's descriptors inside comic folders).
+            let opts = kotora_detect::comics::ScanOpts { folders: cfg.folders.clone(), files: cfg.open_files && tick.is_multiple_of(3), yac_args: cfg.yacreader, reader_args: cfg.open_files };
+            tick = tick.wrapping_add(1);
+            let found = sc.scan_with(&opts);
+            let mut open: Vec<kotora_core::manga::openfile::Open> = Vec::new();
+            for o in found {
+                match o.yac {
+                    // The viewer: its comic from the library's database (read only).
+                    Some(id) => {
+                        if let Some(path) = yac_comic(&mut yac_cache, &o.path, id) {
+                            open.push(kotora_core::manga::openfile::Open { app: o.app, path });
+                        }
+                    }
+                    None => open.push(kotora_core::manga::openfile::Open { app: o.app, path: o.path }),
+                }
+            }
+            // Between file scans, the files seen last stand (the tracker counts from them).
+            if opts.files {
+                files_kept = open.clone();
+            } else if cfg.open_files {
+                for k in &files_kept {
+                    if !open.contains(k) {
+                        open.push(k.clone());
+                    }
+                }
+            }
             if let Some(r) = tracker.update(&open, now_unix())
                 && last.as_ref() != Some(&r)
             {
@@ -322,6 +350,20 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// The file of comic `id` in the YACReader library at `library` (its database, read only),
+/// remembered while the viewer shows the same comic.
+fn yac_comic(cache: &mut Option<(String, i64, String)>, library: &str, id: i64) -> Option<String> {
+    if let Some((l, i, p)) = cache.as_ref()
+        && l == library
+        && *i == id
+    {
+        return Some(p.clone());
+    }
+    let path = core_reading::viewer_comic(library, id)?.to_string_lossy().into_owned();
+    *cache = Some((library.to_string(), id, path.clone()));
+    Some(path)
 }
 
 fn open(store: &mut Option<Store>) -> Option<&mut Store> {
@@ -943,7 +985,7 @@ fn choose(s: &mut State) {
 
 // ---------------------------------------------------------------------------------- views
 
-pub const SWITCH_NOTE: &str = "Kotora notices a chapter you read to the end in YACReader and asks before it marks it. It reads YACReader\u{2019}s library database every 30 seconds, read only.";
+pub const SWITCH_NOTE: &str = "Kotora notices a chapter you read to the end in YACReader and asks before it marks it. It sees the comic the YACReader viewer shows (its command line) and reads YACReader\u{2019}s library database when it changes, read only, every 10 seconds.";
 
 /// Settings → Manga → Reading detection → YACReader.
 pub fn switch_row_note(s: &State) -> String {
@@ -1031,13 +1073,98 @@ pub fn libraries_block(s: &State) -> El {
     c
 }
 
-fn reading_cover(s: &State, r: &Reading, w: f32, h: f32, size: f32) -> El {
-    let title = s.reading_title(r);
-    let (id, url) = match &r.found {
+/// The cover id and address of the comic's manga (a tile id from the title when unknown).
+fn cover_of<'a>(s: &'a State, r: &'a Reading, title: &str) -> (u32, Option<&'a str>) {
+    match &r.found {
         Found::List { media_id, .. } => (crate::manga::cover_id(*media_id), s.manga.entries.iter().find(|e| e.id == *media_id).and_then(|e| e.cover_url.as_deref())),
         Found::NotOnList { media_id, .. } => (crate::manga::cover_id(*media_id), r.cover_url.as_deref()),
         _ => (title.bytes().map(u32::from).sum::<u32>() | crate::manga::COVER_BIT, None),
+    }
+}
+
+/// Manga mode with reading detection on: the sidebar says "Now Reading" and shows the comic.
+pub fn now_reading_mode(s: &State) -> bool {
+    s.manga.mode && s.manga.enabled && (s.reading.on || (s.reading.open_files && OPEN_FILES_HERE))
+}
+
+/// Now Reading with nothing read yet: how Kotora sees reading.
+pub fn empty(s: &State) -> El {
+    let mut how = Vec::new();
+    if s.reading.on {
+        how.push("YACReader: open a comic in a library Kotora watches (Settings \u{2192} Manga); it shows here within seconds, and Kotora asks once it is read to the end.".to_string());
+    }
+    if s.reading.open_files && OPEN_FILES_HERE {
+        how.push(format!("Any reader: open a comic file; Kotora asks when the next chapter opens or after {} minutes.", s.reading.minutes));
+    }
+    let mut c = col()
+        .key("rd-empty")
+        .gap(6.0)
+        .padding(16.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .child(text("Nothing is being read").font(theme::SECTION).color(PAL.text));
+    for h in how {
+        c = c.child(text(h).font(theme::LABEL).color(PAL.dim).wrap());
+    }
+    c
+}
+
+/// The sidebar's card for the comic being read (Manga mode), like the playing card for anime.
+pub fn mini(s: &State, r: &Reading, tall: bool) -> El {
+    use crate::look;
+    let title = s.reading_title(r);
+    let (id, url) = cover_of(s, r, &title);
+    let what = r.read.label();
+    let tail = if r.marked.is_some() {
+        "Marked as read".to_string()
+    } else if r.read.finished {
+        if r.read.weak { "Counted as read".into() } else { "Read to the end".into() }
+    } else if r.read.pages > 0 && !r.read.weak {
+        format!("Page {} of {}", r.read.page.max(1), r.read.pages)
+    } else {
+        format!("Open in {}", r.read.source)
     };
+    el().key("rd-mini")
+        .role("button")
+        .label(format!("Now reading: {title}"))
+        .w_full()
+        .h(if tall { 124.0 } else { 76.0 })
+        .radius(theme::R_LG)
+        .clip_rounded(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .hover(PAL.hover())
+        .press(PAL.press())
+        .cursor(rune::Cursor::Pointer)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.go(Page::NowPlaying);
+        })
+        .child(look::backdrop(s, id, url, look::card_scrim()))
+        .child(
+            row()
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .padding(if tall { 10.0 } else { 8.0 })
+                .gap(10.0)
+                .child(if tall { look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM) } else { look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS) }.shadow(4.0, 10.0, rune::Color::BLACK.alpha(0.35)))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(3.0)
+                        .child(row().gap(6.0).center_y().child(look::live_dot(!r.read.finished && r.marked.is_none(), 6.0)).child(text(r.read.source.to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()))
+                        .child(text(title).font(TextStyle::new(13.0, 600.0)).color(PAL.text).wrap().max_lines(if tall { 2 } else { 1 }))
+                        .child(if tall { text(what).font(theme::SMALL).color(PAL.dim).truncate() } else { el() })
+                        .child(rune::spacer())
+                        .child(text(tail).key("rd-mini/state").font(theme::SMALL).color(PAL.dim).truncate()),
+                ),
+        )
+}
+
+fn reading_cover(s: &State, r: &Reading, w: f32, h: f32, size: f32) -> El {
+    let title = s.reading_title(r);
+    let (id, url) = cover_of(s, r, &title);
     let rad = if w > 60.0 { theme::R_LG } else { theme::R_XS };
     let tile = cover(id, &title, w, h, size).radius(rad);
     match s.covers.get(id, url, w, h) {
@@ -1151,7 +1278,9 @@ pub fn card_for(s: &State, r: &Reading) -> El {
             let _ = s.confirm_reading();
         }));
         if !r.read.finished {
-            let when = if r.read.weak {
+            let when = if r.read.weak && r.read.source == "YACReader" {
+                format!("YACReader saves the page when you close the comic: Kotora asks then if it was read to the end, or when the next chapter opens, or after {} minutes open.", s.reading.minutes)
+            } else if r.read.weak {
                 format!("Kotora sees the file is open, not the page: it asks when the next chapter opens, or after {} minutes open.", s.reading.minutes)
             } else {
                 "Kotora asks once the last page is reached (or YACReader marks it read).".to_string()

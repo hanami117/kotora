@@ -275,3 +275,28 @@ fn idle_poll_cost() {
     }
     println!("first read {first:?}; idle poll {:?} each", t.elapsed() / 1000);
 }
+
+#[test]
+fn a_digital_volume_offers_the_volume() {
+    let r = read_of("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
+    assert_eq!((r.series.as_str(), r.volume, r.volume_file, r.chapter), ("Dragon Ball Z", Some(11), true, None));
+    assert_eq!(offer(0, None, 10, Some(26), &r), Some(Offer { chapter: None, volume: Some(11) }));
+    assert_eq!(on_list("Dragon Ball Z", &list(), &None), None, "not on the list: the caller searches (Add as Reading)");
+}
+
+#[test]
+fn the_viewers_comic_by_id() {
+    let s = Scratch::new("viewer");
+    let lib = s.0.join("Movies");
+    let c = db(&lib);
+    put(&c, 1, "/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 1, 0, None);
+    let l = lib.to_string_lossy();
+    assert_eq!(viewer_comic(&l, 1), Some(lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz")));
+    assert_eq!(viewer_comic(&l, 2), None);
+    assert_eq!(viewer_comic(&s.0.join("nowhere").to_string_lossy(), 1), None);
+    // Fed to the open-file rules: shown at once, as a whole volume of Dragon Ball Z.
+    let path = viewer_comic(&l, 1).unwrap().to_string_lossy().into_owned();
+    let mut t = crate::manga::openfile::Tracker::new(10);
+    let r = t.update(&[crate::manga::openfile::Open { app: "YACReader".into(), path }], 1_800_000_000).unwrap();
+    assert_eq!((r.series.as_str(), r.volume, r.volume_file, r.finished, r.source.as_str()), ("Dragon Ball Z", Some(11), true, false, "YACReader"));
+}

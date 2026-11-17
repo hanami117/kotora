@@ -300,6 +300,12 @@ pub fn libraries(added: &[String], auto: bool) -> Vec<Library> {
     v
 }
 
+/// The file of comic `id` in the YACReader library at `library` (the viewer's `<library>
+/// --comicId=N`), from its database, read only. `None`: no such library or comic.
+pub fn viewer_comic(library: &str, id: i64) -> Option<PathBuf> {
+    Some(library_at(library).open().ok()?.comic(id).ok()??.path)
+}
+
 /// A library from a path the user gave: the folder, or the database file inside it.
 pub fn library_at(p: &str) -> Library {
     let path = PathBuf::from(p);

@@ -254,7 +254,11 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     }
     nav = nav.child(nav_heading("Kotora").mt(12.0));
     nav = nav
-        .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
+        .child(if crate::reading::now_reading_mode(s) {
+            nav_item("now-playing", NavMark::Icon(&icons::BOOK), "Now Reading", None, lit == Page::NowPlaying, Page::NowPlaying)
+        } else {
+            nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying)
+        })
         .child(if manga {
             nav_item("publishing", NavMark::Icon(&icons::CALENDAR), "Publishing", None, lit == Page::Publishing, Page::Publishing)
         } else {
@@ -270,7 +274,10 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
         ))
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
     side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
-    if let Some(now) = &s.now {
+    // Manga mode: the comic being read; else (or with none) what plays.
+    if let Some(r) = s.reading.current.as_ref().filter(|_| crate::reading::now_reading_mode(s)) {
+        side = side.child(crate::reading::mini(s, r, height >= 760.0));
+    } else if let Some(now) = &s.now {
         side = side.child(now_mini(s, now, height >= 760.0));
     }
     let (dot, line) = if s.syncing {
@@ -2494,6 +2501,26 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
     side = side.child(players_status_card(s));
     // Reading detection (Manga): the comic read last, above the rest.
     let reading = s.reading.current.as_ref().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
+    // Manga mode: Now Reading. The comic first (or how to start), what plays below it.
+    if crate::reading::now_reading_mode(s) {
+        let mut main = col().gap(16.0).w_full().child(reading.unwrap_or_else(|| crate::reading::empty(s)));
+        if let Some(n) = &s.now {
+            main = main.child(now_facts(s, n));
+        }
+        let body = if wide {
+            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
+        } else {
+            col().gap(16.0).w_full().child(main).child(side)
+        };
+        return col().key("page/now").w_full().h_full().child(top(s, "Now Reading", None, false)).child(
+            col()
+                .key("now-scroll")
+                .scroll(ScrollSpec { stick_bottom: false })
+                .grow(1.0)
+                .min_h(0.0)
+                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
+        );
+    }
     let Some(n) = &s.now else {
         let main = match reading {
             Some(r) => r,

@@ -333,6 +333,40 @@ impl Db {
         Ok(Db { conn, library_dir, version, has_series })
     }
 
+    /// Comic `id` (`comic.id`, the viewer's `--comicId`), opened or not. YACReader writes the
+    /// page only when the comic is closed, so while it is open its row says what was saved
+    /// before (often page 1 and no time).
+    pub fn comic(&self, id: i64) -> Result<Option<Opened>> {
+        let series = if self.has_series { "ci.series" } else { "NULL" };
+        let sql = format!(
+            "SELECT c.path, c.fileName, {series}, COALESCE(ci.currentPage, 0), COALESCE(ci.numPages, 0), COALESCE(ci.read, 0), \
+                    COALESCE(CAST(ci.lastTimeOpened AS INTEGER), 0) \
+             FROM comic c JOIN comic_info ci ON ci.id = c.comicInfoId WHERE c.id = ?1"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query_map([id], |r| {
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?))
+        })?;
+        let Some(row) = rows.next() else { return Ok(None) };
+        let (path, file_name, meta, current_page, num_pages, read, last_opened) = row?;
+        Ok(Some(self.opened(path, file_name, meta, current_page, num_pages, read, last_opened)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn opened(&self, path: Option<String>, file_name: String, meta: Option<String>, current_page: i64, num_pages: i64, read: i64, last_opened: i64) -> Opened {
+        let rel_path = path.filter(|p| !p.is_empty()).unwrap_or_else(|| format!("/{file_name}"));
+        Opened {
+            path: self.library_dir.join(rel_path.trim_start_matches('/')),
+            parsed: name::parse_path(&rel_path),
+            meta_series: meta.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            rel_path,
+            current_page,
+            num_pages,
+            read_flag: read != 0,
+            last_opened,
+        }
+    }
+
     /// The comics opened at or after `since` (Unix seconds), newest first. Comics YACReader has
     /// only listed, never opened, are not in it.
     pub fn opened_since(&self, since: i64) -> Result<Vec<Opened>> {
@@ -360,17 +394,7 @@ impl Db {
         let mut out = Vec::new();
         for row in rows {
             let (path, file_name, meta, current_page, num_pages, read, last_opened) = row?;
-            let rel_path = path.filter(|p| !p.is_empty()).unwrap_or_else(|| format!("/{file_name}"));
-            out.push(Opened {
-                path: self.library_dir.join(rel_path.trim_start_matches('/')),
-                parsed: name::parse_path(&rel_path),
-                meta_series: meta.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-                rel_path,
-                current_page,
-                num_pages,
-                read_flag: read != 0,
-                last_opened,
-            });
+            out.push(self.opened(path, file_name, meta, current_page, num_pages, read, last_opened));
         }
         Ok(out)
     }

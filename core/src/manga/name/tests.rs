@@ -361,3 +361,13 @@ fn known_limits() {
         ("Lantern Road (2019-2021) v03.cbz", "Lantern Road :: v3 x=2019-2021"),
     ]);
 }
+
+/// From the live test: a whole volume with year, source and ripper tags.
+#[test]
+fn a_digital_volume_with_tags() {
+    let p = parse_file_name("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
+    assert_eq!(p.series, "Dragon Ball Z");
+    assert_eq!(p.volume.map(|v| (v.first, v.last)), Some((11.0, 11.0)));
+    assert_eq!(p.chapter, None);
+    assert_eq!(p.year, Some(2003));
+}

@@ -4,6 +4,18 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Fixed
+- Reading detection: the YACReader viewer keeps no file open and writes progress only when the comic is
+  closed, so nothing was seen while reading. Kotora now reads the viewer's command line (`<library>
+  --comicId=N`) and looks the comic up in that library's database (read only): it shows at once. A reader
+  started on a file (Simple Comic, MComix, …) counts by its command line too; open files stay a second signal.
+  Checks every 10 seconds.
+
+### Added
+- **Now Reading**: in Manga mode with reading detection on, the sidebar's Now Playing is Now Reading, with a
+  card for the comic open (title, chapter or volume, reader, cover, the match or "Add as Reading"); the page
+  shows the comic first.
+
 ### Added
 - **Reading detection (Manga), YACReader first.** Kotora notices a chapter you read to the end in YACReader
   (macOS, Linux, Windows) and asks, like it does for an episode: the banner and a notification say "Mark Ch 362

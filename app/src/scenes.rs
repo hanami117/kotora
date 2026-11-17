@@ -310,6 +310,28 @@ pub const SCENES: &[Scene] = &[
         crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
         s.go(Page::NowPlaying);
     }),
+    // Live test shape: the YACReader viewer shows Dragon Ball Z v11 (its command line; nothing
+    // written yet), not on the list: Now Reading in the sidebar, Add as Reading.
+    ("now-reading-yacreader-open", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake_open(s, "YACReader", "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", None);
+        if let Some(r) = &mut s.reading.current {
+            r.found = Found::NotOnList { media_id: 502, title: "Dragon Ball Z".into() };
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // On a list page: the sidebar's Now Reading card (an episode plays too; the comic wins in
+    // Manga mode).
+    ("now-reading-sidebar", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake_open(s, "YACReader", "/media/comics/Inkwell Cartographers/Inkwell Cartographers v12 c120.cbz", None);
+    }),
+    // Now Reading with nothing read yet.
+    ("now-reading-empty", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        s.go(Page::NowPlaying);
+    }),
     // Stage 2: a comic open in Simple Comic (no page): shown, asked later.
     ("now-reading-open-file", |s| {
         crate::manga::fake(s);
@@ -3725,5 +3747,17 @@ mod manga_polish {
         let r = rt("search-kind-manga");
         assert!(r.find("search/kind/manga").is_some() && r.find("hit/501").is_some());
         assert!(rt("manga-grid-selected").find("msel/2").is_some());
+    }
+
+    /// Manga mode with reading detection on: the sidebar says Now Reading and shows the comic;
+    /// Anime mode keeps Now Playing and the playing card.
+    #[test]
+    fn manga_mode_says_now_reading() {
+        let r = rt("now-reading-sidebar");
+        assert!(r.find("rd-mini").is_some() && r.find("np-mini").is_none());
+        let r = rt("now-reading-yacreader-open");
+        assert!(r.find("rd/add").is_some(), "Add as Reading");
+        let r = rt("now-playing-page");
+        assert!(r.find("np-mini").is_some() && r.find("rd-mini").is_none());
     }
 }

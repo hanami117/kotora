@@ -419,3 +419,19 @@ fn the_settings_candidates_follow_xdg() {
     assert!(!c.is_empty());
     assert!(c.iter().all(|p| p.ends_with("YACReader/YACReaderLibrary/YACReaderLibrary.ini")));
 }
+
+/// The viewer's `--comicId`: the row is there while the comic is open, with what was saved
+/// before (here: never opened, page 1, no time), as in the live test.
+#[test]
+fn a_comic_by_its_id_even_before_progress_is_written() {
+    let s = Scratch::new("byid");
+    let rows = [row("/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 1, 0, false, None), row("/Other/c001.cbz", 3, 20, false, Some(1_700_000_000))];
+    let lib = make_library(&s.0, SCHEMA_10_5, &rows, true);
+    let db = Db::open(&lib.join(".yacreaderlibrary/library.ydb")).unwrap();
+    let o = db.comic(1).unwrap().unwrap();
+    assert_eq!(o.path, lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"));
+    assert_eq!((o.series(), o.parsed.volume.map(|v| v.first), o.parsed.chapter), ("Dragon Ball Z", Some(11.0), None));
+    assert_eq!((o.current_page, o.read_flag, o.last_opened), (1, false, 0));
+    assert!(!o.is_read());
+    assert_eq!(db.comic(99).unwrap(), None);
+}
