@@ -71,6 +71,8 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let toast = crate::library::toast_tick(s, tx);
     let intro = crate::intro::poll(s, t, tx);
     let settings = crate::settings::poll(s, t, tx);
+    // Discord Rich Presence: one atomic read while it is off.
+    crate::discord::sync(s);
     now || airing || toast || intro || settings
 }
 
@@ -252,7 +254,11 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     }
     nav = nav.child(nav_heading("Kotora").mt(12.0));
     nav = nav
-        .child(nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying))
+        .child(if crate::reading::now_reading_mode(s) {
+            nav_item("now-playing", NavMark::Icon(&icons::BOOK), "Now Reading", None, lit == Page::NowPlaying, Page::NowPlaying)
+        } else {
+            nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying)
+        })
         .child(if manga {
             nav_item("publishing", NavMark::Icon(&icons::CALENDAR), "Publishing", None, lit == Page::Publishing, Page::Publishing)
         } else {
@@ -268,7 +274,10 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
         ))
         .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
     side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
-    if let Some(now) = &s.now {
+    // Manga mode: the comic being read; else (or with none) what plays.
+    if let Some(r) = s.now_reading().filter(|_| crate::reading::now_reading_mode(s)) {
+        side = side.child(crate::reading::mini(s, r, height >= 760.0));
+    } else if let Some(now) = &s.now {
         side = side.child(now_mini(s, now, height >= 760.0));
     }
     let (dot, line) = if s.syncing {
@@ -593,6 +602,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     // The Now Playing banner sits on top of every page (design-spec §4).
     if s.banner() {
         m = m.child(banner(s));
+    } else if s.reading_banner() {
+        m = m.child(crate::reading::banner(s));
     } else if s.precise_banner() {
         m = m.child(crate::precise::banner(s));
     }
@@ -2474,7 +2485,8 @@ fn now_empty() -> El {
 
 fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
     let mut side = col().gap(16.0);
-    if s.now.is_none() {
+    // Anime's "Up next" only in Anime mode: Manga mode's Now Reading has Continue reading.
+    if s.now.is_none() && !crate::reading::now_reading_mode(s) {
         side = side.children(crate::library::up_next_card(s));
     }
     if let Some(n) = &s.now {
@@ -2488,11 +2500,39 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
         }
     }
     side = side.child(players_status_card(s));
-    let Some(n) = &s.now else {
+    // Reading detection (Manga): the comic read last, above the rest.
+    // Only the comic open now: a closed one that still asks is in the banner (live test: a
+    // closed, answered comic stayed here and hid what Okular had open).
+    let reading = s.now_reading().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
+    // Manga mode: Now Reading. The comic first (or how to start), what plays below it.
+    if crate::reading::now_reading_mode(s) {
+        let mut main = col().gap(16.0).w_full().child(reading.unwrap_or_else(|| crate::reading::empty(s)));
+        if let Some(n) = &s.now {
+            main = main.child(now_facts(s, n));
+        }
         let body = if wide {
-            row().gap(16.0).w_full().items_start().child(now_empty().grow(1.0).min_w(0.0)).child(side.w(340.0))
+            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
         } else {
-            col().gap(16.0).w_full().child(now_empty()).child(side)
+            col().gap(16.0).w_full().child(main).child(side)
+        };
+        return col().key("page/now").w_full().h_full().child(top(s, "Now Reading", None, false)).child(
+            col()
+                .key("now-scroll")
+                .scroll(ScrollSpec { stick_bottom: false })
+                .grow(1.0)
+                .min_h(0.0)
+                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
+        );
+    }
+    let Some(n) = &s.now else {
+        let main = match reading {
+            Some(r) => r,
+            None => now_empty(),
+        };
+        let body = if wide {
+            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
+        } else {
+            col().gap(16.0).w_full().child(main).child(side)
         };
         return col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
             col()
@@ -2504,7 +2544,10 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
         );
     };
     // Something plays: the hero band on top (no title bar: the band says it), the cards below.
-    let facts = now_facts(s, n);
+    let facts = match reading {
+        Some(r) => col().gap(16.0).child(r).child(now_facts(s, n)),
+        None => now_facts(s, n),
+    };
     let body = if wide {
         row().gap(16.0).w_full().items_start().child(facts.grow(1.0).min_w(0.0)).child(side.w(340.0))
     } else {

@@ -184,6 +184,12 @@ pub const SCENES: &[Scene] = &[
         manga(s);
         s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
     }),
+    // "Continue reading" in the menu of a manga with a known last comic.
+    ("manga-ctx-continue", |s| {
+        manga(s);
+        crate::reading::fake_resume(s, 1, 87, false);
+        s.open_manga_ctx(1, crate::ctxmenu::At::Point(420.0, 140.0));
+    }),
     ("manga-ctx-move", |s| {
         manga(s);
         s.open_manga_ctx(2, crate::ctxmenu::At::Point(420.0, 230.0));
@@ -260,6 +266,164 @@ pub const SCENES: &[Scene] = &[
         let stub = crate::manga::stub(e);
         s.open_details(stub);
     }),
+    // Reading detection (Manga): YACReader has chapter 120 of a Reading manga open, page 14.
+    ("now-reading", |s| {
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        s.go(Page::NowPlaying);
+    }),
+    // Read to the end: the banner asks on top of every page, Now Playing shows Mark read.
+    ("now-reading-offer", |s| reading(s, "Inkwell Cartographers v12 c120.cbz", 40)),
+    ("now-reading-offer-page", |s| {
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // "Update automatically" on: marked at once, Undo in the banner.
+    ("now-reading-recorded", |s| {
+        s.prefs.auto = true;
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // Auto on, but chapter 122 at 119 read: it asks and says what it skips.
+    ("now-reading-skip", |s| {
+        s.prefs.auto = true;
+        reading(s, "Inkwell Cartographers - Ch. 122.cbz", 40);
+    }),
+    // A whole-volume file: the volume is offered.
+    ("now-reading-volume", |s| {
+        reading(s, "Night Shift Alchemist/Night Shift Alchemist v04.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // A close title: not sure, Wrong manga… opens the picker.
+    ("now-reading-unsure", |s| {
+        reading(s, "Inkwell Cartographer c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    ("now-reading-picking", |s| {
+        reading(s, "Inkwell Cartographer c120.cbz", 40);
+        s.wrong_manga();
+    }),
+    // A series off the list, found by the search: Add as Reading.
+    ("now-reading-not-on-list", |s| {
+        reading(s, "Tidepool Couriers c007.cbz", 40);
+        if let Some(r) = &mut s.reading.current {
+            r.found = Found::NotOnList { media_id: 501, title: "Tidepool Couriers".into() };
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // An episode plays and a chapter was read: both on Now Playing.
+    ("now-reading-and-playing", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        s.go(Page::NowPlaying);
+    }),
+    // Live test shape: the YACReader viewer shows Dragon Ball Z v11 (its command line; nothing
+    // written yet), not on the list: Now Reading in the sidebar, Add as Reading.
+    ("now-reading-yacreader-open", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake_open(s, "YACReader", "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", None);
+        if let Some(r) = &mut s.reading.current {
+            r.found = Found::NotOnList { media_id: 502, title: "Dragon Ball Z".into() };
+        }
+        s.go(Page::NowPlaying);
+    }),
+    // On a list page: the sidebar's Now Reading card (an episode plays too; the comic wins in
+    // Manga mode).
+    ("now-reading-sidebar", |s| {
+        crate::manga::fake(s);
+        crate::reading::fake_open(s, "YACReader", "/media/comics/Inkwell Cartographers/Inkwell Cartographers v12 c120.cbz", None);
+    }),
+    // The viewer closed a comic read to the end: the question stays (banner, card "Closed"),
+    // Now Reading's sidebar card is gone.
+    ("now-reading-closed-asks", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 40);
+        s.reading_open(Vec::new());
+        s.go(Page::NowPlaying);
+    }),
+    // The details page of a manga read in YACReader: where it stopped, Continue reading.
+    ("manga-details-continue", |s| {
+        manga_details(s, 1);
+        crate::reading::fake_resume(s, 1, 87, false);
+    }),
+    // Read to the end: the next volume in the folder.
+    ("manga-details-continue-next", |s| {
+        manga_details(s, 1);
+        crate::reading::fake_resume(s, 1, 1, true);
+    }),
+    // The comic closed half-read: Now Reading says where it stopped.
+    ("now-reading-continue", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
+        crate::reading::fake_resume(s, 1, 87, false);
+        s.reading_open(Vec::new());
+        s.go(Page::NowPlaying);
+    }),
+    // Live test: VIZ's Dragon Ball Z v11 open in YACReader: "Is this Dragon Ball?", vol 27.
+    ("now-reading-dbz", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake_dbz(s);
+        s.go(Page::NowPlaying);
+    }),
+    // Now Reading with nothing read yet.
+    ("now-reading-empty", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        s.go(Page::NowPlaying);
+    }),
+    // Stage 2: a comic open in Simple Comic (no page): shown, asked later.
+    ("now-reading-open-file", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", None);
+        s.go(Page::NowPlaying);
+    }),
+    // The next chapter opened: chapter 120 counts, and it asks (also with auto on).
+    ("now-reading-open-file-counted", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        s.prefs.auto = true;
+        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", Some("Ch 121 opened next"));
+        s.go(Page::NowPlaying);
+    }),
+    // A chapter inside volume 14: chapter 120 and volume 13 together.
+    ("now-reading-volume-before", |s| {
+        reading(s, "Inkwell Cartographers v14 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // Stage 2 on, a comic folder, YACReader's own libraries not looked up.
+    ("settings-reading-open-files", |s| {
+        crate::manga::fake(s);
+        s.reading.find = false;
+        s.reading.added = vec!["/media/archive/Comics".into()];
+        s.reading.watched = vec!["/media/archive/Comics".into()];
+        s.reading.open_files = true;
+        s.reading.folders = vec!["/media/manga".into()];
+        crate::settings::open(s, Section::Manga);
+    }),
+    // Settings → Notifications: the manga reading switches of their own.
+    ("settings-notifications-reading", |s| {
+        crate::manga::fake(s);
+        s.prefs.notify.read_recorded = false;
+        crate::settings::open(s, Section::Notifications);
+    }),
+    // Settings → Manga → Reading detection: a library found in YACReader's settings, one added.
+    ("settings-reading", |s| {
+        crate::manga::fake(s);
+        s.reading.watched = vec!["/media/comics/Manga".into(), "/media/archive/Comics".into()];
+        s.reading.added = vec!["/media/archive/Comics".into()];
+        crate::settings::open(s, Section::Manga);
+    }),
+    ("settings-reading-error", |s| {
+        crate::manga::fake(s);
+        s.reading.watched = vec!["/media/comics/Manga".into()];
+        s.reading.error = Some("No YACReader library at /media/comics/Other (it has no .yacreaderlibrary folder).".into());
+        crate::settings::open(s, Section::Manga);
+    }),
+    // Manga off: the switch is greyed and says why.
+    ("settings-reading-manga-off", |s| crate::settings::open(s, Section::Manga)),
     // Settings → Manga → Release data.
     ("settings-manga", |s| {
         crate::manga::fake(s);
@@ -1088,6 +1252,13 @@ pub const SCENES: &[Scene] = &[
     ("settings-on-startup", |s| {
         s.prefs.open_on = kotora_core::config::OpenOn::Last;
         s.prefs.start_mode = kotora_core::config::StartMode::Manga;
+        crate::settings::open(s, Section::General)
+    }),
+    // Settings → General → Discord on, with a title hidden and the paused status cleared.
+    ("settings-discord-on", |s| {
+        s.prefs.discord.enabled = true;
+        s.prefs.discord.client_id = "123456789012345678".into();
+        s.prefs.discord.hide_paused = true;
         crate::settings::open(s, Section::General)
     }),
     ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
@@ -2069,6 +2240,13 @@ fn reached(s: &mut State) {
     s.now_reached(&key, &file);
 }
 
+/// Manga on, nothing playing, and YACReader shows `file` at `page` of 40.
+fn reading(s: &mut State, file: &str, page: i64) {
+    crate::manga::fake(s);
+    s.now = None;
+    crate::reading::fake(s, file, page);
+}
+
 fn unsure(s: &mut State) {
     playing_file(s, "Lantern of Kirigaoka - 06.mkv");
     if let Some(n) = &mut s.now {
@@ -2935,7 +3113,7 @@ mod tests {
             }
             assert!(rt.find("about-card").is_none(), "one section at a time");
             let rt = render("settings-about", size);
-            for key in ["about-card", "set/licences", "link/source", "link/site"] {
+            for key in ["about-card", "about-copyright", "set/licences", "link/source", "link/site"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
@@ -3114,6 +3292,36 @@ mod tests {
         // Search finds both.
         let rt = render("settings-search", (1360.0, 860.0));
         assert!(rt.find("set/results").is_some());
+    }
+
+    #[test]
+    fn settings_has_the_discord_switches_off_by_default() {
+        let mut rt = render("settings-general", (1360.0, 860.0));
+        assert!(!rt.state.prefs.discord.enabled, "off by default");
+        for k in ["set/row/discord", "set/row/discord-cover", "set/row/discord-buttons", "set/row/discord-hide-paused", "set/row/discord-hide-title"] {
+            assert!(rt.find(k).is_some(), "{k}");
+        }
+        // The options are inert while the main switch is off.
+        let (x, y) = rt.find("set/discord-hide-title").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(!rt.state.prefs.discord.hide_title);
+        // The main switch turns on (headless: nothing is started, nothing is written).
+        let (x, y) = rt.find("set/discord").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.prefs.discord.enabled);
+        // With it on, an option works.
+        let mut rt = render("settings-discord-on", (1360.0, 1700.0));
+        let (x, y) = rt.find("set/discord-hide-title").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.prefs.discord.hide_title, "an option works once it is on");
+        let rt = render("settings-discord-on", (960.0, 700.0));
+        assert!(rt.state.prefs.discord.hide_paused && rt.find("set/discord").is_some());
     }
 
     #[test]
@@ -3581,4 +3789,39 @@ mod manga_polish {
         assert!(r.find("search/kind/manga").is_some() && r.find("hit/501").is_some());
         assert!(rt("manga-grid-selected").find("msel/2").is_some());
     }
+
+    /// Manga mode with reading detection on: the sidebar says Now Reading and shows the comic;
+    /// Anime mode keeps Now Playing and the playing card.
+    #[test]
+    fn manga_mode_says_now_reading() {
+        let r = rt("now-reading-sidebar");
+        assert!(r.find("rd-mini").is_some() && r.find("np-mini").is_none());
+        let r = rt("now-reading-yacreader-open");
+        assert!(r.find("rd/add").is_some(), "Add as Reading");
+        let r = rt("now-playing-page");
+        assert!(r.find("np-mini").is_some() && r.find("rd-mini").is_none());
+    }
+
+    /// Continue reading: on the details card, in the menu, and in Now Reading once closed.
+    #[test]
+    fn continue_reading_shows_up() {
+        let r = rt("manga-details-continue");
+        assert!(r.find("rd-resume/go").is_some() && r.find("rd-resume/where").is_some());
+        let r = rt("manga-ctx-continue");
+        assert!(r.find("ctx/continue").is_some());
+        let r = rt("manga-ctx");
+        assert!(r.find("ctx/continue").is_none(), "unknown: hidden");
+        let r = rt("now-reading-continue");
+        assert!(r.find("rd-resume/go").is_some());
+    }
+
+    /// Manga mode's Now Reading never shows anime's Up next; Anime mode's Now Playing does.
+    #[test]
+    fn now_reading_has_no_anime_up_next() {
+        let r = rt("now-reading-empty");
+        assert!(r.find("np-up-next").is_none());
+        let r = rt("now-reading-dbz");
+        assert!(r.find("rd/ask").is_some() && r.find("rd/renumbered").is_some() && r.find("np-up-next").is_none());
+    }
 }
+

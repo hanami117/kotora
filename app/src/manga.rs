@@ -475,6 +475,8 @@ impl State {
         }
         crate::queue::send(self, crate::queue::Cmd::Edit { kind: Kind::Manga, media_id: id, change });
         self.refresh_manga();
+        // The comic being read: a `+1` by hand answers or moves its offer.
+        self.recheck_reading();
         Ok(i)
     }
 
@@ -592,7 +594,7 @@ impl State {
         }
     }
 
-    fn set_manga_items(&mut self, items: &[ListItem]) {
+    pub(crate) fn set_manga_items(&mut self, items: &[ListItem]) {
         let lang = self.prefs.titles;
         self.manga.entries = items.iter().map(|it| MEntry::from_item(it, lang)).collect();
         if self.manga.editor.is_some_and(|ed| !self.manga.entries.iter().any(|e| e.id == ed.id)) {
@@ -1433,6 +1435,9 @@ pub fn mine_card(s: &State, d: &crate::details::Detail, mut c: El) -> El {
     match s.manga.editor.filter(|ed| ed.id == id) {
         Some(ed) => c.child(editor(e, &ed, true, s.score_format(), crate::volfill::editor_button(s, id))),
         None => {
+            if let Some(line) = crate::reading::resume_line(s, id) {
+                c = c.child(line);
+            }
             let mut actions = row().pt(10.0).gap(8.0).child(crate::ui::action("det/edit".into(), "Edit", false, move |s, _| s.manga_toggle_editor(id)).h(32.0).px(12.0));
             if e.status == Status::Completed && !e.rereading {
                 actions = actions.child(crate::ui::action("det/reread".into(), "Reread", false, move |s, _| {

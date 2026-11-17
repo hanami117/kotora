@@ -86,6 +86,10 @@ impl Procs for LibProc {
         true
     }
 
+    fn args(&self, pid: u32) -> Vec<String> {
+        LibProc::procargs(pid)
+    }
+
     fn files(&self, pid: u32) -> Vec<(i32, String)> {
         let pid = pid as c_int;
         let one = size_of::<libc::proc_fdinfo>();
@@ -120,6 +124,42 @@ impl Procs for LibProc {
             }
         }
         out
+    }
+}
+
+/// The argv in a `KERN_PROCARGS2` block: `argc` (native `int`), the executable's path, NUL
+/// padding, then `argc` NUL-ended strings (the environment follows; it is not read).
+pub fn parse_procargs2(b: &[u8]) -> Vec<String> {
+    let Some(head) = b.get(..4) else { return Vec::new() };
+    let argc = i32::from_ne_bytes([head[0], head[1], head[2], head[3]]).max(0) as usize;
+    let mut rest = &b[4..];
+    // The executable path, then the padding.
+    let Some(end) = rest.iter().position(|c| *c == 0) else { return Vec::new() };
+    rest = &rest[end..];
+    let start = rest.iter().position(|c| *c != 0).unwrap_or(rest.len());
+    rest = &rest[start..];
+    rest.split(|c| *c == 0).take(argc).map(|a| String::from_utf8_lossy(a).into_owned()).collect()
+}
+
+impl LibProc {
+    /// `sysctl(CTL_KERN, KERN_PROCARGS2, pid)`: works for the user's own processes.
+    fn procargs(pid: u32) -> Vec<String> {
+        let mut max: c_int = 0;
+        let mut size = size_of::<c_int>();
+        let mut mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+        // SAFETY: `max` is an int and `size` its size.
+        if unsafe { libc::sysctl(mib.as_mut_ptr(), 2, (&mut max as *mut c_int).cast::<c_void>(), &mut size, std::ptr::null_mut(), 0) } != 0 || max <= 0 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u8; max as usize];
+        let mut size = buf.len();
+        let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as c_int];
+        // SAFETY: the buffer holds `size` bytes.
+        if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast::<c_void>(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+            return Vec::new();
+        }
+        buf.truncate(size);
+        parse_procargs2(&buf)
     }
 }
 
@@ -218,6 +258,111 @@ mod tests {
         drop(fakes.remove(0));
         assert!(!sc.scan().iter().any(|f| f.pid == pid));
         drop(fakes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Reading detection, stage 2: a process named like a reader holding a `.cbz`, and one with
+    /// another name holding a page image inside a comic folder; the real process table.
+    #[test]
+    fn comic_scanner_finds_open_comics() {
+        let dir = std::env::temp_dir().join(format!("kotora-libproc-comics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Manga/Kotora Test Comic/Ch 2")).unwrap();
+        let dir: PathBuf = dir.canonicalize().unwrap();
+        let cbz = dir.join("Kotora Test Comic c001.cbz");
+        std::fs::write(&cbz, b"").unwrap();
+        let page = dir.join("Manga/Kotora Test Comic/Ch 2/001.jpg");
+        std::fs::write(&page, b"").unwrap();
+        let reader = fake_player(&dir, "Simple Comic", &cbz);
+        let other = fake_player(&dir, "pageviewer", &page);
+        let folders = vec![dir.join("Manga").display().to_string()];
+        let mut sc = crate::comics::ComicScanner::new(LibProc::new());
+        let start = Instant::now();
+        let mut found = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) {
+            found = sc.scan(&folders);
+            if found.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let v: Vec<(u32, &str, &str)> = found.iter().map(|o| (o.pid, o.app.as_str(), o.path.as_str())).collect();
+        let (cbz, chapter) = (cbz.display().to_string(), dir.join("Manga/Kotora Test Comic/Ch 2").display().to_string());
+        assert!(v.contains(&(reader.child.id(), "Simple Comic", cbz.as_str())), "{v:?}");
+        assert!(v.contains(&(other.child.id(), "pageviewer", chapter.as_str())), "{v:?}");
+        // Without comic folders, the unknown process is not looked at.
+        assert!(!sc.scan(&[]).iter().any(|o| o.pid == other.child.id()));
+        drop((reader, other));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Lightness: one scan of the real process table, without and with a comic folder (every
+    /// process's open files are read then). `cargo test -p kotora-detect comic_scan_cost --
+    /// --ignored --nocapture`, release.
+    #[test]
+    #[ignore = "timing"]
+    fn comic_scan_cost() {
+        let mut sc = crate::comics::ComicScanner::new(LibProc::new());
+        let t = Instant::now();
+        sc.scan(&[]);
+        let first = t.elapsed();
+        let t = Instant::now();
+        for _ in 0..20 {
+            sc.scan(&[]);
+        }
+        let readers = t.elapsed() / 20;
+        let folders = vec![std::env::temp_dir().display().to_string()];
+        let t = Instant::now();
+        for _ in 0..5 {
+            sc.scan(&folders);
+        }
+        println!("first scan {first:?}; readers only {readers:?}; with a comic folder {:?}", t.elapsed() / 5);
+    }
+
+    #[test]
+    fn procargs2_blocks() {
+        let mut b = 3i32.to_ne_bytes().to_vec();
+        b.extend_from_slice(b"/Applications/YACReader.app/Contents/MacOS/YACReader\0\0\0\0");
+        b.extend_from_slice(b"/Applications/YACReader.app/Contents/MacOS/YACReader\0/Volumes/Disk/Movies\0--comicId=1\0HOME=/x\0");
+        assert_eq!(parse_procargs2(&b), ["/Applications/YACReader.app/Contents/MacOS/YACReader", "/Volumes/Disk/Movies", "--comicId=1"]);
+        assert!(parse_procargs2(&[1, 0]).is_empty());
+    }
+
+    /// The real sysctl: a copy of this binary named like the viewer, started with YACReader's
+    /// arguments (after the test harness's own), is found by its command line.
+    #[test]
+    fn the_viewer_is_found_by_its_real_command_line() {
+        let dir = std::env::temp_dir().join(format!("kotora-libproc-args-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir: PathBuf = dir.canonicalize().unwrap();
+        let file = dir.join("held.txt");
+        std::fs::write(&file, b"").unwrap();
+        let exe = dir.join("YACReader");
+        let me = std::env::current_exe().unwrap();
+        if std::fs::hard_link(&me, &exe).is_err() {
+            std::fs::copy(&me, &exe).unwrap();
+        }
+        let lib = dir.display().to_string();
+        let child = Command::new(&exe)
+            .args(["--ignored", "--exact", "libproc::tests::hold_open_helper", "--test-threads=1", "-q", "--", &lib, "--comicId=7", "--libraryId=1"])
+            .env(HOLD, &file)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let fake = Fake { child };
+        let mut sc = crate::comics::ComicScanner::new(LibProc::new());
+        let opts = crate::comics::ScanOpts { yac_args: true, ..Default::default() };
+        let start = Instant::now();
+        let mut found = Vec::new();
+        while start.elapsed() < Duration::from_secs(10) && found.is_empty() {
+            found = sc.scan_with(&opts).into_iter().filter(|o| o.pid == fake.child.id()).collect();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(found.first().map(|o| (o.path.as_str(), o.yac)), Some((lib.as_str(), Some(7))), "{found:?}");
+        drop(fake);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

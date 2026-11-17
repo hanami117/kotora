@@ -316,7 +316,12 @@ pub enum Reply {
     Edited { entry: Entry },
     Queue { ops: Vec<QueueItem> },
     /// `None`: nothing plays.
-    Now { now: Option<NowInfo> },
+    Now {
+        now: Option<NowInfo>,
+        /// What the user reads (Manga reading detection); older Kotoras send none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reading: Option<ReadingInfo>,
+    },
     /// Done, in a sentence.
     Done { message: String },
     /// The next episodes of the list, soonest first; `note` says why there are none yet.
@@ -456,6 +461,64 @@ pub struct NowInfo {
     pub position: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
+}
+
+/// The comic a reader has open (or had last), as `kot now` prints it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReadingInfo {
+    /// "YACReader".
+    pub reader: String,
+    pub file: String,
+    /// The manga: the list entry's title, a search hit, or the series in the name.
+    pub title: String,
+    /// "Ch 362", "Vol 4", "Ch 362 (Vol 35)".
+    pub label: String,
+    /// The page and the count, when the reader says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<u32>,
+    /// Read to the end.
+    pub finished: bool,
+    /// "In your list (Reading), sure: …", "Not on your list: …".
+    pub matched: String,
+    /// What "Mark as read" would record: "Ch 362", "Vol 4".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<String>,
+    pub dismissed: bool,
+    /// The reader has it open now (false: closed, still asking or offering Undo). An older
+    /// Kotora sends none: open.
+    #[serde(default = "yes")]
+    pub open: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for ReadingInfo {
+    fn default() -> Self {
+        ReadingInfo {
+            reader: String::new(),
+            file: String::new(),
+            title: String::new(),
+            label: String::new(),
+            page: None,
+            pages: None,
+            finished: false,
+            matched: String::new(),
+            offer: None,
+            note: None,
+            recorded: None,
+            dismissed: false,
+            open: true,
+        }
+    }
 }
 
 /// One list entry, as `kot list` prints it.

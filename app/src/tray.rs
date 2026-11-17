@@ -40,7 +40,10 @@ pub fn show_window(handle: &Handle) {
 
 /// Quit (the tray, `kot quit`): the page left open is kept first.
 pub fn quit(handle: &Handle) {
-    handle.update(|s: &mut State, _| s.remember_page());
+    handle.update(|s: &mut State, _| {
+        s.remember_page();
+        crate::discord::shutdown();
+    });
     handle.quit();
 }
 

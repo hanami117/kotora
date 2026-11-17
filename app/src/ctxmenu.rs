@@ -59,6 +59,7 @@ impl State {
     pub fn open_manga_ctx(&mut self, id: u32, at: At) {
         self.sort_menu = false;
         self.ctx = Some(Ctx { id, kind: kotora_core::Kind::Manga, at, sub: None });
+        self.want_resume(id);
     }
 
     /// The Menu key, Shift+F10: the menu of the selected entry (as P plays it), under it.
@@ -409,6 +410,7 @@ fn manga_menu(s: &State, c: &Ctx) -> Option<El> {
         .child(sep())
         .child(item("ctx/plus".into(), if at_end { format!("+1 {unit}") } else { format!("+1 {unit} ({unit} {next})") }, !at_end && s.has_list(), None, move |s, _| s.manga_ctx_plus(id)))
         .child(sep())
+        .children(s.resume_of(id).map(|r| item("ctx/continue".into(), format!("Continue reading ({})", r.label()), true, None, move |s, _| s.continue_reading(id))))
         .child(item("ctx/edit".into(), "Edit\u{2026}".into(), true, None, move |s, _| s.manga_ctx_edit_entry(id)))
         .child(item("ctx/details".into(), "Open details".into(), true, None, move |s, _| {
             s.ctx = None;

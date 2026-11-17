@@ -316,7 +316,7 @@ fn odd_characters_in_the_library_path() {
 
 #[test]
 fn a_library_knows_its_database() {
-    let lib = Library { name: "Manga".into(), path: PathBuf::from("/shelf/manga") };
+    let lib = Library { name: "Manga".into(), path: PathBuf::from("/shelf/manga"), id: None };
     assert_eq!(lib.db_path(), Path::new("/shelf/manga/.yacreaderlibrary/library.ydb"));
 }
 
@@ -332,7 +332,7 @@ path=/usr/share/yacreader/server/docroot
 #[test]
 fn reads_the_library_list() {
     let libs = parse_libraries(INI_NEW);
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/tmp/lib") }]);
+    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/tmp/lib"), id: Some(1) }]);
 }
 
 /// A Qt `QDataStream` string, for building test input.
@@ -379,6 +379,7 @@ fn reads_several_libraries_with_odd_names() {
     let libs = parse_libraries(&qsettings_bytes(&b));
     let got: Vec<_> = libs.iter().map(|l| (l.name.as_str(), l.path.to_str().unwrap())).collect();
     assert_eq!(got, [("Manga", "/data/manga"), ("Comics \"US\"", "/data/Comics (US)"), ("本", "/data/日本語/本")]);
+    assert!(libs.iter().all(|l| l.id == Some(7)), "the viewer's --libraryId");
 }
 
 #[test]
@@ -389,7 +390,7 @@ fn reads_the_old_library_list() {
     b.extend(1i32.to_be_bytes());
     b.extend(qstring("/old/manga"));
     let libs = parse_libraries(&qsettings_bytes(&b));
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/old/manga") }]);
+    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/old/manga"), id: Some(1) }]);
 }
 
 #[test]
@@ -418,4 +419,20 @@ fn the_settings_candidates_follow_xdg() {
     let c = ini_candidates();
     assert!(!c.is_empty());
     assert!(c.iter().all(|p| p.ends_with("YACReader/YACReaderLibrary/YACReaderLibrary.ini")));
+}
+
+/// The viewer's `--comicId`: the row is there while the comic is open, with what was saved
+/// before (here: never opened, page 1, no time), as in the live test.
+#[test]
+fn a_comic_by_its_id_even_before_progress_is_written() {
+    let s = Scratch::new("byid");
+    let rows = [row("/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 1, 0, false, None), row("/Other/c001.cbz", 3, 20, false, Some(1_700_000_000))];
+    let lib = make_library(&s.0, SCHEMA_10_5, &rows, true);
+    let db = Db::open(&lib.join(".yacreaderlibrary/library.ydb")).unwrap();
+    let o = db.comic(1).unwrap().unwrap();
+    assert_eq!(o.path, lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"));
+    assert_eq!((o.series(), o.parsed.volume.map(|v| v.first), o.parsed.chapter), ("Dragon Ball Z", Some(11.0), None));
+    assert_eq!((o.current_page, o.read_flag, o.last_opened), (1, false, 0));
+    assert!(!o.is_read());
+    assert_eq!(db.comic(99).unwrap(), None);
 }

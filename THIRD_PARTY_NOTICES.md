@@ -1,6 +1,6 @@
 # Third-party notices
 
-Kotora: Copyright (C) 2026 hanami117. SPDX-License-Identifier: GPL-3.0-or-later.
+Kotora: Copyright (C) 2026 Thomas Lonigro. SPDX-License-Identifier: GPL-3.0-or-later.
 
 Kotora is free software under the GNU General Public License, version 3 or (at your option) any later
 version (`GPL-3.0-or-later`, see `LICENSE`). It is built from the projects below; each keeps its own

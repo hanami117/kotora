@@ -1,26 +1,33 @@
 //! Manga support, first pieces (experimental).
 //!
-//! Nothing here is wired into the app yet. There is no UI, no list sync and no thread.
+//! The app uses [`reading`] for reading detection (YACReader).
 //!
 //! - [`name`]: a file name parser for comic files (`.cbz`, `.cbr`, `.cb7`, `.zip`, `.pdf`,
 //!   `.epub`) and their folders: series, volume, chapter, group, language, year.
 //! - [`yacreader`]: a read-only reader of YACReader's library databases. It reports what the user
 //!   opened lately, how far they got, and whether YACReader calls it read.
+//! - [`reading`]: what was read → a manga on the list, the offer, and the library watcher.
 //! - [`chapter_read`]: the one rule that says when Kotora counts a chapter as read.
 
 pub mod name;
+pub mod openfile;
+pub mod reading;
+pub mod resume;
+pub mod viewer;
 pub mod yacreader;
 
 /// Whether a chapter counts as read.
 ///
-/// Yes when the reader's own "read" flag is set, or when the user is on the last page or the one
-/// before it (`current_page >= num_pages - 1`). The one-page slack is on purpose: the last page of
-/// a chapter is often a credits or an ad page that people don't flip to.
+/// With a known page count, the page decides: the last page or the one before it
+/// (`current_page >= num_pages - 1`; the last page is often a credits or an ad page people don't
+/// flip to). YACReader's own "read" flag counts only when the page count is unknown: it stays set
+/// from an earlier reading, and YACReader sends it again with a fresh time when the viewer moves to
+/// the next comic (live test, 2026-11-17), so a volume left after 6 s looked "read to the end".
 ///
 /// Pages are counted from 1, as YACReader does (`currentPage` is 1 for a book that was just
-/// opened). An unknown page count (`num_pages <= 0`) never counts, only the flag does.
+/// opened).
 pub fn chapter_read(read_flag: bool, current_page: i64, num_pages: i64) -> bool {
-    read_flag || (num_pages > 0 && current_page >= num_pages - 1)
+    if num_pages > 0 { current_page >= num_pages - 1 } else { read_flag }
 }
 
 #[cfg(test)]
@@ -28,9 +35,11 @@ mod tests {
     use super::chapter_read;
 
     #[test]
-    fn the_flag_wins() {
-        assert!(chapter_read(true, 1, 200));
-        assert!(chapter_read(true, 0, 0));
+    fn the_page_beats_a_stale_flag() {
+        assert!(!chapter_read(true, 1, 200), "set from an earlier reading; page 1 now");
+        assert!(!chapter_read(true, 12, 200));
+        assert!(chapter_read(true, 199, 200));
+        assert!(chapter_read(true, 0, 0), "no page count: the flag");
     }
 
     #[test]
@@ -42,7 +51,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_page_count_never_counts() {
+    fn an_unknown_page_count_counts_only_by_the_flag() {
         assert!(!chapter_read(false, 5, 0));
         assert!(!chapter_read(false, 5, -1));
     }

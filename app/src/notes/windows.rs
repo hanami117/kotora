@@ -44,7 +44,7 @@ pub struct Sys {
 /// first button answers it with Yes; the others are the same words as everywhere.
 pub(super) fn label(kind: Kind, act: Act, default: &'static str) -> &'static str {
     match (kind, act) {
-        (Kind::Offer, Act::Update) => "Yes",
+        (Kind::Offer | Kind::ReadOffer, Act::Update) => "Yes",
         _ => default,
     }
 }

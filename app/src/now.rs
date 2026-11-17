@@ -167,12 +167,14 @@ pub struct Prefs {
     /// Settings → General → On startup (`[startup] open_on`, `mode`).
     pub open_on: kotora_core::config::OpenOn,
     pub start_mode: kotora_core::config::StartMode,
+    /// Settings → General → Discord (`[discord]`).
+    pub discord: kotora_core::config::Discord,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
         let u = kotora_core::config::Updates::default();
-        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), sources: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), manga_views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default(), open_on: Default::default(), start_mode: Default::default() }
+        Prefs { auto: u.auto, threshold: u.threshold, keep_higher: u.keep_higher_progress, players: Default::default(), vlc_set_up: false, precise_answered: false, iina_precise_answered: false, notify: Default::default(), sources: Default::default(), titles: Default::default(), theme: Default::default(), intro: true, views: Default::default(), manga_views: Default::default(), login: Default::default(), login_busy: false, background: false, check_updates: true, page_keys: Default::default(), open_on: Default::default(), start_mode: Default::default(), discord: Default::default() }
     }
 }
 
@@ -201,6 +203,7 @@ impl Prefs {
             page_keys: c.keys.pages,
             open_on: c.startup.open_on(),
             start_mode: c.startup.mode(),
+            discord: c.discord.clone(),
         }
     }
 }

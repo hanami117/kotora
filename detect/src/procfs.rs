@@ -86,6 +86,15 @@ pub trait Procs {
     fn mine(&self, pid: u32) -> bool;
     /// Open files: (fd, absolute path).
     fn files(&self, pid: u32) -> Vec<(i32, String)>;
+    /// The command line (argv, the program first). Empty when it can't be read.
+    fn args(&self, _pid: u32) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// argv from a NUL-separated block (`/proc/PID/cmdline`).
+pub fn split_nul(b: &[u8]) -> Vec<String> {
+    b.split(|c| *c == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect()
 }
 
 /// `/proc` on Linux. The root is a parameter so tests use a fake tree.
@@ -135,6 +144,10 @@ impl Procs for ProcFs {
             Some((fd, target.into_os_string().into_string().ok()?))
         })
         .collect()
+    }
+
+    fn args(&self, pid: u32) -> Vec<String> {
+        std::fs::read(self.root.join(pid.to_string()).join("cmdline")).map(|b| split_nul(&b)).unwrap_or_default()
     }
 }
 

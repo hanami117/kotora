@@ -445,9 +445,21 @@ impl Store {
 
     /// The cached answer for a parsed title: (media id, source, title).
     pub fn recognition(&self, service: &str, key: &str) -> Result<Option<(u32, String, String)>> {
+        self.recognition_of(service, Kind::Anime, key)
+    }
+
+    /// [`Store::recognition`] for a list of `kind` (manga reading uses `Kind::Manga`).
+    /// The keys the user picked `media_id` for ("Wrong manga…"), of a list of `kind`.
+    pub fn picked_keys(&self, service: &str, kind: Kind, media_id: u32) -> Result<Vec<String>> {
+        let mut st = self.conn.prepare("SELECT key FROM recognition WHERE service = ?1 AND kind = ?2 AND source = 'user' AND media_id = ?3")?;
+        let rows = st.query_map(params![service, kind.name(), media_id], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn recognition_of(&self, service: &str, kind: Kind, key: &str) -> Result<Option<(u32, String, String)>> {
         Ok(self
             .conn
-            .query_row("SELECT media_id, source, title FROM recognition WHERE service = ?1 AND kind = 'anime' AND key = ?2", params![service, key], |r| {
+            .query_row("SELECT media_id, source, title FROM recognition WHERE service = ?1 AND kind = ?2 AND key = ?3", params![service, kind.name(), key], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
             .optional()?)
@@ -455,10 +467,16 @@ impl Store {
 
     /// Saves an answer (and drops search answers older than 30 days).
     pub fn set_recognition(&self, service: &str, key: &str, media_id: u32, source: &str, title: &str, now: i64) -> Result<()> {
+        self.set_recognition_of(service, Kind::Anime, key, media_id, source, title, now)
+    }
+
+    /// [`Store::set_recognition`] for a list of `kind`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_recognition_of(&self, service: &str, kind: Kind, key: &str, media_id: u32, source: &str, title: &str, now: i64) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO recognition (service, kind, key, media_id, source, title, used_at) VALUES (?1, 'anime', ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (service, kind, key) DO UPDATE SET media_id = ?3, source = ?4, title = ?5, used_at = ?6",
-            params![service, key, media_id, source, title, now],
+            "INSERT INTO recognition (service, kind, key, media_id, source, title, used_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (service, kind, key) DO UPDATE SET media_id = ?4, source = ?5, title = ?6, used_at = ?7",
+            params![service, kind.name(), key, media_id, source, title, now],
         )?;
         self.conn.execute("DELETE FROM recognition WHERE source = 'search' AND used_at < ?1", [now - 30 * 86_400])?;
         Ok(())

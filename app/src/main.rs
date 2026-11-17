@@ -23,6 +23,7 @@ mod ctl;
 mod ctxmenu;
 mod detect;
 mod details;
+mod discord;
 mod grid;
 mod home;
 mod icons;
@@ -47,6 +48,7 @@ mod precise;
 mod profile;
 mod publishing;
 mod queue;
+mod reading;
 mod remove;
 mod scenes;
 mod scores;
@@ -75,6 +77,9 @@ use crate::model::State;
 /// Wayland app_id, desktop entry, icon name and macOS bundle id.
 pub const APP_ID: &str = "io.github.hanami117.kotora";
 
+/// The author's copyright line (About, Settings → About, the macOS bundle, the Windows resources).
+pub const COPYRIGHT: &str = "\u{a9} 2026 Thomas Lonigro";
+
 /// The C2 icon (`assets/icons/`), drawn at sidebar size.
 const LOGO: &[u8] = include_bytes!("../../assets/icons/io.github.hanami117.kotora.svg");
 
@@ -102,6 +107,7 @@ fn setup(s: &mut State, wake: Waker) {
 fn on_close(s: &mut State, tx: &mut Tx) {
     s.remember_page();
     if !s.hide_on_close() {
+        crate::discord::shutdown();
         tx.quit();
     }
 }

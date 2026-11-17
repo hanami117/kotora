@@ -28,6 +28,7 @@
 
 #[cfg(unix)]
 pub mod dirwatch;
+pub mod comics;
 #[cfg(target_os = "macos")]
 pub mod iinaconf;
 #[cfg(target_os = "macos")]

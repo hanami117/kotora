@@ -39,10 +39,20 @@
 //! started_airing = true        # a Plan to watch show started airing
 //! new_episode = true           # the next episode of a Watching show is out (estimated)
 //! new_chapter = false          # a new chapter of a Reading manga (MangaUpdates; Manga on)
+//! read_offer = true            # reading detection: Mark Ch N as read? (Manga on)
+//! read_recorded = true         # reading detection: marked, with Undo
 //!
 //! [release_data]               # Publishing's sources (Manga on); at least one stays on
 //! mangaupdates = true
 //! mangadex = true
+//!
+//! [reading]                    # reading detection (Manga on)
+//! yacreader = true             # watch YACReader's libraries (found from its settings)
+//! libraries = ["/Volumes/Disk/Comics"]   # more library folders
+//! find_libraries = true        # also the libraries in YACReader's own settings
+//! open_files = false           # any reader: comic files open in a process (macOS, Linux; opt-in)
+//! comic_folders = []           # only files in these folders (empty: anywhere)
+//! open_minutes = 10            # open this long counts as read (else: when the next file opens)
 //!
 //! [recognition]
 //! relations_download = true    # refresh anime-relations from GitHub, at most once a week
@@ -62,6 +72,14 @@
 //! open_on = "home"             # or "last": the page shown when Kotora was last closed or hidden
 //! mode = "last"                # or "anime", "manga" (Anime when Manga is off): the Anime | Manga switch
 //! last_page = "home"           # the page left open (written by the app; used by open_on = "last")
+//!
+//! [discord]                    # Settings → General → Discord: off by default; nothing runs while off
+//! enabled = false              # show what you watch or read on Discord (needs the Discord app on this computer)
+//! client_id = ""               # your own Discord Application ID (empty: the one built into Kotora)
+//! cover = true                 # the cover as the large image (Discord's servers fetch it; see the README)
+//! buttons = true               # "View on AniList" / "View on MyAnimeList"
+//! hide_paused = false          # clear the status while paused or idle
+//! hide_title = false           # say "Watching anime" / "Reading manga", never the title
 //!
 //! [app]
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
@@ -96,6 +114,7 @@ pub struct Config {
     pub recognition: Recognition,
     pub display: Display,
     pub startup: Startup,
+    pub discord: Discord,
     pub views: Views,
     /// `[manga_views]`: the manga list pages' views (each kind keeps its own).
     pub manga_views: Views,
@@ -104,6 +123,51 @@ pub struct Config {
     pub app: AppSection,
     pub keys: Keys,
     pub release_data: ReleaseData,
+    pub reading: Reading,
+}
+
+/// `[reading]`: reading detection (Manga). It runs only with Manga on.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Reading {
+    /// Watch YACReader's libraries (on by default; nothing runs without a library).
+    pub yacreader: bool,
+    /// Library folders the user added, beside the ones YACReader's settings list.
+    pub libraries: Vec<String>,
+    /// Also watch the libraries listed in YACReader's own settings (`YACReaderLibrary.ini`).
+    pub find_libraries: bool,
+    /// Stage 2, opt-in: comic files any process has open (macOS, Linux).
+    pub open_files: bool,
+    /// Folders the open comic files must be in (empty: anywhere).
+    pub comic_folders: Vec<String>,
+    /// A comic open this long counts as read (when no next file opened first).
+    pub open_minutes: u32,
+}
+
+impl Default for Reading {
+    fn default() -> Self {
+        Reading { yacreader: true, libraries: Vec::new(), find_libraries: true, open_files: false, comic_folders: Vec::new(), open_minutes: 10 }
+    }
+}
+
+/// `[discord]`: Rich Presence ("Show on Discord"). Off by default. `client_id` is a Discord
+/// Application ID (public, like a MAL client id); empty means the one built into Kotora.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Discord {
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_string")]
+    pub client_id: String,
+    pub cover: bool,
+    pub buttons: bool,
+    pub hide_paused: bool,
+    pub hide_title: bool,
+}
+
+impl Default for Discord {
+    fn default() -> Self {
+        Discord { enabled: false, client_id: String::new(), cover: true, buttons: true, hide_paused: false, hide_title: false }
+    }
 }
 
 /// `[release_data]`: Publishing's release sources (both on by default).
@@ -152,11 +216,15 @@ pub struct Notifications {
     /// A new chapter of a Reading manga is on MangaUpdates (Manga on). Off by default: it is
     /// the one switch that makes Kotora ask a third service in the background.
     pub new_chapter: bool,
+    /// Reading detection: "Mark Ch 21 of Title as read?" (as `offer` for anime).
+    pub read_offer: bool,
+    /// Reading detection: a chapter was marked, with Undo (as `recorded` for anime).
+    pub read_recorded: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false }
+        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true }
     }
 }
 
@@ -685,10 +753,12 @@ impl std::fmt::Debug for Config {
             .field("recognition", &self.recognition)
             .field("display", &self.display)
             .field("startup", &self.startup)
+            .field("discord", &self.discord)
             .field("notifications", &self.notifications)
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
             .field("keys", &self.keys)
+            .field("reading", &self.reading)
             .finish()
     }
 }
@@ -718,6 +788,8 @@ struct File {
     #[serde(default)]
     startup: Startup,
     #[serde(default)]
+    discord: Discord,
+    #[serde(default)]
     views: Views,
     #[serde(default)]
     manga_views: Views,
@@ -731,6 +803,8 @@ struct File {
     keys: Keys,
     #[serde(default)]
     release_data: ReleaseData,
+    #[serde(default)]
+    reading: Reading,
 }
 
 #[derive(Deserialize, Default)]
@@ -762,6 +836,7 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
+            discord: Discord { client_id: f.discord.client_id.trim().to_string(), ..f.discord },
             views: f.views,
             manga_views: f.manga_views,
             notifications: f.notifications,
@@ -770,6 +845,7 @@ impl Config {
             keys: f.keys,
             // Both off is not a choice: MangaUpdates comes back on.
             release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
+            reading: f.reading,
         })
     }
 
@@ -997,6 +1073,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn discord_is_off_by_default_and_read_leniently() {
+        let d = Config::default().discord;
+        assert!(!d.enabled && d.cover && d.buttons && !d.hide_paused && !d.hide_title && d.client_id.is_empty());
+        let c = Config::parse("[discord]\nenabled = true\nclient_id = \" 123 \"\nhide_title = true\ncover = false\n").unwrap().discord;
+        assert!(c.enabled && c.hide_title && !c.cover && c.buttons);
+        assert_eq!(c.client_id, "123");
+        assert!(Config::parse("[discord]\nclient_id = 42\n").is_ok(), "a number is no parse error");
+    }
+
+    #[test]
     fn page_keys_are_ctrl_by_default_and_alt_on_request() {
         assert_eq!(Config::parse("").unwrap().keys.pages, PageKeys::Primary);
         assert_eq!(Config::parse("[keys]\npages = \"alt\"\n").unwrap().keys.pages, PageKeys::Alt);
@@ -1121,7 +1207,11 @@ mod tests {
     #[test]
     fn notifications_offer_and_recorded_on_detected_off() {
         let n = Config::parse("").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false });
+        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true });
+        // The manga reading switches are their own: turning the anime ones off leaves them on.
+        assert!(Config::parse("[notifications]\noffer = false\nrecorded = false\n").unwrap().notifications.read_offer);
+        let r = Config::parse("[reading]\nfind_libraries = false\nopen_files = true\nopen_minutes = 4\n").unwrap().reading;
+        assert_eq!((r.yacreader, r.find_libraries, r.open_files, r.open_minutes), (true, false, true, 4));
         assert!(Config::parse("[notifications]\nnew_chapter = true\n").unwrap().notifications.new_chapter);
         let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
         assert_eq!(n, Notifications { detected: true, offer: false, ..Notifications::default() });

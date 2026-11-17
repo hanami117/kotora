@@ -85,7 +85,7 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Keyboard"), vec![Row::PageKeys])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Discord"), vec![Row::Discord, Row::DiscordCover, Row::DiscordButtons, Row::DiscordHidePaused, Row::DiscordHideTitle]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
             Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
             Section::Detection => {
@@ -103,9 +103,9 @@ impl Section {
             Section::Notifications => vec![
                 (Some("While you watch"), vec![Row::NotifyDetected, Row::NotifyOffer, Row::NotifyRecorded]),
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
-                (Some("Manga"), vec![Row::NotifyChapter]),
+                (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
-            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd])],
+            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links])],
         }
     }
@@ -124,6 +124,12 @@ pub enum Row {
     CheckNow,
     /// The modifier with 1 to 5 for the list pages.
     PageKeys,
+    /// Show what you watch on Discord, and its options.
+    Discord,
+    DiscordCover,
+    DiscordButtons,
+    DiscordHidePaused,
+    DiscordHideTitle,
     Theme,
     Titles,
     Intro,
@@ -161,6 +167,18 @@ pub enum Row {
     NotifyChapter,
     ReleaseMu,
     ReleaseMd,
+    /// Reading detection: watch YACReader's libraries.
+    ReadingYac,
+    /// Reading detection: the libraries (found and added).
+    ReadingLibs,
+    /// Reading detection: also the libraries in YACReader's own settings.
+    ReadingFind,
+    /// Reading detection, stage 2: comic files open in any reader.
+    ReadingOpen,
+    ReadingMinutes,
+    ReadingFolders,
+    NotifyReadOffer,
+    NotifyReadRecorded,
     About,
     Licences,
     Links,
@@ -178,6 +196,11 @@ impl Row {
             Row::CheckUpdates => "check-updates",
             Row::CheckNow => "check-now",
             Row::PageKeys => "page-keys",
+            Row::Discord => "discord",
+            Row::DiscordCover => "discord-cover",
+            Row::DiscordButtons => "discord-buttons",
+            Row::DiscordHidePaused => "discord-hide-paused",
+            Row::DiscordHideTitle => "discord-hide-title",
             Row::Theme => "theme",
             Row::Titles => "titles",
             Row::Intro => "intro",
@@ -207,6 +230,14 @@ impl Row {
             Row::NotifyChapter => "notify-chapter",
             Row::ReleaseMu => "release-mu",
             Row::ReleaseMd => "release-md",
+            Row::ReadingYac => "reading-yacreader",
+            Row::ReadingLibs => "reading-libraries",
+            Row::ReadingFind => "reading-find",
+            Row::ReadingOpen => "reading-open-files",
+            Row::ReadingMinutes => "reading-minutes",
+            Row::ReadingFolders => "reading-folders",
+            Row::NotifyReadOffer => "notify-read-offer",
+            Row::NotifyReadRecorded => "notify-read-recorded",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -239,6 +270,11 @@ const SPECS: &[Spec] = &[
     spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
     spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
     spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
+    spec(Row::Discord, Section::General, "Show on Discord", "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.", "discord rich presence status activity presence taiga show playing watching friends share"),
+    spec(Row::DiscordCover, Section::General, "Show the cover", "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.", "discord cover art poster image picture"),
+    spec(Row::DiscordButtons, Section::General, "Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", "discord button buttons link anilist myanimelist"),
+    spec(Row::DiscordHidePaused, Section::General, "Hide while paused", "Clears the status while the player is paused or idle.", "discord hide paused pause idle stopped clear"),
+    spec(Row::DiscordHideTitle, Section::General, "Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", "discord hide title private privacy secret incognito"),
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
@@ -266,6 +302,14 @@ const SPECS: &[Spec] = &[
     spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
     spec(Row::ReleaseMu, Section::Manga, "MangaUpdates", "Release data for Publishing from MangaUpdates.", "manga release data source sources mangaupdates publishing chapters latest"),
     spec(Row::ReleaseMd, Section::Manga, "MangaDex", "Release data for Publishing from MangaDex, official chapters included.", "manga release data source sources mangadex publishing chapters latest official manga plus"),
+    spec(Row::ReadingYac, Section::Manga, "YACReader", crate::reading::SWITCH_NOTE, "reading detection detect read chapter comic reader yacreader cbz cbr mark as read library"),
+    spec(Row::ReadingFind, Section::Manga, "Find YACReader\u{2019}s libraries", "Also watch the libraries listed in YACReader\u{2019}s own settings.", "reading yacreader library libraries find auto ini settings"),
+    spec(Row::ReadingOpen, Section::Manga, "Any reader (open files)", crate::reading::OPEN_FILES_NOTE, "reading detection any reader open file files process simple comic mcomix okular evince zathura komikku preview cbz cbr pdf zip folder"),
+    spec(Row::ReadingMinutes, Section::Manga, "Open this long counts as read", "When the next chapter doesn\u{2019}t open first.", "reading minutes open time counts read threshold"),
+    spec(Row::ReadingFolders, Section::Manga, "Comic folders", "Any app\u{2019}s comic files in these folders count; elsewhere only known readers.", "reading comic folders folder manga directory path"),
+    spec(Row::NotifyReadOffer, Section::Notifications, "Chapter read offered", "Mark Ch 21 as read? with Mark read and Not now.", "notification notifications alert manga chapter read offer ask mark reading detection yacreader"),
+    spec(Row::NotifyReadRecorded, Section::Notifications, "Chapter recorded", "Marked, with Undo.", "notification notifications alert manga chapter recorded marked undo reading detection"),
+    spec(Row::ReadingLibs, Section::Manga, "YACReader libraries", "Found in YACReader\u{2019}s settings, or added here.", "reading library libraries folder comics yacreader ydb database path"),
     spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
@@ -856,6 +900,19 @@ fn row_el(s: &State, r: Row) -> El {
             "Anime or Manga at start, or as you left it. Manga only when Manga is on; otherwise Anime.",
             choice("set/start-mode", &config::StartMode::ALL, p.start_mode, config::StartMode::label, config::StartMode::key, State::set_start_mode),
         ),
+        Row::Discord => line(
+            "Show on Discord",
+            if crate::discord::needs_client_id(&p.discord) {
+                "Not set up in this build: put your own Discord Application ID in config.toml, [discord] client_id (docs/DISCORD.md). Needs the Discord app on this computer.".to_string()
+            } else {
+                "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.".to_string()
+            },
+            switch("set/discord".into(), "Show on Discord", p.discord.enabled, State::set_discord),
+        ),
+        Row::DiscordCover => line("Show the cover", "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.", switch_if("set/discord-cover".into(), "Show the cover", p.discord.cover, p.discord.enabled, State::set_discord_cover)),
+        Row::DiscordButtons => line("Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", switch_if("set/discord-buttons".into(), "Show a button", p.discord.buttons, p.discord.enabled, State::set_discord_buttons)),
+        Row::DiscordHidePaused => line("Hide while paused", "Clears the status while the player is paused or idle.", switch_if("set/discord-hide-paused".into(), "Hide while paused", p.discord.hide_paused, p.discord.enabled, State::set_discord_hide_paused)),
+        Row::DiscordHideTitle => line("Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", switch_if("set/discord-hide-title".into(), "Hide the title", p.discord.hide_title, p.discord.enabled, State::set_discord_hide_title)),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
         Row::PageKeys => line(
@@ -1023,6 +1080,40 @@ fn row_el(s: &State, r: Row) -> El {
             };
             line("New chapter", note, crate::ui::switch_if("set/notify-chapter".into(), "New chapter", p.notify.new_chapter, s.manga.enabled, |s, v| s.set_notify(crate::notes::Kind::Chapter, v)))
         }
+        Row::ReadingYac => line(
+            "YACReader",
+            crate::reading::switch_row_note(s),
+            crate::ui::switch_if("set/reading-yacreader".into(), "YACReader", s.reading.on, s.manga.enabled, |s, v| s.set_reading_on(v)),
+        ),
+        Row::ReadingFind => line(
+            "Find YACReader\u{2019}s libraries",
+            "Also watch the libraries listed in YACReader\u{2019}s own settings. Off: only the ones added below.",
+            crate::ui::switch_if("set/reading-find".into(), "Find YACReader\u{2019}s libraries", s.reading.find, s.manga.enabled && s.reading.on, |s, v| s.set_reading_find(v)),
+        ),
+        Row::ReadingOpen => line(
+            "Any reader (open files)",
+            if crate::reading::OPEN_FILES_HERE { crate::reading::OPEN_FILES_NOTE.to_string() } else { "Not on Windows yet.".to_string() },
+            crate::ui::switch_if("set/reading-open-files".into(), "Any reader (open files)", s.reading.open_files && crate::reading::OPEN_FILES_HERE, s.manga.enabled && crate::reading::OPEN_FILES_HERE, |s, v| s.set_open_files(v)),
+        ),
+        Row::ReadingMinutes => {
+            let minutes = s.reading.minutes;
+            let stepper = row()
+                .key("set/reading-minutes")
+                .h(28.0)
+                .center_y()
+                .radius(theme::R_SM)
+                .fill(PAL.field)
+                .border(1.0, PAL.border_strong)
+                .child(cell("set/reading-minutes/minus".into(), "Fewer minutes".into(), false, |s| s.step_open_minutes(false)).child(text("\u{2212}").font(theme::LABEL).color(PAL.dim)))
+                .child(row().min_w(64.0).center().child(text(format!("{minutes} min")).font(theme::LABEL_NUM).color(PAL.text)))
+                .child(cell("set/reading-minutes/plus".into(), "More minutes".into(), false, |s| s.step_open_minutes(true)).child(text("+").font(theme::LABEL).color(PAL.dim)));
+            let stepper = if s.reading.open_files { stepper } else { stepper.opacity(0.4) };
+            line("Open this long counts as read", "When the next chapter of the series doesn\u{2019}t open first.", stepper)
+        }
+        Row::ReadingFolders => block("Comic folders", "Any app\u{2019}s comic files in these folders count; elsewhere only known readers\u{2019}.", crate::reading::folders_block(s)),
+        Row::NotifyReadOffer => notify("Chapter read offered", "\u{201c}Mark Ch 21 of Title as read?\u{201d} with Mark read and Not now. Manga reading detection.", "set/notify-read-offer", p.notify.read_offer, crate::notes::Kind::ReadOffer),
+        Row::NotifyReadRecorded => notify("Chapter recorded", "\u{201c}Marked Ch 21 as read\u{201d} with Undo.", "set/notify-read-recorded", p.notify.read_recorded, crate::notes::Kind::ReadRecorded),
+        Row::ReadingLibs => block("Libraries", "Found in YACReader\u{2019}s settings, or added here (the folder with .yacreaderlibrary in it).", crate::reading::libraries_block(s)),
         Row::ReleaseMu | Row::ReleaseMd => {
             let md = r == Row::ReleaseMd;
             let (on, other) = if md { (p.sources.md, p.sources.mu) } else { (p.sources.mu, p.sources.md) };
@@ -1165,7 +1256,8 @@ fn about(s: &State) -> El {
                         .font(theme::LABEL)
                         .color(PAL.dim)
                         .wrap(),
-                ),
+                )
+                .child(text(format!("{}. Free software under the GNU General Public License, version 3 or later.", crate::COPYRIGHT)).key("about-copyright").font(theme::LABEL).color(PAL.faint).wrap()),
         )
 }
 

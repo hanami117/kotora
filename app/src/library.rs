@@ -233,7 +233,7 @@ fn save_folders(s: &mut State) {
 }
 
 /// A typed or picked path, tidied: `~` expanded, no trailing slash.
-fn tidy(raw: &str) -> String {
+pub(crate) fn tidy(raw: &str) -> String {
     let t = raw.trim().trim_matches(|c| c == '"' || c == '\'');
     let home = kotora_core::paths::home_dir().map(|h| h.to_string_lossy().into_owned());
     let t = match (t.strip_prefix("~/"), home) {
@@ -297,53 +297,58 @@ fn add_typed(s: &mut State) {
 /// `kdialog` on a thread).
 fn choose(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
-    // macOS: AppKit's own panel, in this process, so it follows Kotora's theme (`chrome.rs`).
-    #[cfg(target_os = "macos")]
-    {
-        let r = crate::chrome::pick_folder(PROMPT, move |picked| {
-            let Some(p) = picked else { return };
-            h.update_if(move |s, _| {
-                if let Err(e) = add_folder(s, &p) {
-                    s.library.error = Some(e);
-                }
-                true
-            });
-        });
-        if let Err(e) = r {
-            s.library.error = Some(e);
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = std::thread::Builder::new().name("kotora-choose".into()).spawn(move || {
-        let picked = pick_folder();
+    let r = choose_folder(PROMPT, move |p| {
         h.update_if(move |s, _| {
-            match picked {
-                Ok(Some(p)) => {
-                    if let Err(e) = add_folder(s, &p) {
-                        s.library.error = Some(e);
-                    }
-                }
-                Ok(None) => return false,
-                Err(e) => s.library.error = Some(e),
+            if let Err(e) = p.and_then(|p| add_folder(s, &p)) {
+                s.library.error = Some(e);
             }
             true
         });
     });
+    if let Err(e) = r {
+        s.library.error = Some(e);
+    }
 }
 
-#[cfg(target_os = "macos")]
+/// The system's folder picker with `prompt`; `picked` runs with the folder, or with why no
+/// picker could run (Linux without zenity or kdialog); a cancel runs nothing. macOS: AppKit's
+/// own panel, in this process, so it follows Kotora's theme (`chrome.rs`); elsewhere a short
+/// thread.
+pub(crate) fn choose_folder(prompt: &'static str, picked: impl Fn(Result<String, String>) + Send + 'static) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::chrome::pick_folder(prompt, move |p| {
+            if let Some(p) = p {
+                picked(Ok(p));
+            }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = std::thread::Builder::new().name("kotora-choose".into()).spawn(move || {
+            match pick_folder(prompt) {
+                Ok(Some(p)) => picked(Ok(p)),
+                Ok(None) => {}
+                Err(e) => picked(Err(e)),
+            }
+        });
+        Ok(())
+    }
+}
+
 const PROMPT: &str = "Choose a folder with anime in it";
 
 #[cfg(windows)]
-fn pick_folder() -> Result<Option<String>, String> {
-    crate::win::pick_folder("Choose a folder with anime in it")
+fn pick_folder(prompt: &str) -> Result<Option<String>, String> {
+    crate::win::pick_folder(prompt)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn pick_folder() -> Result<Option<String>, String> {
-    let tries: &[(&str, &[&str])] = &[("zenity", &["--file-selection", "--directory", "--title=Choose a folder with anime in it"]), ("kdialog", &["--getexistingdirectory", "--title", "Choose a folder with anime in it"])];
-    for (prog, args) in tries {
-        match std::process::Command::new(prog).args(*args).stdin(std::process::Stdio::null()).output() {
+fn pick_folder(prompt: &str) -> Result<Option<String>, String> {
+    let title = format!("--title={prompt}");
+    let tries: [(&str, Vec<&str>); 2] = [("zenity", vec!["--file-selection", "--directory", &title]), ("kdialog", vec!["--getexistingdirectory", "--title", prompt])];
+    for (prog, args) in &tries {
+        match std::process::Command::new(prog).args(args).stdin(std::process::Stdio::null()).output() {
             Ok(out) if out.status.success() => {
                 let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 return Ok((!p.is_empty()).then_some(p));

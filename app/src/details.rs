@@ -107,6 +107,7 @@ impl State {
         self.fetch_details(id, kind);
         if kind == Kind::Manga {
             self.publishing_for_details(id);
+            self.want_resume(id);
         }
     }
 
