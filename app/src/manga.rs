@@ -156,7 +156,7 @@ impl MEntry {
         if self.shows().0 { Unit::Chapters } else { Unit::Volumes }
     }
 
-    fn at_end(&self, u: Unit) -> bool {
+    pub fn at_end(&self, u: Unit) -> bool {
         match u {
             Unit::Chapters => self.chapters_total.is_some_and(|n| self.chapters >= n),
             Unit::Volumes => self.volumes_total.is_some_and(|n| self.volumes >= n),
@@ -240,6 +240,8 @@ pub struct MangaUi {
     pub editor: Option<MEditor>,
     /// "Remove … from your manga list?" asks about this manga (the bar on top of the page).
     pub confirm_remove: Option<u32>,
+    /// The manga grid's selection (arrow keys), by manga id.
+    pub grid_sel: Option<u32>,
 }
 
 impl Default for MangaUi {
@@ -256,6 +258,7 @@ impl Default for MangaUi {
             error: None,
             editor: None,
             confirm_remove: None,
+            grid_sel: None,
         }
     }
 }
@@ -378,7 +381,7 @@ impl State {
         // The search page in Manga mode: every manga matching its field, Reading's first.
         let (st, q) = match self.page {
             Page::Manga(st) => (st, self.manga.query.text.trim().to_lowercase()),
-            Page::Search if self.manga.mode && self.searching() => (Status::Watching, self.find.text.trim().to_lowercase()),
+            Page::Search if self.search_kind() == Kind::Manga && self.searching() => (Status::Watching, self.find.text.trim().to_lowercase()),
             _ => {
                 self.manga.rows.clear();
                 return;
@@ -1741,8 +1744,7 @@ mod more_tests {
         s.find.replace_text("salt");
         s.open_search();
         s.online.show("salt", fake_hits());
-        s.manga.mode = false;
-        s.search_changed();
+        s.set_search_kind(Kind::Anime);
         assert_eq!(s.online.kind, Kind::Anime);
         assert!(s.online.hits.is_empty(), "manga results never show as anime ones");
     }
@@ -1827,6 +1829,63 @@ mod more_tests {
         s.prefs.manga_views.set(Status::Watching, ListView::Grid);
         s.manga_ctx_edit_entry(1);
         assert!(s.page == Page::Details && s.detail.as_ref().is_some_and(|d| d.is_manga()));
+    }
+
+    /// The search page's own kind: it opens on the switch's, Tab (or the toggle) flips it,
+    /// Ctrl/Cmd K follows the switch again; no manga without Manga on.
+    #[test]
+    fn the_search_page_switches_kind() {
+        let mut s = loaded();
+        s.set_kind(Kind::Anime);
+        s.find.replace_text("salt");
+        s.open_search();
+        assert_eq!(s.search_kind(), Kind::Anime, "the switch's kind");
+        assert!(s.manga.rows.is_empty());
+        assert!(s.toggle_search_kind());
+        assert_eq!(s.search_kind(), Kind::Manga);
+        assert_eq!(s.manga.rows.iter().map(|&k| s.manga.entries[k].id).collect::<Vec<_>>(), [2], "the manga list's matches");
+        assert!(s.rows.is_empty(), "no anime rows now");
+        assert_eq!(s.online.kind, Kind::Manga, "MyAnimeList is asked for manga");
+        s.toggle_search_kind();
+        assert_eq!(s.search_kind(), Kind::Anime);
+        s.toggle_search_kind();
+        s.open_search();
+        assert_eq!(s.search_kind(), Kind::Anime, "Ctrl/Cmd K follows the switch again");
+        // Off the search page the switch decides, and Manga off has nothing to toggle to.
+        let mut a = State::fake();
+        a.find.replace_text("x");
+        a.open_search();
+        assert!(!a.toggle_search_kind());
+        a.set_search_kind(Kind::Manga);
+        assert_eq!(a.search_kind(), Kind::Anime);
+    }
+
+    /// The manga grid's keys: arrows pick, Enter opens, + and - step the picked manga.
+    #[test]
+    fn the_manga_grid_takes_the_keys() {
+        use rune::{Key, KeyEvent};
+        let mut s = loaded();
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.grid.per_row.set(3);
+        let mut tx = rune::Tx::default();
+        let key = |k: Key| KeyEvent { key: k, mods: Default::default() };
+        assert!(s.manga_grid_key(&key(Key::Right), &mut tx));
+        let first = s.manga.entries[s.manga.rows[0]].id;
+        assert_eq!(s.manga.grid_sel, Some(first));
+        s.manga_grid_key(&key(Key::Down), &mut tx);
+        let picked = s.manga.entries[s.manga.rows[3]].id;
+        assert_eq!(s.manga.grid_sel, Some(picked), "down: a row on");
+        let before = s.manga.entries.iter().find(|e| e.id == picked).map(|e| (e.chapters, e.volumes)).unwrap();
+        s.manga_grid_key(&key(Key::Text("+".into())), &mut tx);
+        let after = s.manga.entries.iter().find(|e| e.id == picked).map(|e| (e.chapters, e.volumes)).unwrap();
+        assert!(after.0 + after.1 == before.0 + before.1 + 1, "+: one more chapter or volume");
+        s.manga_grid_key(&key(Key::Text("-".into())), &mut tx);
+        assert_eq!(s.manga.entries.iter().find(|e| e.id == picked).map(|e| (e.chapters, e.volumes)).unwrap(), before, "-: back");
+        assert!(s.manga_grid_key(&key(Key::Enter), &mut tx));
+        assert!(s.detail.as_ref().is_some_and(|d| d.is_manga() && d.id() == picked));
+        // The table leaves the keys alone.
+        let mut t = loaded();
+        assert!(!t.manga_grid_key(&key(Key::Down), &mut tx));
     }
 
     /// Each kind keeps its views.

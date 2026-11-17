@@ -185,6 +185,43 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             s.remove_manga(id)?;
             Ok(Reply::Done { message: format!("Removed {name} from your manga list. It waits in the sync queue (kot queue); Undo it there in Kotora to keep the manga.") })
         })),
+        // `kot fill-volumes`: the window's manga list, looked up on this thread (MangaDex, the
+        // saved answers first), then the preview held, or with --yes the volumes queued.
+        Request::FillVolumes { yes } => {
+            let ready = on_ui(handle, false, |s| -> Result<(Vec<kotora_core::ListItem>, ServiceId), String> {
+                manga_ready(s)?;
+                if kotora_core::paths::offline_forced() || s.offline {
+                    return Err("Offline: volumes from chapters need MangaDex.".into());
+                }
+                Ok((crate::volfill::candidates(s), s.service))
+            });
+            let (items, service) = match ready {
+                Ok(Ok(x)) => x,
+                Ok(Err(message)) | Err(message) => return Reply::Error { message, anyway: false },
+            };
+            if items.is_empty() {
+                return Reply::Done { message: "Nothing to look up: no manga has chapters read with volumes short of its total.".into() };
+            }
+            let rows = match crate::volfill::look_up(items, service, false, &std::sync::atomic::AtomicBool::new(false), |_, _| {}) {
+                Ok(r) => r,
+                Err(message) => return Reply::Error { message, anyway: false },
+            };
+            let plan = kotora_core::mangadex::plan_fill(&rows);
+            let text = crate::volfill::plan_text(&plan);
+            if plan.fill.is_empty() {
+                return Reply::Done { message: text };
+            }
+            if !yes {
+                return Reply::Error { message: text, anyway: true };
+            }
+            reply(on_ui(handle, true, move |s| {
+                let actions = kotora_core::mangadex::fill_actions(&plan);
+                let n = actions.len();
+                s.volfill.applying = true;
+                crate::queue::send(s, crate::queue::Cmd::FillVolumes(actions));
+                Ok(Reply::Done { message: s.queued_text(n, "volume change", "volume changes") })
+            }))
+        }
         // Off the UI thread: reads the database and writes the file.
         Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path), kotora_core::Kind::Anime) {
             Ok(message) => Reply::Done { message },

@@ -58,6 +58,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   (you still save). Only when you ask: no background requests, under 3 a second, each series saved for 30
   days. Volume data: MangaDex.
 
+- **Manga polish:** the Search page has its own Anime | Manga toggle (Tab in the box switches; Ctrl/⌘ K opens it on
+  the sidebar's kind). Home shows Continue reading under Continue watching when Manga is on (+1 is the next
+  chapter, or volume). The manga Grid and Large views take the arrow keys, Enter, and + / − like the anime ones
+  (which gain + / − too). `kot fill-volumes [--yes]` prints the volume preview and fills only after a yes, and
+  the preview has "Look up again" to ask MangaDex anew instead of using its saved answers.
+
 ### Changed
 - Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import
   anime list…**, beside Export manga list… and Import manga list…; the messages, file dialogs and `kot help` say

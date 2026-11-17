@@ -652,7 +652,7 @@ impl State {
         let st = match self.page {
             Page::List(st) => st,
             // Manga mode: the search page's matches are manga (`refresh_manga`).
-            Page::Search if self.searching() && !self.manga.mode => Status::ALL[0],
+            Page::Search if self.searching() && self.search_kind() == kotora_core::Kind::Anime => Status::ALL[0],
             _ => {
                 self.rows.clear();
                 return;

@@ -63,7 +63,48 @@ fn offline_text(e: &ServiceError) -> String {
 // ---------------------------------------------------------------------------------- settings
 
 /// "Fill volumes from chapters…": look every manga up (a thread), then the preview.
+/// The manga a fill looks up: chapters read, volumes short of the total.
+pub fn candidates(s: &State) -> Vec<ListItem> {
+    s.manga.entries.iter().map(item_of).filter(mangadex::wants_lookup).collect()
+}
+
+/// Looks `items` up on MangaDex (the cache first, unless `refresh`), calling `progress(done, of)`
+/// after each; stops early when `cancel` is set. One series MangaDex can't answer for is left
+/// out (`None`); no network or a rate limit stops it with the reason. Blocking: a worker thread
+/// (the Settings row) or `kot`'s connection thread.
+pub fn look_up(items: Vec<ListItem>, service: kotora_core::service::ServiceId, refresh: bool, cancel: &AtomicBool, mut progress: impl FnMut(usize, usize)) -> Result<Vec<(ListItem, Option<Lookup>)>, String> {
+    let mut client = mangadex::Client::online();
+    let cache = mangadex::Cache::default_dir();
+    let mut rows = Vec::new();
+    let n = items.len();
+    for (i, it) in items.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let key = mangadex::key_of(service, &it.media);
+        match mangadex::find(&mut client, &cache, key, &mangadex::titles_of(&it.media), kotora_core::time::now_unix(), refresh) {
+            Ok((l, _)) => rows.push((it, Some(l))),
+            Err(ServiceError::Other(_)) => rows.push((it, None)),
+            Err(e) => return Err(offline_text(&e)),
+        }
+        progress(i + 1, n);
+    }
+    Ok(rows)
+}
+
+/// "Fill…": look every manga up (the saved answers first) and show the preview.
 fn start(s: &mut State) {
+    start_with(s, false);
+}
+
+/// "Look up again": the same, asking MangaDex again for every manga (the saved answers are
+/// replaced).
+fn look_again(s: &mut State) {
+    s.volfill.preview = None;
+    start_with(s, true);
+}
+
+fn start_with(s: &mut State, refresh: bool) {
     let v = &mut s.volfill;
     if v.busy.is_some() || v.applying {
         return;
@@ -77,56 +118,61 @@ fn start(s: &mut State) {
         return;
     }
     let Some(h) = s.handle.clone() else { return };
-    let items: Vec<ListItem> = s.manga.entries.iter().map(item_of).filter(mangadex::wants_lookup).collect();
+    let items = candidates(s);
     let service = s.service;
+    let v = &mut s.volfill;
     v.busy = Some((0, items.len()));
     v.cancel = Arc::new(AtomicBool::new(false));
     let cancel = v.cancel.clone();
     let _ = std::thread::Builder::new().name("kotora-mangadex".into()).spawn(move || {
-        let mut client = mangadex::Client::online();
-        let cache = mangadex::Cache::default_dir();
-        let mut rows = Vec::new();
-        let mut error = None;
-        let n = items.len();
-        for (i, it) in items.into_iter().enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            let key = mangadex::key_of(service, &it.media);
-            match mangadex::find(&mut client, &cache, key, &mangadex::titles_of(&it.media), kotora_core::time::now_unix(), false) {
-                Ok((l, _)) => rows.push((it, Some(l))),
-                // One series MangaDex can't answer for: left out of this preview.
-                Err(ServiceError::Other(_)) => rows.push((it, None)),
-                Err(e) => {
-                    error = Some(offline_text(&e));
-                    break;
-                }
-            }
-            h.update_if(move |s, _| {
-                s.volfill.busy = Some((i + 1, n));
+        let hp = h.clone();
+        let r = look_up(items, service, refresh, &cancel, move |i, n| {
+            hp.update_if(move |s, _| {
+                s.volfill.busy = Some((i, n));
                 true
             });
-        }
-        let found: Vec<(u32, Lookup)> = rows.iter().filter_map(|(it, l)| Some((it.media.id, l.clone()?))).collect();
-        let plan = mangadex::plan_fill(&rows);
+        });
         let stopped = cancel.load(Ordering::Relaxed);
         h.update_if(move |s, tx| {
             let v = &mut s.volfill;
             v.busy = None;
-            for (id, l) in found {
-                v.tables.insert(id, Some(l));
-            }
-            match (error, stopped) {
-                (Some(e), _) => v.error = Some(e),
-                (None, true) => {}
-                (None, false) => {
-                    v.preview = Some(plan);
-                    tx.scroll_into_view("set/fill-volumes-preview");
+            match r {
+                Err(e) => v.error = Some(e),
+                Ok(rows) => {
+                    for (it, l) in &rows {
+                        if let Some(l) = l {
+                            v.tables.insert(it.media.id, Some(l.clone()));
+                        }
+                    }
+                    if !stopped {
+                        v.preview = Some(mangadex::plan_fill(&rows));
+                        tx.scroll_into_view("set/fill-volumes-preview");
+                    }
                 }
             }
             true
         });
     });
+}
+
+/// The preview as `kot fill-volumes` prints it.
+pub fn plan_text(p: &FillPlan) -> String {
+    let mut out = Vec::new();
+    let mut part = |head: String, lines: Vec<String>| {
+        if !lines.is_empty() {
+            out.push(head);
+            out.extend(lines.into_iter().map(|l| format!("  {l}")));
+        }
+    };
+    part(format!("Volumes that go up ({}):", p.fill.len()), p.fill.iter().map(|r| format!("{}: ch {} \u{2192} vol {} \u{2192} {}", r.title, r.chapters, r.from, r.to)).collect());
+    part(format!("Higher than MangaDex, left alone ({}):", p.higher.len()), p.higher.iter().map(|r| format!("{}: vol {} (MangaDex: {})", r.title, r.from, r.to)).collect());
+    part(format!("Already right ({}):", p.same.len()), p.same.iter().map(|r| format!("{}: vol {}", r.title, r.from)).collect());
+    part(format!("Not found on MangaDex ({}):", p.not_found.len()), p.not_found.clone());
+    if p.fill.is_empty() {
+        out.push("Nothing to change.".into());
+    }
+    out.push(format!("{CREDIT}."));
+    out.join("\n")
 }
 
 /// A manga entry as the core sees it (its titles, ids and counts).
@@ -275,18 +321,25 @@ fn preview(s: &State, p: &FillPlan) -> El {
         // Nothing goes up: say so, and only Close.
         b = b.child(text("Nothing to change.").key("set/fill-volumes-nothing").font(theme::BODY_MED).color(PAL.text));
         b = b.child(text(CREDIT).key("set/fill-volumes-credit").font(theme::LABEL).color(PAL.faint));
-        return b.child(row().key("set/fill-volumes-actions").child(small_button("set/fill-volumes-close-preview", "Close", false, Some(close as fn(&mut State)))));
+        return b.child(
+            row()
+                .key("set/fill-volumes-actions")
+                .gap(8.0)
+                .child(small_button("set/fill-volumes-close-preview", "Close", false, Some(close as fn(&mut State))))
+                .child(small_button("set/fill-volumes-refresh", "Look up again", false, Some(look_again as fn(&mut State)))),
+        );
     }
     let mirror = s.mirror.link.map(|l| format!(" With the mirror on, {} gets them too.", l.to.title())).unwrap_or_default();
     b = b.child(text(format!("Only volumes change, through the sync queue to {} at its pace; Undo takes back what hasn\u{2019}t been sent.{mirror}", s.service.title())).font(theme::LABEL).color(PAL.dim).wrap());
-    b = b.child(text(CREDIT).key("set/fill-volumes-credit").font(theme::LABEL).color(PAL.faint));
+    b = b.child(text(format!("{CREDIT}. Saved answers are used for 30 days; \u{201c}Look up again\u{201d} asks MangaDex anew.")).key("set/fill-volumes-credit").font(theme::LABEL).color(PAL.faint));
     let fill: Option<fn(&mut State)> = (!s.volfill.applying).then_some(apply);
     b.child(
         row()
             .key("set/fill-volumes-actions")
             .gap(8.0)
             .child(small_button("set/fill-volumes-apply", &format!("Fill {}", plural(n, "volume count", "volume counts")), true, fill))
-            .child(small_button("set/fill-volumes-cancel", "Cancel", false, Some(close as fn(&mut State)))),
+            .child(small_button("set/fill-volumes-cancel", "Cancel", false, Some(close as fn(&mut State))))
+            .child(small_button("set/fill-volumes-refresh", "Look up again", false, Some(look_again as fn(&mut State)))),
     )
 }
 
@@ -463,6 +516,24 @@ mod tests {
         for k in ["set/fill-volumes-missing", "set/fill-volumes-apply", "set/fill-volumes-cancel"] {
             assert!(rt.find(k).is_none(), "{k}: hidden");
         }
+    }
+
+    /// What `kot fill-volumes` prints: every group with its count, the credit.
+    #[test]
+    fn the_kot_preview_reads_plainly() {
+        let mut s = State::fake();
+        crate::manga::fake(&mut s);
+        fake_preview(&mut s);
+        let t = plan_text(s.volfill.preview.as_ref().unwrap());
+        assert!(t.starts_with("Volumes that go up (3):\n  Paper Wolves of Osaka: ch 12 \u{2192} vol 0 \u{2192} 1"), "{t}");
+        assert!(t.contains("Higher than MangaDex, left alone (2):") && t.contains("Already right (1):") && t.contains("Not found on MangaDex (1):\n  Moth Orchestra"));
+        assert!(t.ends_with("Volume data: MangaDex.") && !t.contains("Nothing to change"));
+        let empty = plan_text(&FillPlan::default());
+        assert_eq!(empty, "Nothing to change.\nVolume data: MangaDex.");
+        // The preview offers "Look up again" (asks MangaDex anew).
+        let rt = keys("settings-fill-volumes-preview");
+        assert!(rt.find("set/fill-volumes-refresh").is_some());
+        assert!(keys("settings-fill-volumes-nothing").find("set/fill-volumes-refresh").is_some());
     }
 
     /// The done line names the mirror when it is on (a fill is mirrored like any import).

@@ -191,7 +191,7 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.play_entry(id);
         return true;
     }
-    s.grid_key(k, tx)
+    s.grid_key(k, tx) || s.manga_grid_key(k, tx)
 }
 
 // ------------------------------------------------------------------------------------ sidebar
@@ -892,7 +892,7 @@ fn results(s: &State, mut page: El, scroll_key: String, wide: bool) -> El {
         page = page.child(a);
     }
     let n = layout(s).len();
-    let manga = s.page == Page::Search && s.manga.mode;
+    let manga = s.page == Page::Search && s.search_kind() == kotora_core::Kind::Manga;
     page.child(if manga { crate::manga::header(wide, s.sort) } else { header(wide, s.sort) }).child(
         col().key(scroll_key).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
             col().key("rows").growth(GrowthSpec::default()).virtual_rows(
@@ -932,13 +932,18 @@ fn search_view(s: &State, wide: bool) -> El {
                 .single_line()
                 .color(PAL.text)
                 .placeholder(
-                    field_hint(&s.find, &if s.manga.mode { format!("Search your manga and {svc}, or paste a {svc} manga link", svc = s.service.title()) } else { format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title()) }),
+                    field_hint(&s.find, &if s.search_kind() == kotora_core::Kind::Manga { format!("Search your manga and {svc}, or paste a {svc} manga link", svc = s.service.title()) } else { format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title()) }),
                     PAL.faint,
                 )
                 .on_edit(|s: &mut State| &mut s.find)
                 // Escape goes back from the field too (the field would only let go of the focus).
                 .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
                     if field_page_key(s, k, tx) {
+                        return true;
+                    }
+                    // Tab: anime or manga (with Manga on); Shift+Tab still moves the focus.
+                    if k.key == rune::Key::Tab && !k.mods.shift && !k.mods.ctrl && !k.mods.alt && !k.mods.cmd && s.toggle_search_kind() {
+                        tx.instant();
                         return true;
                     }
                     if k.key != rune::Key::Escape || s.online.menu.is_some() {
@@ -967,11 +972,44 @@ fn search_view(s: &State, wide: bool) -> El {
         .w_full()
         .h_full()
         .child(top(s, "Search", count, false))
-        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).child(field.grow(1.0).max_w(720.0)));
+        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).gap(12.0).center_y().child(field.grow(1.0).max_w(720.0)).children(s.manga.enabled.then(|| kind_toggle(s))));
     if !s.searching() {
-        return page.child(search_hint(s.service.title(), s.manga.mode));
+        return page.child(search_hint(s.service.title(), s.search_kind() == kotora_core::Kind::Manga));
     }
     results(s, page, "search-scroll".into(), wide)
+}
+
+/// The search page's Anime | Manga toggle (with Manga on); Tab in the box does the same.
+fn kind_toggle(s: &State) -> El {
+    use kotora_core::Kind;
+    let now = s.search_kind();
+    let seg = |kind: Kind| {
+        let on = now == kind;
+        let c = el()
+            .key(format!("search/kind/{}", kind.name()))
+            .role("button")
+            .label(format!("Search {}", kind.label().to_lowercase()))
+            .checked(on)
+            .h(32.0)
+            .px(12.0)
+            .radius(theme::R_SM)
+            .center()
+            .child(text(kind.label()).font(if on { theme::BODY_MED } else { theme::BODY }).color(if on { PAL.text } else { PAL.dim }));
+        if on {
+            c.fill(PAL.raised).border(1.0, PAL.border_strong)
+        } else {
+            c.focusable(true).hover(PAL.hover()).press(PAL.press()).cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                tx.instant();
+                s.set_search_kind(kind);
+            })
+        }
+    };
+    row()
+        .key("search/kind")
+        .gap(8.0)
+        .center_y()
+        .child(row().h(40.0).padding(4.0).gap(2.0).center_y().radius(theme::R_SM).fill(PAL.field).border(1.0, PAL.border).child(seg(Kind::Anime)).child(seg(Kind::Manga)))
+        .child(kbd("Tab"))
 }
 
 /// The empty search page: what it finds.

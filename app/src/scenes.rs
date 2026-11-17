@@ -265,6 +265,29 @@ pub const SCENES: &[Scene] = &[
     }),
     // Home: continue watching, airing this week, plan to watch.
     ("home", home),
+    // Manga on: Continue reading under Continue watching (+1 is the next chapter or volume).
+    ("home-manga", |s| {
+        manga(s);
+        s.set_kind(kotora_core::Kind::Anime);
+        home(s);
+    }),
+    // The search page's own kind: the switch is on Anime, Tab (or the toggle) looks for manga.
+    ("search-kind-manga", |s| {
+        manga(s);
+        s.set_kind(kotora_core::Kind::Anime);
+        s.find.replace_text("salt");
+        s.open_search();
+        s.find.focused = false;
+        s.toggle_search_kind();
+        s.online.pending = false;
+        s.online.show("salt", crate::manga::fake_hits());
+    }),
+    // The manga grid with a card picked by the arrow keys.
+    ("manga-grid-selected", |s| {
+        manga(s);
+        s.prefs.manga_views.set(Status::Watching, ListView::Grid);
+        s.manga.grid_sel = Some(2);
+    }),
     ("home-covers", |s| {
         fake_covers(s);
         home(s);
@@ -3317,5 +3340,34 @@ mod settings_scroll {
             "set/mirror-preview",
             "set/mirror-cancel",
         );
+    }
+}
+
+/// Home with Manga on shows Continue reading (and nothing of manga when it is off); the search
+/// page shows its kind toggle with Manga on.
+#[cfg(test)]
+mod manga_polish {
+    use super::*;
+
+    fn rt(name: &str) -> rune::Runtime<State> {
+        let mut s = State::fake();
+        (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
+        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 900.0), rune::Env { system_dark: true, scale: 1.0 });
+        for _ in 0..3 {
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    }
+
+    #[test]
+    fn home_search_and_grid_show_their_manga_parts() {
+        let r = rt("home-manga");
+        assert!(r.find("home/reading").is_some() && r.find("read/2").is_some(), "Continue reading with Salt & Gears");
+        assert!(r.find("read/3").is_some(), "a reread shows");
+        assert!(r.find("read/4").is_some(), "On hiatus still reads on");
+        assert!(rt("home").find("home/reading").is_none(), "Manga off: no manga on Home");
+        let r = rt("search-kind-manga");
+        assert!(r.find("search/kind/manga").is_some() && r.find("hit/501").is_some());
+        assert!(rt("manga-grid-selected").find("msel/2").is_some());
     }
 }

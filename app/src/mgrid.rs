@@ -6,13 +6,13 @@
 
 use kotora_core::Status;
 use kotora_core::config::ListView;
-use rune::{El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
+use rune::{El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
 
 use crate::grid::{DENSE, LARGE, badge, fit, row_key, size};
 use crate::icons;
 use crate::look;
 use crate::manga::{MEntry, Run, Unit, cover_id, stub};
-use crate::model::State;
+use crate::model::{Page, State};
 use crate::theme::{self, PAL};
 
 /// The progress under a poster, by the rule: one count with its total, or both counts.
@@ -140,6 +140,66 @@ fn pressable(c: El, e: &MEntry) -> El {
         })
 }
 
+impl State {
+    /// The manga grid's keys, as the anime grid's: the arrows move a selection (outlined),
+    /// Enter opens its page, Escape drops it, + and - step its chapter (or volume, when only
+    /// volumes show). Returns whether the key was used.
+    pub fn manga_grid_key(&mut self, k: &KeyEvent, tx: &mut Tx) -> bool {
+        let Page::Manga(st) = self.page else { return false };
+        if self.manga_view_of(st) == ListView::List || !self.manga.query.text.trim().is_empty() || self.manga.rows.is_empty() || k.mods.cmd || k.mods.alt || k.mods.ctrl {
+            return false;
+        }
+        let per = self.grid.per_row.get().max(1);
+        let n = self.manga.rows.len();
+        let at = self.manga.grid_sel.and_then(|id| self.manga.rows.iter().position(|&k| self.manga.entries[k].id == id));
+        let next = match (&k.key, at) {
+            (Key::Escape, Some(_)) => {
+                self.manga.grid_sel = None;
+                return true;
+            }
+            (Key::Enter, Some(i)) => {
+                tx.instant();
+                let st = stub(&self.manga.entries[self.manga.rows[i]]);
+                self.open_details(st);
+                return true;
+            }
+            (Key::Text(t), Some(i)) if matches!(t.as_str(), "+" | "=" | "-") => {
+                tx.instant();
+                let e = &self.manga.entries[self.manga.rows[i]];
+                let id = e.id;
+                let r = if t.as_str() == "-" {
+                    let change = match e.plus_unit() {
+                        Unit::Chapters if e.chapters > 0 => Some(kotora_core::Change { progress: Some(e.chapters - 1), ..Default::default() }),
+                        Unit::Volumes if e.volumes > 0 => Some(kotora_core::Change { volumes: Some(e.volumes - 1), ..Default::default() }),
+                        _ => None,
+                    };
+                    change.map_or(Ok(()), |c| self.manga_edit(id, c).map(|_| ()))
+                } else {
+                    self.manga_plus_one(id).map(|_| ())
+                };
+                if let Err(m) = r {
+                    self.error = Some(m);
+                }
+                return true;
+            }
+            (Key::Right | Key::Left | Key::Up | Key::Down, None) => 0,
+            (Key::Right, Some(i)) => (i + 1).min(n - 1),
+            (Key::Left, Some(i)) => i.saturating_sub(1),
+            (Key::Down, Some(i)) => (i + per).min(n - 1),
+            (Key::Up, Some(i)) => i.checked_sub(per).unwrap_or(i),
+            _ => return false,
+        };
+        self.manga.grid_sel = Some(self.manga.entries[self.manga.rows[next]].id);
+        tx.scroll_into_view(row_key(next / per));
+        true
+    }
+}
+
+/// The selection's outline (on a wrapper: the poster clips its own children).
+fn outlined(s: &State, e: &MEntry, c: El, r: f32) -> El {
+    if s.manga.grid_sel == Some(e.id) { el().key(format!("msel/{}", e.id)).radius(r).outline(2.0, 2.0, PAL.accent).child(c) } else { c }
+}
+
 /// Grid: the poster with its badges and a progress strip, the title and the progress under it.
 fn card_dense(s: &State, e: &MEntry, st: Status) -> El {
     let z = DENSE;
@@ -159,7 +219,7 @@ fn card_dense(s: &State, e: &MEntry, st: Status) -> El {
         .child(p)
         .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
         .child(row().h(16.0).center_y().child(text(progress_text(e)).font(theme::LABEL_NUM).color(PAL.dim).truncate().min_w(0.0)).child(spacer()).child(score(s, e)));
-    pressable(c, e)
+    outlined(s, e, pressable(c, e), theme::R_MD)
 }
 
 /// Large: the poster, two lines of title, a bar, the progress, the score and `+1`.
@@ -184,7 +244,7 @@ fn card_large(s: &State, e: &MEntry) -> El {
                 .child(row().h(16.0).gap(8.0).center_y().child(col().grow(1.0).child(look::bar(e.fraction(), status_color(e), 5.0, PAL.border))).child(score(s, e)))
                 .child(row().h(26.0).center_y().gap(8.0).child(text(progress_text(e)).font(theme::NUM_MED).color(PAL.dim).truncate().min_w(0.0)).child(spacer()).child(plus)),
         );
-    pressable(c, e)
+    outlined(s, e, pressable(c, e), theme::R_LG)
 }
 
 /// The cards of manga page `st` (its rows after the chip and the sort), `width` the main area's.
@@ -192,6 +252,8 @@ pub fn cards(s: &State, st: Status, width: f32) -> El {
     let v = s.manga_view_of(st);
     let z = size(v);
     let (per, gap) = fit(width, z);
+    // The arrow keys need it (the anime grid sets it the same way).
+    s.grid.per_row.set(per);
     let rows = s.manga.rows.len().div_ceil(per);
     col().key(format!("manga-grid-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
         col().key("grid").growth(GrowthSpec::default()).virtual_rows(

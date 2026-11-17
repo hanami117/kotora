@@ -98,6 +98,23 @@ impl State {
                 self.open_details(Stub::from_entry(e));
                 return true;
             }
+            // + and - on the selected card: one episode more or less (as +1 and the editor).
+            (Key::Text(t), Some(i)) if matches!(t.as_str(), "+" | "=" | "-") => {
+                tx.instant();
+                let id = self.entries[self.rows[i]].id;
+                let r = if t.as_str() == "-" {
+                    match self.entries.iter().find(|e| e.id == id).map(|e| e.progress) {
+                        Some(p) if p > 0 => self.edit(id, kotora_core::Change { progress: Some(p - 1), ..Default::default() }).map(|_| ()),
+                        _ => Ok(()),
+                    }
+                } else {
+                    self.plus_one_or_ask(id)
+                };
+                if let Err(m) = r {
+                    self.error = Some(m);
+                }
+                return true;
+            }
             (Key::Right | Key::Left | Key::Up | Key::Down, None) => 0,
             (Key::Right, Some(i)) => (i + 1).min(n - 1),
             (Key::Left, Some(i)) => i.saturating_sub(1),
@@ -408,6 +425,17 @@ mod tests {
         assert!(s.grid_key(&key(Key::Enter), &mut tx));
         assert_eq!(s.page, Page::Details);
         assert_eq!(s.detail.as_ref().map(|d| d.id()), Some(id));
+        // + and - step the picked card's episode.
+        let mut s = State::fake();
+        s.prefs.views.set(Status::Watching, ListView::Grid);
+        s.grid.per_row.set(4);
+        s.grid_key(&key(Key::Right), &mut tx);
+        let id = s.grid.sel.unwrap();
+        let p = s.entries.iter().find(|e| e.id == id).unwrap().progress;
+        s.grid_key(&key(Key::Text("-".into())), &mut tx);
+        assert_eq!(s.entries.iter().find(|e| e.id == id).unwrap().progress, p - 1);
+        s.grid_key(&key(Key::Text("+".into())), &mut tx);
+        assert_eq!(s.entries.iter().find(|e| e.id == id).unwrap().progress, p);
         // The table view leaves the keys alone.
         let mut s = State::fake();
         assert!(!s.grid_key(&key(Key::Down), &mut tx));

@@ -70,6 +70,10 @@ Commands:
                         dropped. Needs manga on
   manga [on|off]        whether syncs also read your manga list (MyAnimeList
                         or AniList; off by default); on syncs now
+  fill-volumes [--yes]  set manga volumes read from chapters read, with
+                        MangaDex's volume tables: prints what would change
+                        and asks first (--yes doesn't); never lowers. Volume
+                        data: MangaDex
   export [--manga] FILE write your anime list (--manga: your manga list) as a
                         MyAnimeList XML file (MyAnimeList lists only), as
                         Settings \u{2192} Account \u{2192} Export anime/manga list\u{2026}
@@ -138,6 +142,8 @@ fn main() -> ExitCode {
             }
         },
         ["next", title @ ..] if !title.is_empty() => Request::Next { title: title.join(" ") },
+        ["fill-volumes"] => Request::FillVolumes { yes: false },
+        ["fill-volumes", "--yes"] | ["fill-volumes", "-y"] => Request::FillVolumes { yes: true },
         ["export", "--manga", file] | ["export", file, "--manga"] if !file.starts_with("--") => Request::ExportManga { path: absolute(file) },
         ["export", file] if !file.starts_with("--") => Request::Export { path: absolute(file) },
         ["export", ..] => {
@@ -182,9 +188,20 @@ fn main() -> ExitCode {
     if let Ok(Reply::Error { message, anyway: true }) = &reply {
         eprintln!("kot: {message}");
         let removing = matches!(req, Request::Remove { .. } | Request::MangaRemove { .. });
-        if !confirm(if removing { "Remove it? [y/N] " } else { "Mark anyway? [y/N] " }) {
+        let filling = matches!(req, Request::FillVolumes { .. });
+        let question = if filling { "Fill them? [y/N] " } else if removing { "Remove it? [y/N] " } else { "Mark anyway? [y/N] " };
+        if !confirm(question) {
             if !interactive() {
-                eprintln!("{}", if removing { "kot: run it again with --yes to remove it." } else { "kot: run it again with --anyway to mark it." });
+                eprintln!(
+                    "{}",
+                    if filling {
+                        "kot: run it again with --yes to fill them."
+                    } else if removing {
+                        "kot: run it again with --yes to remove it."
+                    } else {
+                        "kot: run it again with --anyway to mark it."
+                    }
+                );
             }
             return ExitCode::FAILURE;
         }
@@ -257,7 +274,12 @@ fn main() -> ExitCode {
 }
 
 fn ask(req: &Request) -> io::Result<Reply> {
-    Client::connect()?.request(req)
+    let mut c = Client::connect()?;
+    // Looking manga up on MangaDex can take minutes on a long list (under 3 requests a second).
+    if matches!(req, Request::FillVolumes { .. }) {
+        c.set_reply_timeout(std::time::Duration::from_secs(600))?;
+    }
+    c.request(req)
 }
 
 fn stdout_is_tty() -> bool {
@@ -321,6 +343,7 @@ fn with_anyway(req: Request) -> Request {
         Request::Set { title, progress, status, score, score_text, .. } => Request::Set { title, progress, status, score, score_text, anyway: true },
         Request::Remove { title, .. } => Request::Remove { title, yes: true },
         Request::MangaRemove { title, .. } => Request::MangaRemove { title, yes: true },
+        Request::FillVolumes { .. } => Request::FillVolumes { yes: true },
         other => other,
     }
 }
@@ -667,6 +690,7 @@ mod tests {
         assert_eq!(parse_add(&["--manga", "Salt", "Road", "--status", "reading"]), Ok(Request::MangaAdd { query: "Salt Road".into(), status: Some("reading".into()) }));
         assert_eq!(parse_remove(&["Salt", "--manga", "--yes"]), Ok(Request::MangaRemove { title: "Salt".into(), yes: true }));
         assert_eq!(parse_remove(&["Salt"]), Ok(Request::Remove { title: "Salt".into(), yes: false }));
+        assert_eq!(with_anyway(Request::FillVolumes { yes: false }), Request::FillVolumes { yes: true });
         assert_eq!(with_anyway(Request::MangaRemove { title: "Salt".into(), yes: false }), Request::MangaRemove { title: "Salt".into(), yes: true });
         assert!(parse_add(&[]).is_err());
         assert!(parse_add(&["--status", "plan"]).is_err());

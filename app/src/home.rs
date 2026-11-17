@@ -1,5 +1,6 @@
 //! Home: the list at a glance, in shelves. Continue watching (wide cards: the next episode's +1,
-//! and Play when the file is in the library folders), Airing this week (the next episode of each
+//! and Play when the file is in the library folders), with Manga on Continue reading (the same
+//! cards for manga: +1 is the next chapter, or volume), Airing this week (the next episode of each
 //! airing show on the list, soonest first, with its day), and Plan to watch. Each shelf scrolls
 //! sideways and links to its full page ("See all").
 //!
@@ -48,6 +49,84 @@ fn airing_week(s: &State) -> Vec<(&Entry, u32, i64)> {
     v
 }
 
+/// Continue reading: Reading (and rereads) with a next chapter or volume, last updated first.
+fn reading(s: &State) -> Vec<&crate::manga::MEntry> {
+    let mut v: Vec<&crate::manga::MEntry> = s.manga.entries.iter().filter(|e| e.on_page(Status::Watching) && !e.at_end(e.plus_unit())).collect();
+    v.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
+    v
+}
+
+/// A Continue reading card: as Continue watching's, `+1` for the next chapter (or volume), the
+/// counts by the agreed rule; a press opens the manga's page, a right-click its menu.
+fn manga_card(s: &State, e: &crate::manga::MEntry) -> El {
+    use crate::manga::{Unit, cover_id};
+    let id = e.id;
+    let cid = cover_id(id);
+    let (word, next) = match e.plus_unit() {
+        Unit::Chapters => ("Ch", e.chapters + 1),
+        Unit::Volumes => ("Vol", e.volumes + 1),
+    };
+    let st = if e.rereading { PAL.st_completed } else { PAL.status(e.status) };
+    let plus = row()
+        .key("plus")
+        .role("button")
+        .label(format!("+1, {} {next}", if word == "Ch" { "chapter" } else { "volume" }))
+        .focusable(true)
+        .h(28.0)
+        .px(10.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.bg.alpha(0.7))
+        .border(1.0, PAL.border_strong)
+        .hover(PAL.accent)
+        .press(PAL.accent_lo)
+        .hover_group()
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            if let Err(m) = s.manga_plus_one(id) {
+                s.error = Some(m);
+            }
+        })
+        .child(text(format!("+1  {word} {next}")).font(theme::LABEL_BTN).color(PAL.text).group_color(PAL.on_accent));
+    let stub = crate::manga::stub(e);
+    el().key(format!("read/{id}"))
+        .role("button")
+        .label(format!("About {}", e.title))
+        .size(WIDE_W, WIDE_H)
+        .radius(theme::R_LG)
+        .clip_rounded(theme::R_LG)
+        .border(1.0, PAL.border)
+        .hover(PAL.hover())
+        .cursor(rune::Cursor::Pointer)
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.open_manga_ctx(id, crate::ctxmenu::At::Point(p.x, p.y));
+        })
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.open_details(stub.clone());
+        })
+        .child(look::backdrop(s, cid, e.cover_url.as_deref(), look::card_scrim()))
+        .child(
+            row()
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .padding(10.0)
+                .gap(12.0)
+                .child(look::poster(s, cid, &e.title, e.cover_url.as_deref(), 74.0, 111.0, theme::R_SM))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(4.0)
+                        .py(2.0)
+                        .child(text(e.title.clone()).font(TextStyle::new(14.0, 600.0)).color(PAL.text).wrap().max_lines(2))
+                        .child(text(crate::mgrid::progress_text(e)).font(theme::LABEL_NUM).color(PAL.dim).truncate())
+                        .child(spacer())
+                        .child(row().gap(8.0).center_y().child(col().grow(1.0).child(look::bar(e.fraction(), st, 4.0, PAL.text.alpha(0.16)))).child(plus)),
+                ),
+        )
+}
+
 fn plan(s: &State) -> Vec<&Entry> {
     let mut v: Vec<&Entry> = s.entries.iter().filter(|e| e.status == Status::PlanToWatch).collect();
     v.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
@@ -68,6 +147,19 @@ pub fn page(s: &State) -> El {
         cont.iter().take(SHELF_MAX).map(|e| wide_card(s, e)).collect(),
         "Nothing to continue: start something from Plan to watch.",
     ));
+    // Manga on: what is being read, the same way (nothing when Manga is off).
+    if s.manga.enabled {
+        let reading = reading(s);
+        body = body.child(shelf(
+            "reading",
+            "Continue reading",
+            reading.len(),
+            Some(Page::Manga(Status::Watching)),
+            WIDE_H,
+            reading.iter().take(SHELF_MAX).map(|e| manga_card(s, e)).collect(),
+            "Nothing to continue: start something from Plan to read.",
+        ));
+    }
     let today = s.airing.clock(s.clock()).day;
     body = body.child(shelf(
         "airing",

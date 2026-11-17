@@ -246,6 +246,12 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<String>,
     },
+    /// `kot fill-volumes`: volumes read from chapters read (MangaDex). Without `yes` the reply
+    /// is the preview, held (`Error` with `anyway`); with it, the volumes go to the queue.
+    FillVolumes {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        yes: bool,
+    },
     /// `kot remove --manga`: as `Remove`, from the manga list.
     MangaRemove {
         title: String,

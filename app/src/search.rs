@@ -51,6 +51,9 @@ pub struct Online {
     pub menu: Option<u32>,
     /// What the results are: anime, or manga (the sidebar's switch on Manga).
     pub kind: Kind,
+    /// What the search page looks for: set from the sidebar's switch each time the page opens
+    /// (Ctrl/Cmd K), then Tab or the page's Anime | Manga toggle.
+    pub page_kind: Kind,
     /// Recent answers: kind, query, when, results.
     cache: Vec<(Kind, String, i64, Vec<AnimeHit>)>,
     /// Bumped by every change of the query; an older search's answer is dropped.
@@ -145,9 +148,36 @@ pub fn blocked(s: &State) -> Option<String> {
 }
 
 impl State {
-    /// What the search page looks for: manga when the sidebar's switch is on Manga.
+    /// What a search looks for: on the search page its own kind (the switch's when it opened,
+    /// then Tab or its toggle); elsewhere the sidebar's switch.
     pub fn search_kind(&self) -> Kind {
-        if self.manga.mode { Kind::Manga } else { Kind::Anime }
+        match self.page {
+            Page::Search => self.online.page_kind,
+            _ if self.manga.mode => Kind::Manga,
+            _ => Kind::Anime,
+        }
+    }
+
+    /// Tab or the toggle on the search page: anime or manga (manga only with Manga on). The
+    /// box keeps its words; both parts search again.
+    pub fn set_search_kind(&mut self, kind: Kind) {
+        if self.page != Page::Search || (kind == Kind::Manga && !self.manga.enabled) || self.online.page_kind == kind {
+            return;
+        }
+        self.online.page_kind = kind;
+        self.online.menu = None;
+        self.refresh();
+        self.search_changed();
+    }
+
+    /// Tab: the other kind.
+    pub fn toggle_search_kind(&mut self) -> bool {
+        if self.page != Page::Search || !self.manga.enabled {
+            return false;
+        }
+        let other = if self.online.page_kind == Kind::Manga { Kind::Anime } else { Kind::Manga };
+        self.set_search_kind(other);
+        true
     }
 
     /// The search page's own matches: the manga list's or the anime list's.
@@ -289,10 +319,14 @@ impl State {
         if !self.has_list() {
             return;
         }
+        // Ctrl/Cmd K follows the sidebar's switch, every time.
+        self.online.page_kind = if self.manga.mode { Kind::Manga } else { Kind::Anime };
         if self.page != Page::Search {
             self.search_back = self.page;
             self.editor = None;
             self.go(Page::Search);
+        } else {
+            self.refresh();
         }
         self.find.focused = true;
         self.search_changed();
