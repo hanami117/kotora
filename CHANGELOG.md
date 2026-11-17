@@ -7,8 +7,8 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [0.4.0] - 2026-11-17
 
 Kotora now notices the manga you read in your own comic files and asks to mark the chapter, as it does for an
-episode. It can also show what you watch or read as your Discord status. Both are off until you turn them on
-(reading detection needs Manga on). No database change.
+episode (with Manga on: YACReader is watched by default, other readers when you turn them on). It can also show
+what you watch or read as your Discord status, off until you turn it on. No database change.
 
 ### Added
 - **Reading detection (Manga).** Read a chapter to the end and Kotora asks "Mark Ch 120 of *Title* as read?"
