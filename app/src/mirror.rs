@@ -62,6 +62,9 @@ pub struct MirrorUi {
     /// The mirror service's ids by MyAnimeList id, per kind (AniList mirror: from its saved
     /// media), for its "Open on …" links.
     pub ids: HashMap<(Kind, u32), u32>,
+    /// MyAnimeList main, AniList mirror: AniList's exact next airing per MyAnimeList anime id,
+    /// from the saved AniList list (the Airing page's "to watch").
+    pub next: HashMap<u32, kotora_core::airing::NextAiring>,
     pub worker: Arc<Worker>,
 }
 
@@ -201,6 +204,7 @@ struct Snapshot {
     fmt: ScoreFormat,
     manga_aligned: bool,
     ids: HashMap<(Kind, u32), u32>,
+    next: HashMap<u32, kotora_core::airing::NextAiring>,
 }
 
 fn snapshot(store: &Store) -> Snapshot {
@@ -224,6 +228,12 @@ fn snapshot(store: &Store) -> Snapshot {
                 .collect(),
             _ => HashMap::new(),
         },
+        next: match link {
+            Some(l) if l.main == ServiceId::Mal && l.to == ServiceId::AniList => {
+                store.load_list(l.to.name()).unwrap_or_default().into_iter().filter_map(|it| Some((it.media.id_mal?, it.media.next_airing?))).collect()
+            }
+            _ => HashMap::new(),
+        },
     }
 }
 
@@ -237,6 +247,8 @@ fn report(h: &Handle, snap: Snapshot, trouble: Option<Option<String>>) {
         s.mirror.fmt = snap.fmt;
         s.mirror.manga_aligned = snap.manga_aligned;
         s.mirror.ids = snap.ids;
+        s.mirror.next = snap.next;
+        s.airing_rebuild();
         if let Some(t) = trouble {
             s.mirror.trouble = t;
         }
@@ -428,6 +440,8 @@ pub fn load(s: &mut State) {
             s.mirror.synced_at = snap.synced_at;
             s.mirror.manga_aligned = snap.manga_aligned;
             s.mirror.ids = snap.ids;
+            s.mirror.next = snap.next;
+            s.airing_rebuild();
             if on {
                 send(s, Cmd::Kick { sync: false });
             }

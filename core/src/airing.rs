@@ -429,9 +429,108 @@ pub fn countdown(secs: i64) -> String {
     }
 }
 
+/// Episodes out that the user hasn't watched (the Airing page, Home, `kot airing`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToWatch {
+    /// Episodes out, by the service (exact) or by the timetable (estimate).
+    pub out: u32,
+    /// Out and not watched.
+    pub behind: u32,
+    /// From the service's own data (AniList's next airing still ahead, or a finished show's
+    /// count); else the weekly estimate, which can't know of breaks and delays.
+    pub exact: bool,
+    /// Not aired yet.
+    pub upcoming: bool,
+}
+
+impl ToWatch {
+    /// "3 to watch", "~3 to watch" (an estimate), "Caught up", "Not aired yet".
+    pub fn label(self) -> String {
+        match (self.behind, self.upcoming && self.out == 0) {
+            (_, true) => "Not aired yet".into(),
+            (0, _) => "Caught up".into(),
+            (n, _) if self.exact => format!("{n} to watch"),
+            (n, _) => format!("~{n} to watch"),
+        }
+    }
+}
+
+/// How many episodes of a show are out and not watched at `now`.
+///
+/// - Finished airing: the episode count (exact); no count, nothing known.
+/// - The exact next airing (`next`: AniList's own, or the mirror's AniList copy on MyAnimeList)
+///   still ahead: the episodes before it (exact). One already past: weeks counted on from it.
+/// - Else the timetable's estimate (`estimate`: start date + weekly slot, MyAnimeList).
+/// - Not yet aired: none out, unless the timetable says the start has passed.
+/// - A progress past the estimate means more is out: never negative, "Caught up".
+///
+/// `None`: nothing to go on (airing with no slot time, say).
+pub fn to_watch(air_status: &str, episodes: Option<u32>, next: Option<NextAiring>, estimate: Option<Timetable>, progress: u32, now: i64) -> Option<ToWatch> {
+    let episodes = episodes.filter(|n| *n > 0);
+    let cap = |n: u32| episodes.map_or(n, |t| n.min(t));
+    let (out, exact) = match (air_status, next) {
+        ("finished_airing", _) => (episodes?, true),
+        (_, Some(n)) if now < n.at => (cap(n.episode.saturating_sub(1)), true),
+        (_, Some(n)) => (Timetable::from_next(n, episodes).aired(now), false),
+        ("not_yet_aired", None) => (estimate.map_or(0, |t| t.aired(now)), estimate.is_none_or(|t| t.aired(now) == 0)),
+        (_, None) => (estimate?.aired(now), false),
+    };
+    let upcoming = air_status == "not_yet_aired" && out == 0;
+    Some(ToWatch { out, behind: out.saturating_sub(progress), exact, upcoming })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_watch_from_anilist_exactly() {
+        // AniList: episode 5 airs next week: 4 are out.
+        let next = NextAiring { episode: 5, at: at("2026-11-21", 23, 30, JST) };
+        let now = at("2026-11-20", 12, 0, JST);
+        let w = to_watch("currently_airing", Some(12), Some(next), Some(show()), 1, now).unwrap();
+        assert_eq!((w.out, w.behind, w.exact), (4, 3, true), "the estimate (7) loses to AniList's 4");
+        assert_eq!(w.label(), "3 to watch");
+        assert_eq!(to_watch("currently_airing", Some(12), Some(next), None, 4, now).unwrap().label(), "Caught up");
+        // Its time passed (the saved copy is old): counted on weekly, now an estimate.
+        let w = to_watch("currently_airing", Some(12), Some(next), None, 1, next.at + WEEK + 60).unwrap();
+        assert_eq!((w.out, w.exact), (6, false));
+        assert_eq!(w.label(), "~5 to watch");
+    }
+
+    #[test]
+    fn to_watch_on_myanimelist_is_an_estimate_from_the_season_start() {
+        let t = show();
+        // Before the first slot: none out.
+        let w = to_watch("currently_airing", Some(12), None, Some(t), 0, t.first - 60).unwrap();
+        assert_eq!((w.out, w.behind, w.label().as_str()), (0, 0, "Caught up"));
+        // At the first slot: one.
+        assert_eq!(to_watch("currently_airing", Some(12), None, Some(t), 0, t.first).unwrap().label(), "~1 to watch");
+        // Week 7, at 2: ~5.
+        let w = to_watch("currently_airing", Some(12), None, Some(t), 2, at("2026-11-15", 12, 0, JST)).unwrap();
+        assert_eq!((w.out, w.behind, w.exact), (7, 5, false));
+        assert_eq!(w.label(), "~5 to watch");
+        // The user ahead of the estimate (a double premiere): caught up, never negative.
+        assert_eq!(to_watch("currently_airing", Some(12), None, Some(t), 9, at("2026-11-15", 12, 0, JST)).unwrap().behind, 0);
+        // No slot time: nothing to say.
+        assert_eq!(to_watch("currently_airing", Some(12), None, None, 2, t.first), None);
+    }
+
+    #[test]
+    fn to_watch_finished_and_not_yet_aired() {
+        let now = at("2027-03-01", 0, 0, 0);
+        let w = to_watch("finished_airing", Some(12), None, Some(show()), 5, now).unwrap();
+        assert_eq!((w.out, w.behind, w.exact, w.label().as_str()), (12, 7, true, "7 to watch"));
+        assert_eq!(to_watch("finished_airing", Some(12), None, None, 12, now).unwrap().label(), "Caught up");
+        assert_eq!(to_watch("finished_airing", None, None, None, 3, now), None, "no count");
+        // Not yet aired, start date ahead: none out.
+        let t = show();
+        let w = to_watch("not_yet_aired", Some(12), None, Some(t), 0, t.first - 86_400).unwrap();
+        assert_eq!((w.out, w.upcoming, w.label().as_str()), (0, true, "Not aired yet"));
+        assert_eq!(to_watch("not_yet_aired", None, None, None, 0, now).unwrap().label(), "Not aired yet");
+        // MyAnimeList still says not yet aired, but the first slot has passed: ~1.
+        assert_eq!(to_watch("not_yet_aired", Some(12), None, Some(t), 0, t.first + 60).unwrap().label(), "~1 to watch");
+    }
 
     fn at(date: &str, hh: i64, mm: i64, offset: i64) -> i64 {
         time::parse_date(date).unwrap() * 86_400 + hh * 3600 + mm * 60 - offset

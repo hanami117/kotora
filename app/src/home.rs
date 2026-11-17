@@ -250,6 +250,10 @@ fn wide_card(s: &State, e: &Entry) -> El {
     if let Some(n) = e.airing_note {
         sub = format!("{sub} \u{b7} {n}");
     }
+    // Episodes out and not watched ("~3 to watch", "Caught up").
+    if let Some(w) = s.to_watch(e) {
+        sub = format!("{sub} \u{b7} {}", w.label());
+    }
     let st = if e.rewatching { PAL.st_completed } else { PAL.status(e.status) };
     let plus = row()
         .key("plus")

@@ -673,7 +673,7 @@ fn airing_text(items: &[AiringItem], note: Option<&str>) -> String {
             out.push_str(&format!("{day}\n"));
         }
         let title: String = i.title.chars().take(40).collect();
-        let behind = if i.behind > 0 { format!(", {} aired not watched", i.behind) } else { String::new() };
+        let behind = if i.behind > 0 { format!(", {}{} to watch", if i.estimate { "~" } else { "" }, i.behind) } else { String::new() };
         out.push_str(&format!("  {}  {title:<w$}  ep {}  ({}{behind})\n", i.time, i.episode, i.countdown));
     }
     out
@@ -902,6 +902,7 @@ mod tests {
             time: time.into(),
             countdown: countdown.into(),
             behind,
+            estimate: false,
         };
         let text = airing_text(
             &[it("Mecha Bento Club", 11, "Today", "15:00", "in 6 h", 0), it("Lanterns", 7, "Saturday", "15:30", "in 1 d 6 h", 1), it("Hoshizora", 4, "Saturday", "17:00", "in 1 d 8 h", 0)],
@@ -909,8 +910,11 @@ mod tests {
         );
         assert_eq!(
             text,
-            "Airing on your list, next 7 days (some times are estimates):\nToday\n  15:00  Mecha Bento Club  ep 11  (in 6 h)\nSaturday\n  15:30  Lanterns          ep 7  (in 1 d 6 h, 1 aired not watched)\n  17:00  Hoshizora         ep 4  (in 1 d 8 h)\n"
+            "Airing on your list, next 7 days (some times are estimates):\nToday\n  15:00  Mecha Bento Club  ep 11  (in 6 h)\nSaturday\n  15:30  Lanterns          ep 7  (in 1 d 6 h, 1 to watch)\n  17:00  Hoshizora         ep 4  (in 1 d 8 h)\n"
         );
+        // An estimate (MyAnimeList's timetable) is marked.
+        let est = AiringItem { estimate: true, ..it("Lanterns", 7, "Saturday", "15:30", "in 1 d 6 h", 3) };
+        assert!(airing_text(&[est], None).contains("(in 1 d 6 h, ~3 to watch)"));
         assert_eq!(airing_text(&[], None), "Nothing on your list airs in the next 7 days.\n");
         assert_eq!(airing_text(&[], Some("Loading.")), "Loading.\n");
     }

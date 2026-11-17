@@ -410,9 +410,12 @@ pub struct AiringItem {
     pub time: String,
     /// "in 1 d 6 h".
     pub countdown: String,
-    /// Episodes aired (by the estimate) that the progress hasn't reached.
+    /// Episodes out that the progress hasn't reached (Watching and On hold).
     #[serde(skip_serializing_if = "is_zero")]
     pub behind: u32,
+    /// `behind` is Kotora's estimate (MyAnimeList's timetable), not the service's count.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub estimate: bool,
 }
 
 /// What plays, as `kot now` prints it.

@@ -117,6 +117,27 @@ impl Mine {
     }
 }
 
+/// The season grid's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Order {
+    /// Most members first (MyAnimeList's order).
+    #[default]
+    Popular,
+    /// The list's shows with the most episodes out and not watched first.
+    ToWatch,
+}
+
+impl Order {
+    pub const ALL: [Order; 2] = [Order::Popular, Order::ToWatch];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Order::Popular => "Most popular",
+            Order::ToWatch => "Most to watch",
+        }
+    }
+}
+
 /// One episode in the week view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Slot {
@@ -131,6 +152,8 @@ pub struct Slot {
     pub mine: bool,
     /// "in 2 d 4 h" (on the list, still to come), "aired", or empty.
     pub note: String,
+    /// Watching or On hold: "~3 to watch", "Caught up" ([`ToWatch::label`]).
+    pub to_watch: Option<String>,
 }
 
 /// A line of the week view (virtual rows).
@@ -160,6 +183,8 @@ pub struct Card {
     pub status: Option<Status>,
     /// The next episode is soon and the anime is on the list: the line is lit.
     pub lit: bool,
+    /// Watching or On hold: the label and the episodes behind (the "Most to watch" order).
+    pub to_watch: Option<(String, u32)>,
 }
 
 /// Another season than the current one, as the picker shows it.
@@ -180,6 +205,8 @@ pub struct Airing {
     pub view: View,
     pub kind: Kind,
     pub mine: Mine,
+    /// The season grid's order.
+    pub order: Order,
     /// The season lists and the list's airing entries, merged, most members first.
     pub shows: Vec<SeasonAnime>,
     /// The season shown (the current one).
@@ -410,6 +437,11 @@ impl State {
         self.airing_rebuild();
     }
 
+    pub fn airing_order(&mut self, o: Order) {
+        self.airing.order = o;
+        self.airing_rebuild();
+    }
+
     /// Asks the worker for the seasons: the saved copies first (shown at once, even old ones), then
     /// MyAnimeList when they are older than [`FRESH_SECS`] (or `force`, the Refresh button). The
     /// current season comes first and shows as soon as its first page is in; the previous one
@@ -487,6 +519,9 @@ impl State {
         let now = self.clock();
         // The list as the page sees it: status and progress (pending edits included).
         let mine: HashMap<u32, (Status, u32)> = self.entries.iter().map(|e| (e.id, (e.status, e.progress))).collect();
+        // Episodes out and not watched, of Watching and On hold shows (the browsed seasons too).
+        let shows: HashMap<u32, &SeasonAnime> = self.airing.shown().iter().map(|s| (s.id, s)).collect();
+        let behind: HashMap<u32, kotora_core::airing::ToWatch> = self.entries.iter().filter_map(|e| Some((e.id, self.to_watch_in(e, shows.get(&e.id).copied())?))).collect();
         let lang = self.prefs.titles;
         let a = &mut self.airing;
         a.minute = now.div_euclid(60);
@@ -531,7 +566,7 @@ impl State {
                         };
                         let k = a.day_from_today(at, now) as usize;
                         if let Some(day) = a.days.get_mut(k) {
-                            day.push(Slot { show: i, episode: ep, at, time: c.hhmm(), mine: entry.is_some(), note });
+                            day.push(Slot { show: i, episode: ep, at, time: c.hhmm(), mine: entry.is_some(), note, to_watch: behind.get(&show.id).map(|w| w.label()) });
                         }
                     }
                 }
@@ -575,7 +610,12 @@ impl State {
                 },
             };
             let lit = entry.is_some() && next.is_some_and(|(_, at)| at - now < 2 * 86_400);
-            a.cards.push(Card { show: i, meta: meta.join(" \u{b7} "), when, status: entry.map(|(st, _)| st), lit });
+            let to_watch = behind.get(&show.id).map(|w| (w.label(), w.behind));
+            a.cards.push(Card { show: i, meta: meta.join(" \u{b7} "), when, status: entry.map(|(st, _)| st), lit, to_watch });
+        }
+        if a.order == Order::ToWatch {
+            // Stable: equal ones keep the popular order; shows not watched last.
+            a.cards.sort_by_key(|c| std::cmp::Reverse(c.to_watch.as_ref().map_or(-1, |(_, n)| i64::from(*n))));
         }
         for d in &mut a.days {
             d.sort_by_key(|s| (s.at, !s.mine));
@@ -643,7 +683,8 @@ impl State {
                     day,
                     time: c.hhmm(),
                     countdown: format!("in {}", airing::countdown(at - now)),
-                    behind: t.aired(now).saturating_sub(e.progress),
+                    behind: self.to_watch_in(e, Some(show)).map_or(0, |w| w.behind),
+                    estimate: self.to_watch_in(e, Some(show)).is_some_and(|w| !w.exact && w.behind > 0),
                 });
             }
         }
@@ -1148,7 +1189,13 @@ fn filters(s: &State) -> El {
     if a.browse.is_some() {
         return r;
     }
-    r.child(spacer()).child(text("Times are estimated".to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
+    if a.view == View::Season {
+        r = r.child(el().w(1.0).h(18.0).mx(4.0).fill(PAL.border));
+        for o in Order::ALL {
+            r = r.child(chip(format!("airing/order/{}", o.label()), o.label(), a.order == o, move |s: &mut State| s.airing_order(o)));
+        }
+    }
+    r.child(spacer()).child(text("Times are estimated; ~ marks estimated counts".to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
 }
 
 fn loading(season: &str) -> El {
@@ -1282,6 +1329,10 @@ fn slot_row(s: &State, sl: &Slot) -> El {
         let c = if sl.note == "aired" { PAL.faint } else { PAL.accent_hi };
         info = info.child(text(sl.note.clone()).key("note").font(theme::LABEL_NUM).color(c));
     }
+    if let Some(w) = &sl.to_watch {
+        let c = if w.contains("to watch") { PAL.text } else { PAL.faint };
+        info = info.child(text("\u{b7}").font(theme::LABEL).color(PAL.faint)).child(text(w.clone()).key("to-watch").font(theme::LABEL_NUM).color(c));
+    }
     let line = row()
         .key("line")
         .h(WEEK_ROW_H)
@@ -1388,12 +1439,15 @@ fn card(s: &State, c: &Card) -> El {
     } else {
         text(c.when.clone()).key("when").font(TextStyle::new(11.0, if c.lit { 600.0 } else { 400.0 }).features("'tnum' 1")).color(if c.lit { PAL.accent_hi } else { PAL.dim }).max_lines(2).wrap()
     };
-    let words = col()
+    let mut words = col()
         .h(CARD_TEXT_H)
         .gap(3.0)
         .child(text(title.to_string()).font(TextStyle::new(12.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).max_lines(2).wrap())
         .child(text(c.meta.clone()).font(theme::SMALL).color(PAL.faint).truncate())
         .child(when);
+    if let Some((w, n)) = &c.to_watch {
+        words = words.child(text(w.clone()).key("to-watch").font(TextStyle::new(11.0, if *n > 0 { 600.0 } else { 400.0 }).features("'tnum' 1")).color(if *n > 0 { PAL.text } else { PAL.faint }).truncate());
+    }
     let open = col()
         .key("open")
         .role("button")
@@ -1866,7 +1920,63 @@ mod tests {
         assert_eq!(v.iter().map(|x| (x.title.as_str(), x.episode)).collect::<Vec<_>>()[..2], [("Mecha Bento Club", 5), ("Lanterns of Kirigaoka", 7)]);
         assert!(v.iter().all(|x| x.at > FAKE && x.at - FAKE <= WEEK));
         // Tidepool Radio: episode 9 aired Monday night, progress 8: one behind.
-        assert_eq!(v.iter().find(|x| x.title == "Tidepool Radio").map(|x| (x.episode, x.behind)), Some((10, 1)));
+        assert_eq!(v.iter().find(|x| x.title == "Tidepool Radio").map(|x| (x.episode, x.behind, x.estimate)), Some((10, 1, true)), "MyAnimeList: an estimate");
+    }
+
+    #[test]
+    fn the_week_and_cards_say_what_is_left_to_watch() {
+        let mut s = page();
+        let tide = s.entries.iter().find(|e| e.title == "Tidepool Radio").unwrap().id;
+        let slot = s.airing.days.iter().flatten().find(|sl| s.airing.shows[sl.show].id == tide).cloned().unwrap();
+        assert_eq!(slot.to_watch.as_deref(), Some("~1 to watch"), "MyAnimeList's estimate is marked");
+        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).cloned().unwrap();
+        assert_eq!(card.to_watch, Some(("~1 to watch".to_string(), 1)));
+        // Plan to watch and shows off the list: nothing.
+        assert!(s.airing.cards.iter().filter(|c| c.status.is_none() || c.status == Some(Status::PlanToWatch)).all(|c| c.to_watch.is_none()));
+        // On hold counts too.
+        let e = s.entries.iter_mut().find(|e| e.id == tide).unwrap();
+        e.status = Status::OnHold;
+        s.airing_rebuild();
+        assert!(s.airing.cards.iter().any(|c| s.airing.shows[c.show].id == tide && c.to_watch.is_some()));
+        // Caught up after +1.
+        s.entries.iter_mut().find(|e| e.id == tide).unwrap().progress += 1;
+        s.airing_rebuild();
+        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).unwrap();
+        assert_eq!(card.to_watch.as_ref().map(|w| w.0.as_str()), Some("Caught up"));
+    }
+
+    #[test]
+    fn most_to_watch_puts_the_list_s_backlog_first() {
+        let mut s = page();
+        s.airing_view(View::Season);
+        // Two shows behind by different amounts.
+        let ids: Vec<u32> = s.entries.iter().filter(|e| e.status == Status::Watching && s.airing.shows.iter().any(|x| x.id == e.id)).map(|e| e.id).take(2).collect();
+        assert_eq!(ids.len(), 2);
+        for (k, id) in ids.iter().enumerate() {
+            s.entries.iter_mut().find(|e| e.id == *id).unwrap().progress = k as u32;
+        }
+        s.airing_order(Order::ToWatch);
+        let first = &s.airing.cards[0];
+        let max = s.airing.cards.iter().filter_map(|c| c.to_watch.as_ref().map(|w| w.1)).max().unwrap();
+        assert_eq!(first.to_watch.as_ref().map(|w| w.1), Some(max));
+        // Shows not watched come after every watched one.
+        let pos = s.airing.cards.iter().position(|c| c.to_watch.is_none()).unwrap();
+        assert!(s.airing.cards[pos..].iter().all(|c| c.to_watch.is_none()));
+        s.airing_order(Order::Popular);
+        assert_ne!(s.airing.cards[0].show, usize::MAX);
+    }
+
+    #[test]
+    fn the_mirrors_anilist_copy_makes_it_exact_on_myanimelist() {
+        let mut s = page();
+        let tide = s.entries.iter().find(|e| e.title == "Tidepool Radio").unwrap().id;
+        // AniList knows episode 12 airs tomorrow: 11 out (more than the estimate's 9).
+        s.mirror.next.insert(tide, kotora_core::airing::NextAiring { episode: 12, at: FAKE + 86_400 });
+        s.airing_rebuild();
+        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).unwrap();
+        assert_eq!(card.to_watch, Some(("3 to watch".to_string(), 3)), "exact: no ~");
+        let e = s.entries.iter().find(|e| e.id == tide).unwrap();
+        assert_eq!(s.to_watch(e).map(|w| (w.out, w.exact)), Some((11, true)));
     }
 
     const FAKE: i64 = crate::model::FAKE_NOW;

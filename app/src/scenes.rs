@@ -920,6 +920,12 @@ pub const SCENES: &[Scene] = &[
         s.airing_mine(crate::airing::Mine::On);
     }),
     ("airing-season", |s| airing(s, crate::airing::View::Season)),
+    // The list's airing shows with the most episodes out and not watched first.
+    ("airing-season-to-watch", |s| {
+        airing(s, crate::airing::View::Season);
+        s.airing_mine(crate::airing::Mine::On);
+        s.airing_order(crate::airing::Order::ToWatch);
+    }),
     ("airing-season-tv", |s| {
         airing(s, crate::airing::View::Season);
         s.airing_kind(crate::airing::Kind::Tv);

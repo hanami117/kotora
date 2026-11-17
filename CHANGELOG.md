@@ -32,6 +32,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   it on, Kotora checks MangaUpdates every 30 minutes for series older than 4 hours. Linux, macOS and Windows,
   like the airing notifications; a click opens the manga's page.
 - **`kot publishing`** (also `kot chapters`): the Publishing page in the terminal.
+- **Episodes to watch on Airing:** for the shows you're watching (or have on hold), the week rows and the season
+  cards say how many episodes are out that you haven't watched ("3 to watch", "Caught up", "Not aired yet").
+  On AniList it is exact (the episode before the next airing; a finished show's count); on MyAnimeList it is
+  Kotora's estimate from the start date and weekly slot, marked "~3 to watch", and exact when the mirror's
+  saved AniList list knows the next airing. The season grid has a "Most to watch" order; Continue watching on
+  Home and `kot airing` say the same.
 
 ## [0.3.0] - 2026-11-17
 

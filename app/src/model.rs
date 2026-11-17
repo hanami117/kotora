@@ -194,6 +194,8 @@ pub struct Entry {
     pub cover_url: Option<String>,
     /// When its episodes air, estimated (start date and weekly slot); `None` when unknown.
     pub timetable: Option<Timetable>,
+    /// The service's exact next airing (AniList), when it has one.
+    pub next_airing: Option<kotora_core::airing::NextAiring>,
 }
 
 /// MAL's `media_type` as the Type column writes it.
@@ -243,6 +245,7 @@ impl Entry {
             cover_url: m.cover_url.clone(),
             id_mal: m.id_mal,
             timetable: Timetable::of_media(m),
+            next_airing: m.next_airing,
         }
     }
 
@@ -619,6 +622,28 @@ impl State {
 
     pub fn clock(&self) -> i64 {
         self.fixed_now.unwrap_or_else(kotora_core::time::now_unix)
+    }
+
+    /// Episodes out and not watched, for a Watching (or rewatched) or On hold entry
+    /// ([`kotora_core::airing::to_watch`]): exact from AniList's next airing (the active
+    /// account's, or the mirror's saved AniList copy on MyAnimeList), else the estimate.
+    pub fn to_watch(&self, e: &Entry) -> Option<kotora_core::airing::ToWatch> {
+        self.to_watch_in(e, self.airing.shows.iter().find(|s| s.id == e.id))
+    }
+
+    /// [`State::to_watch`], with the season list's data of the show to fill in what the saved
+    /// list lacks (its slot, its exact next airing, its status).
+    pub fn to_watch_in(&self, e: &Entry, show: Option<&kotora_core::airing::SeasonAnime>) -> Option<kotora_core::airing::ToWatch> {
+        if !(matches!(e.status, Status::Watching | Status::OnHold) || e.rewatching) {
+            return None;
+        }
+        let next = e.next_airing.or_else(|| self.mirror.next.get(&e.id).copied()).or_else(|| show.and_then(|s| s.next_airing));
+        let estimate = e.timetable.or_else(|| show.and_then(Timetable::of));
+        let air = match (e.air, show) {
+            (Air::Unknown, Some(s)) => s.air_status.as_str(),
+            (a, _) => a.mal_name(),
+        };
+        kotora_core::airing::to_watch(air, e.episodes.or_else(|| show.and_then(|s| s.episodes)), next, estimate, e.progress, self.clock())
     }
 
     /// Entries with this status on MAL (the sidebar's count).
@@ -1561,6 +1586,7 @@ fn fake_entries() -> Vec<Entry> {
             cover_url: None,
             id_mal: None,
             timetable: None,
+            next_airing: None,
         })
         .collect();
     const UPDATED: [&str; 6] = ["3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year"];
@@ -1601,6 +1627,7 @@ fn fake_entries() -> Vec<Entry> {
                 cover_url: None,
                 id_mal: None,
                 timetable: None,
+                next_airing: None,
             });
             id += 1;
         }
