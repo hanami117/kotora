@@ -54,6 +54,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **AniList scores keep their precision.** A 73 was saved as 7 and could go back to AniList as 70. Kotora now
   keeps every score on AniList's 100-point scale, and picking the score that already shows (4 stars for a 73)
   changes nothing. The saved list is upgraded on first start (a copy, `kotora.db.schema-11.bak`, is kept beside it).
+- **A file's season beats an old pick.** A file naming season 3 no longer matches the season 1 you once picked for
+  the same title: the list's season 3 wins, else a search hit for that season ("not on your list: add?"). Files
+  without a season keep their picks.
+- **Now Playing follows list changes.** When an entry is added or removed (a sync, the queue) while a file plays,
+  Kotora recognises the file again instead of showing "In your list ()" with no status or cover.
 
 ## [0.2.0] - 2026-11-16
 

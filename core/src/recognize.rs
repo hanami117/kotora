@@ -3,8 +3,8 @@
 //! 1. Parse the file name with anitomy (the `anitomy-ng` port, MPL-2.0). Without a title in the
 //!    name, the folder's name gives it.
 //! 2. The cache, per title and season: the user's own pick ("Wrong anime…") or "not an anime"
-//!    wins. A pick of another season gives way when the file names its season and the list has
-//!    that season ([`on_list`]).
+//!    wins. A pick of another season than the one the file names gives way: to that season on
+//!    the list ([`on_list`]), else to a search hit naming it ([`from_search_picked`]).
 //! 3. The user's list: every title (main, English, Japanese, synonyms), normalised, with the
 //!    season split off ("2nd Season", "Second Season", "Season 2", "第2期", "S2", "II"). The same
 //!    title and season is a sure match, also when the file's title is the start of the list's
@@ -311,10 +311,11 @@ pub type Cached = Option<(u32, String, String)>;
 /// Steps 2 and 3. `None`: nothing on the list; the caller may search (step 4). `rel` only keeps
 /// an episode past the count sure when a relation explains it ([`redirect`] moves it after).
 ///
-/// The user's pick wins, except when the file names a season the picked entry isn't and the
-/// list has a sure match for that season: a pick of season 1 never takes "S03E07" from the
-/// season 3 entry. (Picks are kept per title and season, `Parsed::key`, so this only undoes a
-/// wrong pick for this very season.)
+/// The user's pick wins, except when the file names a season the picked entry isn't: a pick of
+/// season 1 never takes "S03E07". The list's match for that season answers then, and with none
+/// `None`: the caller searches, and [`from_search_picked`] keeps the pick only when the search
+/// finds nothing naming the file's season. (Picks are kept per title and season, `Parsed::key`,
+/// so this only undoes a wrong pick for this very season.)
 pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations) -> Option<Found> {
     let c = candidates(p, items);
     let mut passed_over = None;
@@ -323,17 +324,17 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
             "ignore" => return Some(Found::Ignored),
             "user" => {
                 if let Some(it) = items.iter().find(|it| it.media.id == *id) {
-                    let other_sure = c.first().is_some_and(|b| b.score >= PREFIX_SURE && b.media_id != *id && c.get(1).is_none_or(|n| n.score < b.score));
-                    if !(season_conflict(p, it) && other_sure) {
+                    if !season_conflict(p, it) {
                         return Some(Found::List { media_id: *id, sure: true, why: "you picked it".into() });
                     }
-                    passed_over = Some(it.media.title.clone());
+                    passed_over = Some((it.media.id, it.media.title.clone()));
                 }
             }
             _ => {}
         }
     }
-    let best = c.first().filter(|b| b.score >= UNSURE_AT)?;
+    // The passed-over pick itself is no answer.
+    let best = c.first().filter(|b| b.score >= UNSURE_AT && passed_over.as_ref().is_none_or(|(id, _)| *id != b.media_id))?;
     let ties = c.iter().filter(|x| x.score >= best.score).count();
     let mut sure = best.score >= PREFIX_SURE && ties == 1;
     let named = file_season(p).filter(|s| *s > 1);
@@ -344,7 +345,7 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
         (false, _) if ties > 1 && best.score >= PREFIX_SURE => format!("{ties} titles in your list match"),
         (false, _) => format!("close to a title in your list ({:.0}%)", best.score * 100.0),
     };
-    if let Some(t) = passed_over {
+    if let Some((_, t)) = passed_over {
         why = format!("{why}; your earlier pick, {t}, is another season");
     }
     // An episode past the count: a different season or numbering, so ask.
@@ -362,6 +363,12 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
 /// Step 4: the search's hits against the list. A hit on the list of another season than the
 /// file's comes last: a hit off the list that names the file's season is the better answer.
 pub fn from_search(p: &Parsed, hits: &[SearchHit], items: &[ListItem]) -> Found {
+    from_search_picked(p, hits, items, None)
+}
+
+/// As [`from_search`], with the user's pick that [`on_list`] passed over (another season than
+/// the file's): a hit naming the file's season beats it; with none, the pick stands.
+pub fn from_search_picked(p: &Parsed, hits: &[SearchHit], items: &[ListItem], pick: Option<u32>) -> Found {
     let on_list = |h: &SearchHit| items.iter().find(|it| it.media.id == h.id);
     let mut other_season = None;
     for h in hits {
@@ -377,6 +384,9 @@ pub fn from_search(p: &Parsed, hits: &[SearchHit], items: &[ListItem]) -> Found 
     if let Some(h) = off.iter().find(names_season) {
         return Found::NotOnList { media_id: h.id, title: h.title.clone() };
     }
+    if let Some(id) = pick.filter(|id| items.iter().any(|it| it.media.id == *id)) {
+        return Found::List { media_id: id, sure: true, why: "you picked it".into() };
+    }
     if let Some(id) = other_season {
         let s = file_season(p).unwrap_or(1);
         return Found::List { media_id: id, sure: false, why: format!("found by a MyAnimeList search, but the file says season {s}") };
@@ -386,6 +396,7 @@ pub fn from_search(p: &Parsed, hits: &[SearchHit], items: &[ListItem]) -> Found 
         None => Found::Nothing,
     }
 }
+
 
 /// The destination's title said shortly: what it adds to the source's title ("Part 2"), or all
 /// of it.

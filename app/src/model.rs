@@ -1082,7 +1082,9 @@ impl State {
 
     fn set_items(&mut self, items: &[ListItem]) {
         let lang = self.prefs.titles;
+        let before = self.entry_ids();
         self.entries = items.iter().map(|it| Entry::from_item(it, lang)).collect();
+        self.list_changed_under_now(&before);
         self.queue_changed();
         self.recheck_now();
         self.refresh();
@@ -1160,6 +1162,7 @@ impl State {
                 true
             }
             Msg::Queue { ops, items, gone, offline } => {
+                let before = self.entry_ids();
                 for it in &items {
                     let e = Entry::from_item(it, self.prefs.titles);
                     match self.entries.iter_mut().find(|x| x.id == e.id) {
@@ -1172,6 +1175,7 @@ impl State {
                     self.editor = None;
                 }
                 self.ops = ops;
+                self.list_changed_under_now(&before);
                 self.recheck_now();
                 if let Some(off) = offline {
                     self.offline = off;
@@ -1980,6 +1984,31 @@ mod tests {
         assert!(s.entries.is_empty() && s.account.is_none() && !s.has_list());
         s.apply(Msg::SignInFailed("busy".into()));
         assert_eq!((s.auth, s.error.as_deref()), (Auth::SignedOut, Some("busy")));
+    }
+
+    /// The live report: the file matched season 3 on the list, then season 3 was removed on the
+    /// website. The next sync drops it: the match is looked up again, never "In your list ()".
+    #[test]
+    fn a_match_that_left_the_list_is_looked_up_again() {
+        use kotora_core::recognize::Found;
+        let s1 = || item(1, "Re:Zero kara Hajimeru Isekai Seikatsu", Status::Completed, 12, None, 1);
+        let s3 = || item(3, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", Status::Watching, 0, None, 1);
+        let mut s = State::start(Auth::SignedIn);
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 10 });
+        s.now = State::fake().now;
+        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 15 });
+        assert_eq!(s.now.as_ref().unwrap().media_id(), Some(3), "still on the list: kept");
+        s.apply(Msg::Synced { items: vec![s1()], synced_at: 20 });
+        let n = s.now.as_ref().unwrap();
+        assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
+        // The same when the queue says it left (removed in Kotora).
+        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 30 });
+        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
+        s.now.as_mut().unwrap().recognizing = false;
+        s.apply(Msg::Queue { ops: vec![], items: vec![], gone: vec![3], offline: None });
+        let n = s.now.as_ref().unwrap();
+        assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
     }
 
     #[test]

@@ -421,6 +421,28 @@ impl State {
         true
     }
 
+    /// The list's ids, sorted: [`State::list_changed_under_now`] compares them.
+    pub(crate) fn entry_ids(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.entries.iter().map(|e| e.id).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// The list gained or lost entries (`before`: [`State::entry_ids`] then) while a file plays:
+    /// the file is recognised again. A list match that left the list is no answer meanwhile
+    /// (never "In your list" without its entry).
+    pub(crate) fn list_changed_under_now(&mut self, before: &[u32]) {
+        if self.now.is_none() || self.entry_ids() == before {
+            return;
+        }
+        let gone = self.now.as_ref().and_then(Now::media_id).is_some_and(|id| !self.entries.iter().any(|e| e.id == id));
+        if let Some(n) = self.now.as_mut().filter(|_| gone) {
+            n.found = Found::Nothing;
+            n.recognizing = true;
+        }
+        crate::detect::list_changed(self);
+    }
+
     /// The matched entry's [`Mark`] now.
     fn entry_mark(&self) -> Option<Mark> {
         let id = self.now.as_ref()?.media_id()?;
