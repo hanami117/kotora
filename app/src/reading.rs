@@ -32,8 +32,20 @@ use crate::ui::{action, button, cover, field_hint, ghost, mix};
 /// How often the libraries are looked at.
 const POLL: Duration = Duration::from_secs(30);
 
-/// The only reader so far.
-pub const READER: &str = "YACReader";
+/// How the comic counts as read: "Read to the end in YACReader", "Ch 13 opened next in Simple
+/// Comic", "Open for 10 minutes in Okular".
+pub fn how(r: &Read) -> String {
+    match &r.why {
+        Some(why) => {
+            let mut w = why.clone();
+            if let Some(first) = w.get(..1) {
+                w.replace_range(..1, &first.to_uppercase());
+            }
+            format!("{w} in {}", r.source)
+        }
+        None => format!("Read to the end in {}", r.source),
+    }
+}
 
 /// What the thread found for the newest comic.
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +131,16 @@ pub struct ReadingUi {
     pub errors: Vec<LibState>,
     pub draft: TextEdit,
     pub error: Option<String>,
+    /// `[reading] find_libraries`: also the libraries in YACReader's own settings.
+    pub find: bool,
+    /// `[reading] open_files`: stage 2, comic files open in any process (opt-in).
+    pub open_files: bool,
+    /// `[reading] comic_folders`.
+    pub folders: Vec<String>,
+    pub folder_draft: TextEdit,
+    pub folder_error: Option<String>,
+    /// `[reading] open_minutes`.
+    pub minutes: u32,
     pub current: Option<Reading>,
     tx: Option<Sender<In>>,
     /// Counts the threads started: a message from a stopped one is dropped.
@@ -127,7 +149,23 @@ pub struct ReadingUi {
 
 impl Default for ReadingUi {
     fn default() -> Self {
-        ReadingUi { on: true, added: Vec::new(), watched: Vec::new(), errors: Vec::new(), draft: TextEdit::new(""), error: None, current: None, tx: None, epoch: 0 }
+        ReadingUi {
+            on: true,
+            added: Vec::new(),
+            watched: Vec::new(),
+            errors: Vec::new(),
+            draft: TextEdit::new(""),
+            error: None,
+            find: true,
+            open_files: false,
+            folders: Vec::new(),
+            folder_draft: TextEdit::new(""),
+            folder_error: None,
+            minutes: 10,
+            current: None,
+            tx: None,
+            epoch: 0,
+        }
     }
 }
 
@@ -155,7 +193,7 @@ enum In {
 /// At start and after any change that matters (Manga on/off, the switch, the libraries, sign
 /// in/out): starts or stops the thread. Never headless.
 pub fn sync(s: &mut State) {
-    let want = s.reading.on && s.manga.enabled && s.has_list() && s.handle.is_some() && !rune::is_headless();
+    let want = (s.reading.on || (s.reading.open_files && OPEN_FILES_HERE)) && s.manga.enabled && s.has_list() && s.handle.is_some() && !rune::is_headless();
     match (want, s.reading.running()) {
         (true, false) => start(s),
         (false, true) => stop(s),
@@ -172,7 +210,20 @@ pub fn forget(s: &mut State) {
     s.reading.current = None;
 }
 
-/// The libraries changed: a new watch.
+/// Stage 2 runs here (macOS, Linux). Windows: not yet.
+pub const OPEN_FILES_HERE: bool = cfg!(unix);
+
+/// What the thread is started with.
+struct Cfg {
+    yacreader: bool,
+    find: bool,
+    added: Vec<String>,
+    open_files: bool,
+    folders: Vec<String>,
+    minutes: u32,
+}
+
+/// A setting changed: a new watch.
 fn restart(s: &mut State) {
     stop(s);
     sync(s);
@@ -192,10 +243,11 @@ fn stop(s: &mut State) {
 fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let (tx, rx) = mpsc::channel();
-    let added = s.reading.added.clone();
+    let r = &s.reading;
+    let cfg = Cfg { yacreader: r.on, find: r.find, added: r.added.clone(), open_files: r.open_files && OPEN_FILES_HERE, folders: r.folders.clone(), minutes: r.minutes };
     s.reading.epoch += 1;
     let h = Out { h, epoch: s.reading.epoch };
-    if std::thread::Builder::new().name("kotora-reading".into()).spawn(move || run(&h, &rx, &added)).is_ok() {
+    if std::thread::Builder::new().name("kotora-reading".into()).spawn(move || run(&h, &rx, &cfg)).is_ok() {
         s.reading.tx = Some(tx);
     }
 }
@@ -211,13 +263,18 @@ fn send(o: &Out, m: ReadingMsg) {
     o.h.update_if(move |s, _| s.reading.running() && s.reading.epoch == epoch && s.apply(Msg::Reading(m)));
 }
 
-fn run(h: &Out, rx: &Receiver<In>, added: &[String]) {
-    let libs = core_reading::libraries(added, true);
+fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
+    let libs = if cfg.yacreader { core_reading::libraries(&cfg.added, cfg.find) } else { Vec::new() };
     send(h, ReadingMsg::Libs { watched: libs.iter().map(|l| l.path.to_string_lossy().into_owned()).collect(), errors: Vec::new() });
-    // No library: nothing to watch until the user adds one (that starts a new thread).
-    if libs.is_empty() {
+    // Stage 2: the open comic files (macOS, Linux; `None` elsewhere or when off).
+    let mut scanner = if cfg.open_files { kotora_detect::comics::system() } else { None };
+    // The YACReader viewer's files come from its database when that is watched: not twice.
+    let skip_yac = !libs.is_empty();
+    // Nothing to watch until a setting changes (that starts a new thread).
+    if libs.is_empty() && scanner.is_none() {
         return;
     }
+    let mut tracker = kotora_core::manga::openfile::Tracker::new(cfg.minutes);
     let mut watch = Watch::new(libs, now_unix());
     let mut store: Option<Store> = None;
     let mut last: Option<Read> = None;
@@ -230,6 +287,17 @@ fn run(h: &Out, rx: &Receiver<In>, added: &[String]) {
             let seen = recognise(&mut store, r.clone());
             last = Some(r);
             send(h, ReadingMsg::Seen(Box::new(seen)));
+        }
+        if let Some(sc) = &mut scanner {
+            let open: Vec<kotora_core::manga::openfile::Open> =
+                sc.scan(&cfg.folders).into_iter().filter(|o| !(skip_yac && o.app == "YACReader")).map(|o| kotora_core::manga::openfile::Open { app: o.app, path: o.path }).collect();
+            if let Some(r) = tracker.update(&open, now_unix())
+                && last.as_ref() != Some(&r)
+            {
+                let seen = recognise(&mut store, r.clone());
+                last = Some(r);
+                send(h, ReadingMsg::Seen(Box::new(seen)));
+            }
         }
         if errors != last_errors {
             last_errors = errors.clone();
@@ -419,13 +487,14 @@ impl State {
         let Some((i, o)) = self.reading_offer() else { return };
         let title = self.manga.entries[i].title.clone();
         let note = self.reading_note();
-        let auto = may_record && self.prefs.auto && r.sure() && note.is_none();
+        // An open file only (no page) is a guess: always ask, as for a player seen by its file.
+        let auto = may_record && self.prefs.auto && r.sure() && !r.read.weak && note.is_none();
         if let Some(r) = &mut self.reading.current {
             r.acted = true;
         }
         if auto {
             if self.mark_reading(true).is_ok() {
-                self.notify_reading(NoteKind::Recorded, format!("Marked {} as read", o.label()), title);
+                self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title);
             }
         } else {
             let q = if self.reading.current.as_ref().is_some_and(Reading::sure) { "Mark" } else { "Not sure: mark" };
@@ -575,7 +644,7 @@ impl State {
         let r = self.reading.current.as_ref()?;
         let pos = |n: i64| u32::try_from(n).ok().filter(|n| *n > 0);
         Some(kotora_ctl::ReadingInfo {
-            reader: READER.into(),
+            reader: r.read.source.clone(),
             file: r.read.file_name.clone(),
             title: self.reading_title(r),
             label: r.read.label(),
@@ -602,12 +671,12 @@ impl State {
 
     fn notify_reading(&mut self, kind: NoteKind, summary: String, body: String) {
         let on = match kind {
-            NoteKind::ReadOffer => self.prefs.notify.offer,
-            NoteKind::Recorded => self.prefs.notify.recorded,
+            NoteKind::ReadOffer => self.prefs.notify.read_offer,
+            NoteKind::ReadRecorded => self.prefs.notify.read_recorded,
             _ => false,
         };
         let Some(id) = self.reading_note_id().filter(|_| on) else {
-            if kind == NoteKind::Recorded {
+            if kind == NoteKind::ReadRecorded {
                 self.withdraw_reading_note();
             }
             return;
@@ -634,7 +703,7 @@ impl State {
         let asks = !marked && self.reading_offer().is_some();
         match act {
             Act::Update if asks => match self.mark_reading(false) {
-                Ok((title, o)) => self.notify_reading(NoteKind::Recorded, format!("Marked {} as read", o.label()), title),
+                Ok((title, o)) => self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title),
                 Err(_) => self.open_reading(),
             },
             Act::NotNow if asks => {
@@ -658,7 +727,39 @@ impl State {
     pub fn set_reading_on(&mut self, on: bool) {
         self.reading.on = on;
         crate::detect::save_setting(self, "reading", "yacreader", on.to_string());
-        sync(self);
+        restart(self);
+    }
+
+    /// Settings: also the libraries in YACReader's own settings.
+    pub fn set_reading_find(&mut self, on: bool) {
+        self.reading.find = on;
+        crate::detect::save_setting(self, "reading", "find_libraries", on.to_string());
+        restart(self);
+    }
+
+    /// Settings: comic files open in any reader (stage 2, opt-in).
+    pub fn set_open_files(&mut self, on: bool) {
+        self.reading.open_files = on;
+        crate::detect::save_setting(self, "reading", "open_files", on.to_string());
+        restart(self);
+    }
+
+    /// Settings: the minutes open that count a comic as read (1 to 60).
+    pub fn step_open_minutes(&mut self, up: bool) {
+        let m = self.reading.minutes;
+        let m = if up { (m + if m >= 10 { 5 } else { 1 }).min(60) } else { m.saturating_sub(if m > 10 { 5 } else { 1 }).max(1) };
+        if m == self.reading.minutes {
+            return;
+        }
+        self.reading.minutes = m;
+        crate::detect::save_setting(self, "reading", "open_minutes", m.to_string());
+        restart(self);
+    }
+
+    fn save_comic_folders(&mut self) {
+        let v = kotora_core::config::quote_list(&self.reading.folders);
+        crate::detect::save_setting(self, "reading", "comic_folders", v);
+        restart(self);
     }
 
     fn save_reading_libraries(&mut self) {
@@ -672,7 +773,125 @@ impl State {
 pub fn load(s: &mut State, c: &kotora_core::config::Config) {
     s.reading.on = c.reading.yacreader;
     s.reading.added = c.reading.libraries.clone();
+    s.reading.find = c.reading.find_libraries;
+    s.reading.open_files = c.reading.open_files;
+    s.reading.folders = c.reading.comic_folders.clone();
+    s.reading.minutes = c.reading.open_minutes.clamp(1, 60);
 }
+
+/// Adds a comic folder (stage 2): other processes' files count only inside these.
+pub fn add_comic_folder(s: &mut State, raw: &str) -> Result<(), String> {
+    let path = crate::library::tidy(raw);
+    if path.is_empty() {
+        return Err("Type a folder's path, or press Choose\u{2026}".into());
+    }
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err("Give the whole path, from / (or ~/).".into());
+    }
+    if s.reading.folders.contains(&path) {
+        return Err("That folder is already in the list.".into());
+    }
+    if !std::path::Path::new(&path).is_dir() {
+        return Err(format!("No folder at {path}."));
+    }
+    s.reading.folders.push(path);
+    s.reading.folder_draft.clear();
+    s.reading.folder_error = None;
+    s.save_comic_folders();
+    Ok(())
+}
+
+pub fn remove_comic_folder(s: &mut State, path: &str) {
+    s.reading.folders.retain(|p| p != path);
+    s.save_comic_folders();
+}
+
+fn add_typed_folder(s: &mut State) {
+    let raw = s.reading.folder_draft.text.clone();
+    if let Err(e) = add_comic_folder(s, &raw) {
+        s.reading.folder_error = Some(e);
+    }
+}
+
+fn choose_comic_folder(s: &mut State) {
+    let Some(h) = s.handle.clone() else { return };
+    let r = crate::library::choose_folder("Choose a folder with comics in it", move |p| {
+        h.update_if(move |s, _| {
+            if let Err(e) = p.and_then(|p| add_comic_folder(s, &p)) {
+                s.reading.folder_error = Some(e);
+            }
+            true
+        });
+    });
+    if let Err(e) = r {
+        s.reading.folder_error = Some(e);
+    }
+}
+
+/// Settings → Manga → Reading detection → Comic folders (stage 2).
+pub fn folders_block(s: &State) -> El {
+    let r = &s.reading;
+    let mut c = col().key("reading-folders").w_full();
+    if r.folders.is_empty() {
+        c = c.child(text("None: only known readers (Simple Comic, MComix, Okular, \u{2026}) are looked at, wherever their files are.").font(theme::LABEL).color(PAL.faint).wrap().py(4.0));
+    }
+    for path in &r.folders {
+        let there = std::path::Path::new(path).is_dir();
+        let p = path.clone();
+        c = c.child(
+            row()
+                .key(format!("set/comic-folder/{path}"))
+                .gap(12.0)
+                .py(6.0)
+                .center_y()
+                .child(el().size(7.0, 7.0).radius(3.5).fill(if there { PAL.ok() } else { PAL.warn() }))
+                .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(path.clone()).font(theme::BODY_MED).color(PAL.text).truncate()).child(text(if there { "Any app\u{2019}s comic files in here count" } else { "Not there (drive not connected?)" }).font(theme::LABEL).color(PAL.dim)))
+                .child(ghost(&format!("set/comic-folder/remove/{path}"), "Remove", move |s| remove_comic_folder(s, &p))),
+        );
+    }
+    let input = row()
+        .key("set/comic-folder/box")
+        .role("textbox")
+        .grow(1.0)
+        .min_w(0.0)
+        .h(32.0)
+        .px(10.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, if r.folder_error.is_some() { PAL.warn() } else { PAL.border_strong })
+        .child(
+            text_input(&r.folder_draft, TextStyle::new(12.0, 400.0).mono())
+                .key("set/comic-folder/input")
+                .grow(1.0)
+                .min_w(0.0)
+                .single_line()
+                .color(PAL.text)
+                .placeholder(field_hint(&r.folder_draft, "~/Manga"), PAL.faint)
+                .on_edit(|s: &mut State| &mut s.reading.folder_draft)
+                .on_input_key(crate::ui::field_page_key)
+                .on_input_change(|s: &mut State, _tx: &mut Tx| s.reading.folder_error = None)
+                .on_submit(|s: &mut State, tx: &mut Tx| {
+                    tx.blur();
+                    add_typed_folder(s);
+                }),
+        );
+    c = c.child(
+        row()
+            .gap(8.0)
+            .mt(6.0)
+            .center_y()
+            .child(input)
+            .child(button("set/comic-folder/add", "Add", false, Some(add_typed_folder)))
+            .child(button("set/comic-folder/choose", "Choose\u{2026}", false, Some(choose_comic_folder))),
+    );
+    if let Some(e) = &r.folder_error {
+        c = c.child(text(e.clone()).key("set/comic-folder/error").font(theme::LABEL).color(PAL.warn()).wrap().mt(6.0));
+    }
+    c
+}
+
+pub const OPEN_FILES_NOTE: &str = "Kotora sees which comic file (.cbz, .cbr, .cb7, .zip, .pdf, or a folder of pages) a reader has open, not the page. It asks when the next chapter of the series opens, or after the minutes below. Checks every 30 seconds. Off by default.";
 
 /// Adds a library folder typed or picked: it must have YACReader's database.
 pub fn add_library(s: &mut State, raw: &str) -> Result<(), String> {
@@ -884,7 +1103,7 @@ pub fn banner(s: &State) -> El {
         (true, false) => " \u{b7} Matched in your list".to_string(),
         (false, _) => " \u{b7} Not sure it\u{2019}s this one".to_string(),
     };
-    let mut small = row().min_w(0.0).gap(6.0).child(text(format!("Read to the end in {READER}{matched}")).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0));
+    let mut small = row().min_w(0.0).gap(6.0).child(text(format!("{}{matched}", how(&r.read))).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0));
     if let Some(n) = note {
         small = small.child(text("\u{b7}").font(theme::LABEL).color(PAL.dim)).child(text(n).key("rd-banner/note").font(theme::LABEL).color(PAL.warn()).truncate().min_w(0.0));
     }
@@ -902,7 +1121,9 @@ pub fn banner(s: &State) -> El {
 /// Now Playing's reading card: the comic, the page, the match, and what to do.
 pub fn card_for(s: &State, r: &Reading) -> El {
     let title = s.reading_title(r);
-    let progress = if r.read.finished {
+    let progress = if r.read.finished && r.read.weak {
+        "Counted as read".to_string()
+    } else if r.read.finished {
         "Read to the end".to_string()
     } else if r.read.pages > 0 {
         format!("Page {} of {}", r.read.page.max(1), r.read.pages)
@@ -915,7 +1136,7 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         .grow(1.0)
         .min_w(0.0)
         .gap(4.0)
-        .child(text(format!("READING IN {}", READER.to_uppercase())).font(theme::LABEL).color(PAL.accent))
+        .child(text(format!("{} IN {}", if r.read.weak { "OPEN" } else { "READING" }, r.read.source.to_uppercase())).font(theme::LABEL).color(PAL.accent))
         .child(text(title).font(theme::SECTION).color(PAL.text).truncate())
         .child(text(r.read.label()).font(theme::BODY_MED).color(PAL.text))
         .child(text(r.read.file_name.clone()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate())
@@ -930,7 +1151,14 @@ pub fn card_for(s: &State, r: &Reading) -> El {
             let _ = s.confirm_reading();
         }));
         if !r.read.finished {
-            info = info.child(text("Kotora asks once the last page is reached (or YACReader marks it read).").font(theme::LABEL).color(PAL.faint).wrap());
+            let when = if r.read.weak {
+                format!("Kotora sees the file is open, not the page: it asks when the next chapter opens, or after {} minutes open.", s.reading.minutes)
+            } else {
+                "Kotora asks once the last page is reached (or YACReader marks it read).".to_string()
+            };
+            info = info.child(text(when).font(theme::LABEL).color(PAL.faint).wrap());
+        } else if r.read.weak {
+            info = info.child(text(how(&r.read)).key("rd/why").font(theme::LABEL).color(PAL.faint).wrap());
         }
     } else if matches!(r.found, Found::List { .. }) {
         info = info.child(text("Nothing to mark: your list is at or past this already.").font(theme::LABEL).color(PAL.faint).wrap());
@@ -1016,6 +1244,18 @@ pub fn fake(s: &mut State, file: &str, page: i64) {
         last_opened: 0,
     };
     let read = Read::from_opened(&o);
+    let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
+    let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
+    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    s.reading_seen(Seen { read, found, candidates, cover_url: None });
+}
+
+/// A made-up comic open in `app` (stage 2), counted as read when `why` is given.
+pub fn fake_open(s: &mut State, app: &str, path: &str, why: Option<&str>) {
+    let open = kotora_core::manga::openfile::Open { app: app.into(), path: path.into() };
+    let mut read = kotora_core::manga::openfile::read_of(&open, 0);
+    read.finished = why.is_some();
+    read.why = why.map(String::from);
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
     let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();

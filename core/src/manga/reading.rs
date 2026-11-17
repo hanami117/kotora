@@ -11,10 +11,9 @@
 //! 4. Nothing on the list: the caller may search once ([`from_search`]); a hit off the list is
 //!    "not on your list: add?".
 //!
-//! [`offer`] then says what to mark: never at or below the progress, never past the count, and
-//! volumes only from a file that is a whole volume (`Blue Lock v35.cbz`). A chapter file that
-//! names its volume too (`v35 c362`) only moves chapters: reading chapter 362 doesn't finish
-//! volume 35.
+//! [`offer`] then says what to mark: never at or below the progress, never past the count. A
+//! whole-volume file (`Blue Lock v35.cbz`) marks its volume; a chapter file that names its volume
+//! (`v35 c362`) marks the volume before as completed (34): being inside volume 35 means 34 is done.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -48,6 +47,12 @@ pub struct Read {
     pub finished: bool,
     /// When it was last opened or its page saved: Unix seconds.
     pub at: i64,
+    /// The reader: "YACReader", or the process that has the file open ("Simple Comic").
+    pub source: String,
+    /// A weak signal (an open file, no page): it always asks, even with "Update automatically".
+    pub weak: bool,
+    /// Why a weak signal counts it as read: "Ch 13 opened next", "open for 10 minutes".
+    pub why: Option<String>,
 }
 
 fn whole(n: f64) -> Option<u32> {
@@ -70,6 +75,9 @@ impl Read {
             pages: o.num_pages,
             finished: o.is_read(),
             at: o.last_opened,
+            source: "YACReader".into(),
+            weak: false,
+            why: None,
         }
     }
 
@@ -197,12 +205,14 @@ impl Offer {
 }
 
 /// The offer for `read` on the entry with these counts, if any. Only forward: a chapter above
-/// the chapters read (and not past the known count), a volume above the volumes read, only from
-/// a whole-volume file. A one-shot (a count of 1 and no number in the name) is chapter 1.
+/// the chapters read (and not past the known count), a volume above the volumes read (and not
+/// past its count). A whole-volume file gives its volume; a chapter in volume N gives N - 1 (the
+/// volumes before it are done). A one-shot (a count of 1 and no number in the name) is chapter 1.
 pub fn offer(chapters: u32, chapters_total: Option<u32>, volumes: u32, volumes_total: Option<u32>, read: &Read) -> Option<Offer> {
     let one_shot = chapters_total == Some(1) && read.chapter.is_none() && read.volume.is_none();
     let chapter = read.chapter.or(one_shot.then_some(1)).filter(|c| *c > chapters && chapters_total.is_none_or(|n| n == 0 || *c <= n));
-    let volume = read.volume.filter(|_| read.volume_file).filter(|v| *v > volumes && volumes_total.is_none_or(|n| n == 0 || *v <= n));
+    let done_volume = if read.volume_file { read.volume } else { read.volume.and_then(|v| v.checked_sub(1)) };
+    let volume = done_volume.filter(|v| *v > 0 && *v > volumes && volumes_total.is_none_or(|n| n == 0 || *v <= n));
     (chapter.is_some() || volume.is_some()).then_some(Offer { chapter, volume })
 }
 

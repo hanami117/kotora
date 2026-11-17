@@ -9,13 +9,23 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   (macOS, Linux, Windows) and asks, like it does for an episode: the banner and a notification say "Mark Ch 362
   of *Title* as read?" with **Mark read**, **Not now** and **Wrong manga…**; Now Playing shows the comic, the
   page and the match. Only forward (never lowers a count, never past the known total); a whole-volume file
-  (`Title v04.cbz`) marks the volume. "Update automatically" marks a sure match that skips nothing, with Undo.
+  (`Title v04.cbz`) marks the volume, and a chapter inside volume N (`Title v35 c362.cbz`) marks volume N - 1
+  as done. "Update automatically" marks a sure match that skips nothing, with Undo.
   The edit goes through the sync queue like `+1` (the mirror follows). Matching uses your manga list's titles,
   remembers your pick per series, and searches once for a series off the list ("Add as Reading").
 - Settings → Manga → Reading detection: **YACReader** (on by default; only runs with Manga on) and its
   **Libraries**: the ones in YACReader's settings are found by themselves, others can be added. Kotora reads
   each library's database read only and without locks, and only when the file changed (one file check every
-  30 seconds). In `config.toml`: `[reading] yacreader`, `libraries`.
+  30 seconds). **Find YACReader's libraries** can be turned off (only the added ones are watched then). In
+  `config.toml`: `[reading] yacreader`, `libraries`, `find_libraries`.
+- Reading detection in any reader (macOS, Linux; opt-in, off by default): Settings → Manga → Reading detection
+  → **Any reader (open files)**. Kotora sees which comic file (`.cbz .cbr .cb7 .zip .pdf`, or a folder of page
+  images) a reader has open (Simple Comic, MComix, Okular, Evince, Zathura, Komikku, Preview, …; any app inside
+  the **Comic folders** you add), not the page. A chapter counts when the next chapter of the series opens, or
+  after it has been open for **Open this long counts as read** (10 minutes by default); Kotora always asks for
+  these. `[reading] open_files`, `comic_folders`, `open_minutes`. Not on Windows yet.
+- Settings → Notifications → Manga: **Chapter read offered** and **Chapter recorded**, on by default, apart
+  from the anime ones (`[notifications] read_offer`, `read_recorded`).
 - `kot now` also says what you read last; `kot confirm` and `kot dismiss` answer the reading offer when no
   episode asks.
 

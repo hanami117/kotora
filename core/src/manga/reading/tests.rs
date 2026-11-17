@@ -106,10 +106,14 @@ fn a_search_finds_a_manga_off_the_list() {
 #[test]
 fn offers_only_go_forward() {
     let r = read_of("Glass Lantern Club v35 c362.cbz");
-    assert_eq!(offer(361, None, 34, None, &r), Some(Offer { chapter: Some(362), volume: None }), "a chapter file never moves volumes");
-    assert_eq!(offer(362, None, 0, None, &r), None, "already counted");
-    assert_eq!(offer(400, None, 0, None, &r), None, "never lower");
-    assert_eq!(offer(10, Some(300), 0, None, &r), None, "past the count");
+    assert_eq!(offer(361, None, 34, None, &r), Some(Offer { chapter: Some(362), volume: None }), "volume 34 is done already");
+    assert_eq!(offer(361, None, 30, None, &r), Some(Offer { chapter: Some(362), volume: Some(34) }), "inside volume 35: 34 is done");
+    assert_eq!(offer(361, None, 30, Some(33), &r).and_then(|o| o.volume), None, "never past the volume count");
+    assert_eq!(offer(362, None, 30, None, &r), Some(Offer { chapter: None, volume: Some(34) }), "the volume alone");
+    assert_eq!(offer(361, None, 0, None, &read_of("Glass Lantern Club v01 c003.cbz")).and_then(|o| o.volume), None, "inside volume 1: none done");
+    assert_eq!(offer(362, None, 34, None, &r), None, "already counted");
+    assert_eq!(offer(400, None, 40, None, &r), None, "never lower");
+    assert_eq!(offer(10, Some(300), 34, None, &r), None, "past the count");
     assert_eq!(offer(10, Some(0), 0, None, &r).and_then(|o| o.chapter), Some(362), "0 is an unknown count");
 }
 

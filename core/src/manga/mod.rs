@@ -10,6 +10,7 @@
 //! - [`chapter_read`]: the one rule that says when Kotora counts a chapter as read.
 
 pub mod name;
+pub mod openfile;
 pub mod reading;
 pub mod yacreader;
 

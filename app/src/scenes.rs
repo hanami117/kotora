@@ -310,6 +310,42 @@ pub const SCENES: &[Scene] = &[
         crate::reading::fake(s, "Inkwell Cartographers v12 c120.cbz", 14);
         s.go(Page::NowPlaying);
     }),
+    // Stage 2: a comic open in Simple Comic (no page): shown, asked later.
+    ("now-reading-open-file", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", None);
+        s.go(Page::NowPlaying);
+    }),
+    // The next chapter opened: chapter 120 counts, and it asks (also with auto on).
+    ("now-reading-open-file-counted", |s| {
+        crate::manga::fake(s);
+        s.now = None;
+        s.prefs.auto = true;
+        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", Some("Ch 121 opened next"));
+        s.go(Page::NowPlaying);
+    }),
+    // A chapter inside volume 14: chapter 120 and volume 13 together.
+    ("now-reading-volume-before", |s| {
+        reading(s, "Inkwell Cartographers v14 c120.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // Stage 2 on, a comic folder, YACReader's own libraries not looked up.
+    ("settings-reading-open-files", |s| {
+        crate::manga::fake(s);
+        s.reading.find = false;
+        s.reading.added = vec!["/media/archive/Comics".into()];
+        s.reading.watched = vec!["/media/archive/Comics".into()];
+        s.reading.open_files = true;
+        s.reading.folders = vec!["/media/manga".into()];
+        crate::settings::open(s, Section::Manga);
+    }),
+    // Settings → Notifications: the manga reading switches of their own.
+    ("settings-notifications-reading", |s| {
+        crate::manga::fake(s);
+        s.prefs.notify.read_recorded = false;
+        crate::settings::open(s, Section::Notifications);
+    }),
     // Settings → Manga → Reading detection: a library found in YACReader's settings, one added.
     ("settings-reading", |s| {
         crate::manga::fake(s);

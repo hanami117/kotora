@@ -57,6 +57,8 @@ pub enum Kind {
     /// "Mark Ch 21 of Title as read?" (Mark read, Not now); reading detection, under the Offer
     /// switch.
     ReadOffer,
+    /// "Marked Ch 21 as read" (Undo); reading detection.
+    ReadRecorded,
 }
 
 impl Kind {
@@ -73,6 +75,7 @@ impl Kind {
             Kind::AiredPlay => "aired-play",
             Kind::Chapter => "chapter",
             Kind::ReadOffer => "read-offer",
+            Kind::ReadRecorded => "read-recorded",
         }
     }
 
@@ -83,7 +86,7 @@ impl Kind {
             Kind::Offer => &[(Act::Update, "Update"), (Act::NotNow, "Not now")],
             Kind::Rewatch => &[(Act::Update, "Start rewatch"), (Act::NotNow, "Not now")],
             Kind::ReadOffer => &[(Act::Update, "Mark read"), (Act::NotNow, "Not now")],
-            Kind::Recorded => &[(Act::Undo, "Undo")],
+            Kind::Recorded | Kind::ReadRecorded => &[(Act::Undo, "Undo")],
             Kind::AiredPlay => &[(Act::Play, "Play")],
         }
     }
@@ -286,11 +289,11 @@ impl State {
             Kind::Offer | Kind::Rewatch => self.prefs.notify.offer,
             Kind::Recorded => self.prefs.notify.recorded,
             // Not about the playing episode: `air_notes`.
-            Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer => false,
+            Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer | Kind::ReadRecorded => false,
         };
         let Some(id) = self.note_id().filter(|_| on) else { return };
         let tail = match kind {
-            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer => None,
+            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer | Kind::ReadRecorded => None,
             Kind::Offer | Kind::Rewatch => Some(ANSWER.to_string()),
             Kind::Recorded => Some("Undo is in Kotora's banner.".to_string()),
         };
@@ -391,7 +394,15 @@ impl State {
                 self.prefs.notify.detected = on;
                 "detected"
             }
-            Kind::Offer | Kind::Rewatch | Kind::ReadOffer => {
+            Kind::ReadOffer => {
+                self.prefs.notify.read_offer = on;
+                "read_offer"
+            }
+            Kind::ReadRecorded => {
+                self.prefs.notify.read_recorded = on;
+                "read_recorded"
+            }
+            Kind::Offer | Kind::Rewatch => {
                 self.prefs.notify.offer = on;
                 "offer"
             }
