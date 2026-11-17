@@ -4,91 +4,40 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
-### Fixed
-- Reading detection: the YACReader viewer keeps no file open and writes progress only when the comic is
-  closed, so nothing was seen while reading. Kotora now reads the viewer's command line (`<library>
-  --comicId=N`) and looks the comic up in that library's database (read only): it shows at once. A reader
-  started on a file (Simple Comic, MComix, …) counts by its command line too; open files stay a second signal.
-  Checks every 10 seconds.
-- Reading detection (live test on Arch): a closed comic answered "Not now" stayed as Now Reading and in `kot
-  now`, and after one comic was counted no other comic (Okular) was reported until a restart. A counted comic
-  now holds only while its series is open or until it is answered; Now Reading shows only what is open (a
-  closed comic that asks is in the banner); `kot now` says "Closed in …" for such a comic.
-- Reading detection: the next volume opened inside a YACReader viewer started by the library was missed (its
-  command line keeps the first `--comicId`). The viewer's log is now read whenever a viewer runs, and a line
-  newer than the viewer's start wins. The Linux log format (`opening archive: "…"`, native and Flatpak) is read
-  too, and the newest of the log folders is used.
-- Reading detection: YACReader's "read" flag, still set from an earlier reading, made a volume left after a
-  few seconds count as read to the end. With a known page count, the page decides.
-- Reading detection: paths behind a symlink (a library or comic folder linked elsewhere) are resolved, so a file
-  has one name whether it comes from the library, the viewer's log or the process table.
-- Reading detection logs what it sees on stderr (`kotora: reading: …`: libraries watched, a comic open or
-  closed, its match, a question, an answer); only changes, file names only. `KOTORA_DEBUG_READING=1` adds more.
-- Reading detection: a comic opened in YACReader from the Finder (not from its library) was not seen: on
-  macOS the file comes as an Apple Event, the viewer keeps no file open, and its command line names none.
-  Kotora now reads the viewer's own log (`yacreader.log`: "Opened archive file : …") while it runs, and on
-  close the page from its `bookmarks.yacr` (page count from the `.cbz`). Read only.
-- Reading detection: VIZ's "Dragon Ball Z v11" was matched to the movie manga "Dragon Ball Z: Fukkatsu no
-  'F'". A search hit with words added to the series is never the match; a cached answer is checked again.
-  MyAnimeList has no separate Dragon Ball Z manga (it lists "Dragon Ball Z" among Dragon Ball's titles), so
-  the file now asks "Is this Dragon Ball?" (never marks by itself), with a small renumbering table: "Dragon
-  Ball Z v11 = Dragon Ball vol 27" (VIZ's Dragon Ball Z: +16 volumes, +194 chapters).
-- Now Reading shows the cover of the manga it matched or found (saved details, or one fetch), and no longer
-  shows anime's "Up next" in Manga mode.
-- Reading detection: "Dragon Ball Z v11" was a sure match for Dragon Ball (MyAnimeList lists "Dragon Ball Z"
-  among Dragon Ball's other titles). A list title that is the series with words missing at the end (Z, Super,
-  GT, Part 2), or that goes on with other words, is now another series: at most a suggestion in Wrong manga…,
-  never a match; the search then finds the series itself ("Not on your list: Add as Reading").
-- Closing a comic ends Now Reading and the Discord status at once (the reader's process or file is gone),
-  instead of after 30 minutes. A comic read to the end keeps its question in the banner (and Undo) while closed.
-- Discord on Linux: the socket of newer Flatpak builds (`$XDG_RUNTIME_DIR/.flatpak/com.discordapp.Discord/
-  xdg-run`) is found, and a status that shows is sent again every minute, so it comes back after Discord
-  restarts.
+## [0.4.0] - 2026-11-17
+
+Kotora now notices the manga you read in your own comic files and asks to mark the chapter, as it does for an
+episode. It can also show what you watch or read as your Discord status. Both are off until you turn them on
+(reading detection needs Manga on). No database change.
 
 ### Added
-- **Continue reading** (YACReader): a manga's details page, its right-click menu and Now Reading (once the
-  comic is closed) say where you stopped ("Stopped at Vol 11 · p. 87/190", from YACReader's library, read
-  only; Kotora keeps no pages) with **Continue reading**, which opens the comic in YACReader the way its library
-  does (`--comicId`, `--libraryId`: the page is saved back). Read to the end: the next file of the series in
-  that library ("Next: Vol 12"). Hidden when nothing is known, the file is gone, or there is no next one.
-- **Now Reading**: in Manga mode with reading detection on, the sidebar's Now Playing is Now Reading, with a
-  card for the comic open (title, chapter or volume, reader, cover, the match or "Add as Reading"); the page
-  shows the comic first.
-
-### Added
-- **Reading detection (Manga), YACReader first.** Kotora notices a chapter you read to the end in YACReader
-  (macOS, Linux, Windows) and asks, like it does for an episode: the banner and a notification say "Mark Ch 362
-  of *Title* as read?" with **Mark read**, **Not now** and **Wrong manga…**; Now Playing shows the comic, the
-  page and the match. Only forward (never lowers a count, never past the known total); a whole-volume file
-  (`Title v04.cbz`) marks the volume, and a chapter inside volume N (`Title v35 c362.cbz`) marks volume N - 1
-  as done. "Update automatically" marks a sure match that skips nothing, with Undo.
-  The edit goes through the sync queue like `+1` (the mirror follows). Matching uses your manga list's titles,
-  remembers your pick per series, and searches once for a series off the list ("Add as Reading").
-- Settings → Manga → Reading detection: **YACReader** (on by default; only runs with Manga on) and its
-  **Libraries**: the ones in YACReader's settings are found by themselves, others can be added. Kotora reads
-  each library's database read only and without locks, and only when the file changed (one file check every
-  30 seconds). **Find YACReader's libraries** can be turned off (only the added ones are watched then). In
-  `config.toml`: `[reading] yacreader`, `libraries`, `find_libraries`.
-- Reading detection in any reader (macOS, Linux; opt-in, off by default): Settings → Manga → Reading detection
-  → **Any reader (open files)**. Kotora sees which comic file (`.cbz .cbr .cb7 .zip .pdf`, or a folder of page
-  images) a reader has open (Simple Comic, MComix, Okular, Evince, Zathura, Komikku, Preview, …; any app inside
-  the **Comic folders** you add), not the page. A chapter counts when the next chapter of the series opens, or
-  after it has been open for **Open this long counts as read** (10 minutes by default); Kotora always asks for
-  these. `[reading] open_files`, `comic_folders`, `open_minutes`. Not on Windows yet.
-- Settings → Notifications → Manga: **Chapter read offered** and **Chapter recorded**, on by default, apart
-  from the anime ones (`[notifications] read_offer`, `read_recorded`).
-- `kot now` also says what you read last; `kot confirm` and `kot dismiss` answer the reading offer when no
-  episode asks.
-- Discord Rich Presence, off by default (Settings → General → **Show on Discord**, `[discord] enabled` in
-  `config.toml`). Your Discord app shows "Watching Kotora" with the anime, "Episode 7 of 24" and the player's
-  start and end times while it plays; options: the cover as the large image, a "View on AniList" / "View on
-  MyAnimeList" button, hide while paused or idle, and hide the title ("Watching anime"). It uses Discord's
-  local socket (Unix socket, Flatpak and Snap paths, Windows named pipe) on one worker thread that exists only
-  while the switch is on, looks for Discord again every 30 seconds, and clears the status when nothing plays,
-  when you turn it off and when Kotora quits. No new dependency and no connection of Kotora's own. Needs a
-  Discord Application ID: see `docs/DISCORD.md`. A comic reading detection reports (YACReader or an open
-  file) shows as "Playing Kotora" with the manga and "Chapter N", until it goes quiet for 30 minutes; an
-  episode that plays wins.
+- **Reading detection (Manga).** Read a chapter to the end and Kotora asks "Mark Ch 120 of *Title* as read?"
+  (banner, notification, `kot confirm`), with **Mark read**, **Not now** and **Wrong manga…**. It only counts
+  forward, and the edit goes through the sync queue with Undo, like an episode. Settings → Manga → Reading
+  detection.
+  - **YACReader** (macOS, Linux, Windows; on by default): Kotora reads YACReader's own library, read only, so it
+    knows the exact page. YACReader's libraries are found by themselves; you can add others.
+  - **Any other reader** (macOS, Linux; off by default): Kotora sees which comic file a reader has open (Simple
+    Comic, MComix, Okular, Preview, …), not the page. A chapter counts when the next one opens, or after it has
+    been open for 10 minutes; Kotora always asks for these.
+  - File names: `Title v04.cbz` is volume 4, `Title c120.cbz` is chapter 120, `Title v35 c362.cbz` is chapter 362
+    (and volume 34 done). Files: `.cbz .cbr .cb7 .zip .pdf`, or a folder of images.
+  - Matching uses your manga list and remembers your pick; a series not on your list offers "Add as Reading".
+    VIZ's Dragon Ball Z volumes ask about Dragon Ball, renumbered (Z vol 11 = Dragon Ball vol 27).
+- **Now Reading:** in Manga mode, the sidebar's Now Playing shows the comic that is open, its cover and its match.
+- **Continue reading** (YACReader): a manga's page, its right-click menu and Now Reading say where you stopped
+  ("Stopped at Vol 11 · p. 87/190") and open it in YACReader at that page, or the next volume after a finished
+  one.
+- **Discord Rich Presence** (off by default; Settings → General → Show on Discord): the anime you watch ("Episode
+  7 of 24", with the player's times) or the manga you read, with the cover and a button to the entry. You can
+  hide the title, or the status while paused. Works with the Discord app (on Linux also the Flatpak and Snap
+  ones) and with Vesktop or arRPC. Kotora only talks to Discord on your own computer. See
+  [docs/DISCORD.md](docs/DISCORD.md).
+- Settings → Notifications → Manga: **Chapter read offered** and **Chapter recorded**.
+- `kot now` also says what you read last; `kot confirm` and `kot dismiss` answer a reading question.
+- Logs: reading detection says what it sees on stderr (`kotora: reading: …`, file names only);
+  `KOTORA_DEBUG_READING=1` adds more.
+- Settings → About shows the copyright, © 2026 Thomas Lonigro.
 
 ## [0.3.2] - 2026-11-17
 
