@@ -42,7 +42,7 @@ const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/64x64/apps/io
 /// Windows: the sizes drawn by hand for small use, (side, PNG). The notification area shows
 /// 16 to 32 px; a size in between is scaled down from the next larger one.
 #[cfg(windows)]
-const SMALL_PNGS: [(u32, &[u8]); 4] = [
+static SMALL_PNGS: [(u32, &[u8]); 4] = [
     (16, include_bytes!("../../assets/icons/hicolor/16x16/apps/io.github.hanami117.kotora.png")),
     (24, include_bytes!("../../assets/icons/hicolor/24x24/apps/io.github.hanami117.kotora.png")),
     (32, include_bytes!("../../assets/icons/hicolor/32x32/apps/io.github.hanami117.kotora.png")),
@@ -206,12 +206,13 @@ mod tests {
     fn windows_gets_the_drawn_size_for_each_scale() {
         for (px, side) in [(16, 16), (20, 24), (24, 24), (32, 32), (40, 48), (48, 48)] {
             let want = super::SMALL_PNGS.iter().find(|(s, _)| *s == side).unwrap().1;
-            assert!(std::ptr::eq(super::source_for(px), want), "{px} px comes from the {side} px drawing");
+            // By content: the compiler is free to keep one copy of the bytes or several.
+            assert!(super::source_for(px) == want, "{px} px comes from the {side} px drawing");
             let rgba = super::icon_pixels(super::source_for(px), px);
             assert_eq!(rgba.len(), (px * px * 4) as usize);
             assert!(rgba.chunks(4).any(|p| p[3] == 255), "{px} px is not blank");
         }
-        assert!(std::ptr::eq(super::source_for(64), super::ICON_PNG));
+        assert!(super::source_for(64) == super::ICON_PNG, "above the drawn sizes: the 64 px one");
         let _ = super::icon();
     }
 
