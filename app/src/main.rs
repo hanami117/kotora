@@ -23,6 +23,7 @@ mod ctl;
 mod ctxmenu;
 mod detect;
 mod details;
+mod discord;
 mod grid;
 mod home;
 mod icons;
@@ -103,6 +104,7 @@ fn setup(s: &mut State, wake: Waker) {
 fn on_close(s: &mut State, tx: &mut Tx) {
     s.remember_page();
     if !s.hide_on_close() {
+        crate::discord::shutdown();
         tx.quit();
     }
 }

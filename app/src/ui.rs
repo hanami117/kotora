@@ -71,6 +71,8 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let toast = crate::library::toast_tick(s, tx);
     let intro = crate::intro::poll(s, t, tx);
     let settings = crate::settings::poll(s, t, tx);
+    // Discord Rich Presence: one atomic read while it is off.
+    crate::discord::sync(s);
     now || airing || toast || intro || settings
 }
 

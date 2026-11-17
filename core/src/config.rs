@@ -73,6 +73,14 @@
 //! mode = "last"                # or "anime", "manga" (Anime when Manga is off): the Anime | Manga switch
 //! last_page = "home"           # the page left open (written by the app; used by open_on = "last")
 //!
+//! [discord]                    # Settings → General → Discord: off by default; nothing runs while off
+//! enabled = false              # show what you watch or read on Discord (needs the Discord app on this computer)
+//! client_id = ""               # your own Discord Application ID (empty: the one built into Kotora)
+//! cover = true                 # the cover as the large image (Discord's servers fetch it; see the README)
+//! buttons = true               # "View on AniList" / "View on MyAnimeList"
+//! hide_paused = false          # clear the status while paused or idle
+//! hide_title = false           # say "Watching anime" / "Reading manga", never the title
+//!
 //! [app]
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
 //! [views]                      # each list page's view: "list", "grid" (posters) or "large"
@@ -106,6 +114,7 @@ pub struct Config {
     pub recognition: Recognition,
     pub display: Display,
     pub startup: Startup,
+    pub discord: Discord,
     pub views: Views,
     /// `[manga_views]`: the manga list pages' views (each kind keeps its own).
     pub manga_views: Views,
@@ -138,6 +147,26 @@ pub struct Reading {
 impl Default for Reading {
     fn default() -> Self {
         Reading { yacreader: true, libraries: Vec::new(), find_libraries: true, open_files: false, comic_folders: Vec::new(), open_minutes: 10 }
+    }
+}
+
+/// `[discord]`: Rich Presence ("Show on Discord"). Off by default. `client_id` is a Discord
+/// Application ID (public, like a MAL client id); empty means the one built into Kotora.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Discord {
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_string")]
+    pub client_id: String,
+    pub cover: bool,
+    pub buttons: bool,
+    pub hide_paused: bool,
+    pub hide_title: bool,
+}
+
+impl Default for Discord {
+    fn default() -> Self {
+        Discord { enabled: false, client_id: String::new(), cover: true, buttons: true, hide_paused: false, hide_title: false }
     }
 }
 
@@ -724,6 +753,7 @@ impl std::fmt::Debug for Config {
             .field("recognition", &self.recognition)
             .field("display", &self.display)
             .field("startup", &self.startup)
+            .field("discord", &self.discord)
             .field("notifications", &self.notifications)
             .field("library_folders", &self.library.folders.len())
             .field("app", &self.app)
@@ -757,6 +787,8 @@ struct File {
     display: Display,
     #[serde(default)]
     startup: Startup,
+    #[serde(default)]
+    discord: Discord,
     #[serde(default)]
     views: Views,
     #[serde(default)]
@@ -804,6 +836,7 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
+            discord: Discord { client_id: f.discord.client_id.trim().to_string(), ..f.discord },
             views: f.views,
             manga_views: f.manga_views,
             notifications: f.notifications,
@@ -1038,6 +1071,16 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discord_is_off_by_default_and_read_leniently() {
+        let d = Config::default().discord;
+        assert!(!d.enabled && d.cover && d.buttons && !d.hide_paused && !d.hide_title && d.client_id.is_empty());
+        let c = Config::parse("[discord]\nenabled = true\nclient_id = \" 123 \"\nhide_title = true\ncover = false\n").unwrap().discord;
+        assert!(c.enabled && c.hide_title && !c.cover && c.buttons);
+        assert_eq!(c.client_id, "123");
+        assert!(Config::parse("[discord]\nclient_id = 42\n").is_ok(), "a number is no parse error");
+    }
 
     #[test]
     fn page_keys_are_ctrl_by_default_and_alt_on_request() {

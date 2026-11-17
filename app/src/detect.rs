@@ -74,6 +74,8 @@ pub fn start(s: &mut State) {
     }
     // Home or the last page, in the switch's mode (`[startup]`).
     s.apply_startup(&c);
+    // Off by default: nothing starts. On: one worker thread for the Discord app's local socket.
+    crate::discord::apply(&s.prefs.discord);
     crate::settings::load(s, &c);
     crate::reading::load(s, &c);
     s.prefs.login = crate::autostart::read();

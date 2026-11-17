@@ -40,6 +40,9 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
   manga, and never overwrites an edit made on the other website (Settings → Account → Mirror edits to …).
 - Import a MyAnimeList XML export (anime or manga) into either service, with a preview first; export a MyAnimeList anime or manga list as one (Settings → Account → Import anime list… / Import manga list…, Export anime list… / Export manga list…).
 - Fast and small: no browser engine, a single binary, nothing running in the background that you didn't start.
+- Discord Rich Presence, like Taiga (off by default): Settings → General → Show on Discord shows the episode you
+  watch as your Discord status, with the cover, a button to the entry and the player's times. You can hide the
+  title, or the status while paused. See [docs/DISCORD.md](docs/DISCORD.md).
 - A command line, `kot`, to control the running app.
 
 ## Supported players
@@ -147,6 +150,9 @@ also set `KOTORA_MAL_CLIENT_ID` or `KOTORA_ANILIST_CLIENT_ID`, which win over bo
   or device id, no cookies. If that server can't be reached, Kotora asks `https://kotora.moe/latest.json`
   instead, which counts nothing. Kotora never downloads an update by itself: it shows a banner, and you
   choose. Turn it off in Settings → About Kotora → **Check for updates**; then nothing is sent.
+- **Discord (off by default):** with Settings → General → **Show on Discord** on, Kotora talks to the Discord app
+  on your own computer over its local socket and gives it your status (title, episode, cover link). Kotora makes
+  no connection to Discord itself; Discord's servers fetch the cover from your list service. Off, nothing runs.
 - The sign-in tokens (one per service) are stored in a file only you can read (`~/.local/share/kotora/tokens.json`), never in
   the database or logs. Kotora needs no client secret.
 - Files: settings in `~/.config/kotora`, list and token in `~/.local/share/kotora`, covers in `~/.cache/kotora`,
