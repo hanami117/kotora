@@ -4,7 +4,7 @@
 //! `auto_wanted`), a worker thread asks `updates.kotora.moe/latest.json` (the `server/update`
 //! Worker in the kotora.moe repo) what the newest release is. The request is a plain GET with the
 //! User-Agent `Kotora/<version>` and four values in the query, nothing else: `v` (this version),
-//! `os` (linux, macos), `arch` (x86_64, aarch64) and `ch`, how the copy was installed (`channel`).
+//! `os` (linux, macos, windows), `arch` (x86_64, aarch64) and `ch`, how the copy was installed (`channel`).
 //! Two more flags may be added: `w=1` on the copy's first check of the ISO week and `m=1` on its
 //! first of the calendar month (both UTC), so the server can count weekly and monthly users without
 //! any id; and `repeat=1` on a manual check when the day was already counted. The server keeps
@@ -16,7 +16,8 @@
 //! "What's new", "Download" (opens the browser), "Skip this version", and ✕ (until the next
 //! start). Nothing is ever downloaded by the app. A copy installed by a package manager (built
 //! with `KOTORA_CHANNEL=aur`, a binary under `/usr`, a Homebrew cask) or by `install.sh` is told
-//! how to update instead and gets no Download button. If this version is below the file's
+//! how to update instead and gets no Download button. On Windows the Download button gets the
+//! installer (`downloads.windows_installer`), which updates an installed copy in place. If this version is below the file's
 //! `minimum_supported`, the banner is a warning that can't be closed or skipped. The app keeps
 //! running either way.
 //!
@@ -52,8 +53,9 @@ pub const RECHECK: Duration = Duration::from_secs(3600);
 /// The whole request (connect, TLS, body); a slow site never holds anything up.
 const TIMEOUT: Duration = Duration::from_secs(6);
 
-/// `latest.json`: `{version, build, date, notes_url, downloads: {macos_dmg, linux_tarball, appimage, aur, brew}}`.
-/// Every field but `version` may be missing (older files have no `appimage` and no `build`).
+/// `latest.json`: `{version, build, date, notes_url, downloads: {macos_dmg, linux_tarball, appimage, aur, brew,
+/// windows_installer, windows_installer_sha256}}`.
+/// Every field but `version` may be missing (older files have no `appimage`, no `build` and nothing for Windows).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Latest {
     pub version: String,
@@ -81,6 +83,11 @@ pub struct Downloads {
     pub appimage: String,
     pub aur: String,
     pub brew: String,
+    /// The Windows x64 installer (`Kotora-windows-x64-setup.exe`).
+    pub windows_installer: String,
+    /// That file's SHA-256, 64 hex digits. Kotora downloads nothing itself (the browser does), so
+    /// today this is for people and package tools (winget) to check the file against.
+    pub windows_installer_sha256: String,
 }
 
 // ---- versions ----
@@ -235,7 +242,7 @@ pub fn flags(last_check: Option<u64>, now: u64, manual: bool) -> Flags {
 /// The install channels the server knows (`server/update/src/index.js` in kotora.moe, `CHANNEL`);
 /// it counts anything else as `unknown`, which is what a distribution's package without a channel
 /// sends.
-pub const CHANNELS: [&str; 8] = ["dmg", "homebrew", "appimage", "aur", "aur-bin", "install-sh", "source", "unknown"];
+pub const CHANNELS: [&str; 10] = ["dmg", "homebrew", "appimage", "aur", "aur-bin", "install-sh", "source", "inno", "zip", "unknown"];
 
 /// The query: `v=…&os=…&arch=…&ch=…`, then `&w=1`, `&m=1`, `&repeat=1` as `flags` says.
 pub fn query(version: &str, os: &str, arch: &str, channel: &str, flags: Flags) -> String {
@@ -418,6 +425,11 @@ pub enum Install {
     Aur,
     /// Running as an AppImage (Linux; `APPIMAGE` and `APPDIR` set): offer the AppImage.
     AppImage,
+    /// Windows, put there by the installer (its uninstaller is beside the program): offer the
+    /// new installer, which updates this copy in place.
+    WinSetup,
+    /// Windows, unpacked from the zip (or a build): offer the installer too.
+    WinZip,
 }
 
 /// The Homebrew prefixes (Apple silicon, Intel).
@@ -445,6 +457,18 @@ pub fn install_kind(exe: &Path, linux: bool, mac: bool, is_dir: impl Fn(&Path) -
         }
     }
     Install::Direct
+}
+
+/// The uninstaller Inno Setup puts beside the program (`packaging/windows/kotora.iss`).
+pub const WIN_UNINSTALLER: &str = "unins000.exe";
+
+/// Windows: how the copy at `exe` got there. The installer and the zip ship the very same
+/// programs, so the sign is the installer's uninstaller in the same folder.
+pub fn windows_kind(exe: &Path, is_file: impl Fn(&Path) -> bool) -> Install {
+    match exe.parent() {
+        Some(dir) if is_file(&dir.join(WIN_UNINSTALLER)) => Install::WinSetup,
+        _ => Install::WinZip,
+    }
 }
 
 /// The channel a package built this copy for: `KOTORA_CHANNEL` at compile time (the AUR's
@@ -480,6 +504,8 @@ pub fn channel_of(install: Install, build: Option<&'static str>, mac: bool) -> &
         Install::System => "unknown",
         Install::AppImage => "appimage",
         Install::Script => "install-sh",
+        Install::WinSetup => "inno",
+        Install::WinZip => "zip",
         Install::Direct => match build {
             Some(c @ ("dmg" | "source")) => c,
             _ if mac => "dmg",
@@ -499,6 +525,9 @@ fn running_from_appimage() -> bool {
 pub fn this_install() -> Install {
     let runtime = if cfg!(target_os = "linux") && running_from_appimage() {
         Install::AppImage
+    } else if cfg!(windows) {
+        // Not canonicalised: that gives a `\\?\` path, and the folder is all that matters.
+        windows_kind(&std::env::current_exe().unwrap_or_default(), |p| p.is_file())
     } else {
         let exe = std::env::current_exe().and_then(|p| p.canonicalize()).unwrap_or_default();
         install_kind(&exe, cfg!(target_os = "linux"), cfg!(target_os = "macos"), |p| p.is_dir())
@@ -548,7 +577,7 @@ impl Notice {
     /// How a copy with no Download button updates.
     pub fn how_to_update(&self) -> Option<&'static str> {
         match self.install {
-            Install::Direct | Install::AppImage => None,
+            Install::Direct | Install::AppImage | Install::WinSetup | Install::WinZip => None,
             Install::Script => Some("To update, run git pull and ./install.sh in your Kotora folder."),
             Install::System => Some("Update it with your package manager."),
             Install::Aur => Some("Update it with your AUR helper, for example yay -Syu."),
@@ -570,13 +599,15 @@ pub fn notice(latest: &Latest, current: (&str, u32), skipped: Option<(&str, u32)
     let d = &latest.downloads;
     let file = if install == Install::AppImage {
         &d.appimage
+    } else if matches!(install, Install::WinSetup | Install::WinZip) {
+        &d.windows_installer
     } else if mac {
         &d.macos_dmg
     } else {
         &d.linux_tarball
     };
     let download = match install {
-        Install::Direct | Install::AppImage => Some(file).filter(|u| is_web(u)).or(Some(&latest.notes_url).filter(|u| is_web(u))).cloned(),
+        Install::Direct | Install::AppImage | Install::WinSetup | Install::WinZip => Some(file).filter(|u| is_web(u)).or(Some(&latest.notes_url).filter(|u| is_web(u))).cloned(),
         Install::Script | Install::System | Install::Homebrew | Install::Aur => None,
     };
     Some(Notice { version: latest.version.clone(), build, notes_url: latest.notes_url.clone(), download, install, required })
@@ -934,7 +965,7 @@ mod tests {
         assert_eq!(resolve_install(Some("appimage"), Direct), AppImage);
         assert_eq!(resolve_install(Some("homebrew"), Direct), Homebrew);
         // Every answer is one the server knows.
-        for i in [Direct, Script, System, Homebrew, AppImage, Aur] {
+        for i in [Direct, Script, System, Homebrew, AppImage, Aur, WinSetup, WinZip] {
             for b in [None, Some("dmg"), Some("install-sh"), Some("source"), Some("aur"), Some("aur-bin")] {
                 for mac in [true, false] {
                     assert!(CHANNELS.contains(&channel_of(i, b, mac)));
@@ -1073,6 +1104,34 @@ mod tests {
         assert_eq!(notice(&no_file, ("0.1.0", 1), None, Install::Direct, true).unwrap().download.as_deref(), Some(l.notes_url.as_str()));
         let odd = Latest { notes_url: "javascript:alert(1)".into(), downloads: Downloads { macos_dmg: "file:///etc/passwd".into(), ..Default::default() }, ..l };
         assert_eq!(notice(&odd, ("0.1.0", 1), None, Install::Direct, true).unwrap().download, None);
+    }
+
+    #[test]
+    fn windows_gets_the_installer_from_either_kind_of_copy() {
+        let l: Latest = serde_json::from_str(
+            r#"{"version":"0.2.1","notes_url":"https://github.com/hanami117/kotora/releases/tag/v0.2.1","downloads":{
+                "linux_tarball":"https://x/k.tar.gz","macos_dmg":"https://x/K.dmg",
+                "windows_installer":"https://github.com/hanami117/kotora/releases/latest/download/Kotora-windows-x64-setup.exe",
+                "windows_installer_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}"#,
+        )
+        .unwrap();
+        assert_eq!(l.downloads.windows_installer_sha256.len(), 64);
+        for install in [Install::WinSetup, Install::WinZip] {
+            let n = notice(&l, ("0.2.0", 1), None, install, false).unwrap();
+            assert_eq!(n.download.as_deref(), Some(l.downloads.windows_installer.as_str()), "{install:?}");
+            assert_eq!(n.message(), "Kotora 0.2.1 is available.", "a Download button, no how-to");
+        }
+        // A latest.json from before the Windows build: the release page, never the Linux tarball.
+        let old = Latest { downloads: Downloads { windows_installer: String::new(), ..l.downloads.clone() }, ..l.clone() };
+        assert_eq!(notice(&old, ("0.2.0", 1), None, Install::WinSetup, false).unwrap().download.as_deref(), Some(l.notes_url.as_str()));
+        // The installer's uninstaller beside the program tells the two apart.
+        let exe = Path::new("C:/Users/me/AppData/Local/Programs/Kotora/kotora.exe");
+        assert_eq!(windows_kind(exe, |p| p.ends_with("Programs/Kotora/unins000.exe")), Install::WinSetup);
+        assert_eq!(windows_kind(exe, |_| false), Install::WinZip);
+        assert_eq!(windows_kind(Path::new(""), |_| true), Install::WinZip);
+        assert_eq!(channel_of(Install::WinSetup, None, false), "inno");
+        assert_eq!(channel_of(Install::WinZip, None, false), "zip");
+        assert_eq!(resolve_install(None, Install::WinSetup), Install::WinSetup);
     }
 
     #[test]

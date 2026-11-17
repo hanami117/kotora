@@ -41,10 +41,6 @@ pub struct Updates {
 /// A test instance never fetches unless `KOTORA_UPDATE_URL` points it somewhere;
 /// `KOTORA_OFFLINE` never does.
 fn may_fetch() -> bool {
-    // Windows has no update channel yet (the notice would offer the Linux download).
-    if cfg!(windows) {
-        return false;
-    }
     let var = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
     !kotora_core::paths::offline_forced() && !(var("KOTORA_TEST_INSTANCE") && !var("KOTORA_UPDATE_URL"))
 }

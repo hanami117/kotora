@@ -849,6 +849,8 @@ pub const SCENES: &[Scene] = &[
     ("update-available-aur", |s| update_scene(s, kotora_core::update::Install::Aur, None)),
     ("update-available-homebrew", |s| update_scene(s, kotora_core::update::Install::Homebrew, None)),
     ("update-available-install-sh", |s| update_scene(s, kotora_core::update::Install::Script, None)),
+    // Windows: Download gets the installer, from an installed copy or an unpacked one.
+    ("update-available-windows", |s| update_scene(s, kotora_core::update::Install::WinSetup, None)),
     ("update-required", |s| update_scene(s, kotora_core::update::Install::Direct, Some("99.0.0"))),
     ("update-required-aur", |s| update_scene(s, kotora_core::update::Install::Aur, Some("99.0.0"))),
     // With the Now Playing banner above it.
@@ -1372,6 +1374,7 @@ fn update_scene(s: &mut State, install: kotora_core::update::Install, minimum: O
         downloads: kotora_core::update::Downloads {
             macos_dmg: "https://github.com/hanami117/kotora/releases/download/v99.0.0/Kotora-99.0.0.dmg".into(),
             linux_tarball: "https://github.com/hanami117/kotora/releases/download/v99.0.0/kotora-99.0.0.tar.gz".into(),
+            windows_installer: "https://github.com/hanami117/kotora/releases/download/v99.0.0/Kotora-99.0.0-windows-x64-setup.exe".into(),
             ..Default::default()
         },
         ..Default::default()
@@ -1975,6 +1978,7 @@ mod tests {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("update-available", size);
             assert_eq!(has(&rt, &keys), [true; 5], "{size:?}");
+            assert_eq!(has(&render("update-available-windows", size), &keys), [true; 5], "Windows: the installer behind Download");
             // Package and install.sh copies: no Download, but say how.
             for name in ["update-available-aur", "update-available-homebrew", "update-available-install-sh"] {
                 let rt = render(name, size);
