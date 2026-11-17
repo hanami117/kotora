@@ -5,7 +5,6 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 ## [Unreleased]
 
 ### Added
-<<<<<<< HEAD
 - **Reading detection (Manga), YACReader first.** Kotora notices a chapter you read to the end in YACReader
   (macOS, Linux, Windows) and asks, like it does for an episode: the banner and a notification say "Mark Ch 362
   of *Title* as read?" with **Mark read**, **Not now** and **Wrong manga…**; Now Playing shows the comic, the
@@ -29,7 +28,6 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   from the anime ones (`[notifications] read_offer`, `read_recorded`).
 - `kot now` also says what you read last; `kot confirm` and `kot dismiss` answer the reading offer when no
   episode asks.
-=======
 - Discord Rich Presence, off by default (Settings → General → **Show on Discord**, `[discord] enabled` in
   `config.toml`). Your Discord app shows "Watching Kotora" with the anime, "Episode 7 of 24" and the player's
   start and end times while it plays; options: the cover as the large image, a "View on AniList" / "View on
@@ -38,7 +36,6 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   while the switch is on, looks for Discord again every 30 seconds, and clears the status when nothing plays,
   when you turn it off and when Kotora quits. No new dependency and no connection of Kotora's own. Needs a
   Discord Application ID: see `docs/DISCORD.md`.
->>>>>>> discord
 
 ## [0.3.2] - 2026-11-17
 
