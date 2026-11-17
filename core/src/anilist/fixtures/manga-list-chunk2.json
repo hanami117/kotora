@@ -1,0 +1,12 @@
+{"data":{"MediaListCollection":{"hasNextChunk":false,"lists":[
+ {"entries":[
+  {"id":8003,"mediaId":190003,"status":"PLANNING","progress":0,"progressVolumes":0,"repeat":0,"score":0,"updatedAt":1762000000,
+   "media":{"id":190003,"idMal":null,"title":{"romaji":"Yanlu","english":null,"native":"盐路"},"synonyms":[],"format":"MANGA","status":"NOT_YET_RELEASED","chapters":null,"volumes":null,"countryOfOrigin":"CN","startDate":{"year":2027,"month":null,"day":null},"endDate":{},"averageScore":null,"popularity":12,"coverImage":{"medium":"https://s4.anilist.example.invalid/media/manga/cover/small/bx190003.jpg","large":null}}},
+  {"id":8004,"mediaId":190004,"status":"PAUSED","progress":30,"progressVolumes":5,"repeat":0,"score":42,"updatedAt":1761000000,
+   "media":{"id":190004,"idMal":79004,"title":{"romaji":"Yoru no Renkinjutsushi","english":"Night Shift Alchemist","native":null},"synonyms":[],"format":"NOVEL","status":"HIATUS","chapters":null,"volumes":9,"countryOfOrigin":"JP","startDate":{"year":2019},"endDate":{},"averageScore":77,"popularity":3000,"coverImage":{}}},
+  {"id":8005,"mediaId":190005,"status":"DROPPED","progress":2,"progressVolumes":null,"repeat":0,"score":6,"updatedAt":1760000000,
+   "media":{"id":190005,"idMal":79005,"title":{"romaji":"Tsuki no Kakera"},"format":"ONE_SHOT","status":"CANCELLED","chapters":1,"volumes":1,"countryOfOrigin":"JP","startDate":{},"endDate":{},"coverImage":{}}},
+  {"id":8006,"mediaId":190006,"status":"COMPLETED","progress":64,"progressVolumes":8,"repeat":2,"score":100,"updatedAt":1759000000,
+   "media":{"id":190006,"idMal":79006,"title":{"romaji":"Lanqiu Xiaozhen","english":"Harbour Town"},"format":"MANGA","status":"FINISHED","chapters":64,"volumes":8,"countryOfOrigin":"TW","startDate":{"year":2015,"month":1,"day":1},"endDate":{},"coverImage":{}}}
+ ]}
+]}}}

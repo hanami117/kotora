@@ -1,7 +1,7 @@
 //! The AniList client: GraphQL over `https://graphql.anilist.co`, signed in with the implicit
 //! grant (no client secret, no refresh: a token lasts a year), the user's anime list, one entry
 //! (read, `SaveMediaListEntry`, `DeleteMediaListEntry`), search, details, seasons, a rate budget
-//! and 429 handling.
+//! and 429 handling. The manga list, through the same client and budget, is in `manga.rs`.
 //!
 //! AniList's terms (clause 5) allow a client of the user's own list, nothing more: nothing here
 //! keeps a list of its own, exports, or crawls. Media data is asked for only to show the user's
@@ -1144,7 +1144,38 @@ impl<T: Transport> ListService for AniList<T> {
         let access = self.access()?;
         self.client.season(&access, season, page)
     }
+
+    fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
+        self.manga_list()
+    }
+
+    fn get_manga_entry(&mut self, media_id: u32) -> Result<Option<Remote>, ServiceError> {
+        let access = self.access()?;
+        self.client.fetch_manga_entry(&access, media_id)
+    }
+
+    fn update_manga_entry(&mut self, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+        let access = self.access()?;
+        self.client.save_manga_entry(&access, media_id, change)
+    }
+
+    fn delete_manga_entry(&mut self, media_id: u32) -> Result<(), ServiceError> {
+        let access = self.access()?;
+        self.client.delete_manga_entry(&access, media_id)
+    }
+
+    fn browse_manga(&mut self, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+        let access = self.access()?;
+        self.client.browse_manga(&access, query, limit)
+    }
+
+    fn manga_details(&mut self, media_id: u32) -> Result<Details, ServiceError> {
+        let access = self.access()?;
+        self.client.manga_details(&access, media_id)
+    }
 }
+
+mod manga;
 
 #[cfg(test)]
 mod tests;

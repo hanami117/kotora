@@ -65,11 +65,11 @@ Commands:
       [--status STATUS]   your list service for (it must find one), or its id;
       [--manga]           --manga: a manga (MyAnimeList; Manga must be on)
   list --manga [STATUS|all]
-                        your manga list (MyAnimeList; read only); STATUS:
+                        your manga list (read only); STATUS:
                         reading (the default), plan, completed, on-hold,
                         dropped. Needs manga on
-  manga [on|off]        whether syncs also read your MyAnimeList manga
-                        list (off by default); on syncs now
+  manga [on|off]        whether syncs also read your manga list (MyAnimeList
+                        or AniList; off by default); on syncs now
   export FILE           write your anime list as a MyAnimeList XML file
                         (MyAnimeList lists only)
   config client-id ID   use your own Client ID for your list service

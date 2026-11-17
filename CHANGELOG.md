@@ -25,6 +25,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
   manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror and list
   export leave manga out.
+- **AniList manga (core and `kot`):** with AniList as your list service, `kot manga on` now works and syncs read
+  your AniList manga list (`kot list --manga`, scores in your AniList score format). Chapters, volumes, status,
+  score, rereads (AniList's Rereading) and removal go through the sync queue as on MyAnimeList; manga search and
+  details read authors from AniList's staff (AniList has no magazine, so no serialization). Manga, manhwa,
+  manhua, light novel and one-shot get MyAnimeList's labels. Same rate budget as anime (25 requests a minute);
+  AniList data is still never exported. The window's switch on AniList comes with the manga UI.
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list

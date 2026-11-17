@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::score::ten;
 
+mod manga;
+
 /// A made-up JWT whose `exp` is 1800000000 (its signature is not real).
 const JWT: &str = "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJSUzI1NiJ9.eyJhdWQiOiAiOTk5OTkiLCAianRpIjogIm1hZGUtdXAiLCAiaWF0IjogMTcwMDAwMDAwMCwgImV4cCI6IDE4MDAwMDAwMDAsICJzdWIiOiAiNDI0MjQyIiwgInNjb3BlcyI6IFtdfQ.bWFkZS11cC1zaWduYXR1cmUtbm90LXJlYWw";
 
