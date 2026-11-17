@@ -14,8 +14,16 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   a list read by volume). The switch is remembered (`[display] list_kind`). Home, Now Playing, Airing and Search
   stay anime only. AniList has no manga in Kotora yet: there the switch stays on Anime, with a note.
 - **`kot manga on|off` and `kot list --manga [STATUS|all]`**: the same switch from the terminal, and the saved
-  manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror and list
-  export leave manga out.
+  manga list in aligned columns, by the same rule (chapters, volumes or both). The account mirror leaves manga out.
+- **Export and import your manga list:** with Manga on, Settings → Account has Export manga list… and Import
+  manga list… beside the anime ones, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
+  export format (status, chapters and volumes read, score, times read, rereading, start and finish dates where
+  Kotora has them). The import reads `.xml` or `.xml.gz`, compares first (new, different, same, entries it can't
+  use) and works as the anime one: "Add new only" or "Add new and update", a higher chapter or volume count wins,
+  a score fills an empty one, you choose when the statuses disagree, everything goes through the sync queue, and
+  "Undo import" takes back what hasn't been sent. An anime file given to the manga import (or the other way round)
+  is refused with a message saying which list it is. MyAnimeList only: AniList's API terms don't allow exporting
+  from AniList, and importing a manga list into AniList comes with AniList manga.
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list

@@ -225,6 +225,9 @@ pub enum Request {
     /// relative path absolute). MyAnimeList lists only: AniList's terms don't allow exporting.
     /// Replies `Done`.
     Export { path: String },
+    /// [`Request::Export`] for the manga list (its own command: an older Kotora would export the
+    /// anime list instead of failing). Replies `Done`.
+    ExportManga { path: String },
     /// Everything the bare `kot` dashboard shows, in one reply: what plays, the Watching list
     /// with what comes next, the queue and the last sync. Replies `Dash`.
     Dash,

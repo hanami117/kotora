@@ -156,7 +156,11 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             }
         }
         // Off the UI thread: reads the database and writes the file.
-        Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path)) {
+        Request::Export { path } => match crate::transfer::export_to(std::path::Path::new(&path), kotora_core::Kind::Anime) {
+            Ok(message) => Reply::Done { message },
+            Err(message) => Reply::Error { message, anyway: false },
+        },
+        Request::ExportManga { path } => match crate::transfer::export_to(std::path::Path::new(&path), kotora_core::Kind::Manga) {
             Ok(message) => Reply::Done { message },
             Err(message) => Reply::Error { message, anyway: false },
         },

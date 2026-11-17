@@ -122,16 +122,16 @@ fn report_touched(h: &Handle, store: &Store, touched: &[(Kind, u32)], offline: O
 
 /// An import or its undo: applied, then the result goes to the import panel. Returns the entries
 /// touched.
-fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
+fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
     use kotora_core::listxml::Action;
     let service = crate::account::name();
     match cmd {
         Cmd::Import(actions) => {
-            let touched: Vec<u32> = actions
+            let touched: Vec<(Kind, u32)> = actions
                 .iter()
                 .map(|a| match a {
-                    Action::Add { media, .. } => media.id,
-                    Action::Update { media_id, .. } => *media_id,
+                    Action::Add { media, .. } => (media.kind, media.id),
+                    Action::Update { kind, media_id, .. } => (*kind, *media_id),
                 })
                 .collect();
             let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The import can't be saved: {e}"));
@@ -141,7 +141,7 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<u32> {
         }
         Cmd::UndoImport(ids) => {
             let now = now_unix();
-            let touched: Vec<u32> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| o.media_id).collect();
+            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
             let r = store.undo_import(service, &ids, now).map_err(|e| format!("The import can't be taken back: {e}"));
             h.update_if(move |s, _| crate::transfer::undone(s, r));
             touched
@@ -223,7 +223,7 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                 // Read the whole list once the queue is empty: the imported adds get their
                 // covers and episodes from the service.
                 refresh |= matches!(cmd, Cmd::Import(_));
-                touched.extend(transfer(h, &mut store, cmd).into_iter().map(|id| (Kind::Anime, id)));
+                touched.extend(transfer(h, &mut store, cmd));
                 continue;
             }
             let undo = if let Cmd::UndoRemove { media_id } = &cmd { Some(*media_id) } else { None };
