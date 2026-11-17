@@ -164,8 +164,8 @@ pub fn export(s: &mut State, kind: Kind) {
 
 const EXPORT_PROMPT: &str = "Export your anime list as a MyAnimeList XML file";
 const EXPORT_MANGA_PROMPT: &str = "Export your manga list as a MyAnimeList XML file";
-const IMPORT_PROMPT: &str = "Choose a MyAnimeList list export (.xml or .xml.gz)";
-const IMPORT_MANGA_PROMPT: &str = "Choose a MyAnimeList manga list export (.xml or .xml.gz)";
+const IMPORT_PROMPT: &str = "Import anime list: choose a MyAnimeList anime list export (.xml or .xml.gz)";
+const IMPORT_MANGA_PROMPT: &str = "Import manga list: choose a MyAnimeList manga list export (.xml or .xml.gz)";
 
 /// The system's file dialog; `done` gets the path (on the UI thread on macOS, a thread on Linux
 /// and Windows).
@@ -391,7 +391,7 @@ pub(crate) fn line_tagged(key: &str, title: &str, tag: Option<El>, note: String,
         .child(control)
 }
 
-/// Settings → Account: Export list… (and Export manga list…).
+/// Settings → Account: Export anime list… (and Export manga list…).
 pub fn export_row(s: &State, kind: Kind) -> El {
     let t = &s.transfer;
     let manga = kind == Kind::Manga;
@@ -406,12 +406,12 @@ pub fn export_row(s: &State, kind: Kind) -> El {
         (None, None) if manga => ("Your manga list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, chapters, volumes, score, rereads and the dates Kotora has.".into(), Some(go)),
         (None, None) => ("Your anime list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, episodes, score, rewatches and the dates Kotora has.".into(), Some(go)),
     };
-    let (key, title, button) = if manga { ("set/export-manga", "Export manga list", "set/export-manga-button") } else { ("set/export", "Export list", "set/export-button") };
+    let (key, title, button) = if manga { ("set/export-manga", "Export manga list\u{2026}", "set/export-manga-button") } else { ("set/export", "Export anime list\u{2026}", "set/export-button") };
     let r = line(key, title, note, small_button(button, "Export\u{2026}", false, on));
     if matches!(export_note, Some(Err(_))) && refusal(s).is_none() { r.key(if manga { "set/export-manga-error" } else { "set/export-error" }) } else { r }
 }
 
-/// Settings → Account: Import list… (and Import manga list…) and, once a file is read, its
+/// Settings → Account: Import anime list… (and Import manga list…) and, once a file is read, its
 /// preview under the row of the kind it is about.
 pub fn import_row(s: &State, kind: Kind) -> El {
     let t = &s.transfer;
@@ -424,12 +424,12 @@ pub fn import_row(s: &State, kind: Kind) -> El {
     let note = match (&t.busy, signed_in) {
         (Some(b), _) if mine => b.clone(),
         (_, false) => "Sign in first: the file is compared with your list.".into(),
-        _ if manga => format!("Read a MyAnimeList manga XML export (.xml or .xml.gz) and add it to your {service} list. You see what changes before anything is sent."),
-        _ => format!("Read a MyAnimeList XML export (.xml or .xml.gz) and add it to your {service} list. You see what changes before anything is sent."),
+        _ if manga => format!("Read a MyAnimeList manga XML export (.xml or .xml.gz) and add it to your {service} manga list. You see what changes before anything is sent."),
+        _ => format!("Read a MyAnimeList anime XML export (.xml or .xml.gz) and add it to your {service} anime list. You see what changes before anything is sent."),
     };
     let go: fn(&mut State) = if manga { import_manga } else { import_anime };
     let on: Option<fn(&mut State)> = if idle && signed_in && t.preview.is_none() { Some(go) } else { None };
-    let (key, line_key, title, button) = if manga { ("set/import-manga", "set/import-manga-line", "Import manga list", "set/import-manga-button") } else { ("set/import", "set/import-line", "Import list", "set/import-button") };
+    let (key, line_key, title, button) = if manga { ("set/import-manga", "set/import-manga-line", "Import manga list\u{2026}", "set/import-manga-button") } else { ("set/import", "set/import-line", "Import anime list\u{2026}", "set/import-button") };
     let mut c = col().key(key).w_full().child(line(line_key, title, note, small_button(button, "Import\u{2026}", false, on)));
     if !mine {
         return c;
@@ -582,7 +582,7 @@ fn preview(s: &State, p: &Preview) -> El {
     let mut notes = vec![format!("Changes go through the sync queue to {service} at its pace, and wait there while you are offline. {count_rule}; a score fills an empty one.")];
     if p.plan.other > 0 {
         let verb = if p.plan.other == 1 { "is" } else { "are" };
-        let (what, hint) = if manga { (plural(p.plan.other, "anime entry", "anime entries"), "Import list") } else { (plural(p.plan.other, "manga entry", "manga entries"), "Import manga list") };
+        let (what, hint) = if manga { (plural(p.plan.other, "anime entry", "anime entries"), "Import anime list\u{2026}") } else { (plural(p.plan.other, "manga entry", "manga entries"), "Import manga list\u{2026}") };
         notes.push(format!("{what} in the file {verb} left out: use \u{201c}{hint}\u{201d} for those."));
     }
     notes.push("Dates and notes in the file are not imported.".into());

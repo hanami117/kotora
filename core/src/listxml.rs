@@ -172,9 +172,9 @@ pub fn parse_kind(bytes: &[u8], kind: Kind) -> Result<XmlList, String> {
     }
     if list.entries.is_empty() && list.other > 0 {
         return Err(if kind == Kind::Manga {
-            "This is an anime list. Use \u{201c}Import list\u{201d} (anime) to read it; this import is for manga lists.".into()
+            "This is an anime list. Use \u{201c}Import anime list\u{2026}\u{201d} to read it; this import is for manga lists.".into()
         } else {
-            "This is a manga list. Use \u{201c}Import manga list\u{201d} to read it; this import is for anime lists.".into()
+            "This is a manga list. Use \u{201c}Import manga list\u{2026}\u{201d} to read it; this import is for anime lists.".into()
         });
     }
     Ok(list)
@@ -305,7 +305,7 @@ fn format_from_type(t: &str) -> String {
 pub fn export_refusal(service: ServiceId) -> Option<&'static str> {
     match service {
         ServiceId::Mal => None,
-        ServiceId::AniList => Some("AniList\u{2019}s API terms don\u{2019}t allow exporting list data from AniList, so Kotora exports MyAnimeList lists only."),
+        ServiceId::AniList => Some("AniList\u{2019}s API terms don\u{2019}t allow exporting list data from AniList: Export anime list\u{2026} and Export manga list\u{2026} work with MyAnimeList lists only."),
     }
 }
 

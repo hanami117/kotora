@@ -32,7 +32,7 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   manhua, light novel and one-shot get MyAnimeList's labels. Same rate budget as anime (25 requests a minute);
   AniList data is still never exported.
 - **Export and import your manga list:** with Manga on, Settings → Account has Export manga list… and Import
-  manga list… beside the anime ones, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
+  manga list… beside Export anime list… and Import anime list…, and `kot export --manga FILE` writes the file. It is MyAnimeList's own manga
   export format (status, chapters and volumes read, score, times read, rereading, start and finish dates where
   Kotora has them). The import reads `.xml` or `.xml.gz`, compares first (new, different, same, entries it can't
   use) and works as the anime one: "Add new only" or "Add new and update", a higher chapter or volume count wins,
@@ -49,6 +49,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 - **With the mirror on, both "Open on" links:** details pages (anime and manga) and the right-click menus link to
   MyAnimeList and to AniList, whenever the other service's id is known (MyAnimeList's from the MyAnimeList id;
   AniList's from its saved list). Without the mirror, the one link of your service, as before.
+
+### Changed
+- Settings → Account names the kind: Export list… and Import list… are now **Export anime list…** and **Import
+  anime list…**, beside Export manga list… and Import manga list…; the messages, file dialogs and `kot help` say
+  so too (`kot export FILE` still writes the anime list; `--manga` the manga list).
 
 ### Fixed
 - A failed manga sync is no longer silent: the manga pages and the sidebar say so (with Retry), and `kot list

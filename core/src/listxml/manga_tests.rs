@@ -89,9 +89,10 @@ fn counts_past_the_known_totals_are_cut() {
 #[test]
 fn an_anime_file_is_refused_by_the_manga_import_and_the_other_way_round() {
     let err = parse_manga(ANIME_FILE.as_bytes()).unwrap_err();
-    assert!(err.contains("anime list") && err.contains("manga"), "{err}");
+    assert!(err.contains("\u{201c}Import anime list\u{2026}\u{201d}"), "names the anime item: {err}");
     let err = parse(FILE.as_bytes()).unwrap_err();
-    assert!(err.contains("manga list") && err.contains("anime"), "{err}");
+    assert!(err.contains("\u{201c}Import manga list\u{2026}\u{201d}"), "names the manga item: {err}");
+    assert!(export_refusal(ServiceId::AniList).is_some_and(|w| w.contains("Export anime list\u{2026}") && w.contains("Export manga list\u{2026}")));
     // A file with both: each import reads its own kind and counts the other.
     let both = String::from("<myanimelist><anime><series_animedb_id>1</series_animedb_id><my_status>Watching</my_status></anime><manga><manga_mangadb_id>2</manga_mangadb_id><my_status>Reading</my_status></manga></myanimelist>");
     let (a, m) = (parse(both.as_bytes()).unwrap(), parse_manga(both.as_bytes()).unwrap());

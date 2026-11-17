@@ -70,8 +70,9 @@ Commands:
                         dropped. Needs manga on
   manga [on|off]        whether syncs also read your manga list (MyAnimeList
                         or AniList; off by default); on syncs now
-  export [--manga] FILE write your anime (or manga) list as a MyAnimeList
-                        XML file (MyAnimeList lists only)
+  export [--manga] FILE write your anime list (--manga: your manga list) as a
+                        MyAnimeList XML file (MyAnimeList lists only), as
+                        Settings \u{2192} Account \u{2192} Export anime/manga list\u{2026}
   config client-id ID   use your own Client ID for your list service
                         (MyAnimeList or AniList, as chosen in Kotora; optional)
   show                  show the window

@@ -123,9 +123,9 @@ pub enum Row {
     AniList,
     /// Mirror edits to the other service, and its preview.
     Mirror,
-    /// Export list… (MyAnimeList XML).
+    /// Export anime list… (MyAnimeList XML).
     Export,
-    /// Import list… and its preview.
+    /// Import anime list… and its preview.
     Import,
     /// Export manga list… (only while manga is on).
     ExportManga,
@@ -224,10 +224,10 @@ const SPECS: &[Spec] = &[
     spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
     spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
     spec(Row::Mirror, Section::Account, "Mirror edits", "Every change also goes to your list on the other service.", "mirror mirroring copy both two accounts sync myanimelist anilist mal al align merge second"),
-    spec(Row::Export, Section::Account, "Export list", "Your anime list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file kitsu taiga move transfer"),
-    spec(Row::Import, Section::Account, "Import list", "Read a MyAnimeList XML export and add it to your list.", "import restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
-    spec(Row::ExportManga, Section::Account, "Export manga list", "Your manga list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file manga chapters volumes move transfer"),
-    spec(Row::ImportManga, Section::Account, "Import manga list", "Read a MyAnimeList manga XML export and add it to your list.", "import restore load upload xml gz mal myanimelist file manga chapters volumes move transfer merge"),
+    spec(Row::Export, Section::Account, "Export anime list\u{2026}", "Your anime list as a MyAnimeList XML file.", "export anime backup save download xml mal myanimelist file kitsu taiga move transfer"),
+    spec(Row::Import, Section::Account, "Import anime list\u{2026}", "Read a MyAnimeList anime XML export and add it to your anime list.", "import anime restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
+    spec(Row::ExportManga, Section::Account, "Export manga list\u{2026}", "Your manga list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file manga chapters volumes move transfer"),
+    spec(Row::ImportManga, Section::Account, "Import manga list\u{2026}", "Read a MyAnimeList manga XML export and add it to your manga list.", "import restore load upload xml gz mal myanimelist file manga chapters volumes move transfer merge"),
     spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
     spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
     spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
@@ -1150,6 +1150,18 @@ mod tests {
 
     fn finds(q: &str, r: Row) -> bool {
         rows(q).contains(&r)
+    }
+
+    /// The list file rows name their kind (0.3): Export / Import anime list…, manga list….
+    #[test]
+    fn the_list_file_rows_name_their_kind() {
+        let title = |r: Row| SPECS.iter().find(|s| s.row == r).map(|s| s.title);
+        assert_eq!(title(Row::Export), Some("Export anime list\u{2026}"));
+        assert_eq!(title(Row::Import), Some("Import anime list\u{2026}"));
+        assert_eq!(title(Row::ExportManga), Some("Export manga list\u{2026}"));
+        assert_eq!(title(Row::ImportManga), Some("Import manga list\u{2026}"));
+        assert!(finds("export anime", Row::Export) && finds("import anime list", Row::Import));
+        assert!(finds("export", Row::ExportManga), "export finds both");
     }
 
     #[test]
