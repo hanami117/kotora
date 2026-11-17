@@ -250,6 +250,33 @@ fn any_path_becomes_a_pipe_name() {
     assert_eq!(pipe::pipe_name(Path::new(r"C:\Temp\kot.sock")), r"\\.\pipe\C--Temp-kot.sock");
 }
 
+/// An app that hangs never holds `kot` for ever: the wait for a reply ends at the time limit,
+/// and the same connection still works afterwards when the app answers in time.
+#[test]
+fn a_hung_app_times_out() {
+    let path = temp_socket("timeout");
+    let slow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let s = slow.clone();
+    let _server = serve(&path, move |_| {
+        if s.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        Reply::Status(sample())
+    })
+    .unwrap();
+    let mut c = Client::connect_to(&path).unwrap();
+    c.set_reply_timeout(std::time::Duration::from_millis(200)).unwrap();
+    let start = std::time::Instant::now();
+    let e = c.request(&Request::Status).unwrap_err();
+    assert!(matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock), "{e:?}");
+    assert!(start.elapsed() < std::time::Duration::from_millis(1200), "gave up at the limit, not when the app answered: {:?}", start.elapsed());
+    // A fresh connection to an app that answers again is fine.
+    slow.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut c = Client::connect_to(&path).unwrap();
+    c.set_reply_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(c.request(&Request::Status).unwrap(), Reply::Status(sample()));
+}
+
 /// Several clients at once, each with its own pipe instance.
 #[test]
 fn clients_in_parallel_all_get_answers() {

@@ -1,7 +1,8 @@
 //! The window's size at first launch. Kotora doesn't remember the last size or position (nor does
 //! Uzumaki), so every launch opens at this: big enough for two full rows of Large posters and the
 //! toolbar with a little margin (about 1280×888 pt fits them exactly), cut down to the screen's
-//! usable area (not under the menu bar or the Dock), and centred by the system on open.
+//! usable area (not under the menu bar or the Dock, nor the Windows taskbar), and centred by the
+//! system on open.
 
 /// The size the layout wants.
 pub const DEFAULT: (f32, f32) = (1360.0, 900.0);
@@ -18,8 +19,8 @@ pub fn fit(want: (f32, f32), visible: Option<(f32, f32)>, min: (f32, f32)) -> (f
     ((want.0.min(vw - MARGIN_W)).max(min.0), (want.1.min(vh - MARGIN_H)).max(min.1))
 }
 
-/// The size to open at: the default fitted to the main screen's usable area (macOS; elsewhere
-/// the compositor places and limits it).
+/// The size to open at: the default fitted to the main screen's usable area (macOS and
+/// Windows; on Linux the compositor places and limits it).
 pub fn initial(min: (f32, f32)) -> (f32, f32) {
     fit(DEFAULT, if rune::is_headless() { None } else { visible_screen() }, min)
 }
@@ -44,7 +45,14 @@ fn visible_screen() -> Option<(f32, f32)> {
     (w > 0.0 && h > 0.0).then_some((w, h))
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: the primary screen's work area (the screen less the taskbar) in points, so a
+/// 1366×768 laptop or a screen at 150 % gets a window that fits.
+#[cfg(windows)]
+fn visible_screen() -> Option<(f32, f32)> {
+    crate::win::work_area()
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn visible_screen() -> Option<(f32, f32)> {
     None
 }
@@ -68,6 +76,13 @@ mod tests {
         assert_eq!(w, DEFAULT.0.min(1440.0 - MARGIN_W));
         assert_eq!(h, 800.0 - MARGIN_H);
         assert!(w <= 1440.0 && h <= 800.0);
+    }
+
+    #[test]
+    fn a_small_windows_laptop_fits_too() {
+        // 1366×768 at 100 % with a 48 px taskbar; 1920×1080 at 150 % (1280×680 pt of work area).
+        assert_eq!(fit(DEFAULT, Some((1366.0, 720.0)), MIN), (1342.0, 680.0));
+        assert_eq!(fit(DEFAULT, Some((1280.0, 680.0)), MIN), (1256.0, 640.0));
     }
 
     #[test]

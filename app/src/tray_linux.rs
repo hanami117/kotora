@@ -1,4 +1,5 @@
-//! The system tray icon on Linux (StatusNotifierItem through Rune): the detection line (also
+//! The system tray icon on Linux (StatusNotifierItem through Rune) and on Windows (the
+//! notification area, `Shell_NotifyIcon` through Rune; see the end): the detection line (also
 //! the tooltip), Play next (a disabled header and one item per anime: Rune's tray has no
 //! submenus), Show Kotora and Quit Kotora. A left click shows the window.
 //!
@@ -6,6 +7,12 @@
 //! work while the window is closed (`App::keep_running`). It shows only where a tray host runs
 //! (KDE, waybar and most bars; GNOME needs the AppIndicator extension). Without one the icon
 //! never shows; starting Kotora again (or `kot show`) still brings the window back.
+//!
+//! Windows: Rune makes the icon from the pixels given here and Windows doesn't scale it well,
+//! so it is drawn at the notification area's own size for the screen's scale (16 px at 100 %,
+//! 20 at 125 %, 24 at 150 %, 32 at 200 %) from the nearest drawn size of the app icon. A left
+//! click shows the window, a right click opens the menu, and the icon comes back by itself
+//! when Explorer restarts.
 
 use rune::Tray;
 use rune::tray::{TrayEvent, TrayIcon, TrayItem, TraySpec};
@@ -13,10 +20,21 @@ use rune::tray::{TrayEvent, TrayIcon, TrayItem, TraySpec};
 use crate::model::Handle;
 
 /// Tray icon side in pixels; hosts scale it.
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 const ICON_PX: u32 = 64;
 
 /// The 64 px app icon (the same file the desktop entry uses).
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/64x64/apps/io.github.hanami117.kotora.png");
+
+/// Windows: the sizes drawn by hand for small use, (side, PNG). The notification area shows
+/// 16 to 32 px; a size in between is scaled down from the next larger one.
+#[cfg(windows)]
+const SMALL_PNGS: [(u32, &[u8]); 4] = [
+    (16, include_bytes!("../../assets/icons/hicolor/16x16/apps/io.github.hanami117.kotora.png")),
+    (24, include_bytes!("../../assets/icons/hicolor/24x24/apps/io.github.hanami117.kotora.png")),
+    (32, include_bytes!("../../assets/icons/hicolor/32x32/apps/io.github.hanami117.kotora.png")),
+    (48, include_bytes!("../../assets/icons/hicolor/48x48/apps/io.github.hanami117.kotora.png")),
+];
 
 pub struct TrayCtl {
     tray: Tray,
@@ -89,15 +107,31 @@ fn menu(line: &str, play: &[(u32, String)]) -> Vec<TrayItem> {
     v
 }
 
+#[cfg(not(windows))]
 fn icon() -> TrayIcon {
-    TrayIcon::rgba(ICON_PX, ICON_PX, icon_pixels())
+    TrayIcon::rgba(ICON_PX, ICON_PX, icon_pixels(ICON_PNG, ICON_PX))
 }
 
-/// Straight RGBA rows of the icon (decoded from the PNG built into the binary).
-fn icon_pixels() -> Vec<u8> {
-    match image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png) {
-        Ok(img) => img.resize_exact(ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3).to_rgba8().into_raw(),
-        Err(_) => vec![0; (ICON_PX * ICON_PX * 4) as usize],
+/// Windows: at the notification area's size for this screen's scale.
+#[cfg(windows)]
+fn icon() -> TrayIcon {
+    let px = crate::win::tray_icon_px();
+    TrayIcon::rgba(px, px, icon_pixels(source_for(px), px))
+}
+
+/// The smallest drawn size that is at least `px` (else the 64 px one).
+#[cfg(windows)]
+fn source_for(px: u32) -> &'static [u8] {
+    SMALL_PNGS.iter().find(|(side, _)| *side >= px).map_or(ICON_PNG, |(_, png)| png)
+}
+
+/// Straight RGBA rows of the icon at `px` (decoded from a PNG built into the binary; a PNG
+/// that already has that size is used as it is).
+fn icon_pixels(png: &[u8], px: u32) -> Vec<u8> {
+    match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
+        Ok(img) if img.width() == px && img.height() == px => img.to_rgba8().into_raw(),
+        Ok(img) => img.resize_exact(px, px, image::imageops::FilterType::Lanczos3).to_rgba8().into_raw(),
+        Err(_) => vec![0; (px * px * 4) as usize],
     }
 }
 
@@ -105,9 +139,25 @@ fn icon_pixels() -> Vec<u8> {
 mod tests {
     #[test]
     fn the_icon_decodes_at_tray_size() {
-        let rgba = super::icon_pixels();
+        let rgba = super::icon_pixels(super::ICON_PNG, super::ICON_PX);
         assert_eq!(rgba.len(), (super::ICON_PX * super::ICON_PX * 4) as usize);
         assert!(rgba.chunks(4).any(|p| p[3] == 255), "not blank");
+        // Scaled down (a Windows screen at 125 %).
+        assert_eq!(super::icon_pixels(super::ICON_PNG, 20).len(), 20 * 20 * 4);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_gets_the_drawn_size_for_each_scale() {
+        for (px, side) in [(16, 16), (20, 24), (24, 24), (32, 32), (40, 48), (48, 48)] {
+            let want = super::SMALL_PNGS.iter().find(|(s, _)| *s == side).unwrap().1;
+            assert!(std::ptr::eq(super::source_for(px), want), "{px} px comes from the {side} px drawing");
+            let rgba = super::icon_pixels(super::source_for(px), px);
+            assert_eq!(rgba.len(), (px * px * 4) as usize);
+            assert!(rgba.chunks(4).any(|p| p[3] == 255), "{px} px is not blank");
+        }
+        assert!(std::ptr::eq(super::source_for(64), super::ICON_PNG));
+        let _ = super::icon();
     }
 
     #[test]

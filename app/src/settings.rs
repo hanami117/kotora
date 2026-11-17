@@ -777,6 +777,7 @@ fn row_el(s: &State, r: Row) -> El {
                 (Some(why), _) => why.to_string(),
                 (None, true) => "Waiting for your OK in System Settings, General, Login Items.".to_string(),
                 _ if cfg!(target_os = "macos") => "Opens Kotora when you log in to your Mac, so it keeps detecting episodes. Listed in System Settings, General, Login Items.".to_string(),
+                _ if cfg!(windows) => "Kotora keeps detecting episodes from the moment you sign in. Also listed in Windows Settings, Apps, Startup.".to_string(),
                 _ => "Kotora keeps detecting episodes from the moment you log in.".to_string(),
             };
             let sw = switch_if("set/login".into(), "Start Kotora when I log in", l.on, l.available() && !p.login_busy, State::set_login);
@@ -959,6 +960,7 @@ fn notify_support(s: &State) -> Option<El> {
     let line = match s.notes.support {
         Support::NoButtons => "Your notification server shows no buttons: answer in Kotora\u{2019}s banner or with kot confirm.",
         Support::Outside => "Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them.",
+        Support::Denied if cfg!(windows) => "Notifications are off for Kotora, or for all apps, in Windows Settings \u{2192} System \u{2192} Notifications.",
         Support::Denied => "Notifications are off for Kotora in System Settings \u{2192} Notifications.",
         Support::Unknown | Support::Buttons => return None,
     };
@@ -1056,8 +1058,9 @@ fn about(s: &State) -> El {
                         .gap(8.0)
                         .items_end()
                         .child(text("Kotora \u{5c0f}\u{864e}").font(TextStyle::new(17.0, 600.0)).color(PAL.text))
-                        .child(text(format!("Version {}", env!("CARGO_PKG_VERSION"))).font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
+                        .child(text(about_version(cfg!(windows))).key("about-version").font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
                 )
+                .children(cfg!(windows).then(|| text(WINDOWS_PREVIEW).key("about-preview").font(theme::LABEL).color(PAL.dim).wrap()))
                 .child(
                     text("A tribute to Taiga, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.")
                         .font(theme::LABEL)
@@ -1066,6 +1069,14 @@ fn about(s: &State) -> El {
                 ),
         )
 }
+
+/// "Version 0.2.1", and on Windows "Version 0.2.1 · Preview" (the installer says Preview too).
+fn about_version(windows: bool) -> String {
+    format!("Version {}{}", env!("CARGO_PKG_VERSION"), if windows { " \u{b7} Preview" } else { "" })
+}
+
+/// About, on Windows only.
+const WINDOWS_PREVIEW: &str = "Kotora for Windows is a preview: it is new, and not signed yet. Please report what goes wrong on GitHub.";
 
 /// One service of Settings → Account. The active one says how its sign-in stands (Sign in,
 /// Sign out); the other offers "Use …", which switches services and keeps both lists.

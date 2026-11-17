@@ -734,7 +734,7 @@ impl State {
     }
 
     /// "Start in the background", kept in `config.toml` so it stays when the login switch goes off
-    /// and on. Linux writes `--hidden` into the autostart entry; macOS reads it at launch.
+    /// and on. Linux and Windows write `--hidden` into the login entry; macOS reads it at launch.
     /// Settings → Appearance → Startup animation: read at the next start.
     pub fn set_intro(&mut self, on: bool) {
         self.prefs.intro = on;
@@ -744,7 +744,7 @@ impl State {
     pub fn set_background(&mut self, on: bool) {
         self.prefs.background = on;
         crate::detect::save_setting(self, "startup", "background", on.to_string());
-        if self.prefs.login.on && cfg!(target_os = "linux") && !self.prefs.login_busy {
+        if self.prefs.login.on && cfg!(any(target_os = "linux", windows)) && !self.prefs.login_busy {
             self.apply_login(true);
         }
     }

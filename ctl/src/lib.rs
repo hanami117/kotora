@@ -426,6 +426,9 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 /// A connection to the running app.
 pub struct Client {
     writer: Stream,
+    /// How long `request` waits for the reply.
+    #[cfg_attr(unix, allow(dead_code))]
+    timeout: Duration,
     reader: BufReader<Stream>,
 }
 
@@ -442,11 +445,20 @@ impl Client {
             stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
             stream
         };
-        // A blocking pipe handle has no read timeout; a hung app holds `kot` until Ctrl+C.
+        // A pipe handle has no read timeout of its own: `request` puts a time limit on the wait
+        // (`pipe::with_deadline`).
         #[cfg(windows)]
         let stream = pipe::connect(path)?;
         let reader = BufReader::new(stream.try_clone()?);
-        Ok(Self { writer: stream, reader })
+        Ok(Self { writer: stream, reader, timeout: REPLY_TIMEOUT })
+    }
+
+    /// Waits this long for a reply instead of [`REPLY_TIMEOUT`] (Unix: the socket's read timeout).
+    pub fn set_reply_timeout(&mut self, limit: Duration) -> io::Result<()> {
+        self.timeout = limit;
+        #[cfg(unix)]
+        self.reader.get_ref().set_read_timeout(Some(limit))?;
+        Ok(())
     }
 
     /// Sends one request and waits for its reply. An app-side failure comes back as
@@ -457,7 +469,16 @@ impl Client {
         self.writer.write_all(line.as_bytes())?;
         self.writer.flush()?;
         let mut answer = String::new();
-        if self.reader.read_line(&mut answer)? == 0 {
+        #[cfg(unix)]
+        let read = self.reader.read_line(&mut answer)?;
+        // Windows: the same wait, given up after the time limit (a hung app never holds `kot`).
+        #[cfg(windows)]
+        let read = {
+            let (reader, timeout) = (&mut self.reader, self.timeout);
+            let pipe = reader.get_ref().try_clone()?;
+            pipe::with_deadline(&pipe, timeout, || reader.read_line(&mut answer))?
+        };
+        if read == 0 {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the app closed the connection"));
         }
         serde_json::from_str(&answer).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))

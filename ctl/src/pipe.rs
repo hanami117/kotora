@@ -4,6 +4,8 @@
 //! it, remote clients are refused, and the first instance is created with
 //! `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a second app can't take the name: that is single instance.
 //! Handles are plain blocking ones; a connection reads a line, then writes a line, on one thread.
+//! A blocking read has no time limit of its own, so the client's wait for a reply is watched by
+//! a second thread that cancels it when the limit passes (`with_deadline`).
 
 use std::fs::File;
 use std::io;
@@ -14,10 +16,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, LocalFree};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, LocalFree};
 use windows_sys::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
 use windows_sys::Win32::Security::{GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION};
+use windows_sys::Win32::System::IO::CancelIoEx;
 use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -193,5 +196,37 @@ pub fn connect(path: &Path) -> io::Result<File> {
             }
             Err(e) => return Err(e),
         }
+    }
+}
+
+/// Runs `io` (blocking reads or writes on `pipe`, or on a copy of its handle) and gives up after
+/// `limit`: a watcher thread then cancels whatever the pipe is waiting in, and the answer is
+/// `TimedOut`. The watcher sleeps until then and ends with the call; nothing polls.
+pub fn with_deadline<T>(pipe: &File, limit: std::time::Duration, io: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    // A raw handle isn't `Send`; the number is. `pipe` outlives the watcher (joined below).
+    let handle = pipe.as_raw_handle() as usize;
+    let fired = Arc::new(AtomicBool::new(false));
+    let (done, wait) = std::sync::mpsc::channel::<()>();
+    let watcher = {
+        let fired = fired.clone();
+        std::thread::Builder::new().name("kotora-ctl-deadline".into()).spawn(move || {
+            if wait.recv_timeout(limit) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                fired.store(true, Ordering::SeqCst);
+                // SAFETY: the handle is open until this thread is joined; a null OVERLAPPED
+                // cancels every pending operation on it, from any thread.
+                unsafe { CancelIoEx(handle as HANDLE, std::ptr::null()) };
+            }
+        })
+    };
+    let result = io();
+    drop(done);
+    if let Ok(w) = watcher {
+        let _ = w.join();
+    }
+    match result {
+        Err(e) if fired.load(Ordering::SeqCst) && e.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) => {
+            Err(io::Error::new(io::ErrorKind::TimedOut, format!("Kotora didn't answer within {} seconds", limit.as_secs().max(1))))
+        }
+        other => other,
     }
 }

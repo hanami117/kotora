@@ -18,6 +18,8 @@
 //! - `mac.rs`: `UNUserNotificationCenter` with categories and actions inside Kotora.app (asks
 //!   for permission once, at the first notification); outside a bundle, `osascript` as before,
 //!   without buttons.
+//! - `windows.rs`: toast notifications with the same buttons (the offer's first button reads
+//!   **Yes**), answered while Kotora runs.
 //!
 //! Never headless: the scenes and tests have no backend and only log what would be shown.
 
@@ -25,6 +27,8 @@
 mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(windows)]
+mod windows;
 
 use std::sync::Arc;
 
@@ -140,8 +144,9 @@ pub enum Support {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     NoButtons,
     /// macOS: not running from Kotora.app, so no buttons.
+    #[cfg_attr(windows, allow(dead_code))]
     Outside,
-    /// macOS: notifications are turned off for Kotora in System Settings.
+    /// macOS, Windows: notifications are turned off for Kotora in the system's settings.
     Denied,
 }
 
@@ -197,7 +202,9 @@ impl Notifier {
         let backend: Option<Box<dyn Backend>> = Some(Box::new(linux::Sys::start(on_action, on_support)));
         #[cfg(target_os = "macos")]
         let backend: Option<Box<dyn Backend>> = Some(mac::start(on_action, on_support));
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(windows)]
+        let backend: Option<Box<dyn Backend>> = Some(Box::new(windows::Sys::start(on_action, on_support)));
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let backend: Option<Box<dyn Backend>> = {
             let _ = (on_action, on_support);
             None

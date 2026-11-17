@@ -10,8 +10,6 @@
 
 // Windows: a windowed program (no console window); `win::attach_output` gives its text a place.
 #![cfg_attr(windows, windows_subsystem = "windows")]
-// Windows: the parts that are stubs for now (start at login, notifications) leave code unused.
-#![cfg_attr(windows, allow(dead_code))]
 
 mod account;
 mod airing;
@@ -180,6 +178,11 @@ fn main() {
         return;
     }
     rune::set_app_id(APP_ID);
+    // Windows: the same id for the taskbar and the toasts (the installer's shortcut has it too).
+    #[cfg(windows)]
+    if !rune::is_headless() {
+        win::set_app_id();
+    }
     // The window opens at `winsize::DEFAULT` cut to the screen; headless keeps 1280×800 (every
     // snap and script is made for it, and `--size` overrides it).
     let min_size = (960.0, 600.0);
@@ -219,7 +222,7 @@ fn main() {
     // macOS start at login in the background: a login item gets no `--hidden`, so with both
     // switches on (Settings → Startup) Kotora starts windowless and `autostart::watch_launch`
     // opens the window at once unless macOS says this launch is the login one (as Uzumaki does).
-    // Linux writes `--hidden` into the autostart entry instead.
+    // Linux and Windows write `--hidden` into their login entry instead.
     #[cfg(target_os = "macos")]
     let login_check = !hidden
         && !test_instance
