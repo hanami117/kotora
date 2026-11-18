@@ -31,7 +31,8 @@
 #                                          top folder kotora-<version>-linux-x86_64/ (bin/, share/)
 #   SHA256SUMS                             all of them, in `shasum -c` form
 #   notes.md                               release notes (CHANGELOG section + install notes)
-#   latest.json                            for kotora.moe/latest.json and the update Worker
+#   latest.json                            a first draft (no Windows lines); packaging/publish.sh writes
+#                                          the real one after the release is public and complete
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -40,7 +41,8 @@ warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die() { printf 'release.sh: %s\n' "$*" >&2; exit 1; }
 
 REPO=hanami117/kotora
-# A stable file name (the same bytes as the versioned one) so links can say releases/latest/download/.
+# A stable file name (the same bytes as the versioned one) for the site's buttons (releases/latest/download/).
+# latest.json never uses it: it names its own tag's versioned files.
 DMG_LATEST=Kotora-macOS.dmg
 dmg=1
 linux_bin=0
@@ -167,8 +169,7 @@ say "Writing release notes from CHANGELOG.md"
 - **Windows** (preview; Windows 10 or 11, 64-bit): download \`Kotora-$release-windows-x64-setup.exe\` and run it.
   It installs for your account only (no administrator rights) and puts \`kot\` on your PATH; a zip without an
   installer is here too. Kotora is not signed yet, so Windows SmartScreen says "Windows protected your PC":
-  click **More info**, then **Run anyway**. The Windows files are added by the release workflow a little
-  after the others.
+  click **More info**, then **Run anyway**.
 - **Other Linux**: download \`$src\`, unpack it and run \`./install.sh\` (needs Rust, pkgconf and a Vulkan
   driver; see the README). On x86_64 you can instead unpack the prebuilt \`$bin\` and copy its
   \`bin/\` and \`share/\` folders to \`/usr/local\` (or \`~/.local\`).
@@ -180,19 +181,16 @@ NOTES
 
 # --- latest.json --------------------------------------------------------------------------------
 # The format of core/src/update.rs (`Latest`); the site's site/latest.json and the update Worker serve it.
+# Only versioned links (releases/download/<tag>/…), never releases/latest/…: a copy that reads this file
+# must get exactly this version's files, even while the next release is being uploaded.
+# The Windows installer is built by the `windows` workflow after the tag is pushed, so this first draft
+# has no Windows lines. packaging/publish.sh writes the final latest.json (with them) once the release
+# is public and complete; publish that one, not this.
 dl=https://github.com/$REPO/releases/download/$tag
-latest=https://github.com/$REPO/releases/latest/download
-# Windows: the installer is built by the `windows` workflow after the tag is pushed, so its checksum is
-# not known here on the first run. Once that workflow is green, run this script again with
-#   WINDOWS_SHA256=<the sha256 in Kotora-windows-x64-setup.exe.sha256 on the release>
-# (or paste the two lines its summary prints into `downloads`). Without it latest.json has no Windows
-# entry, and Kotora on Windows then offers the release page instead of the installer.
 windows_lines=
 if [[ -n ${WINDOWS_SHA256:-} ]]; then
   [[ $WINDOWS_SHA256 =~ ^[0-9a-f]{64}$ ]] || die "WINDOWS_SHA256 is not 64 lowercase hex digits"
-  windows_lines=$(printf ',\n    "windows_installer": "%s",\n    "windows_installer_sha256": "%s"' "$latest/Kotora-windows-x64-setup.exe" "$WINDOWS_SHA256")
-else
-  warn "latest.json has no Windows entry yet (set WINDOWS_SHA256 once the windows workflow has uploaded the installer)"
+  windows_lines=$(printf ',\n    "windows_installer": "%s",\n    "windows_installer_sha256": "%s"' "$dl/Kotora-$release-windows-x64-setup.exe" "$WINDOWS_SHA256")
 fi
 cat >"$out/latest.json" <<JSON
 {
@@ -202,7 +200,7 @@ cat >"$out/latest.json" <<JSON
   "minimum_supported": "$min_supported",
   "notes_url": "https://github.com/$REPO/releases/tag/$tag",
   "downloads": {
-    "macos_dmg": "$latest/$DMG_LATEST",
+    "macos_dmg": "$dl/Kotora-$release.dmg",
     "linux_tarball": "$dl/$src",
     "aur": "https://aur.archlinux.org/packages/kotora"$windows_lines
   }
@@ -217,16 +215,21 @@ cat <<DONE
 
 $(say "Ready in $out. Nothing was published.")
 
-1. Push the tag, then create the release:
+1. Push the tag, then create the release AS A DRAFT (nobody sees it; the windows and linux-bin
+   workflows add their 8 files to it):
 
    git push origin $tag
-   gh release create $tag --repo $REPO --title "$title" --notes-file $out/notes.md --verify-tag \\
+   gh release create $tag --repo $REPO --draft --title "$title" --notes-file $out/notes.md --verify-tag \\
        $files
 
-2. Publish latest.json on the site (site/latest.json on kotora.moe's main), after the release is up.
-   The site's download button should use the stable link: $latest/$DMG_LATEST
+2. When both workflows are green, publish: it checks all 15 files and their checksums, completes
+   SHA256SUMS, publishes (not Latest), checks every link from outside, marks it Latest, and writes the
+   final latest.json (versioned links, Windows sha256) into $out:
 
-$(sed 's/^/   /' "$out/latest.json")
+   packaging/publish.sh $tag --wait
+
+   Only then: the site (site/latest.json from that file, and any version flip on the pages), and
+   packaging/check-links.sh https://kotora.moe/latest.json after the deploy.
 
 3. The AUR package:
    packaging/aur/PKGBUILD   pkgver=$version  _build=$build  sha256sums=('$src_sha')

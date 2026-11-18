@@ -1111,7 +1111,7 @@ mod tests {
         let l: Latest = serde_json::from_str(
             r#"{"version":"0.2.1","notes_url":"https://github.com/hanami117/kotora/releases/tag/v0.2.1","downloads":{
                 "linux_tarball":"https://x/k.tar.gz","macos_dmg":"https://x/K.dmg",
-                "windows_installer":"https://github.com/hanami117/kotora/releases/latest/download/Kotora-windows-x64-setup.exe",
+                "windows_installer":"https://github.com/hanami117/kotora/releases/download/v0.2.1/Kotora-0.2.1-windows-x64-setup.exe",
                 "windows_installer_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}"#,
         )
         .unwrap();

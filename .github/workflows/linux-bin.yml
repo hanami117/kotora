@@ -4,9 +4,10 @@
 #   1. build   makes kotora-<release>-linux-x86_64.tar.gz (+ .sha256) with `packaging/release.sh --no-dmg
 #              --linux-bin` in an Arch Linux container (the same toolchain as the AUR's `kotora`), checks the
 #              files and runs `kot --version` from the unpacked tarball.
-#   2. upload  adds those two files to the EXISTING GitHub release of the tag. It waits for the release
-#              (release.sh's flow pushes the tag first, then `gh release create`). It never touches another
-#              asset, never overwrites one, and never creates a release.
+#   2. upload  adds those two files to the EXISTING release of the tag, which is a DRAFT. It waits for it
+#              (the tag is pushed first, then `gh release create --draft`). It never touches another asset,
+#              never overwrites one, never creates or publishes a release: packaging/publish.sh publishes
+#              the draft once all 15 files are there.
 #   3. aur     (environment `release`: needs your approval) fills packaging/aur-bin/PKGBUILD from the
 #              published file, checks it with makepkg, and pushes PKGBUILD + .SRCINFO to the AUR's kotora-bin.
 #
@@ -159,13 +160,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: linux-bin, path: '${{ runner.temp }}/linux' }
-      - name: Wait for the release (the tag is pushed before `gh release create`)
+      - name: Wait for the draft release (the tag is pushed before `gh release create --draft`)
         run: |
+          # gh finds a draft by its tag too (this token can see drafts).
           for i in $(seq 1 60); do
             if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then found=1; break; fi
             echo "no release $TAG yet ($i/60)"; sleep 30
           done
-          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create it, then run this workflow by hand (dry_run false) from main."; exit 1; }
+          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create the draft (gh release create $TAG --draft …), then run this workflow by hand (dry_run false) from main."; exit 1; }
+          # A release must stay a draft until packaging/publish.sh has seen all its files. Already public
+          # means someone published early (or this is a re-run for an old release): upload anyway, loudly.
+          if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::warning::$TAG is already public, not a draft: links may have pointed to files that weren't there. Run packaging/publish.sh $TAG to check it."
+          fi
       - name: Upload the tarball and its checksum
         run: |
           cd "$RUNNER_TEMP/linux"

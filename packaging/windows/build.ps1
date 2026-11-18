@@ -5,8 +5,8 @@
 #
 # Out (in -OutDir, default target\windows-release), <release> = <version>, or <version>-<build> from build 2 on:
 #   Kotora-<release>-windows-x64-setup.exe (+ .sha256)   the installer (packaging\windows\kotora.iss)
-#   Kotora-windows-x64-setup.exe (+ .sha256)             the same bytes under a stable name (the site's button,
-#                                                        latest.json: releases/latest/download/…)
+#   Kotora-windows-x64-setup.exe (+ .sha256)             the same bytes under a stable name (the site's button:
+#                                                        releases/latest/download/…; latest.json uses the versioned one)
 #   Kotora-<release>-windows-x64.zip (+ .sha256)         the same programs without an installer
 # and -StageDir (default target\windows-dist): the files that go into both.
 #

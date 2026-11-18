@@ -5,17 +5,19 @@
 #                                 install/uninstall smoke test. Nothing is uploaded to a release: this is the
 #                                 dry run. The files are the workflow artifact `windows-release` (7 days).
 #   push of a tag v<release>      release build from the tag, snaps, installer + zip, smoke test, then `upload`
-#                                 adds the six files to the EXISTING GitHub release of the tag. It waits for
-#                                 the release (packaging/release.sh pushes the tag first, then `gh release
-#                                 create`), never touches another asset, never overwrites, never creates one.
+#                                 adds the six files to the EXISTING release of the tag, which is a DRAFT. It
+#                                 waits for it (the tag is pushed first, then `gh release create --draft`),
+#                                 never touches another asset, never overwrites, never creates or publishes one.
+#                                 packaging/publish.sh publishes the draft once all 15 files are there.
 #   by hand (Actions > windows > Run workflow, or `gh workflow run windows.yml`), once this file is on main:
 #     tag       empty: a dry run of the branch. An existing annotated tag on main (v0.2.1): its sources.
 #     dry_run   true (the default): build and check only. false (with a tag): upload to the tag's release.
 #
 # The six files (packaging/windows/build.ps1), <release> = <version> or <version>-<build>:
 #   Kotora-<release>-windows-x64-setup.exe (+ .sha256)   the installer (per user, no admin)
-#   Kotora-windows-x64-setup.exe (+ .sha256)             the same bytes, stable name: the site's button and
-#                                                        latest.json use releases/latest/download/<this>
+#   Kotora-windows-x64-setup.exe (+ .sha256)             the same bytes, stable name: the site's button uses
+#                                                        releases/latest/download/<this>. latest.json never
+#                                                        does: it names the versioned file of its tag.
 #   Kotora-<release>-windows-x64.zip (+ .sha256)         the programs without an installer
 #
 # UNSIGNED for now. The hook for SignPath is marked "SIGNING HOOK" below, in packaging/windows/build.ps1
@@ -247,13 +249,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: windows-release, path: '${{ runner.temp }}/windows' }
-      - name: Wait for the release (the tag is pushed before `gh release create`)
+      - name: Wait for the draft release (the tag is pushed before `gh release create --draft`)
         run: |
+          # gh finds a draft by its tag too (this token can see drafts).
           for i in $(seq 1 60); do
             if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then found=1; break; fi
             echo "no release $TAG yet ($i/60)"; sleep 30
           done
-          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create it, then run this workflow by hand (tag $TAG, dry_run false) from main."; exit 1; }
+          [ "${found:-0}" = 1 ] || { echo "::error::no release $TAG after 30 minutes. Create the draft (gh release create $TAG --draft …), then run this workflow by hand (tag $TAG, dry_run false) from main."; exit 1; }
+          # A release must stay a draft until packaging/publish.sh has seen all its files. Already public
+          # means someone published early (or this is a re-run for an old release): upload anyway, loudly.
+          if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::warning::$TAG is already public, not a draft: links may have pointed to files that weren't there. Run packaging/publish.sh $TAG to check it."
+          fi
       - name: Upload the installer, the zip and their checksums
         run: |
           cd "$RUNNER_TEMP/windows"
@@ -283,11 +291,13 @@ jobs:
                        --jq ".assets[] | select(.name == \"$f\") | .digest | sub(\"^sha256:\"; \"\")")
             [ "$remote" = "$(sha256sum "$f" | cut -d' ' -f1)" ] || { echo "::error::GitHub's digest of $f differs"; exit 1; }
           done
-          sha=$(sha256sum Kotora-windows-x64-setup.exe | cut -d' ' -f1)
+          sha=$(sha256sum "Kotora-$R-windows-x64-setup.exe" | cut -d' ' -f1)
           {
-            echo "### On the release $TAG"; echo '```'; cat ./*.sha256; echo '```'
-            echo '### For latest.json (`downloads`)'; echo '```json'
-            echo "    \"windows_installer\": \"https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Kotora-windows-x64-setup.exe\","
+            echo "### On the draft release $TAG"; echo '```'; cat ./*.sha256; echo '```'
+            echo "Publish with \`packaging/publish.sh $TAG\` once linux-bin has uploaded too: it checks all 15 files,"
+            echo 'publishes, marks Latest, and writes latest.json with versioned links only:'
+            echo '```json'
+            echo "    \"windows_installer\": \"https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Kotora-$R-windows-x64-setup.exe\","
             echo "    \"windows_installer_sha256\": \"$sha\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
