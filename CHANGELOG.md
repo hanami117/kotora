@@ -2,6 +2,14 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-18
+
+Small fix release for Windows. No database change.
+
+### Fixed
+- **Windows:** reading detection no longer puts the folders in the series title. Comic file paths were split at `/`
+  only, so a path like `C:\Users\…\Title v11.cbz` became one long name. They are now split at `/` and `\`.
+
 ## [0.4.1] - 2026-11-18
 
 Small release: Quit with Ctrl+Q on Linux and Windows, a Support Kotora card in About, and Windows is no longer
