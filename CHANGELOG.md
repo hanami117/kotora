@@ -2,6 +2,16 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.4.3] - 2026-11-18
+
+Small fix release for narrow windows. No database change.
+
+### Fixed
+- **Details page:** below 780 pt wide the entry panel now stacks under the hero, so the title wraps instead of
+  being cut off.
+- **Publishing card (manga):** the "Wrong or missing series?" label wraps, the link field has a shorter
+  placeholder, the Source chips are tidier and the footnote has more room.
+
 ## [0.4.2] - 2026-11-18
 
 Small fix release for Windows. No database change.
