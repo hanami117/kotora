@@ -85,7 +85,7 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Discord"), vec![Row::Discord, Row::DiscordCover, Row::DiscordButtons, Row::DiscordHidePaused, Row::DiscordHideTitle]), (Some("Keyboard"), vec![Row::PageKeys])],
+            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Discord"), vec![Row::Discord, Row::DiscordCover, Row::DiscordButtons, Row::DiscordHidePaused, Row::DiscordHideTitle, Row::DiscordStatus]), (Some("Keyboard"), vec![Row::PageKeys])],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
             Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
             Section::Detection => {
@@ -130,6 +130,7 @@ pub enum Row {
     DiscordButtons,
     DiscordHidePaused,
     DiscordHideTitle,
+    DiscordStatus,
     Theme,
     Titles,
     Intro,
@@ -202,6 +203,7 @@ impl Row {
             Row::DiscordButtons => "discord-buttons",
             Row::DiscordHidePaused => "discord-hide-paused",
             Row::DiscordHideTitle => "discord-hide-title",
+            Row::DiscordStatus => "discord-status",
             Row::Theme => "theme",
             Row::Titles => "titles",
             Row::Intro => "intro",
@@ -277,6 +279,7 @@ const SPECS: &[Spec] = &[
     spec(Row::DiscordButtons, Section::General, "Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", "discord button buttons link anilist myanimelist"),
     spec(Row::DiscordHidePaused, Section::General, "Hide while paused", "Clears the status while the player is paused or idle.", "discord hide paused pause idle stopped clear"),
     spec(Row::DiscordHideTitle, Section::General, "Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", "discord hide title private privacy secret incognito"),
+    spec(Row::DiscordStatus, Section::General, "Show in status", "What Discord shows next to the activity icon in the member list: the app name, the anime title or the episode.", "discord status show in app name anime title episode member list profile compact line"),
     spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
     spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
     spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
@@ -864,11 +867,16 @@ fn pill(key: &str, label: &str, c: rune::Color) -> El {
 }
 
 fn choice<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
+    choice_if(key, items, on, true, label, slug, set)
+}
+
+/// A choice that can be disabled (dimmed, and it ignores presses), like [`switch_if`].
+fn choice_if<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, enabled: bool, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
     let mut r = row().key(key.to_string()).gap(6.0).flex_wrap();
     for &t in items {
-        r = r.child(cell(format!("{key}/{}", slug(t)), label(t).to_string(), on == t, move |s: &mut State| set(s, t)).child(text(label(t)).font(theme::LABEL).color(PAL.text)));
+        r = r.child(cell(format!("{key}/{}", slug(t)), label(t).to_string(), on == t, move |s: &mut State| if enabled { set(s, t) }).child(text(label(t)).font(theme::LABEL).color(PAL.text)));
     }
-    r
+    if enabled { r } else { r.opacity(0.4) }
 }
 
 fn row_el(s: &State, r: Row) -> El {
@@ -916,6 +924,11 @@ fn row_el(s: &State, r: Row) -> El {
         Row::DiscordButtons => line("Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", switch_if("set/discord-buttons".into(), "Show a button", p.discord.buttons, p.discord.enabled, State::set_discord_buttons)),
         Row::DiscordHidePaused => line("Hide while paused", "Clears the status while the player is paused or idle.", switch_if("set/discord-hide-paused".into(), "Hide while paused", p.discord.hide_paused, p.discord.enabled, State::set_discord_hide_paused)),
         Row::DiscordHideTitle => line("Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", switch_if("set/discord-hide-title".into(), "Hide the title", p.discord.hide_title, p.discord.enabled, State::set_discord_hide_title)),
+        Row::DiscordStatus => line(
+            "Show in status",
+            "What Discord shows after the activity icon in the member list and the mini profile. Anime title uses your title language.",
+            choice_if("set/discord-status", &config::StatusIn::ALL, p.discord.status(), p.discord.enabled, config::StatusIn::label, config::StatusIn::key, State::set_discord_status),
+        ),
         Row::CheckUpdates => line("Check for updates", crate::update::CHECK_NOTE, switch("set/check-updates".into(), "Check for updates", p.check_updates, State::set_check_updates)),
         Row::CheckNow => line("Check now", crate::update::status_note(s), crate::update::check_button(s)).key("set/update-status"),
         Row::PageKeys => line(

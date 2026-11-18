@@ -80,6 +80,7 @@
 //! buttons = true               # "View on AniList" / "View on MyAnimeList"
 //! hide_paused = false          # clear the status while paused or idle
 //! hide_title = false           # say "Watching anime" / "Reading manga", never the title
+//! status = "title"             # Show in status (the line after the activity icon): "app" (Kotora), "title" or "episode"
 //!
 //! [app]
 //! check_updates = true         # once a day, ask kotora.moe whether a newer Kotora is out
@@ -162,11 +163,58 @@ pub struct Discord {
     pub buttons: bool,
     pub hide_paused: bool,
     pub hide_title: bool,
+    /// `status` as written. Read with [`Discord::status`]: a bad value is a warning, never an error.
+    #[serde(deserialize_with = "lenient_string")]
+    pub status: String,
 }
 
 impl Default for Discord {
     fn default() -> Self {
-        Discord { enabled: false, client_id: String::new(), cover: true, buttons: true, hide_paused: false, hide_title: false }
+        Discord { enabled: false, client_id: String::new(), cover: true, buttons: true, hide_paused: false, hide_title: false, status: StatusIn::default().key().into() }
+    }
+}
+
+/// `[discord] status`: what Discord shows after the activity icon in the member list and the
+/// mini profile (Discord's `status_display_type`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatusIn {
+    /// The application's name ("Kotora").
+    App,
+    /// The first line: the anime or manga title.
+    #[default]
+    Title,
+    /// The second line: "Episode 7 of 24", "Chapter 362".
+    Episode,
+}
+
+impl StatusIn {
+    pub const ALL: [StatusIn; 3] = [StatusIn::App, StatusIn::Title, StatusIn::Episode];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            StatusIn::App => "app",
+            StatusIn::Title => "title",
+            StatusIn::Episode => "episode",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StatusIn::App => "App name",
+            StatusIn::Title => "Anime title",
+            StatusIn::Episode => "Episode",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<StatusIn> {
+        StatusIn::ALL.into_iter().find(|m| m.key() == s.trim().to_lowercase())
+    }
+}
+
+impl Discord {
+    /// Where the status line takes its text; the title when the key is absent or not a choice.
+    pub fn status(&self) -> StatusIn {
+        StatusIn::from_key(&self.status).unwrap_or_default()
     }
 }
 
@@ -587,6 +635,9 @@ impl Config {
         }
         if !self.startup.mode.is_empty() && StartMode::from_key(&self.startup.mode).is_none() {
             w.push(format!("config.toml: [startup] mode = {:?} is not \"last\", \"anime\" or \"manga\"; using the last used", self.startup.mode));
+        }
+        if !self.discord.status.is_empty() && StatusIn::from_key(&self.discord.status).is_none() {
+            w.push(format!("config.toml: [discord] status = {:?} is not \"app\", \"title\" or \"episode\"; using the title", self.discord.status));
         }
         w
     }
@@ -1078,6 +1129,13 @@ mod tests {
         assert!(!d.enabled && d.cover && d.buttons && !d.hide_paused && !d.hide_title && d.client_id.is_empty());
         let c = Config::parse("[discord]\nenabled = true\nclient_id = \" 123 \"\nhide_title = true\ncover = false\n").unwrap().discord;
         assert!(c.enabled && c.hide_title && !c.cover && c.buttons);
+        assert_eq!(d.status(), StatusIn::Title, "the title by default");
+        let s = Config::parse("[discord]\nstatus = \"Episode\"\n").unwrap();
+        assert_eq!(s.discord.status(), StatusIn::Episode);
+        assert!(s.warnings().is_empty());
+        let s = Config::parse("[discord]\nstatus = \"both\"\n").unwrap();
+        assert_eq!(s.discord.status(), StatusIn::Title);
+        assert_eq!(s.warnings().len(), 1);
         assert_eq!(c.client_id, "123");
         assert!(Config::parse("[discord]\nclient_id = 42\n").is_ok(), "a number is no parse error");
     }

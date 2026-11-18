@@ -3298,7 +3298,7 @@ mod tests {
     fn settings_has_the_discord_switches_off_by_default() {
         let mut rt = render("settings-general", (1360.0, 860.0));
         assert!(!rt.state.prefs.discord.enabled, "off by default");
-        for k in ["set/row/discord", "set/row/discord-cover", "set/row/discord-buttons", "set/row/discord-hide-paused", "set/row/discord-hide-title"] {
+        for k in ["set/row/discord", "set/row/discord-cover", "set/row/discord-buttons", "set/row/discord-hide-paused", "set/row/discord-hide-title", "set/row/discord-status"] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         // The options are inert while the main switch is off.
@@ -3320,6 +3320,12 @@ mod tests {
         rt.pointer_up(x, y);
         rt.frame(1.0 / 60.0);
         assert!(rt.state.prefs.discord.hide_title, "an option works once it is on");
+        assert_eq!(rt.state.prefs.discord.status(), kotora_core::config::StatusIn::Title, "the default");
+        let (x, y) = rt.find("set/discord-status/episode").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.prefs.discord.status(), kotora_core::config::StatusIn::Episode, "Show in status changes once it is on");
         let rt = render("settings-discord-on", (960.0, 700.0));
         assert!(rt.state.prefs.discord.hide_paused && rt.find("set/discord").is_some());
     }

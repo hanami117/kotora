@@ -58,6 +58,9 @@ pub struct Activity {
     /// The large image: a key of the Application's assets or an https URL, with its hover text.
     pub large: Option<(String, String)>,
     pub small: Option<(String, String)>,
+    /// Discord's `status_display_type`: what follows the activity icon in the member list and
+    /// the mini profile. 0 the application's name, 1 `state`, 2 `details`.
+    pub status_display: u8,
     /// One button: label and https URL.
     pub button: Option<(String, String)>,
 }
@@ -83,6 +86,12 @@ impl Activity {
     /// The `activity` object of `SET_ACTIVITY`.
     pub fn to_json(&self) -> Value {
         let mut a = json!({ "type": self.kind, "details": line(&self.details) });
+        // The line has to exist: no second line, no showing it (the first one then).
+        let shown = match self.status_display {
+            1 if self.state.is_none() => 2,
+            n => n.min(2),
+        };
+        a["status_display_type"] = json!(shown);
         if let Some(s) = &self.state {
             a["state"] = json!(line(s));
         }
@@ -417,7 +426,7 @@ mod tests {
     use super::*;
 
     fn act(title: &str) -> Activity {
-        Activity { kind: 3, details: title.into(), state: Some("Episode 7 of 24".into()), start: Some(1000), end: Some(2400), large: Some(("https://cdn.example/a.jpg".into(), title.into())), small: Some((ICON_ASSET.into(), "Kotora".into())), button: Some(("View on AniList".into(), "https://anilist.co/anime/1".into())) }
+        Activity { kind: 3, details: title.into(), state: Some("Episode 7 of 24".into()), start: Some(1000), end: Some(2400), large: Some(("https://cdn.example/a.jpg".into(), title.into())), small: Some((ICON_ASSET.into(), "Kotora".into())), status_display: 2, button: Some(("View on AniList".into(), "https://anilist.co/anime/1".into())) }
     }
 
     #[test]
@@ -430,6 +439,19 @@ mod tests {
         assert_eq!(j["assets"]["large_image"], "https://cdn.example/a.jpg");
         assert_eq!(j["assets"]["small_image"], "kotora");
         assert_eq!(j["buttons"][0]["label"], "View on AniList");
+        assert_eq!(j["status_display_type"], 2);
+    }
+
+    #[test]
+    fn the_status_line_follows_the_choice_and_needs_its_line() {
+        let mut a = act("T");
+        for (want, shown) in [(0u8, 0), (1, 1), (2, 2), (9, 2)] {
+            a.status_display = want;
+            assert_eq!(a.to_json()["status_display_type"], shown);
+        }
+        a.status_display = 1;
+        a.state = None;
+        assert_eq!(a.to_json()["status_display_type"], 2, "no second line: the first");
     }
 
     #[test]

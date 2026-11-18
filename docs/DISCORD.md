@@ -17,6 +17,10 @@ when it is off, Kotora starts nothing for it.
   "View on ..." button to the manga (Discord has no reading type, so it shows as "Playing Kotora"; "Reading
   manga" when the title is hidden). It ends when the comic closes (the reader's process or file is gone), or when
   reading detection stops. An episode that plays wins over a comic.
+- Show in status (Settings → General → Discord) picks what Discord prints after the activity icon in the
+  member list and the mini profile, instead of the app name: **App name** ("Kotora"), **Anime title** (the
+  default; your title language) or **Episode** ("Episode 7 of 24", "Chapter 362"). It is Discord's
+  `status_display_type`, and applies at once. With no second line (a chapter without a number) it shows the title.
 - The status is cleared when nothing plays or is read, when you turn the switch off and when Kotora quits.
 - Options: show the cover; show a button ("View on AniList" or "View on MyAnimeList"; you don't see your own
   buttons, others do); hide while paused or idle; hide the title (shows "Watching anime", no cover, no button).
@@ -30,6 +34,7 @@ when it is off, Kotora starts nothing for it.
   buttons = true
   hide_paused = false
   hide_title = false
+  status = "title"      # Show in status: "app", "title" or "episode"
   ```
 
 ## Creating the Discord Application (once, by whoever builds Kotora, or by you for your own copy)

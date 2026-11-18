@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use kotora_core::config::Discord as Opts;
+use kotora_core::config::{Discord as Opts, StatusIn};
 use kotora_core::discord::{self as dc, Activity, Worker};
 use kotora_core::recognize::Found;
 use kotora_core::service::ServiceId;
@@ -96,7 +96,13 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
         Some((s, e)) => (Some(s), e),
         None => (None, None),
     };
-    Some(Activity { kind, details, state, start, end, large, small, button })
+    // 0 the app's name, 1 the second line (the episode), 2 the first (the title).
+    let status_display = match o.status() {
+        StatusIn::App => 0,
+        StatusIn::Title => 2,
+        StatusIn::Episode => 1,
+    };
+    Some(Activity { kind, details, state, start, end, large, small, status_display, button })
 }
 
 /// What is playing, or else what is being read. The episode wins when both would show.
@@ -259,6 +265,13 @@ impl State {
         self.discord_changed();
     }
 
+    /// Show in status: applies at once (the status is sent again).
+    pub fn set_discord_status(&mut self, v: StatusIn) {
+        self.prefs.discord.status = v.key().into();
+        crate::detect::save_setting(self, "discord", "status", kotora_core::config::quote(v.key()));
+        self.discord_changed();
+    }
+
     pub fn set_discord_hide_title(&mut self, on: bool) {
         self.prefs.discord.hide_title = on;
         crate::detect::save_setting(self, "discord", "hide_title", on.to_string());
@@ -333,6 +346,22 @@ mod tests {
             r => r,
         };
         assert_eq!(activity(&odd, &on(), ServiceId::Mal, 0).unwrap().large.unwrap().0, dc::ICON_ASSET);
+    }
+
+    #[test]
+    fn show_in_status_maps_to_discords_display_type() {
+        let t = |st: &str| activity(&watching(true), &Opts { status: st.into(), ..on() }, ServiceId::Mal, 0).unwrap().to_json()["status_display_type"].clone();
+        assert_eq!(t("title"), 2);
+        assert_eq!(t("episode"), 1);
+        assert_eq!(t("app"), 0);
+        assert_eq!(t("nonsense"), 2, "a bad value is the title");
+        assert_eq!(Opts::default().status(), StatusIn::Title, "the default");
+        // Paused keeps its second line, so Episode still works; a hidden title shows its stand-in.
+        let a = activity(&watching(false), &Opts { status: "episode".into(), ..on() }, ServiceId::Mal, 0).unwrap();
+        assert_eq!(a.status_display, 1);
+        assert!(a.state.is_some());
+        let r = Input::Reading { title: "Blue Lock".into(), chapter: None, volume: None, media_id: Some(1), cover: None };
+        assert_eq!(activity(&r, &Opts { status: "episode".into(), ..on() }, ServiceId::Mal, 0).unwrap().to_json()["status_display_type"], 2, "no chapter: the title");
     }
 
     #[test]
