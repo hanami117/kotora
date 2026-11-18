@@ -183,7 +183,8 @@ if [[ $(latest_tag) != "$tag" ]]; then
     fi
     say "Marking $tag Latest"
     gh release edit "$tag" -R "$REPO" --latest >/dev/null
-    for _ in $(seq 1 12); do [[ $(latest_tag) == "$tag" ]] && break; sleep 5; done
+    # GitHub's redirect can lag the API by a few minutes (0.4.1: 15 s, 0.4.2: over 2 min).
+    for _ in $(seq 1 60); do [[ $(latest_tag) == "$tag" ]] && break; sleep 5; done
 fi
 [[ $(latest_tag) == "$tag" ]] || die "releases/latest is $(latest_tag), not $tag"
 say "The stable names lead to $tag"
