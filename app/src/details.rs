@@ -747,7 +747,7 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
 /// The details page. Wide windows: a full-bleed banner of the cover's tint, the cover over its
 /// lower edge, the title on it and the user's entry on the right. Narrow ones (below
 /// `theme::NARROW_W`): an inset banner card holding all of it, the entry as a glass panel.
-pub fn page(s: &State, wide: bool) -> El {
+pub fn page(s: &State, wide: bool, width: f32) -> El {
     let Some(d) = &s.detail else {
         return col().key("page/details").w_full().h_full().child(row().key("top").px(theme::PAGE_PAD).pt(18.0).child(back_button(false)));
     };
@@ -756,7 +756,7 @@ pub fn page(s: &State, wide: bool) -> El {
         page = page.child(crate::ui::alert("det/alert", PAL.status(Status::Dropped), e.clone(), None));
     }
     let scroll = col().key(format!("details-scroll/{}", d.id())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0);
-    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(s, d)).child(scroll.child(header_narrow(s, d))) }
+    if wide { page.child(scroll.child(header_wide(s, d))) } else { page.child(top_bar(s, d)).child(scroll.child(header_narrow(s, d, width))) }
 }
 
 fn updating(d: &Detail) -> El {
@@ -830,8 +830,14 @@ fn links(s: &State, d: &Detail, glass: bool) -> Vec<El> {
         .collect()
 }
 
+/// The main area's width under which the narrow page stacks the entry panel under the title.
+const STACK_W: f32 = 780.0;
+
 /// B: one banner card (cover, tags, titles, numbers and the glass entry panel), then the rest.
-fn header_narrow(s: &State, d: &Detail) -> El {
+fn header_narrow(s: &State, d: &Detail, width: f32) -> El {
+    // Side by side only while the title keeps room (about 260 pt): cover, title and the entry
+    // panel need 132 + 250 + two gaps + two paddings + that. Narrower, the panel drops under them.
+    let stacked = width < STACK_W;
     let scrim = if PAL.light { crate::look::Scrim::even(0.62) } else { crate::look::Scrim::even(0.5) };
     let title = text(shown_title(s, d).to_string()).key("det-title").font(TextStyle::new(24.0, 600.0).tracking(-0.2)).color(PAL.text).wrap().max_lines(3).selectable(true);
     let banner = el()
@@ -842,15 +848,15 @@ fn header_narrow(s: &State, d: &Detail) -> El {
         .border(1.0, PAL.border)
         .child(crate::look::backdrop(s, d.cover_id(), cover_url(d), scrim))
         .child(
-            row()
-                .key("det-main")
-                .w_full()
-                .padding(20.0)
-                .gap(20.0)
-                .items_start()
-                .child(big_cover(s, d, 132.0, 198.0))
-                .child(col().grow(1.0).min_w(0.0).gap(6.0).selection_group(true).child(tags(d).pb(4.0)).child(title).child(other_titles(s, d)).child(stats(d).mt(12.0)))
-                .child(mine_column(s, d, true).w(250.0)),
+            {
+                let info = col().grow(1.0).min_w(0.0).gap(6.0).selection_group(true).child(tags(d).pb(4.0)).child(title).child(other_titles(s, d)).child(stats(d).mt(12.0));
+                let hero = row().key("det-main").w_full().gap(20.0).items_start().child(big_cover(s, d, 132.0, 198.0)).child(info);
+                if stacked {
+                    col().key("det-hero").w_full().padding(20.0).gap(20.0).child(hero).child(mine_column(s, d, true).w_full())
+                } else {
+                    row().key("det-hero").w_full().padding(20.0).gap(20.0).items_start().child(hero.grow(1.0).min_w(0.0)).child(mine_column(s, d, true).w(250.0))
+                }
+            },
         );
     col()
         .px(theme::PAGE_PAD)

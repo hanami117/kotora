@@ -610,7 +610,7 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::NowPlaying => now_page(s, wide, size),
         Page::Queue => queue_page(s),
         Page::Settings => crate::settings::page(s, width),
-        Page::Details => crate::details::page(s, wide),
+        Page::Details => crate::details::page(s, wide, width),
         Page::Search if !s.has_list() => welcome(s),
         Page::Search => search_view(s, wide),
         Page::Airing if !s.has_list() => welcome(s),
