@@ -59,7 +59,7 @@ try {
     Check (-not (Test-Path $desktop)) "no desktop shortcut unless asked"
     Check (OnPath) "the folder is on the user's PATH"
     $un = Get-ItemProperty $uninstallKey
-    Check ($un.DisplayName -eq "Kotora (Preview)") "listed in Installed apps as '$($un.DisplayName)'"
+    Check ($un.DisplayName -eq "Kotora") "listed in Installed apps as '$($un.DisplayName)'"
     Check ($un.DisplayVersion -eq $Version) "listed with version $($un.DisplayVersion)"
     Check (-not (Test-Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{17091F1F-7829-4B92-964B-D2AA5E246767}_is1")) "nothing was written for all users"
     # kot from the PATH, as a new terminal would find it.

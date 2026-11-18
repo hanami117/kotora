@@ -1279,9 +1279,8 @@ fn about(s: &State) -> El {
                         .gap(8.0)
                         .items_end()
                         .child(text("Kotora \u{5c0f}\u{864e}").font(TextStyle::new(17.0, 600.0)).color(PAL.text))
-                        .child(text(about_version(cfg!(windows))).key("about-version").font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
+                        .child(text(about_version()).key("about-version").font(theme::LABEL_NUM).color(PAL.faint).pb(2.0)),
                 )
-                .children(cfg!(windows).then(|| text(WINDOWS_PREVIEW).key("about-preview").font(theme::LABEL).color(PAL.dim).wrap()))
                 .child(
                     text("A tribute to Taiga, the Windows anime tracker. Thank you to its author and contributors. Kotora is a separate project.")
                         .font(theme::LABEL)
@@ -1292,13 +1291,10 @@ fn about(s: &State) -> El {
         )
 }
 
-/// "Version 0.2.1", and on Windows "Version 0.2.1 · Preview" (the installer says Preview too).
-fn about_version(windows: bool) -> String {
-    format!("Version {}{}", env!("CARGO_PKG_VERSION"), if windows { " \u{b7} Preview" } else { "" })
+/// "Version 0.4.1".
+fn about_version() -> String {
+    format!("Version {}", env!("CARGO_PKG_VERSION"))
 }
-
-/// About, on Windows only.
-const WINDOWS_PREVIEW: &str = "Kotora for Windows is a preview: it is new, and not signed yet. Please report what goes wrong on GitHub.";
 
 /// One service of Settings → Account. The active one says how its sign-in stands (Sign in,
 /// Sign out); the other offers "Use …", which switches services and keeps both lists.

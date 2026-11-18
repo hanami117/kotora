@@ -2,7 +2,7 @@
 
 # Kotora 小虎
 
-A native anime tracker for Linux and macOS, with a Windows preview, written in Rust.
+A native anime tracker for Linux, macOS and Windows, written in Rust.
 
 Kotora ("little tiger") keeps your [MyAnimeList](https://myanimelist.net) or [AniList](https://anilist.co) list
 up to date, anime and manga. It sees which episode is playing in your media player, and asks before it records
@@ -52,7 +52,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 
 ## Supported players
 
-| Linux | macOS | Windows (preview) |
+| Linux | macOS | Windows |
 |---|---|---|
 | mpv, VLC, mpc-qt, and other MPRIS players (Celluloid, Haruna, SMPlayer, …) | mpv, IINA, VLC | mpv, mpv.net, MPC-HC, MPC-BE, VLC, PotPlayer |
 
@@ -92,7 +92,7 @@ link it into your `PATH`:
 ln -s /Applications/Kotora.app/Contents/MacOS/kot /opt/homebrew/bin/kot
 ```
 
-### Windows (preview)
+### Windows
 
 Windows 10 or 11, 64-bit. Download
 [Kotora-windows-x64-setup.exe](https://github.com/hanami117/kotora/releases/latest/download/Kotora-windows-x64-setup.exe)
@@ -100,7 +100,7 @@ and run it. It installs for your account only (no administrator rights), adds a 
 `kot` on your PATH. A zip without an installer is on the release page.
 
 Kotora is not signed yet, so Windows SmartScreen says "Windows protected your PC": click **More info**, then
-**Run anyway**. The Windows build is new: please report problems.
+**Run anyway**.
 
 ### From source (Linux)
 

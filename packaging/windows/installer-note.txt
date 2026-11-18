@@ -1,7 +1,6 @@
-Kotora for Windows is a preview.
+Kotora for Windows.
 
-It is new on Windows and has been tried on few PCs so far. Please report what goes wrong at
-https://github.com/hanami117/kotora/issues
+Please report what goes wrong at https://github.com/hanami117/kotora/issues
 
 Good to know:
 

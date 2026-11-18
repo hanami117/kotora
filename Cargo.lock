@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "kotora"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "block2 0.6.2",
  "image",
@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "kotora-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anitomy-ng",
  "flate2",
@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "kotora-ctl"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "libc",
  "serde",
@@ -1461,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "kotora-detect"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "libc",
  "serde_json",

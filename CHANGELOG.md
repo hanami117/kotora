@@ -2,11 +2,18 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.1] - 2026-11-18
+
+Small release: Quit with Ctrl+Q on Linux and Windows, a Support Kotora card in About, and Windows is no longer
+called a preview. No database change.
 
 ### Added
 - **Linux and Windows:** Ctrl Q quits Kotora, even from the tray, also while you type in a search box. (macOS has ⌘Q.)
 - **Support Kotora** (Settings → About): a heart, one line and a button that opens Kotora's Ko-fi page. Kotora stays free, and nothing else asks.
+
+### Changed
+- **Windows is no longer called a preview:** About says "Version 0.4.1", and the installer, its entry in Installed apps,
+  the README and the release notes drop the word. Kotora is still not signed, so SmartScreen still asks once.
 
 ## [0.4.0] - 2026-11-17
 

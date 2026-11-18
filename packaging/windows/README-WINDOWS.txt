@@ -1,9 +1,7 @@
-Kotora for Windows (preview)
-============================
+Kotora for Windows
+==================
 
-Kotora is new on Windows: this is a preview. It was built and tested by machine (GitHub
-Actions) and tried on few real PCs so far. Expect rough edges, and please report them.
-It is not signed yet.
+Please report what goes wrong (see the end of this file). The programs are not signed yet.
 
 Needs Windows 10 (version 1809 or newer) or Windows 11, 64-bit (x64).
 

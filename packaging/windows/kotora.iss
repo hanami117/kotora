@@ -49,7 +49,7 @@
 AppId={{17091F1F-7829-4B92-964B-D2AA5E246767}
 AppName=Kotora
 AppVersion={#AppVersion}
-AppVerName=Kotora {#AppVersion} (Preview)
+AppVerName=Kotora {#AppVersion}
 AppPublisher=Kotora
 AppPublisherURL=https://kotora.moe
 AppSupportURL=https://github.com/hanami117/kotora/issues
@@ -57,7 +57,7 @@ AppUpdatesURL=https://github.com/hanami117/kotora/releases
 AppCopyright=Copyright (C) 2026 Thomas Lonigro. GPL-3.0-or-later
 VersionInfoVersion={#FileVersion}
 VersionInfoProductName=Kotora
-VersionInfoDescription=Kotora Setup (Preview)
+VersionInfoDescription=Kotora Setup
 ; Per user, no admin: {autopf} is %LOCALAPPDATA%\Programs here.
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\Kotora
@@ -71,7 +71,7 @@ OutputDir={#OutputDir}
 OutputBaseFilename=Kotora-{#Release}-windows-x64-setup
 SetupIconFile=kotora.ico
 UninstallDisplayIcon={app}\kotora.exe
-UninstallDisplayName=Kotora (Preview)
+UninstallDisplayName=Kotora
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
