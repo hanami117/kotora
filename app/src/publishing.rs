@@ -1197,7 +1197,8 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
     // Which source the numbers come from, and the choice.
     if let Some(i) = info {
         let used = i.best(now, list, on).map(|b| b.1);
-        let mut chips = row().key("pub/source").gap(6.0).center_y().flex_wrap().child(text("Source").font(theme::LABEL).color(PAL.faint).pr(2.0));
+        let mut showing: Option<El> = None;
+        let mut chips = row().key("pub/source").gap(6.0).center_y().flex_wrap().w_full();
         for src in Source::ALL.into_iter().filter(|x| match x {
             Source::MangaUpdates => on.mu,
             Source::MangaDex => on.md,
@@ -1225,9 +1226,13 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
         }
         if let Some(u) = used {
             let ext = if u == Source::MangaDex && i.md.external { " (an official release it links to)" } else { "" };
-            chips = chips.child(text(format!("Showing {}{ext}", u.label())).key("pub/source-used").font(theme::LABEL).color(PAL.dim).pl(4.0));
+            showing = Some(text(format!("Showing {}{ext}", u.label())).key("pub/source-used").font(theme::LABEL).color(PAL.dim).wrap());
         }
-        c = c.child(chips);
+        let mut block = col().gap(5.0).w_full().child(text("SOURCE").font(theme::CAPTION).color(PAL.faint)).child(chips);
+        if let Some(t) = showing {
+            block = block.child(t);
+        }
+        c = c.child(block);
     }
     if let Some(r) = s.publishing.rows.iter().find(|r| r.id == id).filter(|r| r.ahead) {
         let _ = r;
@@ -1286,7 +1291,7 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(crate::ui::field_hint(&p.link, "mangaupdates.com/series/\u{2026} or mangadex.org/title/\u{2026}"), PAL.faint)
+                .placeholder(crate::ui::field_hint(&p.link, "Paste a link\u{2026}"), PAL.faint)
                 .on_edit(|s: &mut State| &mut s.publishing.link)
                 .on_submit(move |s: &mut State, tx: &mut Tx| {
                     tx.blur();
@@ -1303,7 +1308,7 @@ fn match_block(s: &State, id: u32, wide: bool) -> El {
         }
     }
     let label = "Wrong or missing series? Paste its MangaUpdates or MangaDex link:";
-    c = c.child(col().gap(4.0).child(text(label).font(theme::LABEL).color(PAL.dim)).child(fix));
+    c = c.child(col().gap(4.0).w_full().child(text(label).font(theme::LABEL).color(PAL.dim).wrap()).child(fix));
     if let Some((failed, t)) = &p.link_note {
         c = c.child(text(t.clone()).key("pub/link-note").font(theme::LABEL).color(if *failed { PAL.err() } else { PAL.ok() }).wrap());
     }
@@ -1337,7 +1342,7 @@ pub fn details_card(s: &State, id: u32) -> Option<El> {
         .child(col().pt(4.0).child(kv("Latest", latest)).child(kv("To read", text(behind).font(theme::LABEL_NUM).color(PAL.text))).child(kv("Next (estimate)", text(next).font(theme::LABEL_NUM).color(PAL.text).wrap())))
         .child(el().h(6.0))
         .child(match_block(s, id, false))
-        .child(text(format!("{}. Next dates are estimates from past releases.", mu::CREDIT)).font(theme::SMALL).color(PAL.faint).wrap().pt(8.0));
+        .child(text(format!("{}. Next dates are estimates from past releases.", mu::CREDIT)).font(theme::SMALL).color(PAL.faint).wrap().pt(14.0));
     Some(c)
 }
 
