@@ -4,7 +4,7 @@ members = ["core", "detect", "app", "ctl"]
 
 # The one version and license of every crate (and of the app: About, `--version`, the bundle).
 [workspace.package]
-version = "0.4.3"
+version = "0.4.4"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/hanami117/kotora"
 edition = "2024"

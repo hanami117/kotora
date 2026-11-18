@@ -2,6 +2,16 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.4.4] - 2026-11-18
+
+Small release: you choose what Discord shows in the compact status line. No database change.
+
+### Added
+- **Discord:** a "Show in status" choice (Settings → General → Discord): what Discord shows after the activity icon in
+  the member list and the mini profile. **Anime title** (the default, as before), **App name** (Kotora) or
+  **Episode** ("Episode 7 of 24", "Chapter 362"). It applies at once, and is saved as `status` in the `[discord]`
+  section of `config.toml` (`app`, `title` or `episode`).
+
 ## [0.4.3] - 2026-11-18
 
 Small fix release for narrow windows. No database change.
