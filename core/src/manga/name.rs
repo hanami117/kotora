@@ -551,9 +551,9 @@ pub fn parse_file_name(name: &str) -> Parsed {
 
 /// Parses a path: the file name, and its folders for what the name lacks. The path may be
 /// relative to a library; the folders above the library must not be part of it (the library's own
-/// folder is not a series).
+/// folder is not a series). Folders are split at `/` and at `\` (Windows paths).
 pub fn parse_path(path: &str) -> Parsed {
-    let comps: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    let comps: Vec<&str> = path.split(['/', '\\']).filter(|c| !c.is_empty()).collect();
     let Some((file, dirs)) = comps.split_last() else {
         return Parsed::default();
     };

@@ -371,3 +371,11 @@ fn a_digital_volume_with_tags() {
     assert_eq!(p.chapter, None);
     assert_eq!(p.year, Some(2003));
 }
+
+#[test]
+fn a_windows_path_is_split_at_backslashes_too() {
+    let p = parse_path(r"C:\Users\x\Movies\Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
+    assert_eq!(p.series, "Dragon Ball Z");
+    assert_eq!(p.volume.map(|v| v.last), Some(11.0));
+    assert_eq!(parse_path(r"Berserk\Vol 03\Berserk c021.cbz"), parse_path("Berserk/Vol 03/Berserk c021.cbz"));
+}
