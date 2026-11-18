@@ -222,7 +222,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: linux-bin, path: .ci/linux }
-      - name: The AUR secrets are there, and the known hosts have an ED25519 key (none at all: skip the push)
+      - name: The AUR secrets are there, and the known hosts have an ED25519 key, or none at all and the push is skipped
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
           AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
