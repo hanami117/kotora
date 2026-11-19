@@ -902,7 +902,7 @@ impl Kotora {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{ClientIds, Paths, Platform};
     use kotora_core::airing::Broadcast;
@@ -931,7 +931,7 @@ mod tests {
 
     /// A core signed in to MyAnimeList (a made-up token) in a scratch folder. The folders are
     /// the process's (the first `Kotora::new`), so the store is per test, `config.toml` shared.
-    fn signed_in_mal(name: &str) -> (Arc<Kotora>, std::path::PathBuf) {
+    pub(crate) fn signed_in_mal(name: &str) -> (Arc<Kotora>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("kotora-mobile-pages-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let paths = Paths { config_dir: dir.join("files").display().to_string(), data_dir: dir.join("nobackup").display().to_string(), cache_dir: dir.join("cache").display().to_string() };
@@ -942,15 +942,15 @@ mod tests {
         (k, dir)
     }
 
-    fn fixture(id: u32, title: &str, status: Status, progress: u32) -> ListItem {
+    pub(crate) fn fixture(id: u32, title: &str, status: Status, progress: u32) -> ListItem {
         let media = Media { kind: kotora_core::Kind::Anime, id, title: title.into(), title_en: None, title_ja: None, synonyms: Vec::new(), episodes: None, format: "manga".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, volumes: None, authors: Vec::new(), next_airing: None, id_mal: None };
         ListItem { media, status, progress, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: 1 }
     }
 
     /// Saturday 2026-10-03 23:30 JST = 14:30 UTC (the core's airnotes test).
-    const EP1: i64 = 1_791_037_800;
+    pub(crate) const EP1: i64 = 1_791_037_800;
 
-    fn show(id: u32, title: &str, status: Status, progress: u32) -> ListItem {
+    pub(crate) fn show(id: u32, title: &str, status: Status, progress: u32) -> ListItem {
         let mut it = fixture(id, title, status, progress);
         it.media.air_status = "currently_airing".into();
         it.media.format = "tv".into();

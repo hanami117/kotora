@@ -137,11 +137,14 @@ struct SignedInView: View {
         let account = model.session.active
         TabView(selection: $tab) {
             NavigationStack(path: $homePath) {
-                HomeScreen(path: $homePath) { kind, status in
+                HomeScreen(path: $homePath, seeAll: { kind, status in
                     model.select(kind: kind, status: status)
                     listPath = []
                     tab = .list
-                }
+                }, seeAiring: {
+                    airingPath = []
+                    tab = .airing
+                })
                 .overlay(alignment: .bottom) { snack }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: RowRef.self) { DetailsScreen(ref: $0) }
@@ -183,10 +186,17 @@ struct SignedInView: View {
         .modifier(StartupState(tab: tab.rawValue))
         .onReceive(NotificationCenter.default.publisher(for: .kotoraOpenEntry)) { n in
             guard let ref = n.object as? RowRef else { return }
-            listPath = [ref]
-            tab = .list
+            PendingOpen.ref = nil
+            open(ref)
         }
+        .onAppear { if let ref = PendingOpen.take() { open(ref) } }
         .animation(.easeOut(duration: 0.2), value: model.snack)
+    }
+
+    /// A notification's entry: its details, on the List tab.
+    private func open(_ ref: RowRef) {
+        listPath = [ref]
+        tab = .list
     }
 
     @ViewBuilder private var snack: some View {

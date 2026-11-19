@@ -137,6 +137,9 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         guard let id = info["id"] as? Int, id > 0 else { return }
         let kind: MediaKind = info["kind"] as? String == "manga" ? .manga : .anime
-        NotificationCenter.default.post(name: .kotoraOpenEntry, object: RowRef(kind: kind, id: UInt32(id)))
+        let ref = RowRef(kind: kind, id: UInt32(id))
+        // On a cold start the tabs aren't there to hear the post yet: they take it when they appear.
+        PendingOpen.ref = ref
+        NotificationCenter.default.post(name: .kotoraOpenEntry, object: ref)
     }
 }

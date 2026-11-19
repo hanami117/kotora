@@ -11,6 +11,8 @@ struct SettingsExtras: View {
     @ObservedObject private var prefs = Prefs.shared
     @State private var systemNotifications: UNAuthorizationStatus?
     @State private var fill = false
+    @State private var titles = "romaji"
+    @State private var keepHigher = true
 
     var body: some View {
         let s = prefs.settings
@@ -33,8 +35,35 @@ struct SettingsExtras: View {
                 ListLine(title: "Theme", subtitle: "System follows your iPhone's light or dark setting.") { EmptyView() } trailing: {
                     picker(s.theme, [("system", "System"), ("light", "Light"), ("dark", "Dark")]) { prefs.set(.theme(value: $0)) }
                 }
+                if let src = model.repo as? ExtrasSource {
+                    ListLine(title: "Titles", subtitle: "Romaji, English or Japanese titles everywhere.") { EmptyView() } trailing: {
+                        picker(titles, [("romaji", "Romaji"), ("english", "English"), ("japanese", "Japanese")]) { v in
+                            titles = v
+                            Task {
+                                try? await src.setTitleLanguage(v)
+                                await model.reload()
+                            }
+                        }
+                    }
+                }
                 ListLine(title: "Startup animation", subtitle: "Claw marks when Kotora opens.", divider: false) { EmptyView() } trailing: {
                     toggle(s.intro) { prefs.set(.intro(on: $0)) }
+                }
+            }
+
+            if let src = model.repo as? ExtrasSource {
+                SectionTitle(text: "Sync")
+                Card {
+                    ListLine(title: "Keep the higher progress in conflicts", subtitle: "When only the progress differs and yours is higher, Kotora sends yours.", divider: false) { EmptyView() } trailing: {
+                        toggle(keepHigher) { on in
+                            keepHigher = on
+                            Task { do { try await src.setKeepHigherProgress(on) } catch { keepHigher = !on } }
+                        }
+                    }
+                }
+                .task {
+                    titles = await src.titleLanguage()
+                    keepHigher = await src.keepHigherProgress()
                 }
             }
 

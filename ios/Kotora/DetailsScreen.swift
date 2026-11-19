@@ -10,6 +10,8 @@ struct DetailsScreen: View {
     @State private var row: Row?
     @State private var loaded = false
     @StateObject private var info = DetailsInfo()
+    /// A Reading manga's releases (the desktop's Publishing card).
+    @State private var publishing: PublishingCard?
 
     private var service: String { model.session.active?.service.label ?? "MyAnimeList" }
 
@@ -33,6 +35,9 @@ struct DetailsScreen: View {
         .task(id: model.list.version) {
             row = await model.entry(ref.kind, ref.id)
             loaded = true
+            if ref.kind == .manga, let src = model.repo as? ExtrasSource {
+                publishing = (try? await src.publishingCard(id: ref.id)) ?? nil
+            }
         }
         .task(id: ref) { await info.load(model, kind: ref.kind, id: ref.id) }
     }
@@ -135,6 +140,7 @@ struct DetailsScreen: View {
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 14)
                     EntryActions(row: row)
                 }
+                if let c = publishing { publishingCard(c).padding(.top, 16) }
                 DetailsBody(state: info, service: service) { Task { await info.load(model, kind: ref.kind, id: ref.id) } }
                     .padding(.top, 16)
                 Spacer(minLength: 80)
@@ -167,6 +173,27 @@ struct DetailsScreen: View {
         }
         .frame(height: 250)
         .padding(.bottom, 80)
+    }
+
+    /// "Publishing": Latest, To read, Next (estimate), the source credit (desktop `publishing.rs`).
+    private func publishingCard(_ c: PublishingCard) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Publishing").font(Inter.semibold(15)).foregroundStyle(p.text)
+                if let e = c.error { Text(e).font(Inter.regular(12)).foregroundStyle(p.dropped) }
+                ForEach([("Latest", c.latest), ("To read", c.toRead), ("Next (estimate)", c.next)], id: \.0) { k, v in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(k).font(Inter.regular(13)).foregroundStyle(p.faint).frame(width: 120, alignment: .leading)
+                        Text(v).font(Inter.medium(13)).foregroundStyle(p.text)
+                        Spacer(minLength: 0)
+                    }
+                }
+                Text(c.credit).font(Inter.regular(11.5)).foregroundStyle(p.faint).padding(.top, 6)
+            }
+            .padding(16)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("details/publishing")
+        }
     }
 
     private func pill(_ text: String, color: Color, dot: Bool) -> some View {

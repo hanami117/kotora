@@ -90,6 +90,7 @@ struct PublishingScreen: View {
                 HStack(spacing: 6) {
                     Text(r.title).font(Inter.medium(15)).foregroundStyle(p.text).lineLimit(1)
                     if r.look == .guess { Tag(text: "Check match", style: .wait) }
+                    if r.error != nil { Tag(text: "Couldn\u{2019}t check", style: .wait) }
                 }
                 latest(r)
                 next(r)
