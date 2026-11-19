@@ -155,7 +155,8 @@ struct WideCard: View {
 
     var body: some View {
         let manga = row.kind == .manga
-        let next = row.progress + 1
+        let next = row.plusVolumes ? row.volumes + 1 : row.progress + 1
+        let unit = row.plusVolumes ? ("Vol", "volume") : manga ? ("Ch", "chapter") : ("Ep", "episode")
         HStack(alignment: .top, spacing: 12) {
             CoverTile(id: row.id, initials: row.initials, url: row.coverUrl, width: 70, height: 104, radius: 6)
             VStack(alignment: .leading, spacing: 4) {
@@ -171,13 +172,13 @@ struct WideCard: View {
                     }
                     .frame(height: 4)
                     Button { plusOne(row) } label: {
-                        Text("+1  \(manga ? "Ch" : "Ep") \(next)").font(Inter.semibold(13)).foregroundStyle(p.text)
+                        Text("+1  \(unit.0) \(next)").font(Inter.semibold(13)).foregroundStyle(p.text)
                             .padding(.horizontal, 10).frame(height: 30)
                             .background(RoundedRectangle(cornerRadius: 7).fill(p.bg.opacity(0.7)))
                             .overlay(RoundedRectangle(cornerRadius: 7).stroke(p.borderStrong, lineWidth: 1))
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel("+1, \(manga ? "chapter" : "episode") \(next)")
+                    .accessibilityLabel("+1, \(unit.1) \(next)")
                 }
             }
         }

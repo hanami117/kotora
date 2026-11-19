@@ -76,7 +76,7 @@ private struct Badges: View {
                 Badge(text: "On hiatus", dot: p.dropped)
             }
             if let n = line.newEpisode { Badge(text: "Ep \(n) out", filled: true) }
-            if r.waiting { Badge(text: "Waiting to sync", dot: p.onHold) }
+            if r.waiting { Badge(text: r.waitingText, dot: r.waitingProblem ? p.dropped : p.onHold) }
         }
         .padding(6)
     }
@@ -97,10 +97,10 @@ struct PosterGrid: View {
                 card(line)
                     .contentShape(Rectangle())
                     .onTapGesture { open(line.row) }
-                    .contextMenu { OpenOnMenuItems(kind: line.row.kind, id: line.row.id) }
+                    .contextMenu { QuickMenuItems(row: line.row) }
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(.isButton)
-                    .accessibilityAction(named: "Plus one") { if line.row.canPlusOne { plusOne(line.row) } }
+                    .accessibilityAction(named: Text(line.row.plusOneText)) { if line.row.canPlusOne { plusOne(line.row) } }
             }
         }
         .padding(.horizontal, 16).padding(.top, 4)

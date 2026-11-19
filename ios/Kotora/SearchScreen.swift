@@ -56,7 +56,7 @@ final class SearchModel: ObservableObject {
         task?.cancel()
         asked = q
         error = nil
-        guard q.count >= 3, let repo = model.repo as? SearchRepository else {
+        guard q.count >= 3, model.expired == nil, !model.list.offline, let repo = model.repo as? SearchRepository else {
             hits = []
             pending = false
             return
@@ -256,6 +256,8 @@ struct SearchScreen: View {
 
     /// Why the service isn't searched now, if it isn't (the desktop's words).
     private var blocked: String? {
+        if model.expired != nil { return "Sign in again to search \(service)." }
+        if model.list.offline { return "Offline: searching \(service) needs the network. Your list is searched above." }
         if s.query.count < 3 { return "Type 3 letters or more to search \(service) too." }
         return nil
     }

@@ -27,6 +27,7 @@ struct ListScreen: View {
             chips(ui)
             syncLine(ui)
             SignInAgainBanner()
+            if model.expired == nil, let problem = ui.problem { ErrorNotice(text: problem) { model.sync() } }
             filterBox(ui)
             if ui.query.trimmingCharacters(in: .whitespaces).isEmpty { quickChips(ui) }
             if ui.view == .list {
@@ -35,7 +36,7 @@ struct ListScreen: View {
                         RowView(row: line.row, line: line) { model.plusOne(line.row) }
                             .contentShape(Rectangle())
                             .onTapGesture { path.append(RowRef(kind: line.row.kind, id: line.row.id)) }
-                            .contextMenu { OpenOnMenuItems(kind: line.row.kind, id: line.row.id) }
+                            .contextMenu { QuickMenuItems(row: line.row) }
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
                             .listRowBackground(p.bg)
                             .listRowSeparatorTint(p.border)
@@ -228,9 +229,37 @@ struct RowView: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("Plus one \(row.kind.unit): \(row.title)")
+                .accessibilityLabel("\(row.plusOneText): \(row.title)")
             }
         }
         .frame(minHeight: 84)
+    }
+}
+
+/// The bar above the list after a failed sync, with Retry (the desktop's `status_alert`; an
+/// expired sign-in has its own bar with Sign in, `SignInAgainBanner`).
+struct ErrorNotice: View {
+    @Environment(\.palette) private var p
+    let text: String
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle().fill(p.dropped).frame(width: 6, height: 6)
+            Text(text).font(Inter.regular(14)).foregroundStyle(p.text)
+                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            Button(action: retry) {
+                Text("Retry").font(Inter.semibold(13)).foregroundStyle(p.text)
+                    .padding(.horizontal, 14).frame(height: 34)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(p.raised))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(p.dropped.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.dropped.opacity(0.3), lineWidth: 1))
+        .padding(.horizontal, 16).padding(.vertical, 6)
+        .accessibilityIdentifier("errorNotice")
     }
 }

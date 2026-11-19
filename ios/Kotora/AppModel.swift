@@ -65,6 +65,12 @@ struct ListUi: Equatable {
     func count(_ s: ListStatus) -> UInt32 { counts.first { $0.status == s }?.count ?? 0 }
 }
 
+/// "Mark anyway?": the +1 and the core's words ("Episode 9 of X hasn't aired yet (expected …).").
+struct MarkAnyway: Equatable {
+    let row: Row
+    let question: String
+}
+
 /// A message at the bottom, with Undo when it is an edit.
 struct Snack: Identifiable, Equatable {
     let id = UUID()
@@ -84,6 +90,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var list = ListUi()
     @Published private(set) var mangaEnabled = false
     @Published var snack: Snack?
+    /// A +1 of an episode not aired yet by the estimate, waiting for "Mark anyway" or Cancel.
+    @Published var markAnyway: MarkAnyway?
+    /// The Score ▸ menu's choices in the active account's format, high to low.
+    @Published var scoreChoices: [ScoreChoice] = []
     /// The service that asked to sign in again (the "Sign in again" banner); the list stays.
     @Published var expired: Service?
     /// The service of the last sign-in started (AniList shows the token paste after a problem).
@@ -143,6 +153,7 @@ final class AppModel: ObservableObject {
             l.syncedAt = await r.syncedAt(kind: l.kind)
             l.waiting = await r.waitingCount()
             l.loaded = true
+            if let e = editing { scoreChoices = ((try? await e.scoreScale())?.choices ?? []).reversed() }
         } catch KotoraError.NotSignedIn {
             session = .signedOut()
             return
@@ -220,7 +231,19 @@ final class AppModel: ObservableObject {
         while list.syncing { try? await Task.sleep(for: .milliseconds(100)) }
     }
 
+    /// +1, after "Mark anyway?" when the episode hasn't aired yet by the estimate (desktop `plus_one_or_ask`).
     func plusOne(_ row: Row) {
+        Task {
+            if let q = await editing?.notAiredQuestion(kind: row.kind, id: row.id) {
+                markAnyway = MarkAnyway(row: row, question: q)
+            } else {
+                plusOneNow(row)
+            }
+        }
+    }
+
+    func plusOneNow(_ row: Row) {
+        markAnyway = nil
         guard let r = repo else { return }
         Task {
             do {

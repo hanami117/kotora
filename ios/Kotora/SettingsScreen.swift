@@ -67,7 +67,12 @@ struct SettingsScreen: View {
                         ListLine(title: "Data", subtitle: "From MyAnimeList and AniList, for your own account. No Kotora server.") {
                             EmptyView()
                         } trailing: { EmptyView() }
-                        ListLine(title: "Font", subtitle: "Inter, SIL Open Font License 1.1") { EmptyView() } trailing: { EmptyView() }
+                        NavigationLink { LicencesScreen() } label: {
+                            ListLine(title: "Licences", subtitle: "Kotora, the fonts and the parts it is built from") { EmptyView() } trailing: {
+                                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(p.faint)
+                            }
+                        }
+                        .buttonStyle(.plain)
                         AboutLinks()
                     }
                     .padding(.bottom, 24)
@@ -87,5 +92,25 @@ struct SettingsScreen: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
         }
         .buttonStyle(.borderless)
+    }
+}
+
+/// About → Licences: every part the app ships, in the desktop's words (the core's list).
+struct LicencesScreen: View {
+    @Environment(\.palette) private var p
+
+    var body: some View {
+        ScrollView {
+            Card {
+                let lines = licenceLines(android: false)
+                ForEach(Array(lines.enumerated()), id: \.offset) { i, l in
+                    ListLine(title: l.name, subtitle: l.licence.isEmpty ? nil : l.licence, divider: i < lines.count - 1) { EmptyView() } trailing: { EmptyView() }
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .background(p.bg)
+        .navigationTitle("Licences")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

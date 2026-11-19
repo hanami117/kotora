@@ -17,6 +17,11 @@ protocol EntryEditing: AnyObject, Sendable {
     func remove(kind: MediaKind, id: UInt32) async throws -> Removal
     func undoRemoval(_ removal: Removal) async throws
     func minusOne(kind: MediaKind, id: UInt32) async throws -> Edit
+    /// Move to ▸ / Score ▸ (the desktop's right-click menu); `nil`: nothing changed.
+    func moveTo(kind: MediaKind, id: UInt32, status: ListStatus) async throws -> Edit?
+    func setScore(kind: MediaKind, id: UInt32, points: UInt32?) async throws -> Edit?
+    /// "Episode 9 of X hasn't aired yet (expected …)." before a +1; `nil`: +1 at once.
+    func notAiredQuestion(kind: MediaKind, id: UInt32) async -> String?
 
     func queueItems() async -> [QueueItem]
     func conflictCount() async -> UInt32
@@ -46,6 +51,9 @@ extension CoreRepository: EntryEditing {
     func remove(kind: MediaKind, id: UInt32) async throws -> Removal { try await work { try self.kotora.remove(kind: kind, id: id) } }
     func undoRemoval(_ removal: Removal) async throws { try await work { try self.kotora.discard(service: removal.service, id: removal.opId) } }
     func minusOne(kind: MediaKind, id: UInt32) async throws -> Edit { try await work { try self.kotora.minusOne(kind: kind, id: id) } }
+    func moveTo(kind: MediaKind, id: UInt32, status: ListStatus) async throws -> Edit? { try await work { try self.kotora.moveTo(kind: kind, id: id, status: status) } }
+    func setScore(kind: MediaKind, id: UInt32, points: UInt32?) async throws -> Edit? { try await work { try self.kotora.setScore(kind: kind, id: id, points: points) } }
+    func notAiredQuestion(kind: MediaKind, id: UInt32) async -> String? { await work { self.kotora.notAiredQuestion(kind: kind, id: id) } }
     func queueItems() async -> [QueueItem] { await work { self.kotora.queueItems() } }
     func conflictCount() async -> UInt32 { await work { self.kotora.conflictCount() } }
     func keepMine(_ item: QueueItem) async throws { try await work { try self.kotora.keepMine(service: item.service, id: item.id) } }
@@ -154,6 +162,39 @@ extension SampleRepository: EntryEditing {
     }
 
     nonisolated(unsafe) private static var removedRows: [Int64: Row] = [:]
+
+    func moveTo(kind: MediaKind, id: UInt32, status: ListStatus) async throws -> Edit? {
+        try locked {
+            guard let i = rows.firstIndex(where: { $0.kind == kind && $0.id == id }) else { throw KotoraError.NotFound(message: "That isn't on your list.") }
+            let r = rows[i]
+            guard r.status != status else { return nil }
+            rows[i].status = status
+            if status == .completed, let t = r.total { rows[i].progress = t }
+            rows[i].waiting = true
+            return Edit(kind: kind, id: id, message: "Moved \(r.title) to \(status.label(kind))", beforeStatus: r.status, beforeProgress: r.progress,
+                        beforeRewatching: r.rewatching, beforeTimesRewatched: r.timesRewatched, beforeVolumes: r.volumes,
+                        beforeScore: r.score.flatMap { UInt32($0) }.map { $0 * 10 }, restoreScore: true)
+        }
+    }
+
+    func setScore(kind: MediaKind, id: UInt32, points: UInt32?) async throws -> Edit? {
+        try locked {
+            guard let i = rows.firstIndex(where: { $0.kind == kind && $0.id == id }) else { throw KotoraError.NotFound(message: "That isn't on your list.") }
+            let r = rows[i]
+            let score = points.map { String(($0 + 5) / 10) }
+            guard r.score != score else { return nil }
+            rows[i].score = score
+            rows[i].waiting = true
+            return Edit(kind: kind, id: id, message: score.map { "Scored \(r.title) \($0)" } ?? "Removed the score of \(r.title)", beforeStatus: r.status,
+                        beforeProgress: r.progress, beforeRewatching: r.rewatching, beforeTimesRewatched: r.timesRewatched, beforeVolumes: r.volumes,
+                        beforeScore: r.score.flatMap { UInt32($0) }.map { $0 * 10 }, restoreScore: true)
+        }
+    }
+
+    func notAiredQuestion(kind: MediaKind, id: UInt32) async -> String? {
+        guard let r = locked({ rows.first { $0.kind == kind && $0.id == id } }), r.airStatus == "not_yet_aired" else { return nil }
+        return "Episode \(r.progress + 1) of \(r.title) hasn't aired yet."
+    }
 
     func queueItems() async -> [QueueItem] { sampleQueue { $0 } }
     func conflictCount() async -> UInt32 { sampleQueue { UInt32($0.filter { $0.state == .conflict }.count) } }

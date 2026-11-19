@@ -105,4 +105,35 @@ extension AppModel {
             sync()
         }
     }
+
+    /// Move to ▸ (the desktop's right-click menu): at once, with Undo.
+    func moveTo(_ row: Row, _ status: ListStatus) {
+        quick { try await $0.moveTo(kind: row.kind, id: row.id, status: status) }
+    }
+
+    /// Score ▸ a score or "No score": at once, with Undo.
+    func setScore(_ row: Row, _ points: UInt32?) {
+        quick { try await $0.setScore(kind: row.kind, id: row.id, points: points) }
+    }
+
+    /// The Score ▸ choices, once per account.
+    func loadScoreChoices() {
+        guard let e = editing else { return }
+        Task { scoreChoices = ((try? await e.scoreScale())?.choices ?? []).reversed() }
+    }
+
+    private func quick(_ f: @escaping (EntryEditing) async throws -> Edit?) {
+        guard let e = editing else { return }
+        Task {
+            do {
+                if let edit = try await f(e) {
+                    await reload()
+                    requestFlush()
+                    snack = Snack(text: edit.message, undo: edit)
+                }
+            } catch {
+                snack = Snack(text: message(of: error))
+            }
+        }
+    }
 }

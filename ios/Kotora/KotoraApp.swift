@@ -190,6 +190,7 @@ struct SignedInView: View {
             open(ref)
         }
         .onAppear { if let ref = PendingOpen.take() { open(ref) } }
+        .modifier(MarkAnywayAlert())
         .animation(.easeOut(duration: 0.2), value: model.snack)
     }
 

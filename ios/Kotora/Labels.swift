@@ -53,9 +53,21 @@ extension Row {
         }
     }
 
-    /// +1 is offered while watching (or rewatching) and before the last episode.
+    /// The waiting change's tag: "Waiting to sync", "Conflict in queue", "Sync failed" (desktop `waiting_label`).
+    var waitingText: String { syncLabel ?? "Waiting to sync" }
+    /// A conflict or a failure: the tag is red.
+    var waitingProblem: Bool { syncLabel != nil && syncLabel != "Waiting to sync" }
+
+    /// A manga read by volume (no chapter yet, some volumes): +1 steps volumes, as on the desktop.
+    var plusVolumes: Bool { kind == .manga && progress == 0 && volumes > 0 }
+
+    /// "One more episode", "One more chapter", "One more volume" (the core's words).
+    var plusOneText: String { plusOneLabel(row: self) }
+
+    /// +1 is offered while watching (or rewatching) and before the last episode (volume).
     var canPlusOne: Bool {
-        (status == .watching || rewatching) && !(total.map { progress >= $0 } ?? false)
+        let atEnd = plusVolumes ? totalVolumes.map { volumes >= $0 } : total.map { progress >= $0 }
+        return (status == .watching || rewatching) && !(atEnd ?? false)
     }
 
     /// The small tags under a title: rewatch, airing, waiting, format. At most three.
@@ -68,7 +80,7 @@ extension Row {
         case "not_yet_aired", "NOT_YET_RELEASED", "not_yet_published": out.append(("Not aired yet", .plain))
         default: break
         }
-        if waiting { out.append(("Waiting to sync", .wait)) }
+        if waiting { out.append((waitingText, waitingProblem ? .hiatus : .wait)) }
         if out.count < 2 {
             let f = formatLabel
             if !f.isEmpty {

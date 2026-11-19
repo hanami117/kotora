@@ -72,6 +72,8 @@ final class SampleRepository: Repository, @unchecked Sendable {
             rows[i].status = edit.beforeStatus
             rows[i].progress = edit.beforeProgress
             rows[i].rewatching = edit.beforeRewatching
+            rows[i].volumes = edit.beforeVolumes
+            if edit.restoreScore { rows[i].score = edit.beforeScore.map { String(($0 + 5) / 10) } }
             rows[i].waiting = false
         }
     }

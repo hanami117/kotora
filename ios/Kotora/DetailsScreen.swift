@@ -87,7 +87,7 @@ struct DetailsScreen: View {
                 hero(row)
                 HStack(spacing: 8) {
                     if let (text, live) = row.airPill { pill(text, color: live ? p.air : p.dim, dot: live) }
-                    if row.waiting { pill("Waiting to sync", color: p.onHold, dot: false) }
+                    if row.waiting { pill(row.waitingText, color: row.waitingProblem ? p.dropped : p.onHold, dot: false) }
                 }
                 .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
                 HStack(spacing: 8) {
@@ -124,13 +124,13 @@ struct DetailsScreen: View {
                                 .background(RoundedRectangle(cornerRadius: 8).fill(p.field))
                                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
                             Button { model.plusOne(row) } label: {
-                                Text("+1 \(ref.kind.unit.capitalized) \(row.progress + 1)")
+                                Text(row.plusVolumes ? "+1 Volume \(row.volumes + 1)" : "+1 \(ref.kind.unit.capitalized) \(row.progress + 1)")
                                     .font(Inter.semibold(15)).foregroundStyle(row.canPlusOne ? p.onAccent : p.faint)
                                     .frame(maxWidth: .infinity).frame(height: 44)
                                     .background(RoundedRectangle(cornerRadius: 10).fill(row.canPlusOne ? p.accent : p.raised))
                             }
                             .disabled(!row.canPlusOne)
-                            .accessibilityLabel("Plus one \(ref.kind.unit)")
+                            .accessibilityLabel(row.plusOneText)
                         }
                         if manga {
                             Text("Volumes \(row.volumes) of \(row.totalVolumes.map(String.init) ?? "?")")

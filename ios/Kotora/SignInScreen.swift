@@ -65,6 +65,8 @@ struct SignInScreen: View {
                     Button("Look around with sample data", action: lookAround)
                         .font(Inter.medium(14)).foregroundStyle(p.accentHi).frame(height: 40).padding(.top, 12)
                 }
+                Text(welcomeNote()).font(Inter.regular(12)).foregroundStyle(p.faint).multilineTextAlignment(.center)
+                    .padding(.top, 18).accessibilityIdentifier("welcomeNote")
                 Spacer(minLength: 24)
                 Text("No account with Kotora · no ads · no tracking").font(Inter.regular(12)).foregroundStyle(p.faint).padding(.bottom, 18)
             }
