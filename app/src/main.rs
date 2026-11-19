@@ -61,6 +61,7 @@ mod tray;
 mod ui;
 mod startup;
 mod feeds;
+mod torrents;
 mod stats;
 mod update;
 #[cfg(windows)]

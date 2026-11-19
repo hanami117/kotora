@@ -638,7 +638,7 @@ fn compact_editor(e: &Entry, ed: &crate::model::Editor, fmt: kotora_core::ScoreF
 /// "Your list", and under it the feeds' next release (anime, while feeds are on).
 fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
     let mine = mine_card(s, d, glass);
-    match (!d.is_manga()).then(|| crate::feeds::details_card(s, d.id())).flatten() {
+    match (!d.is_manga()).then(|| crate::torrents::details_card(s, d.id())).flatten() {
         Some(f) => col().key("det-mine-col").gap(16.0).child(mine.w_full()).child(f.w_full()),
         None => mine,
     }

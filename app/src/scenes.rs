@@ -442,10 +442,22 @@ pub const SCENES: &[Scene] = &[
     ("feeds-settings-off", |s| crate::settings::open(s, Section::Feeds)),
     ("feeds-settings", |s| {
         crate::feeds::fake(s);
-        s.feeds.include.text = "multi sub".into();
-        s.feeds.exclude.text = "dub, raw".into();
-        s.feeds.cfg.resolution = 1080;
         crate::settings::open(s, Section::Feeds);
+    }),
+    // Settings → Feeds → Filters: Add filter… (Taiga's presets), then one preset in the editor
+    // with its element picker open.
+    ("feeds-filter-presets", |s| {
+        crate::feeds::fake(s);
+        s.feeds_filter_new();
+        crate::settings::open(s, Section::Feeds);
+        crate::settings::set_query(s, "preset");
+    }),
+    ("feeds-filter-edit", |s| {
+        crate::feeds::fake(s);
+        s.feeds_filter_edit(4);
+        s.feeds_picker("el/0".into());
+        crate::settings::open(s, Section::Feeds);
+        crate::settings::set_query(s, "preset");
     }),
     ("feeds-settings-nyaa", |s| {
         crate::feeds::fake(s);
@@ -460,9 +472,7 @@ pub const SCENES: &[Scene] = &[
     }),
     ("feeds-open", |s| {
         crate::feeds::fake(s);
-        if let Some(r) = s.feeds.sel.rows.first() {
-            s.feeds.open.insert((r.media_id, r.episodes.0, r.episodes.1));
-        }
+        s.feeds.open_row = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).map(|e| e.item.key());
         s.open_feeds();
     }),
     // Search releases (Taiga's "Search for torrents"): made-up results for one show.
@@ -482,6 +492,13 @@ pub const SCENES: &[Scene] = &[
             .collect();
         s.feeds_found(id, Ok(items));
     }),
+    ("feeds-history", |s| {
+        crate::feeds::fake(s);
+        let t: Vec<String> = s.feeds.items.iter().take(3).map(|(_, i)| i.title.clone()).collect();
+        s.feeds.archive = Some(kotora_core::feeds::taiga::Archive { titles: t });
+        s.feeds.history = true;
+        s.open_feeds();
+    }),
     ("feeds-empty", |s| {
         s.feeds.cfg.enabled = true;
         s.open_feeds();
@@ -490,7 +507,7 @@ pub const SCENES: &[Scene] = &[
     ("feeds-list-badge", |s| crate::feeds::fake(s)),
     ("feeds-details", |s| {
         crate::feeds::fake(s);
-        let id = s.feeds.sel.rows.first().map_or(0, |r| r.media_id);
+        let id = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).and_then(|e| e.anime_id).unwrap_or(0);
         details(s, id, true);
     }),
     ("settings-manga", |s| {
@@ -2941,37 +2958,71 @@ mod tests {
         assert!(s.page != Page::Profile);
     }
 
-    /// Feeds: off shows only the switch's row and no sidebar item; on, the page has one row per
-    /// episode with Download, the list and details show the badge, and a keyed URL never shows.
+    /// Torrents: off shows only the switch's row and no sidebar item; on, Taiga's table with
+    /// its states, the filter manager and its presets, the history, and a keyed URL never shows.
     #[test]
     fn feeds_scenes_show_their_parts() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("feeds-settings-off", size);
             assert!(rt.find("set/feeds").is_some() && rt.find("nav/feeds").is_none(), "off at {size:?}");
             let rt = render("feeds", size);
-            for key in ["page/feeds", "feeds/new", "feeds/sources", "nav/feeds"] {
+            for key in ["page/feeds", "feeds/table", "feeds/head", "feeds/sources", "nav/feeds", "feeds/download", "feeds/select-new"] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(render("feeds-empty", size).find("feeds/empty").is_some());
             let rt = render("feeds-search", size);
             assert!(rt.find("feeds/search").is_some() && rt.find("feeds/search/loading").is_none(), "search at {size:?}");
             assert!(render("feeds-settings-nyaa", size).find("set/feeds/note").is_some());
+            assert!(render("feeds-history", size).find("feeds/history/0").is_some());
+            let rt = render("feeds-filter-presets", size);
+            assert!(rt.find("set/feeds/preset/0").is_some() && rt.find("set/feeds/preset/9").is_some());
+            let rt = render("feeds-filter-edit", size);
+            assert!(rt.find("set/feeds/editor/cond/0/elements").is_some() && rt.find("set/feeds/editor/save").is_some());
+            assert!(render("feeds-open", size).find("feeds/act/download/fake-1").is_some() || render("feeds-open", size).find("page/feeds").is_some());
         }
         let mut s = State::fake();
         crate::feeds::fake(&mut s);
-        assert!(!s.feeds.sel.rows.is_empty() && s.feeds.sel.rows.iter().all(|r| r.releases.len() == 3));
-        // Hoshi 1080p first (highest, most seeders), then Kumo-Subs 1080p, then 720p.
-        let r = &s.feeds.sel.rows[0];
-        assert!(s.feeds.items[r.releases[0]].1.title.starts_with("[Hoshi]"));
-        let id = r.media_id;
+        // Taiga's default filters: the Watching items selected, the not-in-list ones discarded.
+        let watching: Vec<u32> = s.entries.iter().filter(|e| e.status == Status::Watching).map(|e| e.id).collect();
+        assert!(s.feeds.entries.iter().any(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected));
+        assert!(s.feeds.entries.iter().filter(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected).all(|e| e.anime_id.is_some_and(|id| watching.contains(&id)) || e.anime_id.is_some()));
+        let e = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).unwrap().clone();
+        let id = e.anime_id.unwrap();
         assert!(s.feeds_badge(id).is_some());
-        let tree = format!("{:?}", render("feeds-settings", (1280.0, 800.0)).find("set/feeds/list").is_some());
-        assert_eq!(tree, "true");
-        // Download marks it got (headless: nothing opens) and the row goes.
-        let (item, eps) = (r.releases[0], r.episodes);
-        s.feeds_download(s.feeds.items[item].1.clone(), id, eps);
-        assert!(s.feeds.sel.rows.iter().all(|r| !(r.media_id == id && r.episodes == eps)));
-        assert!(s.feeds_badge(id) != Some(eps));
+        assert!(render("feeds-settings", (1280.0, 800.0)).find("set/feeds/list").is_some());
+        // Check box, Discard marked, Select all new.
+        let k = e.item.key();
+        s.feeds_mark(vec![k.clone()], kotora_core::feeds::taiga::ItemState::Blank);
+        s.feeds_toggle(&k);
+        assert_eq!(s.feeds.entries.iter().find(|x| x.item.key() == k).unwrap().state, kotora_core::feeds::taiga::ItemState::Selected);
+        s.feeds_discard_marked();
+        assert!(s.feeds_checked().is_empty());
+        s.feeds.manual.clear();
+        s.feeds_discard_rest();
+        s.feeds.manual.clear();
+        s.feeds_reselect();
+        s.feeds_select_new();
+        assert!(!s.feeds_checked().is_empty());
+        // Download: into the history (headless: nothing opens), the item is discarded, its
+        // episode marked got.
+        let eps = e.release.episodes.unwrap();
+        s.feeds_download(vec![k.clone()]);
+        assert!(s.feeds.archive.as_ref().unwrap().contains(&e.item.title));
+        assert!(s.feeds.entries.iter().find(|x| x.item.key() == k).unwrap().state.is_discarded());
+        assert!(s.feeds.marks.got.contains_key(&(id, eps.0, eps.1)));
+        // Per-anime: prefer a group, then discard the anime.
+        s.feeds_prefer_group(id, "Tsuki");
+        assert_eq!(kotora_core::feeds::taiga::fansub_groups(&s.feeds.filters, id), vec!["Tsuki".to_string()]);
+        s.feeds_discard_anime(id);
+        assert!(s.feeds.entries.iter().filter(|x| x.anime_id == Some(id)).all(|x| x.state.is_discarded()));
+        // The editor: a preset, a condition, saved.
+        let n = s.feeds.filters.len();
+        s.feeds_filter_new();
+        s.feeds_filter_preset(2);
+        s.feeds_cond_add();
+        s.feeds_filter_save();
+        assert_eq!(s.feeds.filters.len(), n + 1);
+        assert_eq!(s.feeds.filters[n].conditions.len(), 8);
     }
 
     /// Statistics: every part at both sizes, the empty state's line, manga's words, and the

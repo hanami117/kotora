@@ -110,7 +110,12 @@ impl Section {
                 (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
             Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
-            Section::Feeds => vec![(Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsMinutes]), (Some("Releases"), vec![Row::FeedsSearch, Row::FeedsWords, Row::FeedsResolution, Row::FeedsNotify])],
+            Section::Feeds => vec![
+                (Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsAutocheck, Row::FeedsMinutes, Row::FeedsNewAction, Row::FeedsNotify]),
+                (Some("Filters"), vec![Row::FeedsFiltersOn, Row::FeedsFilters]),
+                (Some("Downloads"), vec![Row::FeedsApp, Row::FeedsFolder, Row::FeedsOrder]),
+                (Some("Search and history"), vec![Row::FeedsSearch, Row::FeedsHistory]),
+            ],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links]), (None, vec![Row::Support])],
         }
     }
@@ -189,8 +194,14 @@ pub enum Row {
     FeedsList,
     FeedsMinutes,
     FeedsSearch,
-    FeedsWords,
-    FeedsResolution,
+    FeedsAutocheck,
+    FeedsNewAction,
+    FeedsFiltersOn,
+    FeedsFilters,
+    FeedsApp,
+    FeedsFolder,
+    FeedsOrder,
+    FeedsHistory,
     FeedsNotify,
     About,
     Licences,
@@ -257,8 +268,14 @@ impl Row {
             Row::FeedsList => "feeds-list",
             Row::FeedsMinutes => "feeds-minutes",
             Row::FeedsSearch => "feeds-search",
-            Row::FeedsWords => "feeds-words",
-            Row::FeedsResolution => "feeds-resolution",
+            Row::FeedsAutocheck => "feeds-autocheck",
+            Row::FeedsNewAction => "feeds-new-action",
+            Row::FeedsFiltersOn => "feeds-filters-on",
+            Row::FeedsFilters => "feeds-filters",
+            Row::FeedsApp => "feeds-app",
+            Row::FeedsFolder => "feeds-folder",
+            Row::FeedsOrder => "feeds-order",
+            Row::FeedsHistory => "feeds-history",
             Row::FeedsNotify => "feeds-notify",
             Row::About => "about",
             Row::Licences => "licences",
@@ -340,8 +357,14 @@ const SPECS: &[Spec] = &[
     spec(Row::FeedsList, Section::Feeds, "Feeds", "The RSS feeds Kotora checks. None is built in.", "feed feeds rss url address add remove nyaa source sources key passkey apikey"),
     spec(Row::FeedsMinutes, Section::Feeds, "Check every", "How often Kotora checks your feeds while it runs.", "interval minutes poll check every often refresh"),
     spec(Row::FeedsSearch, Section::Feeds, "Search address", "Search releases on a show uses this address, with %title% as the title, as in Taiga.", "search address url title %title% nyaa find releases episodes missing backlog taiga"),
-    spec(Row::FeedsWords, Section::Feeds, "Words", "Words a release name must have, and words it must not have.", "words include exclude filter dub raw subs keyword keywords"),
-    spec(Row::FeedsResolution, Section::Feeds, "Preferred resolution", "Which release comes first when there are several.", "resolution quality 1080p 720p 2160p 4k 480p prefer"),
+    spec(Row::FeedsAutocheck, Section::Feeds, "Check automatically", "Check the feeds on an interval, as Taiga's auto-check.", "auto check automatic automatically interval torrents new"),
+    spec(Row::FeedsNewAction, Section::Feeds, "When new episodes are found", "Notify, or download the selected ones at once.", "new episodes action notify download automatically auto-download auto"),
+    spec(Row::FeedsFiltersOn, Section::Feeds, "Enable filters", "Taiga's torrent filters: conditions, then discard, select or prefer.", "filter filters enable conditions discard select prefer"),
+    spec(Row::FeedsFilters, Section::Feeds, "Filters", "Taiga's filter manager: presets, conditions, actions, per-anime filters, import and export.", "filter filters manager preset presets condition conditions action discard select prefer fansub group resolution anime import export xml default"),
+    spec(Row::FeedsApp, Section::Feeds, "Open torrents with", "The system's torrent app, or one you choose.", "app application client torrent qbittorrent transmission deluge open with path program"),
+    spec(Row::FeedsFolder, Section::Feeds, "Save to a folder", "Save .torrent files into a folder, a folder per anime.", "folder save download directory watch subfolder subfolders torrent file"),
+    spec(Row::FeedsOrder, Section::Feeds, "Download order", "The order Download marked uses: episode or date.", "order sort episode date ascending descending download marked"),
+    spec(Row::FeedsHistory, Section::Feeds, "Torrent history", "The torrents already downloaded: discarded when a feed shows them again.", "history archive downloaded clear torrents already"),
     spec(Row::FeedsNotify, Section::Feeds, "New release", "A notification when a feed has a new episode for your list.", "notification notifications alert popup release feed torrent new episode"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
     spec(Row::Licences, Section::About, "Licences", "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.", "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright"),
@@ -897,7 +920,7 @@ fn choice<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, label: f
 }
 
 /// A choice that can be disabled (dimmed, and it ignores presses), like [`switch_if`].
-fn choice_if<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, enabled: bool, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
+pub(crate) fn choice_if<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, enabled: bool, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
     let mut r = row().key(key.to_string()).gap(6.0).flex_wrap();
     for &t in items {
         r = r.child(cell(format!("{key}/{}", slug(t)), label(t).to_string(), on == t, move |s: &mut State| if enabled { set(s, t) }).child(text(label(t)).font(theme::LABEL).color(PAL.text)));
@@ -1103,12 +1126,33 @@ fn row_el(s: &State, r: Row) -> El {
             "\u{201c}Search releases\u{201d} (right-click a show, or its details) reads this address once, with %title% replaced by the show\u{2019}s title, as Taiga does. Adding a nyaa.si feed fills in nyaa.si\u{2019}s.",
             crate::feeds::search_block(s),
         ),
-        Row::FeedsWords => block("Words", "Plain words, separated by commas, any case, whole words only. A release with a \u{201c}never\u{201d} word, or without every \u{201c}must have\u{201d} word, is hidden.", crate::feeds::words_block(s)),
-        Row::FeedsResolution => line(
-            "Preferred resolution",
-            "Shown first when an episode has several releases; the others stay one click away.",
-            choice_if("set/feeds-resolution", &crate::feeds::RESOLUTIONS, s.feeds.cfg.resolution, s.feeds.cfg.enabled, crate::feeds::resolution_label, crate::feeds::resolution_slug, State::set_feeds_resolution),
+        Row::FeedsAutocheck => line(
+            "Check automatically",
+            "Off: only Check new torrents (on the Torrents page) checks.",
+            switch_if("set/feeds-autocheck".into(), "Check automatically", s.feeds.cfg.autocheck, s.feeds.cfg.enabled, State::set_feeds_autocheck),
         ),
+        Row::FeedsNewAction => line(
+            "When new episodes are found",
+            "Download opens the items your filters select at once, in the download order. Off by default: a notification only.",
+            choice_if("set/feeds-new-action", &crate::torrents::NEW_ACTIONS, crate::torrents::pick(&crate::torrents::NEW_ACTIONS, &s.feeds.cfg.new_action), s.feeds.cfg.enabled, crate::torrents::new_action_label, crate::torrents::slug, State::set_feeds_new_action),
+        ),
+        Row::FeedsFiltersOn => line(
+            "Enable filters",
+            "Filters discard, select or prefer items by their conditions, top to bottom; preferences last.",
+            switch_if("set/feeds-filters-on".into(), "Enable filters", s.feeds.cfg.filters_enabled, s.feeds.cfg.enabled, State::set_feeds_filters_on),
+        ),
+        Row::FeedsFilters => {
+            let b = block("Filters", "As in Taiga: start from a preset or from scratch. Filters for some anime only apply to those.", crate::torrents::filters_block(s));
+            if s.feeds.cfg.enabled { b } else { b.opacity(0.4) }
+        }
+        Row::FeedsApp => block("Open torrents with", "Magnets and .torrent files go to this app. Kotora never downloads video itself.", crate::torrents::app_block(s)),
+        Row::FeedsFolder => block("Save to a folder", "Saves the .torrent file into the folder instead of opening it (a torrent app can watch it). Magnet-only items still open.", crate::torrents::folder_block(s)),
+        Row::FeedsOrder => line(
+            "Download order",
+            "Download marked torrents goes by anime, then this.",
+            crate::torrents::order_choice(s),
+        ),
+        Row::FeedsHistory => line("Torrent history", crate::torrents::history_note(s), crate::torrents::history_button(s)),
         Row::FeedsNotify => line("New release", "\u{201c}New release: Title Ep 8\u{201d}, one notification per check. Never for unsure matches.", switch_if("set/feeds-notify".into(), "New release", p.notify.new_release, s.feeds.cfg.enabled, State::set_feeds_notify)),
         Row::NotifyDetected => notify(
             "Episode detected",
