@@ -452,7 +452,8 @@ fn row(it: &ListItem, fmt: ScoreFormat, waiting: bool) -> Row {
     Row {
         kind: m.kind.into(),
         id: m.id,
-        title: m.title.clone(),
+        // The chosen language, romaji when the service has none (the desktop's `display_title`).
+        title: m.display_title(prefs::titles()).to_string(),
         title_en: m.title_en.clone(),
         status: it.status.into(),
         progress: it.progress,
@@ -742,13 +743,14 @@ impl Kotora {
     pub fn flush_queue(&self) -> Result<FlushReport, KotoraError> {
         let mut report = FlushReport::default();
         let mut store = self.own_store()?;
+        let keep_higher = prefs::keep_higher();
         for service in Service::ALL.into_iter().filter(|s| self.signed_in(*s)) {
             if store.open_count(service.name())? == 0 {
                 continue;
             }
             let mut svc = self.service(service)?;
             for _ in 0..FLUSH_MAX {
-                match queue::step(&mut store, svc.as_mut(), time::now_unix())? {
+                match queue::step_with(&mut store, svc.as_mut(), time::now_unix(), keep_higher)? {
                     Step::Idle => break,
                     Step::Wait(s) => {
                         report.retry_in = Some(report.retry_in.map_or(s, |r| r.min(s)));
@@ -802,6 +804,9 @@ mod prefs;
 mod seasons;
 pub use seasons::{SeasonGrid, SeasonPick};
 pub use prefs::{ReleaseSources, ShownTitle};
+/// Home's Airing this week and the manga details' Publishing card.
+mod home;
+pub use home::{HomeAiring, PublishingCard};
 
 #[cfg(test)]
 mod tests;

@@ -5,7 +5,34 @@
 use kotora_core::config::{self, Config, TitleLang};
 use kotora_core::{Scope, paths};
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use crate::{Kotora, KotoraError, MediaKind, other};
+
+/// The title language, read once from `config.toml` and kept up to date by
+/// [`Kotora::set_title_language`] (rows ask for it one by one). `u8::MAX`: not read yet.
+static TITLES: AtomicU8 = AtomicU8::new(u8::MAX);
+
+/// The title language the rows use: the desktop's `[display] titles`.
+pub(crate) fn titles() -> TitleLang {
+    let n = TITLES.load(Ordering::Relaxed);
+    let l = TitleLang::ALL.get(usize::from(n)).copied().unwrap_or_else(|| load().display.titles);
+    if n == u8::MAX {
+        remember(l);
+    }
+    l
+}
+
+fn remember(l: TitleLang) {
+    let i = TitleLang::ALL.iter().position(|x| *x == l).unwrap_or(0);
+    TITLES.store(u8::try_from(i).unwrap_or(0), Ordering::Relaxed);
+}
+
+/// Settings → Updates → "Keep the higher progress in conflicts" (`[updates]
+/// keep_higher_progress`, on by default as on the desktop): read by every queue run.
+pub(crate) fn keep_higher() -> bool {
+    load().updates.keep_higher_progress
+}
 
 /// Settings → Release data: at least one stays on.
 #[derive(uniffi::Record, Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,11 +65,23 @@ impl Kotora {
 
     pub fn set_title_language(&self, value: String) -> Result<(), KotoraError> {
         let l = TitleLang::ALL.into_iter().find(|l| l.key() == value).ok_or_else(|| other(format!("{value:?} is not a title language")))?;
-        write("display", "titles", &config::quote(l.key()))
+        write("display", "titles", &config::quote(l.key()))?;
+        remember(l);
+        Ok(())
     }
 
-    /// The active list's titles in the chosen language (romaji when that one is missing).
-    /// Local. Romaji: empty (the rows' titles already are).
+    /// "Keep the higher progress in conflicts": a progress-only conflict where this phone's
+    /// count is higher sends it instead of asking (the desktop's rule and default).
+    pub fn keep_higher_progress(&self) -> bool {
+        keep_higher()
+    }
+
+    pub fn set_keep_higher_progress(&self, on: bool) -> Result<(), KotoraError> {
+        write("updates", "keep_higher_progress", &on.to_string())
+    }
+
+    /// The active list's titles in the chosen language (romaji when that one is missing, as on
+    /// the desktop). Local. Romaji: empty. (Rows already carry the chosen title.)
     pub fn shown_titles(&self, kind: MediaKind) -> Result<Vec<ShownTitle>, KotoraError> {
         let lang = load().display.titles;
         if lang == TitleLang::Romaji {
