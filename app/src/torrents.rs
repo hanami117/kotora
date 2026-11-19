@@ -4,7 +4,7 @@
 // src/ui/dlg/dlg_feed_filter.cpp and dlg_settings_page.cpp (the feed filter manager: presets,
 // conditions, actions, options, anime, import and export; the torrent settings: auto-check, new
 // episode action, the torrent application, the download folder, the download order) and
-// src/track/feed_aggregator.cpp (Download, the archive).
+// src/track/feed_aggregator.cpp (Download, the archive) and res/menu.xml (TorrentListRightClick).
 
 //! Taiga's torrent tab for Kotora: the Torrents page (every feed item, its anime, episode,
 //! group, size, video, seeders/leechers and description, checked when selected, dimmed when
