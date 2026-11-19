@@ -15,6 +15,15 @@ import io.github.hanami117.kotora.core.PublishingSort
 import io.github.hanami117.kotora.data.SamplePages
 import io.github.hanami117.kotora.ui.AppearanceExtras
 import io.github.hanami117.kotora.ui.FillVolumesPreview
+import io.github.hanami117.kotora.core.ExportRow
+import io.github.hanami117.kotora.core.ImportConflict
+import io.github.hanami117.kotora.core.ImportDone
+import io.github.hanami117.kotora.core.ImportGroup
+import io.github.hanami117.kotora.core.ImportPreview
+import io.github.hanami117.kotora.ui.ImportBody
+import io.github.hanami117.kotora.ui.ImportUi
+import io.github.hanami117.kotora.ui.TransferRows
+import androidx.compose.foundation.layout.Column
 import io.github.hanami117.kotora.ui.PublishingPanelBody
 import io.github.hanami117.kotora.ui.PublishingScreen
 import io.github.hanami117.kotora.ui.SettingsExtras
@@ -343,6 +352,29 @@ class ScreenshotTest {
     @Test fun fillPreviewDark() = shot("fill-preview", true) { FillVolumesPreview(fillPreview) }
     @Test fun fillPreviewLight() = shot("fill-preview", false) { FillVolumesPreview(fillPreview) }
     @Test fun fillDoneLight() = shot("fill-done", false) { FillVolumesPreview(fillPreview, queued = 2u) }
+
+    // Batch E: Export / Import MyAnimeList XML (the core's words, made up here).
+    private val importPreview = ImportPreview(
+        file = "animelist_demo.xml.gz", total = "7 anime", new = 3u, different = 2u, same = 1u, unknown = 1u,
+        groups = listOf(
+            ImportGroup("New on your MyAnimeList list", listOf("Moonlit Harbor: Plan to watch", "Paper Kite Diaries: Completed, episode 12, score 8", "Rust & Rain: Watching, episode 3")),
+            ImportGroup("Different (with \u201cupdate\u201d)", listOf("Hoshikuzu Relay: episode 6 \u2192 7")),
+            ImportGroup("Left out", listOf("No Id In The File: No MyAnimeList id")),
+        ),
+        conflicts = listOf(ImportConflict(2u, "Kagerou Bakery", "Keep Watching", "Use Dropped")),
+        note = "Changes go through the sync queue to MyAnimeList at its pace, and wait there while you are offline. A higher episode count wins; a score fills an empty one. Dates and notes in the file are not imported.",
+        addNew = "Add new only (3)", addNewEnabled = true, addAndUpdate = "Add new and update (5)", addAndUpdateEnabled = true,
+    )
+    private val transferRows = listOf(
+        Triple(MediaKind.ANIME, ExportRow("Export anime list\u2026", "Your anime list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, episodes, score, rewatches and the dates Kotora has.", true),
+            ExportRow("Import anime list\u2026", "Read a MyAnimeList anime XML export (.xml or .xml.gz) and add it to your MyAnimeList anime list. You see what changes before anything is sent.", true)),
+        Triple(MediaKind.MANGA, ExportRow("Export manga list\u2026", "Your manga list as a MyAnimeList XML file, which MyAnimeList, AniList, Kitsu and Taiga can import. Status, chapters, volumes, score, rereads and the dates Kotora has.", true),
+            ExportRow("Import manga list\u2026", "Read a MyAnimeList manga XML export (.xml or .xml.gz) and add it to your MyAnimeList manga list. You see what changes before anything is sent.", true)),
+    )
+    @Test fun transferRowsDark() = shot("transfer-rows", true) { Column { TransferRows(transferRows, {}, {}) } }
+    @Test fun importPreviewDark() = shot("import-preview", true) { ImportBody(MediaKind.ANIME, ImportUi(preview = importPreview, useFile = setOf(2u))) }
+    @Test fun importPreviewLight() = shot("import-preview", false) { ImportBody(MediaKind.ANIME, ImportUi(preview = importPreview)) }
+    @Test fun importDoneLight() = shot("import-done", false) { ImportBody(MediaKind.ANIME, ImportUi(done = ImportDone(5u, "Queued 5 changes for MyAnimeList. They go out at its pace; the Queue page shows them.", true))) }
 
     // Batch B: the service's details, and a title not on the list.
     private fun detailsInfo(name: String, dark: Boolean, id: UInt) = shot(name, dark) {

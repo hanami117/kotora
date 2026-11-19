@@ -288,6 +288,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     extras = {
                         vm.repo?.let { r ->
                             SettingsExtras(r.pages, vm.settings, vm.mangaEnabled, vm.isSample, vm::changeSetting, { nav.navigate("stats") }, { fill = true })
+                            TransferSection((r as? io.github.hanami117.kotora.data.CoreRepository)?.kotora, vm.mangaEnabled, vm::listChanged) { nav.navigate("queue") }
                         }
                     },
                 )

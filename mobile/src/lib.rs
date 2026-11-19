@@ -834,3 +834,5 @@ pub use background::*;
 /// The details page's service information and the add of a title not on the list.
 mod details;
 pub use details::{InfoFact, InfoStat, PastedId, ServiceDetails, TitleStub};
+/// MyAnimeList XML export and import (Settings → Your list).
+mod xml;
