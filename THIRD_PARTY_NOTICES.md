@@ -15,7 +15,7 @@ Kotora is a tribute to Taiga (https://taiga.moe/, by erengy).
 ### Taiga (GPL-3.0)
 
 The torrent feeds (`core/src/feeds.rs`, `core/src/feeds/taiga.rs`, `core/src/feeds/download.rs`,
-`app/src/feeds.rs`, `app/src/torrents.rs`) port parts of Taiga (https://github.com/erengy/taiga),
+`app/src/feeds.rs`, `app/src/torrents.rs`, `app/src/shows.rs`) port parts of Taiga (https://github.com/erengy/taiga),
 Copyright (C) Eren Okka and contributors, licensed under the GNU General Public License version 3:
 the torrent engine (item states and categories, the feed filters with their elements, operators,
 actions, options and presets, preference filters, new episodes, the archive of downloaded torrents,
