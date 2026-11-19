@@ -153,6 +153,27 @@ pub struct Feeds {
     pub resolution: u32,
     /// The search address, as in Taiga: `%title%` becomes the anime's title. Empty: no search.
     pub search: String,
+    /// Taiga's "Check new torrents every N minutes" switch: off, only "Check now" checks.
+    pub autocheck: bool,
+    /// What a check does with new episodes (Taiga's `newaction`): `notify`, or `download` the
+    /// selected ones at once.
+    pub new_action: String,
+    /// Taiga's filters switch ("Enable filters"); the filters live in `feed_filters.xml`.
+    pub filters_enabled: bool,
+    /// Download with: `default` (the system's app for magnets and .torrent files) or `custom`
+    /// (`app_path`, the torrent file or magnet as its argument).
+    pub app_mode: String,
+    pub app_path: String,
+    /// Save .torrent files into `folder` instead of opening them (magnets still open).
+    pub save_to_folder: bool,
+    pub folder: String,
+    /// A folder per anime inside `folder`.
+    pub subfolders: bool,
+    /// "Download marked torrents" order: `episode` or `date`, ascending unless `sort_desc`.
+    pub sort_by: String,
+    pub sort_desc: bool,
+    /// The history of downloaded torrents keeps this many titles.
+    pub archive_max: u32,
 }
 
 impl Feeds {
@@ -178,7 +199,26 @@ impl Feeds {
 
 impl Default for Feeds {
     fn default() -> Self {
-        Feeds { enabled: false, sources: Vec::new(), interval_minutes: Self::DEFAULT_MINUTES, include: Vec::new(), exclude: Vec::new(), resolution: 0, search: String::new() }
+        Feeds {
+            enabled: false,
+            sources: Vec::new(),
+            interval_minutes: Self::DEFAULT_MINUTES,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            resolution: 0,
+            search: String::new(),
+            autocheck: true,
+            new_action: "notify".into(),
+            filters_enabled: true,
+            app_mode: "default".into(),
+            app_path: String::new(),
+            save_to_folder: false,
+            folder: String::new(),
+            subfolders: true,
+            sort_by: "episode".into(),
+            sort_desc: false,
+            archive_max: 1000,
+        }
     }
 }
 
@@ -1326,6 +1366,9 @@ mod tests {
     fn feeds_are_off_with_no_sources() {
         let f = Config::parse("").unwrap().feeds;
         assert_eq!((f.enabled, f.sources.len(), f.minutes(), f.active()), (false, 0, 30, false));
+        // Taiga's torrent defaults: auto-check on, notify (no auto-download), filters on, the
+        // system's app, no folder.
+        assert_eq!((f.autocheck, f.new_action.as_str(), f.filters_enabled, f.app_mode.as_str(), f.save_to_folder, f.archive_max), (true, "notify", true, "default", false, 1000));
         let src = vec![FeedSource { name: "A \"b\"".into(), url: "https://x.example/rss?apikey=k".into() }];
         let text = set_line("", "feeds", "sources", &Feeds::sources_toml(&src));
         let text = set_line(&text, "feeds", "enabled", "true");

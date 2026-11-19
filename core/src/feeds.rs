@@ -14,6 +14,7 @@
 //! Nothing here makes a request. URLs that carry a key are masked by [`mask`] wherever they
 //! are shown; [`nyaa_defaults`] fills a name for a pasted nyaa.si URL without asking the site.
 
+pub mod download;
 pub mod marks;
 pub mod poll;
 pub mod select;
