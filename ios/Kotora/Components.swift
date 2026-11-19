@@ -53,6 +53,7 @@ struct AccountMenu: View {
     @Environment(\.webAuthenticationSession) private var auth
     @EnvironmentObject private var model: AppModel
     @State private var showProfile = false
+    @State private var showStats = false
 
     var body: some View {
         if let active = model.session.active {
@@ -73,11 +74,13 @@ struct AccountMenu: View {
                 }
                 Divider()
                 Button { showProfile = true } label: { Label("Profile", systemImage: "person.text.rectangle") }
+                Button { showStats = true } label: { Label("Statistics", systemImage: "chart.bar.xaxis") }
             } label: {
                 Avatar(account: active).contentShape(Circle()).frame(width: 44, height: 44)
             }
             .accessibilityIdentifier("accountMenu")
             .sheet(isPresented: $showProfile) { ProfileScreen() }
+            .sheet(isPresented: $showStats) { StatsSheet() }
         }
     }
 }

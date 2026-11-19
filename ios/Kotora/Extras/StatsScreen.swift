@@ -51,7 +51,7 @@ struct StatsScreen: View {
 }
 
 /// The desktop's words for one kind of list.
-private struct Words {
+struct Words {
     let unit, units, verb: String
 
     init(_ kind: MediaKind) {
@@ -59,6 +59,15 @@ private struct Words {
     }
 
     func count(_ n: UInt64) -> String { n == 1 ? "1 \(unit)" : "\(statsGrouped(n: n)) \(units)" }
+}
+
+/// The line under a period's number ("2 h 24 min", "5 vol.", "3 titles", "Nothing watched yet").
+func statsPeriodLine(_ kind: MediaKind, _ p: StatsPeriod, _ w: Words) -> String {
+    if kind == .anime && p.minutes > 0 { return statsDuration(minutes: p.minutes) }
+    if kind == .manga && p.volumes > 0 { return "\(p.volumes) vol." }
+    if p.titles == 1 { return "1 title" }
+    if p.titles > 0 { return "\(p.titles) titles" }
+    return "Nothing \(w.verb) yet"
 }
 
 private struct StatsContent: View {
@@ -85,13 +94,7 @@ private struct StatsContent: View {
 
     // ---- the tiles ----
 
-    private func periodLine(_ p: StatsPeriod, _ w: Words) -> String {
-        if st.kind == .anime && p.minutes > 0 { return statsDuration(minutes: p.minutes) }
-        if st.kind == .manga && p.volumes > 0 { return "\(p.volumes) vol." }
-        if p.titles == 1 { return "1 title" }
-        if p.titles > 0 { return "\(p.titles) titles" }
-        return "Nothing \(w.verb) yet"
-    }
+    private func periodLine(_ p: StatsPeriod, _ w: Words) -> String { statsPeriodLine(st.kind, p, w) }
 
     private func figures(_ w: Words) -> some View {
         var tiles: [(String, String, String)] = []

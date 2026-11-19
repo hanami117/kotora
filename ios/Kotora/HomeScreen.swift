@@ -35,6 +35,7 @@ struct HomeScreen: View {
                     }
                     shelf("Plan to watch", shelves.plan, all: (.anime, .planToWatch),
                           none: "Your Plan to watch list is empty.") { PosterCard(row: $0) }
+                    HomeStatsCard()
                 }
                 .padding(.top, 8).padding(.bottom, 80)
             }

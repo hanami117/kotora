@@ -15,6 +15,19 @@ struct ProfileScreen: View {
                 if let info, let account = model.session.active {
                     VStack(alignment: .leading, spacing: 16) {
                         head(info, account)
+                        NavigationLink { StatsScreen() } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "chart.bar.xaxis").foregroundStyle(p.accent).frame(width: 22)
+                                Text("Statistics").font(Inter.medium(15)).foregroundStyle(p.text)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(p.faint)
+                            }
+                            .padding(.horizontal, 16).frame(height: 52)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(p.surface))
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(p.border, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("profileStatistics")
                         anime(info)
                         scores(info)
                         HStack(spacing: 12) {
