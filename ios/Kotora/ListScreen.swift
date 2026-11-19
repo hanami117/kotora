@@ -26,11 +26,13 @@ struct ListScreen: View {
                 .padding(.horizontal, 16)
             chips(ui)
             syncLine(ui)
+            SignInAgainBanner()
             List {
                 ForEach(ui.rows, id: \.key) { row in
                     RowView(row: row) { model.plusOne(row) }
                         .contentShape(Rectangle())
                         .onTapGesture { path.append(RowRef(kind: row.kind, id: row.id)) }
+                        .contextMenu { OpenOnMenuItems(kind: row.kind, id: row.id) }
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
                         .listRowBackground(p.bg)
                         .listRowSeparatorTint(p.border)

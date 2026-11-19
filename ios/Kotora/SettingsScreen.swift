@@ -65,7 +65,8 @@ struct SettingsScreen: View {
                         ListLine(title: "Data", subtitle: "From MyAnimeList and AniList, for your own account. No Kotora server.") {
                             EmptyView()
                         } trailing: { EmptyView() }
-                        ListLine(title: "Font", subtitle: "Inter, SIL Open Font License 1.1", divider: false) { EmptyView() } trailing: { EmptyView() }
+                        ListLine(title: "Font", subtitle: "Inter, SIL Open Font License 1.1") { EmptyView() } trailing: { EmptyView() }
+                        AboutLinks()
                     }
                     .padding(.bottom, 24)
                 }

@@ -797,3 +797,6 @@ mod pages;
 
 #[cfg(test)]
 mod tests;
+
+mod links;
+mod profile;

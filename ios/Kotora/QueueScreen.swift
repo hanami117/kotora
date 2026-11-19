@@ -11,6 +11,7 @@ struct QueueScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                SignInAgainBanner(queue: true).padding(.top, 6)
                 if let problem = model.list.problem {
                     Text(problem).font(Inter.regular(13)).foregroundStyle(p.dropped)
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading)

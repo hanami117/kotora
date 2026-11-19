@@ -67,6 +67,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var list = ListUi()
     @Published private(set) var mangaEnabled = false
     @Published var snack: Snack?
+    /// The service that asked to sign in again (the "Sign in again" banner); the list stays.
+    @Published var expired: Service?
+    /// The service of the last sign-in started (AniList shows the token paste after a problem).
+    @Published private(set) var lastSignIn: Service?
 
     private var repoOverride: Repository?
     var repo: Repository? { repoOverride ?? Core.repository }
@@ -149,8 +153,10 @@ final class AppModel: ObservableObject {
                 _ = try await r.flush()
                 _ = try await r.sync()
                 list.problem = nil
+                expired = nil
                 if case .signedIn = session { session = .signedIn(accounts: try await r.accounts()) }
             } catch KotoraError.SignInAgain {
+                expired = session.active?.service
                 list.problem = "Sign in again: the service no longer accepts Kotora's sign-in."
             } catch {
                 list.problem = message(of: error)
@@ -217,6 +223,7 @@ final class AppModel: ObservableObject {
     /// `finishSignIn`.
     func signIn(_ service: Service, with auth: WebAuthenticationSession) {
         guard let r = repo else { return }
+        lastSignIn = service
         Task {
             do {
                 let p = try await r.signInStart(service)
@@ -250,6 +257,7 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 let a = try await r.signInFinish(p, redirect: redirect)
+                if expired == service { expired = nil }
                 if signedIn { snack = Snack(text: "Signed in to \(service.label) as \(a.userName).") }
                 await start()
             } catch {

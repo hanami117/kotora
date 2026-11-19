@@ -52,6 +52,7 @@ struct AppBar<Trailing: View>: View {
 struct AccountMenu: View {
     @Environment(\.webAuthenticationSession) private var auth
     @EnvironmentObject private var model: AppModel
+    @State private var showProfile = false
 
     var body: some View {
         if let active = model.session.active {
@@ -70,10 +71,13 @@ struct AccountMenu: View {
                             .disabled(!model.hasClientId(s))
                     }
                 }
+                Divider()
+                Button { showProfile = true } label: { Label("Profile", systemImage: "person.text.rectangle") }
             } label: {
                 Avatar(account: active).contentShape(Circle()).frame(width: 44, height: 44)
             }
             .accessibilityIdentifier("accountMenu")
+            .sheet(isPresented: $showProfile) { ProfileScreen() }
         }
     }
 }

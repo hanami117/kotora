@@ -42,6 +42,11 @@ struct DetailsScreen: View {
                     if row.waiting { pill("Waiting to sync", color: p.onHold, dot: false) }
                 }
                 .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+                HStack(spacing: 8) {
+                    ForEach(model.serviceLinks(ref.kind, ref.id), id: \.url) { OpenOnButton(label: $0.label, url: $0.url) }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 12)
+                .accessibilityIdentifier("detailsOpenOn")
 
                 Card {
                     HStack {

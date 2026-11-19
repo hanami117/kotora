@@ -53,6 +53,7 @@ struct SignInScreen: View {
                 if let error {
                     Text(error).font(Inter.regular(13)).foregroundStyle(p.dropped).multilineTextAlignment(.center).padding(.top, 14)
                         .accessibilityIdentifier("signInError")
+                    if model.lastSignIn == .aniList && !busy { TokenPasteField().padding(.top, 12) }
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "lock").font(.system(size: 14)).foregroundStyle(p.faint).padding(.top, 2)
