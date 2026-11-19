@@ -148,3 +148,11 @@ fn nyaa_addresses_get_defaults() {
     assert!(nyaa_defaults("https://tracker.example/?page=rss").is_none());
     assert!(nyaa_defaults("https://nyaa.si.example/").is_none());
 }
+
+#[test]
+fn search_addresses() {
+    assert_eq!(search_url(NYAA_SEARCH, "Black Clover").as_deref(), Some("https://nyaa.si/?page=rss&c=1_2&f=0&q=Black+Clover"));
+    assert_eq!(search_url(NYAA_SEARCH, "Re:Bloom & Co").as_deref(), Some("https://nyaa.si/?page=rss&c=1_2&f=0&q=Re%3ABloom+%26+Co"));
+    assert_eq!(search_url("https://x.example/rss", "a"), None, "no %title%");
+    assert_eq!(search_url("file:///%title%", "a"), None);
+}

@@ -110,7 +110,7 @@ impl Section {
                 (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
             Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
-            Section::Feeds => vec![(Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsMinutes]), (Some("Releases"), vec![Row::FeedsWords, Row::FeedsResolution, Row::FeedsNotify])],
+            Section::Feeds => vec![(Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsMinutes]), (Some("Releases"), vec![Row::FeedsSearch, Row::FeedsWords, Row::FeedsResolution, Row::FeedsNotify])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links]), (None, vec![Row::Support])],
         }
     }
@@ -188,6 +188,7 @@ pub enum Row {
     FeedsOn,
     FeedsList,
     FeedsMinutes,
+    FeedsSearch,
     FeedsWords,
     FeedsResolution,
     FeedsNotify,
@@ -255,6 +256,7 @@ impl Row {
             Row::FeedsOn => "feeds",
             Row::FeedsList => "feeds-list",
             Row::FeedsMinutes => "feeds-minutes",
+            Row::FeedsSearch => "feeds-search",
             Row::FeedsWords => "feeds-words",
             Row::FeedsResolution => "feeds-resolution",
             Row::FeedsNotify => "feeds-notify",
@@ -337,6 +339,7 @@ const SPECS: &[Spec] = &[
     spec(Row::FeedsOn, Section::Feeds, "Torrent feeds", crate::feeds::SWITCH_NOTE, "torrent torrents feed feeds rss atom nyaa magnet release releases download new episode subs fansub"),
     spec(Row::FeedsList, Section::Feeds, "Feeds", "The RSS feeds Kotora checks. None is built in.", "feed feeds rss url address add remove nyaa source sources key passkey apikey"),
     spec(Row::FeedsMinutes, Section::Feeds, "Check every", "How often Kotora checks your feeds while it runs.", "interval minutes poll check every often refresh"),
+    spec(Row::FeedsSearch, Section::Feeds, "Search address", "Search releases on a show uses this address, with %title% as the title, as in Taiga.", "search address url title %title% nyaa find releases episodes missing backlog taiga"),
     spec(Row::FeedsWords, Section::Feeds, "Words", "Words a release name must have, and words it must not have.", "words include exclude filter dub raw subs keyword keywords"),
     spec(Row::FeedsResolution, Section::Feeds, "Preferred resolution", "Which release comes first when there are several.", "resolution quality 1080p 720p 2160p 4k 480p prefer"),
     spec(Row::FeedsNotify, Section::Feeds, "New release", "A notification when a feed has a new episode for your list.", "notification notifications alert popup release feed torrent new episode"),
@@ -1094,6 +1097,11 @@ fn row_el(s: &State, r: Row) -> El {
             "Check every",
             "While Kotora runs (also in the background). A feed can ask for longer.",
             choice_if("set/feeds-minutes", &crate::feeds::MINUTES, s.feeds.cfg.minutes(), s.feeds.cfg.enabled, crate::feeds::minutes_label, crate::feeds::minutes_slug, State::set_feeds_minutes),
+        ),
+        Row::FeedsSearch => block(
+            "Search address",
+            "\u{201c}Search releases\u{201d} (right-click a show, or its details) reads this address once, with %title% replaced by the show\u{2019}s title, as Taiga does. Adding a nyaa.si feed fills in nyaa.si\u{2019}s.",
+            crate::feeds::search_block(s),
         ),
         Row::FeedsWords => block("Words", "Plain words, separated by commas, any case, whole words only. A release with a \u{201c}never\u{201d} word, or without every \u{201c}must have\u{201d} word, is hidden.", crate::feeds::words_block(s)),
         Row::FeedsResolution => line(

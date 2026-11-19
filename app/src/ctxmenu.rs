@@ -356,6 +356,12 @@ pub fn view(s: &State, c: &Ctx) -> Vec<El> {
         }))
         .child(sep())
         .child(item("ctx/edit".into(), "Edit\u{2026}".into(), true, None, move |s, _| s.ctx_edit_entry(id)))
+        .children(s.feeds_can_search(id).then(|| {
+            item("ctx/search-releases".into(), "Search releases".into(), true, None, move |s, _| {
+                s.ctx = None;
+                s.feeds_search(id);
+            })
+        }))
         .child(item("ctx/details".into(), "Open details".into(), true, None, move |s, _| {
             s.ctx = None;
             if let Some(e) = s.entries.iter().find(|e| e.id == id) {

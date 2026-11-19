@@ -19,7 +19,7 @@ use kotora_core::config::{self, FeedSource, Feeds};
 use kotora_core::feeds::marks::Mark;
 use kotora_core::feeds::poll::{FeedState, Fetched, download_target, fetch};
 use kotora_core::feeds::select::{Ctx, Filter, Marks, Selection, select};
-use kotora_core::feeds::{Item, mask, nyaa_defaults, safe_http};
+use kotora_core::feeds::{Item, NYAA_SEARCH, mask, nyaa_defaults, safe_http, search_url};
 use kotora_core::recognize::{parse_release, relations::Relations};
 use kotora_core::{Kind, ListItem, paths};
 use rune::{El, ScrollSpec, TextEdit, TextStyle, Tx, col, el, row, spacer, text, text_input};
@@ -70,7 +70,22 @@ pub struct FeedsUi {
     /// A Download running, and what it said last.
     pub busy: Option<(u32, u32, u32)>,
     pub said: Option<String>,
+    /// Settings → Feeds → Search address.
+    pub search_edit: TextEdit,
+    /// The last "Search releases" (Taiga's Search for torrents).
+    pub search: Option<SearchView>,
     worker: Option<Sender<Cmd>>,
+}
+
+/// One search: the anime, its results, and what is new in them.
+#[derive(Default)]
+pub struct SearchView {
+    pub media_id: u32,
+    pub title: String,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub items: Vec<(i64, Item)>,
+    pub sel: Selection,
 }
 
 enum Cmd {
@@ -111,6 +126,7 @@ impl State {
         self.feeds.cfg = c.feeds.clone();
         self.feeds.include.text = c.feeds.include.join(", ");
         self.feeds.exclude.text = c.feeds.exclude.join(", ");
+        self.feeds.search_edit.text = c.feeds.search.clone();
         self.feeds_apply();
     }
 
@@ -148,7 +164,17 @@ impl State {
         let filter = filter_of(&f.cfg);
         let (aired, series) = (HashMap::new(), HashMap::new());
         let ctx = Ctx { list: &f.list, picks: &f.picks, relations: rel, aired: &aired, filter: &filter, series: &series, marks: &f.marks };
-        self.feeds.sel = select(&f.items, &ctx);
+        let main = select(&f.items, &ctx);
+        let found = f.search.as_ref().map(|sv| {
+            let mut sel = select(&sv.items, &ctx);
+            sel.rows.retain(|r| r.media_id == sv.media_id);
+            sel.unsure.retain(|u| u.media_id == sv.media_id);
+            sel
+        });
+        self.feeds.sel = main;
+        if let (Some(sv), Some(sel)) = (self.feeds.search.as_mut(), found) {
+            sv.sel = sel;
+        }
     }
 
     /// A pass ended.
@@ -319,6 +345,9 @@ impl State {
             return;
         }
         let masked = mask(&url) != url;
+        if nyaa_defaults(&url).is_some() && self.feeds.cfg.search.trim().is_empty() {
+            self.set_feeds_search(NYAA_SEARCH.to_string());
+        }
         self.feeds.cfg.sources.push(FeedSource { name: name.clone(), url });
         self.feeds_save("sources", Feeds::sources_toml(&self.feeds.cfg.sources));
         self.feeds.draft = TextEdit::default();
@@ -338,8 +367,7 @@ impl State {
 
     /// Download: the release's magnet or .torrent to the system's handler, then mark the
     /// episodes got (their other releases go).
-    pub fn feeds_download(&mut self, item: usize, media: u32, eps: (u32, u32)) {
-        let Some((_, it)) = self.feeds.items.get(item).cloned() else { return };
+    pub fn feeds_download(&mut self, it: Item, media: u32, eps: (u32, u32)) {
         let version = parse_release(&it.title).version;
         self.feeds.marks.got.insert((media, eps.0, eps.1), (it.info_hash.clone(), version));
         self.feeds_reselect();
@@ -368,6 +396,66 @@ impl State {
                 true
             });
         });
+    }
+}
+
+impl State {
+    pub fn set_feeds_search(&mut self, url: String) {
+        let url = url.trim().to_string();
+        self.feeds.cfg.search = url.clone();
+        self.feeds.search_edit.text = url.clone();
+        self.feeds_save("search", config::quote(&url));
+    }
+
+    pub fn feeds_save_search(&mut self) {
+        let t = self.feeds.search_edit.text.trim().to_string();
+        if t == self.feeds.cfg.search {
+            return;
+        }
+        if !t.is_empty() && search_url(&t, "x").is_none() {
+            self.feeds.error = Some("The search address needs %title% and must start with https:// (or http://).".into());
+            return;
+        }
+        self.feeds.error = None;
+        self.set_feeds_search(t);
+    }
+
+    /// Whether "Search releases" can run for an anime on the list.
+    pub fn feeds_can_search(&self, id: u32) -> bool {
+        self.feeds.cfg.enabled && !self.feeds.cfg.search.trim().is_empty() && self.entries.iter().any(|e| e.id == id)
+    }
+
+    /// Search releases (Taiga's "Search for torrents"): the search address with the anime's
+    /// title, read once, shown on the Feeds page.
+    pub fn feeds_search(&mut self, id: u32) {
+        let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
+        let title = e.main_title.clone();
+        let Some(url) = search_url(&self.feeds.cfg.search, &title) else {
+            self.feeds.search = Some(SearchView { media_id: id, title, error: Some("Set a search address in Settings \u{2192} Feeds.".into()), ..SearchView::default() });
+            self.open_feeds();
+            return;
+        };
+        self.feeds.search = Some(SearchView { media_id: id, title, loading: true, ..SearchView::default() });
+        self.open_feeds();
+        let Some(h) = self.handle.clone() else { return };
+        let _ = std::thread::Builder::new().name("kotora-feed-search".into()).spawn(move || {
+            let r = fetch(&url, None, None).and_then(|f| match f {
+                Fetched::New { body, .. } => kotora_core::feeds::parse(&body).map(|f| f.items).map_err(|e| e.to_string()),
+                Fetched::Same => Ok(Vec::new()),
+            });
+            h.update_if(move |s, _| s.feeds_found(id, r));
+        });
+    }
+
+    pub fn feeds_found(&mut self, id: u32, r: Result<Vec<Item>, String>) -> bool {
+        let Some(sv) = self.feeds.search.as_mut().filter(|sv| sv.media_id == id) else { return false };
+        sv.loading = false;
+        match r {
+            Ok(items) => sv.items = items.into_iter().map(|i| (-1, i)).collect(),
+            Err(e) => sv.error = Some(e),
+        }
+        self.feeds_reselect();
+        true
     }
 }
 
@@ -529,6 +617,8 @@ pub fn fake(s: &mut State) {
         FeedSource { name: "nyaa.si: Hoshi".into(), url: "https://nyaa.si/user/Hoshi?page=rss&c=1_2".into() },
         FeedSource { name: "tracker.example".into(), url: "https://tracker.example/rss?passkey=0123456789abcdef".into() },
     ];
+    s.feeds.cfg.search = NYAA_SEARCH.into();
+    s.feeds.search_edit.text = NYAA_SEARCH.into();
     s.feeds.items = items;
     s.feeds.notified = Some(Vec::new());
     s.feeds_reselect();
@@ -673,7 +763,7 @@ pub fn sources_block(s: &State) -> El {
     c
 }
 
-fn word_field(key: &'static str, edit: &TextEdit, hint: &str, get: fn(&mut State) -> &mut TextEdit) -> El {
+fn word_field(key: &'static str, edit: &TextEdit, hint: &str, get: fn(&mut State) -> &mut TextEdit, submit: fn(&mut State)) -> El {
     row()
         .key(format!("{key}/box"))
         .role("textbox")
@@ -695,9 +785,9 @@ fn word_field(key: &'static str, edit: &TextEdit, hint: &str, get: fn(&mut State
                 .placeholder(field_hint(edit, hint), PAL.faint)
                 .on_edit(get)
                 .on_input_key(crate::ui::field_page_key)
-                .on_submit(|s: &mut State, tx: &mut Tx| {
+                .on_submit(move |s: &mut State, tx: &mut Tx| {
                     tx.blur();
-                    s.feeds_save_words();
+                    submit(s);
                 }),
         )
 }
@@ -708,8 +798,8 @@ pub fn words_block(s: &State) -> El {
         .key("set/feeds/words")
         .gap(8.0)
         .w_full()
-        .child(row().gap(10.0).center_y().child(text("Must have").font(theme::LABEL).color(PAL.dim).w(80.0)).child(word_field("set/feeds/include", &s.feeds.include, "e.g. multi sub", |s| &mut s.feeds.include)))
-        .child(row().gap(10.0).center_y().child(text("Never").font(theme::LABEL).color(PAL.dim).w(80.0)).child(word_field("set/feeds/exclude", &s.feeds.exclude, "e.g. dub, raw", |s| &mut s.feeds.exclude)))
+        .child(row().gap(10.0).center_y().child(text("Must have").font(theme::LABEL).color(PAL.dim).w(80.0)).child(word_field("set/feeds/include", &s.feeds.include, "e.g. multi sub", |s| &mut s.feeds.include, State::feeds_save_words)))
+        .child(row().gap(10.0).center_y().child(text("Never").font(theme::LABEL).color(PAL.dim).w(80.0)).child(word_field("set/feeds/exclude", &s.feeds.exclude, "e.g. dub, raw", |s| &mut s.feeds.exclude, State::feeds_save_words)))
         .child(row().child(spacer()).child(small("set/feeds/save-words".into(), "Save words", false, |s| s.feeds_save_words())))
 }
 
@@ -779,17 +869,20 @@ pub fn badge(s: &State, id: u32) -> Option<El> {
 
 /// Details → under "Your list": the releases of the next new episode, with Download.
 pub fn details_card(s: &State, id: u32) -> Option<El> {
-    let r = s.feeds.sel.rows.iter().filter(|r| r.media_id == id && !r.version_out).min_by_key(|r| r.episodes)?;
+    let search = s.feeds_can_search(id).then(|| row().pt(8.0).child(small(format!("det/search-releases/{id}"), "Search releases", false, move |s| s.feeds_search(id))));
+    let Some(r) = s.feeds.sel.rows.iter().filter(|r| r.media_id == id && !r.version_out).min_by_key(|r| r.episodes) else {
+        return search.map(|b| card("det-feeds", "Releases").child(text("Search your torrent site for this show\u{2019}s episodes.").font(theme::LABEL).color(PAL.dim)).child(b));
+    };
     let mut c = card("det-feeds", "Available");
-    c = c.child(release_line(s, r.media_id, r.episodes, r.releases[0], true, "det"));
+    c = c.child(release_line(s, r.media_id, r.episodes, &s.feeds.items[r.releases[0]].1, r.releases[0], true, "det"));
     if r.releases.len() > 1 {
         c = c.child(text(format!("{} more in Feeds", r.releases.len() - 1)).font(theme::LABEL).color(PAL.dim).pt(6.0));
     }
-    Some(c)
+    Some(c.children(search))
 }
 
-fn release_line(s: &State, media: u32, eps: (u32, u32), item: usize, best: bool, prefix: &str) -> El {
-    let it = &s.feeds.items[item].1;
+fn release_line(s: &State, media: u32, eps: (u32, u32), it: &Item, item: usize, best: bool, prefix: &str) -> El {
+    let owned = it.clone();
     let busy = s.feeds.busy == Some((media, eps.0, eps.1));
     let label = if busy { "Opening\u{2026}" } else { "Download" };
     row()
@@ -805,7 +898,46 @@ fn release_line(s: &State, media: u32, eps: (u32, u32), item: usize, best: bool,
                 .child(text(it.title.clone()).font(if best { theme::BODY_MED } else { theme::BODY }).color(PAL.text).truncate())
                 .child(text(facts(it)).font(theme::LABEL).color(PAL.dim).truncate()),
         )
-        .child(small(format!("{prefix}/download/{media}/{}-{}/{item}", eps.0, eps.1), label, best, move |s| s.feeds_download(item, media, eps)))
+        .child(small(format!("{prefix}/download/{media}/{}-{}/{item}", eps.0, eps.1), label, best, move |s| s.feeds_download(owned.clone(), media, eps)))
+}
+
+/// The search's results: the episodes past the progress, one row each, every release listed.
+fn search_card(s: &State, sv: &SearchView) -> El {
+    let mut c = card("feeds/search", &format!("Search: {}", sv.title));
+    c = c.child(row().child(spacer()).child(small("feeds/search/close".into(), "Close", false, |s| s.feeds.search = None)));
+    if sv.loading {
+        return c.child(text("Searching\u{2026}").key("feeds/search/loading").font(theme::BODY).color(PAL.dim).py(8.0));
+    }
+    if let Some(e) = &sv.error {
+        return c.child(text(mask(e)).key("feeds/search/error").font(theme::BODY).color(PAL.warn()).wrap().py(8.0));
+    }
+    if sv.sel.rows.is_empty() {
+        let line = if sv.items.is_empty() { "No releases found.".to_string() } else { format!("{} releases found, none past your progress.", sv.items.len()) };
+        c = c.child(text(line).key("feeds/search/none").font(theme::BODY).color(PAL.dim).py(8.0));
+    }
+    for r in &sv.sel.rows {
+        let mut group = col().key(format!("feeds/search/row/{}-{}", r.episodes.0, r.episodes.1)).w_full();
+        group = group.child(row().pt(10.0).child(crate::ui::tag_tinted(&ep_text(r.episodes.0, r.episodes.1), PAL.accent_hi, PAL.tint(PAL.accent, 0.14))));
+        for (n, &i) in r.releases.iter().enumerate() {
+            group = group.child(release_line(s, r.media_id, r.episodes, &sv.items[i].1, i, n == 0, "feeds/search"));
+        }
+        c = c.child(group);
+    }
+    if !sv.sel.unsure.is_empty() {
+        c = c.child(text(format!("{} more might be this show (unsure: not listed).", sv.sel.unsure.len())).font(theme::LABEL).color(PAL.dim).pt(8.0));
+    }
+    c
+}
+
+/// Settings → Feeds → Search address.
+pub fn search_block(s: &State) -> El {
+    row()
+        .key("set/feeds/search")
+        .gap(8.0)
+        .w_full()
+        .center_y()
+        .child(word_field("set/feeds/search-input", &s.feeds.search_edit, NYAA_SEARCH, |s| &mut s.feeds.search_edit, State::feeds_save_search))
+        .child(small("set/feeds/search-save".into(), "Save", false, |s| s.feeds_save_search()))
 }
 
 /// The Feeds page: new episodes for the list, then what needs a look, then the feeds.
@@ -813,7 +945,10 @@ pub fn page(s: &State, width: f32) -> El {
     let inner = (width.min(1000.0) - 2.0 * theme::PAGE_PAD).max(320.0);
     let f = &s.feeds;
     let mut body = col().gap(16.0).w_full();
-    if f.cfg.sources.is_empty() {
+    if let Some(sv) = &f.search {
+        body = body.child(search_card(s, sv));
+    }
+    if f.cfg.sources.is_empty() && f.search.is_none() {
         body = body.child(
             col()
                 .key("feeds/empty")
@@ -825,7 +960,7 @@ pub fn page(s: &State, width: f32) -> El {
                 .child(text("Add an RSS feed in Settings \u{2192} Feeds. Kotora checks only the feeds you add.").font(theme::BODY).color(PAL.dim).wrap())
                 .child(small("feeds/open-settings".into(), "Open Settings", true, |s| crate::settings::open(s, crate::settings::Section::Feeds))),
         );
-    } else {
+    } else if !f.cfg.sources.is_empty() {
         let mut list = card("feeds/new", "New for your list");
         if f.sel.rows.is_empty() {
             let waiting = f.lines.is_empty() || f.lines.values().any(|l| l.checking);
@@ -857,10 +992,10 @@ pub fn page(s: &State, width: f32) -> El {
                 );
             }
             let mut group = col().key(format!("feeds/row/{}/{}-{}", r.media_id, r.episodes.0, r.episodes.1)).w_full().child(head);
-            group = group.child(release_line(s, r.media_id, r.episodes, r.releases[0], true, "feeds"));
+            group = group.child(release_line(s, r.media_id, r.episodes, &f.items[r.releases[0]].1, r.releases[0], true, "feeds"));
             if f.open.contains(&key) {
                 for &i in &r.releases[1..] {
-                    group = group.child(release_line(s, r.media_id, r.episodes, i, false, "feeds"));
+                    group = group.child(release_line(s, r.media_id, r.episodes, &f.items[i].1, i, false, "feeds"));
                 }
             }
             list = list.child(group);

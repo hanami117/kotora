@@ -151,6 +151,8 @@ pub struct Feeds {
     pub exclude: Vec<String>,
     /// Preferred resolution (1080, 720, …); 0: any, the highest first.
     pub resolution: u32,
+    /// The search address, as in Taiga: `%title%` becomes the anime's title. Empty: no search.
+    pub search: String,
 }
 
 impl Feeds {
@@ -176,7 +178,7 @@ impl Feeds {
 
 impl Default for Feeds {
     fn default() -> Self {
-        Feeds { enabled: false, sources: Vec::new(), interval_minutes: Self::DEFAULT_MINUTES, include: Vec::new(), exclude: Vec::new(), resolution: 0 }
+        Feeds { enabled: false, sources: Vec::new(), interval_minutes: Self::DEFAULT_MINUTES, include: Vec::new(), exclude: Vec::new(), resolution: 0, search: String::new() }
     }
 }
 

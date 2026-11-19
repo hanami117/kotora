@@ -465,6 +465,23 @@ pub const SCENES: &[Scene] = &[
         }
         s.open_feeds();
     }),
+    // Search releases (Taiga's "Search for torrents"): made-up results for one show.
+    ("feeds-search", |s| {
+        crate::feeds::fake(s);
+        let e = s.entries.iter().find(|e| e.status == kotora_core::Status::Watching).unwrap();
+        let (id, title, ep) = (e.id, e.main_title.clone(), e.progress + 1);
+        s.feeds_search(id);
+        let items = (0..3)
+            .map(|k| kotora_core::feeds::Item {
+                guid: format!("s{k}"),
+                title: format!("[Hoshi] {title} - {:02} [1080p]", ep + k),
+                magnet: Some(format!("magnet:?xt=urn:btih:{:040x}", 900 + k)),
+                seeders: Some(30),
+                ..Default::default()
+            })
+            .collect();
+        s.feeds_found(id, Ok(items));
+    }),
     ("feeds-empty", |s| {
         s.feeds.cfg.enabled = true;
         s.open_feeds();
@@ -2936,6 +2953,8 @@ mod tests {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(render("feeds-empty", size).find("feeds/empty").is_some());
+            let rt = render("feeds-search", size);
+            assert!(rt.find("feeds/search").is_some() && rt.find("feeds/search/loading").is_none(), "search at {size:?}");
             assert!(render("feeds-settings-nyaa", size).find("set/feeds/note").is_some());
         }
         let mut s = State::fake();
@@ -2950,7 +2969,7 @@ mod tests {
         assert_eq!(tree, "true");
         // Download marks it got (headless: nothing opens) and the row goes.
         let (item, eps) = (r.releases[0], r.episodes);
-        s.feeds_download(item, id, eps);
+        s.feeds_download(s.feeds.items[item].1.clone(), id, eps);
         assert!(s.feeds.sel.rows.iter().all(|r| !(r.media_id == id && r.episodes == eps)));
         assert!(s.feeds_badge(id) != Some(eps));
     }

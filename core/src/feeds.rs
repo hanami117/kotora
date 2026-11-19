@@ -424,6 +424,27 @@ fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// nyaa.si's search, as Taiga's default (`rss/torrent/search/address`).
+pub const NYAA_SEARCH: &str = "https://nyaa.si/?page=rss&c=1_2&f=0&q=%title%";
+
+/// The search address for a title: `%title%` replaced, URL-encoded. `None`: no `%title%`, or
+/// not http(s).
+pub fn search_url(template: &str, title: &str) -> Option<String> {
+    let t = template.trim();
+    if !t.contains("%title%") {
+        return None;
+    }
+    let mut enc = String::new();
+    for b in title.trim().bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => enc.push(b as char),
+            b' ' => enc.push('+'),
+            _ => enc.push_str(&format!("%{b:02X}")),
+        }
+    }
+    safe_http(&t.replace("%title%", &enc))
+}
+
 /// The Anime category nyaa.si files English-translated releases under.
 pub const NYAA_ANIME_ENGLISH: &str = "1_2";
 
