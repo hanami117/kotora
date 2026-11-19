@@ -21,6 +21,9 @@
 //! rewatching).
 
 pub mod relations;
+mod release;
+
+pub use release::{Codec, Release, parse_release};
 
 use anitomy_ng::{ElementKind, Options};
 use relations::Relations;

@@ -30,6 +30,41 @@ pub fn parse_rfc3339(s: &str) -> Option<i64> {
     Some(days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se - offset)
 }
 
+/// Parses an RSS date, `Sat, 24 Feb 2018 05:34:20 +0000` (the weekday and seconds are optional;
+/// `GMT`, `UT`, `Z` and the US zone names work) to unix seconds.
+pub fn parse_rfc2822(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let s = s.split_once(',').map_or(s, |(_, r)| r).trim();
+    let mut it = s.split_whitespace();
+    let d: i64 = it.next()?.parse().ok()?;
+    let mon = it.next()?.get(..3)?.to_ascii_lowercase();
+    let mo = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].iter().position(|m| *m == mon)? as i64 + 1;
+    let y: i64 = it.next()?.parse().ok()?;
+    let y = if y < 100 { y + if y < 50 { 2000 } else { 1900 } } else { y };
+    let mut hms = it.next()?.split(':').map(|p| p.parse::<i64>().ok());
+    let (h, mi, se) = (hms.next()??, hms.next()??, hms.next().flatten().unwrap_or(0));
+    if !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+        return None;
+    }
+    let offset = match it.next().unwrap_or("+0000") {
+        "GMT" | "UT" | "UTC" | "Z" => 0,
+        "EST" => -5 * 3600,
+        "EDT" => -4 * 3600,
+        "CST" => -6 * 3600,
+        "CDT" => -5 * 3600,
+        "MST" => -7 * 3600,
+        "MDT" => -6 * 3600,
+        "PST" => -8 * 3600,
+        "PDT" => -7 * 3600,
+        z if z.len() == 5 && (z.starts_with('+') || z.starts_with('-')) => {
+            let v = z[1..3].parse::<i64>().ok()? * 3600 + z[3..5].parse::<i64>().ok()? * 60;
+            if z.starts_with('-') { -v } else { v }
+        }
+        _ => return None,
+    };
+    Some(days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se - offset)
+}
+
 /// Days since 1970-01-01 (Howard Hinnant's algorithm).
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -190,6 +225,17 @@ pub fn age(then: i64, now: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_rfc2822() {
+        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 05:34:20 +0000"), Some(1_519_450_460));
+        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 07:34:20 +0200"), Some(1_519_450_460));
+        assert_eq!(parse_rfc2822("24 Feb 2018 05:34:20 GMT"), Some(1_519_450_460));
+        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 00:34:20 EST"), Some(1_519_450_460));
+        assert_eq!(parse_rfc2822("Sat, 24 Feb 18 05:34 GMT"), Some(1_519_450_440));
+        assert_eq!(parse_rfc2822("2018-02-24"), None);
+        assert_eq!(parse_rfc2822("Sat, 24 Foo 2018 05:34:20 GMT"), None);
+    }
 
     #[test]
     fn parses_rfc3339() {

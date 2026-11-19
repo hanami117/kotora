@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Odd feed</title>
+  <item><title>[Hoshi] Harbor Lights Overtime - 04 [1080p]</title><link>file:///etc/passwd</link>
+    <enclosure url="javascript:alert(1)" type="application/x-bittorrent" length="1"/></item>
+  <item><title>[Hoshi] Harbor Lights Overtime - 05 [1080p]</title><link>magnet:?dn=no-hash-here</link>
+    <enclosure url="itms-apps://example" length="1"/></item>
+  <item><title>[Hoshi] Harbor Lights Overtime - 06 [1080p]</title><link>https://ok.example/download/6.torrent</link></item>
+  <item><title>No links at all</title></item>
+</channel></rss>

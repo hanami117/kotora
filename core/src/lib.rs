@@ -12,6 +12,7 @@ pub mod airnotes;
 pub mod config;
 pub mod covers;
 pub mod discord;
+pub mod feeds;
 pub mod http;
 pub mod library;
 pub mod listxml;

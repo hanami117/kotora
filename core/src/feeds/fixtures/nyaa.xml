@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:nyaa="https://nyaa.si/xmlns/nyaa" version="2.0">
+  <channel>
+    <title>Example Tracker - Lanterns - Torrent File RSS</title>
+    <link>https://tracker.example/</link>
+    <ttl>15</ttl>
+    <item>
+      <title>[Hoshi] Lanterns of Kirigaoka - 08 [1080p][A1B2C3D4].mkv</title>
+      <link>https://tracker.example/download/1000008.torrent</link>
+      <guid isPermaLink="true">https://tracker.example/view/1000008</guid>
+      <pubDate>Tue, 17 Nov 2026 15:31:02 -0000</pubDate>
+      <nyaa:seeders>412</nyaa:seeders>
+      <nyaa:leechers>37</nyaa:leechers>
+      <nyaa:infoHash>0123456789ABCDEF0123456789ABCDEF01234567</nyaa:infoHash>
+      <nyaa:category>Anime - English-translated</nyaa:category>
+      <nyaa:size>1.4 GiB</nyaa:size>
+      <description><![CDATA[<a href="https://tracker.example/view/1000008">#1000008</a>]]></description>
+    </item>
+    <item>
+      <title><![CDATA[[Kumo-Subs] Starfall Delivery Service (01-12) [BD 1080p x265 FLAC] [Batch]]]></title>
+      <link>https://tracker.example/download/1000009.torrent</link>
+      <guid isPermaLink="true">https://tracker.example/view/1000009</guid>
+      <pubDate>Mon, 16 Nov 2026 09:00:00 -0000</pubDate>
+      <nyaa:seeders>58</nyaa:seeders>
+      <nyaa:infoHash>89abcdef0123456789abcdef0123456789abcdef</nyaa:infoHash>
+      <nyaa:size>14.2 GiB</nyaa:size>
+    </item>
+    <item>
+      <title>[Tsuki] Starfall Delivery Service S2 - 05 [720p] &amp; Extras</title>
+      <link>https://tracker.example/download/1000010.torrent</link>
+      <guid isPermaLink="true">https://tracker.example/view/1000010</guid>
+      <nyaa:seeders>0</nyaa:seeders>
+      <nyaa:size>350.5 MiB</nyaa:size>
+    </item>
+  </channel>
+</rss>

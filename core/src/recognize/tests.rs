@@ -304,3 +304,53 @@ fn a_search_prefers_the_files_season() {
     let f = from_search(&p, &[hit(11, "Yakusou no Sasayaki"), hit(91, "Yakusou no Sasayaki Movie")], &items);
     assert_eq!(f, Found::List { media_id: 11, sure: false, why: "found by a MyAnimeList search, but the file says season 4".into() });
 }
+
+/// (name, title, season, episodes, batch, version).
+type ReleaseRow = (&'static str, &'static str, Option<u32>, Option<(u32, u32)>, bool, Option<u32>);
+
+/// Release names as feeds give them (made up).
+#[test]
+fn release_names() {
+    let table: [ReleaseRow; 12] = [
+        ("[Hoshi] Lanterns of Kirigaoka - 08 [1080p][A1B2C3D4].mkv", "Lanterns of Kirigaoka", None, Some((8, 8)), false, None),
+        ("[Hoshi] Lanterns of Kirigaoka - 08v2 (1080p HEVC 10bit) [WEB-DL]", "Lanterns of Kirigaoka", None, Some((8, 8)), false, Some(2)),
+        ("[Kumo-Subs] Starfall Delivery Service (01-12) [BD 1080p x265 FLAC] [Batch]", "Starfall Delivery Service", None, Some((1, 12)), true, None),
+        ("[Tsuki] Starfall Delivery Service S2 - 05 [720p] [ENG SUB]", "Starfall Delivery Service", Some(2), Some((5, 5)), false, None),
+        ("Paper Crane Detective S02 1080p WEB-DL AAC2.0 H.264-Nami", "Paper Crane Detective", Some(2), None, true, None),
+        ("[Hoshi] Clockwork Tanuki - 12 END [1080p]", "Clockwork Tanuki", None, Some((12, 12)), false, None),
+        ("[Hoshi] Fate/Lantern Night - 03 [1080p]", "Fate/Lantern Night", None, Some((3, 3)), false, None),
+        ("[Hoshi] Mikan-iro no Sora - Movie [1080p AV1]", "Mikan-iro no Sora", None, None, false, None),
+        ("[Hoshi] Harbor Lights Overtime (Complete) [1080p]", "Harbor Lights Overtime", None, None, true, None),
+        ("[Hoshi] Ghost of the Library Stacks - 01 [1080p][Multiple Subtitle][ENG][FRE]", "Ghost of the Library Stacks", None, Some((1, 1)), false, None),
+        ("Re:Bloom Academy S01E07 1080p WEB H264-Grp", "Re:Bloom Academy", Some(1), Some((7, 7)), false, None),
+        ("[Hoshi] Lanterns of Kirigaoka - 08 [1080p].torrent", "Lanterns of Kirigaoka", None, Some((8, 8)), false, None),
+    ];
+    for (name, title, season, eps, batch, version) in table {
+        let r = parse_release(name);
+        assert_eq!((r.parsed.title.as_str(), r.parsed.season, r.episodes, r.batch, r.version), (title, season, eps, batch, version), "{name}");
+        assert_eq!(r.parsed.episode, eps.map(|e| e.1), "{name}");
+    }
+}
+
+#[test]
+fn release_details() {
+    let r = parse_release("[Hoshi] Lanterns of Kirigaoka - 08v2 (1080p HEVC 10bit) [WEB-DL]");
+    assert_eq!((r.codec, r.ten_bit, r.source.as_deref(), r.height()), (Some(Codec::Hevc), true, Some("WEB-DL"), Some(1080)));
+    assert_eq!(r.parsed.group.as_deref(), Some("Hoshi"));
+    let r = parse_release("[Kumo-Subs] Starfall Delivery Service (01-12) [BD 1080p x265 FLAC] [Batch]");
+    assert!(r.covers(1) && r.covers(12) && !r.covers(13));
+    assert_eq!((r.codec, r.audio.as_slice()), (Some(Codec::Hevc), &["FLAC".to_string()][..]));
+    let r = parse_release("Paper Crane Detective S02 1080p WEB-DL AAC2.0 H.264-Nami");
+    assert_eq!((r.codec, r.parsed.group.as_deref(), r.parsed.key().as_str()), (Some(Codec::Avc), Some("Nami"), "paper crane detective#2"));
+    assert!(parse_release("[Hoshi] Clockwork Tanuki - 12 END [1080p]").last);
+    assert!(!parse_release("[Hoshi] Clockwork Tanuki - 11 [1080p]").last);
+    let r = parse_release("[Hoshi] Mikan-iro no Sora - Movie [1080p AV1]");
+    assert!(r.movie && !r.batch);
+    assert_eq!(r.codec, Some(Codec::Av1));
+    let r = parse_release("[Hoshi] Ghost of the Library Stacks - 01 [1080p][Multiple Subtitle][ENG][FRE]");
+    assert_eq!(r.languages, ["ENG", "FRE"]);
+    assert_eq!(parse_release("[Hoshi] Lanterns of Kirigaoka - 08 [1080p][a1b2c3d4]").checksum.as_deref(), Some("A1B2C3D4"));
+    // The same key as the file, so a pick made for the file holds for the feed.
+    let file = parse("/v/[Hoshi] Lanterns of Kirigaoka - 08 [1080p].mkv").unwrap();
+    assert_eq!(parse_release("[Other] Lanterns of Kirigaoka - 09 [720p]").parsed.key(), file.key());
+}

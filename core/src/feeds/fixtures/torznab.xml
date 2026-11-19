@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>Example Indexer</title>
+    <item>
+      <title>[Hoshi] Ghost of the Library Stacks - 01 [1080p][Multiple Subtitle]</title>
+      <guid>https://indexer.example/torrent/55501</guid>
+      <comments>https://indexer.example/torrent/55501</comments>
+      <pubDate>Tue, 17 Nov 2026 10:00:00 +0100</pubDate>
+      <size>1503238553</size>
+      <link>http://127.0.0.1:9117/dl/example/?apikey=SECRETKEY0000&amp;path=abc</link>
+      <enclosure url="http://127.0.0.1:9117/dl/example/?apikey=SECRETKEY0000&amp;path=abc" length="1503238553" type="application/x-bittorrent"/>
+      <torznab:attr name="category" value="5070"/>
+      <torznab:attr name="seeders" value="120"/>
+      <torznab:attr name="peers" value="135"/>
+      <torznab:attr name="infohash" value="00112233445566778899AABBCCDDEEFF00112233"/>
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:00112233445566778899AABBCCDDEEFF00112233&amp;dn=Ghost"/>
+    </item>
+  </channel>
+</rss>
