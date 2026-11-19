@@ -336,7 +336,7 @@ impl Kotora {
                 MediaKind::Manga => format!("Reading your manga list from {}\u{2026}", service_title(service)),
             };
             (ListEmptyKind::Loading, t, String::new())
-        } else if needle.is_empty() && !items.iter().any(|it| on_page(it)) {
+        } else if needle.is_empty() && !items.iter().any(on_page) {
             let svc = service_title(service);
             let help = match (kind, q.status) {
                 (MediaKind::Anime, ListStatus::Watching) => format!("Anime you're watching on {svc} show up here."),
@@ -399,7 +399,7 @@ mod tests {
 
     impl Platform for Fake {
         fn utc_offset(&self, _at_unix: i64) -> i32 {
-            9 * 3600
+            crate::testenv::OFFSET
         }
         fn log(&self, _level: LogLevel, _message: String) {}
         fn token_load(&self, service: String) -> Option<Vec<u8>> {
@@ -429,6 +429,7 @@ mod tests {
         k
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn item(kind: Kind, id: u32, title: &str, status: Status, progress: u32, score: u8, air: &str, updated_at: i64) -> ListItem {
         ListItem {
             media: Media {

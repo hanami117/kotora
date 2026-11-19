@@ -803,6 +803,24 @@ pub use background::*;
 #[cfg(test)]
 mod tests;
 
+/// What the unit tests share. The folders and the offset source are set once per process (the
+/// first `Kotora::new` wins), so every fake platform must report the same zone, and a test that
+/// reads or writes `config.toml` takes [`testenv::fresh_config`] to have it to itself and empty.
+#[cfg(test)]
+pub(crate) mod testenv {
+    /// The zone every fake platform reports: JST, as the desktop's airing tests.
+    pub const OFFSET: i32 = 9 * 3600;
+
+    static CONFIG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Call after opening a `Kotora` (that sets the folders). Holds the lock until dropped.
+    pub fn fresh_config() -> std::sync::MutexGuard<'static, ()> {
+        let guard = CONFIG.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = std::fs::remove_file(kotora_core::paths::config_file());
+        guard
+    }
+}
+
 mod links;
 mod profile;
 /// The details page's service information and the add of a title not on the list.

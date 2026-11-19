@@ -914,7 +914,7 @@ mod tests {
 
     impl Platform for Fake {
         fn utc_offset(&self, _at_unix: i64) -> i32 {
-            9 * 3600
+            crate::testenv::OFFSET
         }
         fn log(&self, _level: LogLevel, _message: String) {}
         fn token_load(&self, service: String) -> Option<Vec<u8>> {
@@ -988,6 +988,7 @@ mod tests {
     #[test]
     fn notices_follow_the_desktop_rules_and_switches() {
         let (k, dir) = signed_in_mal("airing-notes");
+        let _config = crate::testenv::fresh_config();
         let mut plan = show(2, "Tide Line", Status::PlanToWatch, 0);
         plan.media.air_status = "not_yet_aired".into();
         k.store().replace_list("mal", &[show(1, "Hoshikuzu Relay", Status::Watching, 5), plan.clone()], EP1).unwrap();

@@ -475,7 +475,7 @@ mod tests {
     struct Vault(std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>);
     impl Platform for Vault {
         fn utc_offset(&self, _at: i64) -> i32 {
-            0
+            crate::testenv::OFFSET
         }
         fn log(&self, _l: LogLevel, _m: String) {}
         fn token_load(&self, s: String) -> Option<Vec<u8>> {
