@@ -55,7 +55,11 @@ impl Span {
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_range() { write!(f, "{}-{}", self.first, self.last) } else { write!(f, "{}", self.first) }
+        if self.is_range() {
+            write!(f, "{}-{}", self.first, self.last)
+        } else {
+            write!(f, "{}", self.first)
+        }
     }
 }
 
@@ -86,7 +90,9 @@ impl Parsed {
     }
 }
 
-const EXTENSIONS: [&str; 9] = ["cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "pdf", "epub"];
+const EXTENSIONS: [&str; 9] = [
+    "cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "pdf", "epub",
+];
 
 const LANGUAGES: [(&str, &str); 44] = [
     ("en", "en"),
@@ -173,7 +179,10 @@ fn is_extra(s: &str) -> bool {
 }
 
 fn is_oneshot(s: &str) -> bool {
-    matches!(s.trim().to_lowercase().as_str(), "oneshot" | "one-shot" | "one shot" | "one_shot")
+    matches!(
+        s.trim().to_lowercase().as_str(),
+        "oneshot" | "one-shot" | "one shot" | "one_shot"
+    )
 }
 
 fn year_of(s: &str) -> Option<u16> {
@@ -291,7 +300,11 @@ fn plain_number(ch: &[char], at: usize) -> Option<(f64, usize)> {
 
 fn starts_with_ci(ch: &[char], at: usize, word: &str) -> bool {
     let w: Vec<char> = word.chars().collect();
-    at + w.len() <= ch.len() && ch[at..at + w.len()].iter().zip(&w).all(|(a, b)| a.to_ascii_lowercase() == *b)
+    at + w.len() <= ch.len()
+        && ch[at..at + w.len()]
+            .iter()
+            .zip(&w)
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
 }
 
 /// A marker that starts at `at` (a word start).
@@ -304,7 +317,12 @@ fn marker_at(ch: &[char], at: usize) -> Option<Marker> {
             '巻' | '卷' => Kind::Volume,
             _ => return None,
         };
-        return Some(Marker { kind, start: at, end: i + 1, span: Span::one(first) });
+        return Some(Marker {
+            kind,
+            start: at,
+            end: i + 1,
+            span: Span::one(first),
+        });
     }
     // (keyword, kind, digit must follow at once)
     const KEYWORDS: [(&str, Kind, bool); 10] = [
@@ -334,7 +352,12 @@ fn marker_at(ch: &[char], at: usize) -> Option<Marker> {
         }
         let letter = word.chars().next().filter(|c| c.is_alphabetic());
         if let Some((span, end)) = number(ch, i, letter.map(|c| c.to_ascii_lowercase())) {
-            return Some(Marker { kind, start: at, end, span });
+            return Some(Marker {
+                kind,
+                start: at,
+                end,
+                span,
+            });
         }
     }
     None
@@ -347,7 +370,9 @@ fn find_markers(ch: &[char]) -> (Vec<Marker>, Option<Marker>) {
     let mut i = 0;
     while i < ch.len() {
         let word_start = i == 0 || !ch[i - 1].is_alphanumeric();
-        if (word_start || ch[i] == '第') && let Some(m) = marker_at(ch, i) {
+        if (word_start || ch[i] == '第')
+            && let Some(m) = marker_at(ch, i)
+        {
             i = m.end;
             found.push(m);
             continue;
@@ -359,7 +384,12 @@ fn find_markers(ch: &[char]) -> (Vec<Marker>, Option<Marker>) {
             && let Some((span, end)) = number(ch, i, None)
             && year_of(&ch[i..end].iter().collect::<String>()).is_none()
         {
-            weak = Some(Marker { kind: Kind::Chapter, start: i, end, span });
+            weak = Some(Marker {
+                kind: Kind::Chapter,
+                start: i,
+                end,
+                span,
+            });
             i = end;
             continue;
         }
@@ -430,7 +460,8 @@ fn unglue(s: &str) -> String {
     let ch: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     for (i, &c) in ch.iter().enumerate() {
-        let between_digits = i > 0 && i + 1 < ch.len() && ch[i - 1].is_ascii_digit() && ch[i + 1].is_ascii_digit();
+        let between_digits =
+            i > 0 && i + 1 < ch.len() && ch[i - 1].is_ascii_digit() && ch[i + 1].is_ascii_digit();
         out.push(if c == '.' && !between_digits { ' ' } else { c });
     }
     out
@@ -484,7 +515,12 @@ fn parse_name(name: &str) -> Inner {
     // The chapter's title: after the chapter marker, up to the next marker (a bracketed volume
     // was put at the end).
     if let Some(c) = chapter {
-        let stop = used.iter().filter(|m| m.start >= c.end).map(|m| m.start).min().unwrap_or(ch.len());
+        let stop = used
+            .iter()
+            .filter(|m| m.start >= c.end)
+            .map(|m| m.start)
+            .min()
+            .unwrap_or(ch.len());
         let sub = clean(&ch[c.end.min(stop)..stop].iter().collect::<String>());
         if is_oneshot(&sub) {
             p.oneshot = true;
@@ -530,7 +566,10 @@ fn parse_name(name: &str) -> Inner {
     // `Series - Oneshot`, `Series Oneshot`.
     for tail in ["oneshot", "one-shot", "one shot"] {
         let low = series.to_lowercase();
-        if low.ends_with(tail) && (low.len() == tail.len() || !series.as_bytes()[low.len() - tail.len() - 1].is_ascii_alphanumeric()) {
+        if low.ends_with(tail)
+            && (low.len() == tail.len()
+                || !series.as_bytes()[low.len() - tail.len() - 1].is_ascii_alphanumeric())
+        {
             series = clean(&series[..series.len() - tail.len()]);
             p.oneshot = true;
             break;
@@ -541,7 +580,10 @@ fn parse_name(name: &str) -> Inner {
 }
 
 fn norm(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Parses a file name (no folder).

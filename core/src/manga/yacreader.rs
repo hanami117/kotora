@@ -84,14 +84,21 @@ impl Library {
 /// Where YACReader's `YACReaderLibrary.ini` may be, most likely first.
 pub fn ini_candidates() -> Vec<PathBuf> {
     let home = crate::paths::home_dir().unwrap_or_else(std::env::temp_dir);
-    let data = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".local/share"));
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
     let tail = "YACReader/YACReaderLibrary/YACReaderLibrary.ini";
     let mut v = Vec::new();
     if cfg!(target_os = "macos") {
         v.push(home.join("Library/Application Support").join(tail));
     }
     v.push(data.join(tail));
-    v.push(home.join(".var/app/com.yacreader.YACReader/data").join(tail));
+    v.push(
+        home.join(".var/app/com.yacreader.YACReader/data")
+            .join(tail),
+    );
     v
 }
 
@@ -118,7 +125,9 @@ pub fn parse_libraries(ini: &str) -> Vec<Library> {
     let Some(bytes) = decode_qsettings_bytes(value.trim()) else {
         return Vec::new();
     };
-    decode_library_list(&bytes).or_else(|| decode_legacy_list(&bytes)).unwrap_or_default()
+    decode_library_list(&bytes)
+        .or_else(|| decode_legacy_list(&bytes))
+        .unwrap_or_default()
 }
 
 /// `@ByteArray(...)` with Qt's escapes: `\\ \" \n \t \r \a \b \f \v`, octal (`\0`, up to three
@@ -193,7 +202,8 @@ impl Stream<'_> {
     }
 
     fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        self.take(4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
 
     /// A `QString`: byte length, then UTF-16 big endian. `0xFFFFFFFF` is a null string.
@@ -206,7 +216,10 @@ impl Stream<'_> {
         if bytes.len() % 2 != 0 {
             return None;
         }
-        let units: Vec<u16> = bytes.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         String::from_utf16(&units).ok()
     }
 
@@ -225,7 +238,11 @@ fn decode_library_list(bytes: &[u8]) -> Option<Vec<Library>> {
         let path = s.string()?;
         let id = s.u32()? as i32; // the legacy id: the viewer's `--libraryId`
         s.take(16)?; // the QUuid
-        v.push(Library { name, path: PathBuf::from(path), id: Some(i64::from(id)) });
+        v.push(Library {
+            name,
+            path: PathBuf::from(path),
+            id: Some(i64::from(id)),
+        });
     }
     s.done().then_some(v)
 }
@@ -239,7 +256,11 @@ fn decode_legacy_list(bytes: &[u8]) -> Option<Vec<Library>> {
         let name = s.string()?;
         let id = s.u32()? as i32;
         let path = s.string()?;
-        v.push(Library { name, path: PathBuf::from(path), id: Some(i64::from(id)) });
+        v.push(Library {
+            name,
+            path: PathBuf::from(path),
+            id: Some(i64::from(id)),
+        });
     }
     s.done().then_some(v)
 }
@@ -275,7 +296,11 @@ impl Opened {
 
     /// The series to look up: the file name's (or a folder's), else YACReader's metadata.
     pub fn series(&self) -> &str {
-        if self.parsed.series.is_empty() { self.meta_series.as_deref().unwrap_or("") } else { &self.parsed.series }
+        if self.parsed.series.is_empty() {
+            self.meta_series.as_deref().unwrap_or("")
+        } else {
+            &self.parsed.series
+        }
     }
 }
 
@@ -301,11 +326,19 @@ fn immutable_uri(path: &Path) -> String {
     let bytes = {
         let t = path.to_string_lossy().replace('\\', "/");
         let t = t.strip_prefix("//?/").unwrap_or(&t).to_string();
-        if t.as_bytes().get(1) == Some(&b':') { format!("/{t}") } else { t }.into_bytes()
+        if t.as_bytes().get(1) == Some(&b':') {
+            format!("/{t}")
+        } else {
+            t
+        }
+        .into_bytes()
     };
     let mut s = String::from("file:");
     for &b in &bytes {
-        if b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~') || (cfg!(windows) && b == b':') {
+        if b.is_ascii_alphanumeric()
+            || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~')
+            || (cfg!(windows) && b == b':')
+        {
             s.push(b as char);
         } else {
             s.push_str(&format!("%{b:02X}"));
@@ -321,21 +354,40 @@ impl Db {
     /// that has the columns this reader needs.
     pub fn open(db_file: &Path) -> Result<Db> {
         if !db_file.is_file() {
-            return Err(Error(format!("no YACReader database at {}", db_file.display())));
+            return Err(Error(format!(
+                "no YACReader database at {}",
+                db_file.display()
+            )));
         }
-        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(immutable_uri(db_file), flags)?;
         // `<library>/.yacreaderlibrary/library.ydb` → `<library>`.
-        let library_dir = db_file.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_default();
-        let version = conn.query_row("SELECT version FROM db_info", [], |r| r.get::<_, String>(0)).ok();
+        let library_dir = db_file
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let version = conn
+            .query_row("SELECT version FROM db_info", [], |r| r.get::<_, String>(0))
+            .ok();
         let columns = columns_of(&conn, "comic_info")?;
         for need in ["currentPage", "numPages", "read", "lastTimeOpened"] {
             if !columns.iter().any(|c| c == need) {
-                return Err(Error(format!("YACReader database {} has no comic_info.{need}", version.as_deref().unwrap_or("of unknown version"))));
+                return Err(Error(format!(
+                    "YACReader database {} has no comic_info.{need}",
+                    version.as_deref().unwrap_or("of unknown version")
+                )));
             }
         }
         let has_series = columns.iter().any(|c| c == "series");
-        Ok(Db { conn, library_dir, version, has_series })
+        Ok(Db {
+            conn,
+            library_dir,
+            version,
+            has_series,
+        })
     }
 
     /// The columns [`Db::row`] reads, from `comic c JOIN comic_info ci`.
@@ -349,9 +401,13 @@ impl Db {
     }
 
     fn row(&self, r: &rusqlite::Row<'_>) -> rusqlite::Result<Opened> {
-        let (id, path, file_name, meta): (i64, Option<String>, String, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
-        let (current_page, num_pages, read, last_opened): (i64, i64, i64, i64) = (r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?);
-        let rel_path = path.filter(|p| !p.is_empty()).unwrap_or_else(|| format!("/{file_name}"));
+        let (id, path, file_name, meta): (i64, Option<String>, String, Option<String>) =
+            (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+        let (current_page, num_pages, read, last_opened): (i64, i64, i64, i64) =
+            (r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?);
+        let rel_path = path
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| format!("/{file_name}"));
         Ok(Opened {
             id,
             path: self.library_dir.join(rel_path.trim_start_matches('/')),
@@ -369,7 +425,9 @@ impl Db {
     /// page only when the comic is closed, so while it is open its row says what was saved
     /// before (often page 1 and no time).
     pub fn comic(&self, id: i64) -> Result<Option<Opened>> {
-        let mut stmt = self.conn.prepare(&format!("{} WHERE c.id = ?1", self.select()))?;
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{} WHERE c.id = ?1", self.select()))?;
         let mut rows = stmt.query_map([id], |r| self.row(r))?;
         Ok(rows.next().transpose()?)
     }
@@ -390,7 +448,9 @@ impl Db {
     /// Every comic of the library, opened or not (for "the next one" after a comic read to the
     /// end).
     pub fn comics(&self) -> Result<Vec<Opened>> {
-        let mut stmt = self.conn.prepare(&format!("{} ORDER BY c.id", self.select()))?;
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{} ORDER BY c.id", self.select()))?;
         let rows = stmt.query_map([], |r| self.row(r))?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
@@ -398,7 +458,9 @@ impl Db {
 
 fn columns_of(conn: &Connection, table: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let names = stmt.query_map([], |r| r.get::<_, String>(1))?.collect::<std::result::Result<Vec<_>, _>>()?;
+    let names = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(names)
 }
 

@@ -139,7 +139,14 @@ struct Row {
 }
 
 fn row(path: &'static str, page: i64, pages: i64, read: bool, last: Option<i64>) -> Row {
-    Row { path, page, pages, read, last, series: None }
+    Row {
+        path,
+        page,
+        pages,
+        read,
+        last,
+        series: None,
+    }
 }
 
 /// Builds `<library>/.yacreaderlibrary/library.ydb` and returns the library's folder.
@@ -156,7 +163,11 @@ fn make_library(root: &Path, schema: &str, rows: &[Row], with_series_column: boo
         )
         .unwrap();
         if with_series_column && let Some(s) = r.series {
-            conn.execute("UPDATE comic_info SET series = ?1 WHERE id = ?2", rusqlite::params![s, id]).unwrap();
+            conn.execute(
+                "UPDATE comic_info SET series = ?1 WHERE id = ?2",
+                rusqlite::params![s, id],
+            )
+            .unwrap();
         }
         let file = r.path.rsplit('/').next().unwrap();
         conn.execute("INSERT INTO comic (id, parentId, comicInfoId, fileName, path) VALUES (?1, 1, ?1, ?2, ?3)", rusqlite::params![id, file, r.path]).unwrap();
@@ -168,9 +179,30 @@ fn make_library(root: &Path, schema: &str, rows: &[Row], with_series_column: boo
 fn lists_what_was_opened_since() {
     let s = Scratch::new("since");
     let rows = [
-        Row { series: Some("Lantern Road"), ..row("/Lantern Road/Volume 03/Chapter 021.cbz", 20, 20, true, Some(1_700_000_300)) },
-        row("/Lantern Road/Volume 03/Chapter 022.cbz", 5, 20, false, Some(1_700_000_200)),
-        row("/Night Owls (2019)/Night Owls v02 c011 (Digital).cbz", 19, 20, false, Some(1_700_000_100)),
+        Row {
+            series: Some("Lantern Road"),
+            ..row(
+                "/Lantern Road/Volume 03/Chapter 021.cbz",
+                20,
+                20,
+                true,
+                Some(1_700_000_300),
+            )
+        },
+        row(
+            "/Lantern Road/Volume 03/Chapter 022.cbz",
+            5,
+            20,
+            false,
+            Some(1_700_000_200),
+        ),
+        row(
+            "/Night Owls (2019)/Night Owls v02 c011 (Digital).cbz",
+            19,
+            20,
+            false,
+            Some(1_700_000_100),
+        ),
         row("/Old Series/c001.cbz", 10, 10, true, Some(1_600_000_000)), // before `since`
         row("/Never Opened/c001.cbz", 1, 30, false, None),
     ];
@@ -180,14 +212,24 @@ fn lists_what_was_opened_since() {
 
     let got = db.opened_since(1_700_000_000).unwrap();
     let names: Vec<_> = got.iter().map(|o| o.rel_path.as_str()).collect();
-    assert_eq!(names, ["/Lantern Road/Volume 03/Chapter 021.cbz", "/Lantern Road/Volume 03/Chapter 022.cbz", "/Night Owls (2019)/Night Owls v02 c011 (Digital).cbz"]);
+    assert_eq!(
+        names,
+        [
+            "/Lantern Road/Volume 03/Chapter 021.cbz",
+            "/Lantern Road/Volume 03/Chapter 022.cbz",
+            "/Night Owls (2019)/Night Owls v02 c011 (Digital).cbz"
+        ]
+    );
 
     let a = &got[0];
     assert_eq!(a.series(), "Lantern Road");
     assert_eq!(a.meta_series.as_deref(), Some("Lantern Road"));
     assert_eq!(a.parsed.volume.map(|v| v.first), Some(3.0));
     assert_eq!(a.parsed.chapter.map(|v| v.first), Some(21.0));
-    assert_eq!((a.current_page, a.num_pages, a.read_flag, a.last_opened), (20, 20, true, 1_700_000_300));
+    assert_eq!(
+        (a.current_page, a.num_pages, a.read_flag, a.last_opened),
+        (20, 20, true, 1_700_000_300)
+    );
     assert!(a.is_read());
     assert_eq!(a.path, lib.join("Lantern Road/Volume 03/Chapter 021.cbz"));
 
@@ -212,9 +254,15 @@ fn lists_what_was_opened_since() {
 #[test]
 fn the_metadata_series_fills_in_when_the_path_has_none() {
     let s = Scratch::new("meta");
-    let rows = [Row { series: Some("Lantern Road"), ..row("/c021.cbz", 3, 20, false, Some(10)) }];
+    let rows = [Row {
+        series: Some("Lantern Road"),
+        ..row("/c021.cbz", 3, 20, false, Some(10))
+    }];
     let lib = make_library(&s.0, SCHEMA_10_5, &rows, true);
-    let got = Db::open(&lib.join(".yacreaderlibrary/library.ydb")).unwrap().opened_since(0).unwrap();
+    let got = Db::open(&lib.join(".yacreaderlibrary/library.ydb"))
+        .unwrap()
+        .opened_since(0)
+        .unwrap();
     assert_eq!(got[0].parsed.series, "");
     assert_eq!(got[0].series(), "Lantern Road");
 }
@@ -265,9 +313,15 @@ fn reading_changes_nothing() {
     let lib = make_library(&s.0, SCHEMA_10_5, &rows, true);
     let dir = lib.join(".yacreaderlibrary");
     let file = dir.join("library.ydb");
-    let before = (fs::read(&file).unwrap(), fs::metadata(&file).unwrap().modified().unwrap());
+    let before = (
+        fs::read(&file).unwrap(),
+        fs::metadata(&file).unwrap().modified().unwrap(),
+    );
     let listing = |d: &Path| {
-        let mut v: Vec<_> = fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let mut v: Vec<_> = fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         v.sort();
         v
     };
@@ -302,7 +356,11 @@ fn a_read_only_folder_opens() {
 fn odd_characters_in_the_library_path() {
     let s = Scratch::new("odd");
     // Windows allows no `?` in a name.
-    let root = s.0.join(if cfg!(windows) { "Manga & Comics #1 (100%) what" } else { "Manga & Comics #1 (100%) what?" });
+    let root = s.0.join(if cfg!(windows) {
+        "Manga & Comics #1 (100%) what"
+    } else {
+        "Manga & Comics #1 (100%) what?"
+    });
     fs::create_dir_all(&root).unwrap();
     let rows = [row("/Lantern Road/c021.cbz", 4, 20, false, Some(100))];
     let lib = make_library(&root, SCHEMA_10_5, &rows, true);
@@ -316,8 +374,15 @@ fn odd_characters_in_the_library_path() {
 
 #[test]
 fn a_library_knows_its_database() {
-    let lib = Library { name: "Manga".into(), path: PathBuf::from("/shelf/manga"), id: None };
-    assert_eq!(lib.db_path(), Path::new("/shelf/manga/.yacreaderlibrary/library.ydb"));
+    let lib = Library {
+        name: "Manga".into(),
+        path: PathBuf::from("/shelf/manga"),
+        id: None,
+    };
+    assert_eq!(
+        lib.db_path(),
+        Path::new("/shelf/manga/.yacreaderlibrary/library.ydb")
+    );
 }
 
 // The library list. This literal is shaped like what Qt writes (`\xNN` for hex-digit characters
@@ -332,7 +397,14 @@ path=/usr/share/yacreader/server/docroot
 #[test]
 fn reads_the_library_list() {
     let libs = parse_libraries(INI_NEW);
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/tmp/lib"), id: Some(1) }]);
+    assert_eq!(
+        libs,
+        [Library {
+            name: "Manga".into(),
+            path: PathBuf::from("/tmp/lib"),
+            id: Some(1)
+        }]
+    );
 }
 
 /// A Qt `QDataStream` string, for building test input.
@@ -370,16 +442,35 @@ fn qsettings_bytes(b: &[u8]) -> String {
 #[test]
 fn reads_several_libraries_with_odd_names() {
     let mut b = 3u32.to_be_bytes().to_vec();
-    for (name, path) in [("Manga", "/data/manga"), ("Comics \"US\"", "/data/Comics (US)"), ("本", "/data/日本語/本")] {
+    for (name, path) in [
+        ("Manga", "/data/manga"),
+        ("Comics \"US\"", "/data/Comics (US)"),
+        ("本", "/data/日本語/本"),
+    ] {
         b.extend(qstring(name));
         b.extend(qstring(path));
         b.extend(7i32.to_be_bytes());
-        b.extend([0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xab, 0xcd]);
+        b.extend([
+            0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xab, 0xcd,
+        ]);
     }
     let libs = parse_libraries(&qsettings_bytes(&b));
-    let got: Vec<_> = libs.iter().map(|l| (l.name.as_str(), l.path.to_str().unwrap())).collect();
-    assert_eq!(got, [("Manga", "/data/manga"), ("Comics \"US\"", "/data/Comics (US)"), ("本", "/data/日本語/本")]);
-    assert!(libs.iter().all(|l| l.id == Some(7)), "the viewer's --libraryId");
+    let got: Vec<_> = libs
+        .iter()
+        .map(|l| (l.name.as_str(), l.path.to_str().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("Manga", "/data/manga"),
+            ("Comics \"US\"", "/data/Comics (US)"),
+            ("本", "/data/日本語/本")
+        ]
+    );
+    assert!(
+        libs.iter().all(|l| l.id == Some(7)),
+        "the viewer's --libraryId"
+    );
 }
 
 #[test]
@@ -390,7 +481,14 @@ fn reads_the_old_library_list() {
     b.extend(1i32.to_be_bytes());
     b.extend(qstring("/old/manga"));
     let libs = parse_libraries(&qsettings_bytes(&b));
-    assert_eq!(libs, [Library { name: "Manga".into(), path: PathBuf::from("/old/manga"), id: Some(1) }]);
+    assert_eq!(
+        libs,
+        [Library {
+            name: "Manga".into(),
+            path: PathBuf::from("/old/manga"),
+            id: Some(1)
+        }]
+    );
 }
 
 #[test]
@@ -418,7 +516,10 @@ fn the_settings_candidates_follow_xdg() {
     // Not set here (tests share the process environment): only check the shape.
     let c = ini_candidates();
     assert!(!c.is_empty());
-    assert!(c.iter().all(|p| p.ends_with("YACReader/YACReaderLibrary/YACReaderLibrary.ini")));
+    assert!(
+        c.iter()
+            .all(|p| p.ends_with("YACReader/YACReaderLibrary/YACReaderLibrary.ini"))
+    );
 }
 
 /// The viewer's `--comicId`: the row is there while the comic is open, with what was saved
@@ -426,12 +527,31 @@ fn the_settings_candidates_follow_xdg() {
 #[test]
 fn a_comic_by_its_id_even_before_progress_is_written() {
     let s = Scratch::new("byid");
-    let rows = [row("/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 1, 0, false, None), row("/Other/c001.cbz", 3, 20, false, Some(1_700_000_000))];
+    let rows = [
+        row(
+            "/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz",
+            1,
+            0,
+            false,
+            None,
+        ),
+        row("/Other/c001.cbz", 3, 20, false, Some(1_700_000_000)),
+    ];
     let lib = make_library(&s.0, SCHEMA_10_5, &rows, true);
     let db = Db::open(&lib.join(".yacreaderlibrary/library.ydb")).unwrap();
     let o = db.comic(1).unwrap().unwrap();
-    assert_eq!(o.path, lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"));
-    assert_eq!((o.series(), o.parsed.volume.map(|v| v.first), o.parsed.chapter), ("Dragon Ball Z", Some(11.0), None));
+    assert_eq!(
+        o.path,
+        lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz")
+    );
+    assert_eq!(
+        (
+            o.series(),
+            o.parsed.volume.map(|v| v.first),
+            o.parsed.chapter
+        ),
+        ("Dragon Ball Z", Some(11.0), None)
+    );
     assert_eq!((o.current_page, o.read_flag, o.last_opened), (1, false, 0));
     assert!(!o.is_read());
     assert_eq!(db.comic(99).unwrap(), None);

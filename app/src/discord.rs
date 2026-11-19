@@ -25,9 +25,25 @@ use crate::model::State;
 /// What is playing or being read, before the options decide what to show.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
-    Watching { title: String, episode: Option<u32>, total: Option<u32>, media_id: Option<u32>, cover: Option<String>, playing: bool, position: Option<f64>, duration: Option<f64>, rate: f64 },
+    Watching {
+        title: String,
+        episode: Option<u32>,
+        total: Option<u32>,
+        media_id: Option<u32>,
+        cover: Option<String>,
+        playing: bool,
+        position: Option<f64>,
+        duration: Option<f64>,
+        rate: f64,
+    },
     /// A comic being read (reading detection: YACReader or an open file), see [`current_reading`].
-    Reading { title: String, chapter: Option<u32>, volume: Option<u32>, media_id: Option<u32>, cover: Option<String> },
+    Reading {
+        title: String,
+        chapter: Option<u32>,
+        volume: Option<u32>,
+        media_id: Option<u32>,
+        cover: Option<String>,
+    },
 }
 
 /// The link to the Discord app's page for an entry on the user's service.
@@ -50,7 +66,17 @@ fn button_label(service: ServiceId) -> &'static str {
 pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option<Activity> {
     let icon = || (dc::ICON_ASSET.to_string(), "Kotora".to_string());
     let (kind, title, state, media_id, cover, manga, times) = match input {
-        Input::Watching { title, episode, total, media_id, cover, playing, position, duration, rate } => {
+        Input::Watching {
+            title,
+            episode,
+            total,
+            media_id,
+            cover,
+            playing,
+            position,
+            duration,
+            rate,
+        } => {
             if !playing && o.hide_paused {
                 return None;
             }
@@ -67,14 +93,25 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
             }
             // Times only while it plays: elapsed and remaining, as the player has them.
             let times = (*playing).then_some(()).and_then(|_| {
-                let (pos, rate) = (position.filter(|p| *p >= 0.0)?, if *rate > 0.0 { *rate } else { 1.0 });
+                let (pos, rate) = (
+                    position.filter(|p| *p >= 0.0)?,
+                    if *rate > 0.0 { *rate } else { 1.0 },
+                );
                 let start = now - (pos / rate) as i64;
-                let end = duration.filter(|d| *d > pos).map(|d| now + ((d - pos) / rate) as i64);
+                let end = duration
+                    .filter(|d| *d > pos)
+                    .map(|d| now + ((d - pos) / rate) as i64);
                 Some((start, end))
             });
             (3, title, state, *media_id, cover, false, times)
         }
-        Input::Reading { title, chapter, volume, media_id, cover } => {
+        Input::Reading {
+            title,
+            chapter,
+            volume,
+            media_id,
+            cover,
+        } => {
             let state = match (chapter, volume) {
                 (Some(c), _) => Some(format!("Chapter {c}")),
                 (None, Some(v)) => Some(format!("Volume {v}")),
@@ -84,14 +121,29 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
         }
     };
     let private = o.hide_title;
-    let details = if private { if manga { "Reading manga".to_string() } else { "Watching anime".to_string() } } else { title.clone() };
+    let details = if private {
+        if manga {
+            "Reading manga".to_string()
+        } else {
+            "Watching anime".to_string()
+        }
+    } else {
+        title.clone()
+    };
     // Private: neither the title (hover text) nor the cover nor the link says what it is. The episode count stays.
-    let cover = cover.as_deref().filter(|u| o.cover && !private && u.starts_with("https://") && u.len() <= 256);
+    let cover = cover
+        .as_deref()
+        .filter(|u| o.cover && !private && u.starts_with("https://") && u.len() <= 256);
     let (large, small) = match cover {
         Some(u) => (Some((u.to_string(), title.clone())), Some(icon())),
         None => (Some(icon()), None),
     };
-    let button = media_id.filter(|_| o.buttons && !private).map(|id| (button_label(service).to_string(), entry_url(service, manga, id)));
+    let button = media_id.filter(|_| o.buttons && !private).map(|id| {
+        (
+            button_label(service).to_string(),
+            entry_url(service, manga, id),
+        )
+    });
     let (start, end) = match times {
         Some((s, e)) => (Some(s), e),
         None => (None, None),
@@ -102,7 +154,17 @@ pub fn activity(input: &Input, o: &Opts, service: ServiceId, now: i64) -> Option
         StatusIn::Title => 2,
         StatusIn::Episode => 1,
     };
-    Some(Activity { kind, details, state, start, end, large, small, status_display, button })
+    Some(Activity {
+        kind,
+        details,
+        state,
+        start,
+        end,
+        large,
+        small,
+        status_display,
+        button,
+    })
 }
 
 /// What is playing, or else what is being read. The episode wins when both would show.
@@ -129,8 +191,20 @@ fn current_reading(s: &State, _now: i64) -> Option<Input> {
     if title.is_empty() || (r.read.chapter.is_none() && r.read.volume.is_none()) {
         return None;
     }
-    let cover = s.manga.entries.iter().find(|e| e.id == media_id).and_then(|e| e.cover_url.clone()).or_else(|| r.cover_url.clone());
-    Some(Input::Reading { title, chapter: r.read.chapter, volume: r.read.volume, media_id: Some(media_id), cover })
+    let cover = s
+        .manga
+        .entries
+        .iter()
+        .find(|e| e.id == media_id)
+        .and_then(|e| e.cover_url.clone())
+        .or_else(|| r.cover_url.clone());
+    Some(Input::Reading {
+        title,
+        chapter: r.read.chapter,
+        volume: r.read.volume,
+        media_id: Some(media_id),
+        cover,
+    })
 }
 
 /// What is playing, from the state: a recognised file (on the list or found by search).
@@ -144,7 +218,11 @@ fn current_watching(s: &State) -> Option<Input> {
     if title.is_empty() {
         return None;
     }
-    let total = s.entries.iter().find(|e| e.id == media_id).and_then(|e| e.episodes);
+    let total = s
+        .entries
+        .iter()
+        .find(|e| e.id == media_id)
+        .and_then(|e| e.episodes);
     Some(Input::Watching {
         title,
         episode: n.episode(),
@@ -188,10 +266,16 @@ pub fn apply(o: &Opts) {
         && let Some(old) = link.take()
     {
         // Off the UI thread: the status comes down, then the thread ends.
-        let _ = std::thread::Builder::new().name("kotora-discord-stop".into()).spawn(move || old.worker.stop(Duration::from_secs(3)));
+        let _ = std::thread::Builder::new()
+            .name("kotora-discord-stop".into())
+            .spawn(move || old.worker.stop(Duration::from_secs(3)));
     }
     if on && link.is_none() {
-        *link = Some(Link { worker: Worker::start(id.clone(), dc::system_connector(), dc::Timing::default()), client_id: id, last: None });
+        *link = Some(Link {
+            worker: Worker::start(id.clone(), dc::system_connector(), dc::Timing::default()),
+            client_id: id,
+            last: None,
+        });
     }
     // The next sync sends the status again (an option changed what it says).
     if let Some(l) = link.as_mut() {
@@ -214,7 +298,14 @@ pub fn sync(s: &State) {
     if !ON.load(Ordering::Relaxed) {
         return;
     }
-    let want = current(s).and_then(|i| activity(&i, &s.prefs.discord, s.service, kotora_core::time::now_unix()));
+    let want = current(s).and_then(|i| {
+        activity(
+            &i,
+            &s.prefs.discord,
+            s.service,
+            kotora_core::time::now_unix(),
+        )
+    });
     let mut link = LINK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(l) = link.as_mut() else { return };
     let same = match (&l.last, &want) {
@@ -268,7 +359,12 @@ impl State {
     /// Show in status: applies at once (the status is sent again).
     pub fn set_discord_status(&mut self, v: StatusIn) {
         self.prefs.discord.status = v.key().into();
-        crate::detect::save_setting(self, "discord", "status", kotora_core::config::quote(v.key()));
+        crate::detect::save_setting(
+            self,
+            "discord",
+            "status",
+            kotora_core::config::quote(v.key()),
+        );
         self.discord_changed();
     }
 
@@ -284,94 +380,288 @@ mod tests {
     use super::*;
 
     fn watching(playing: bool) -> Input {
-        Input::Watching { title: "Kagurabachi".into(), episode: Some(7), total: Some(24), media_id: Some(61), cover: Some("https://cdn.myanimelist.net/images/anime/1/2.jpg".into()), playing, position: Some(300.0), duration: Some(1400.0), rate: 1.0 }
+        Input::Watching {
+            title: "Kagurabachi".into(),
+            episode: Some(7),
+            total: Some(24),
+            media_id: Some(61),
+            cover: Some("https://cdn.myanimelist.net/images/anime/1/2.jpg".into()),
+            playing,
+            position: Some(300.0),
+            duration: Some(1400.0),
+            rate: 1.0,
+        }
     }
 
     fn on() -> Opts {
-        Opts { enabled: true, ..Opts::default() }
+        Opts {
+            enabled: true,
+            ..Opts::default()
+        }
     }
 
     #[test]
     fn an_episode_playing() {
         let a = activity(&watching(true), &on(), ServiceId::AniList, 10_000).unwrap();
-        assert_eq!((a.kind, a.details.as_str(), a.state.as_deref()), (3, "Kagurabachi", Some("Episode 7 of 24")));
-        assert_eq!((a.start, a.end), (Some(9_700), Some(11_100)), "elapsed and remaining from the player");
-        assert_eq!(a.large.as_ref().unwrap().0, "https://cdn.myanimelist.net/images/anime/1/2.jpg");
+        assert_eq!(
+            (a.kind, a.details.as_str(), a.state.as_deref()),
+            (3, "Kagurabachi", Some("Episode 7 of 24"))
+        );
+        assert_eq!(
+            (a.start, a.end),
+            (Some(9_700), Some(11_100)),
+            "elapsed and remaining from the player"
+        );
+        assert_eq!(
+            a.large.as_ref().unwrap().0,
+            "https://cdn.myanimelist.net/images/anime/1/2.jpg"
+        );
         assert_eq!(a.small.as_ref().unwrap().0, dc::ICON_ASSET);
-        assert_eq!(a.button, Some(("View on AniList".into(), "https://anilist.co/anime/61".into())));
+        assert_eq!(
+            a.button,
+            Some((
+                "View on AniList".into(),
+                "https://anilist.co/anime/61".into()
+            ))
+        );
         let m = activity(&watching(true), &on(), ServiceId::Mal, 0).unwrap();
-        assert_eq!(m.button.unwrap(), ("View on MyAnimeList".into(), "https://myanimelist.net/anime/61".into()));
+        assert_eq!(
+            m.button.unwrap(),
+            (
+                "View on MyAnimeList".into(),
+                "https://myanimelist.net/anime/61".into()
+            )
+        );
     }
 
     #[test]
     fn speed_and_unknown_length() {
-        let Input::Watching { .. } = watching(true) else { unreachable!() };
+        let Input::Watching { .. } = watching(true) else {
+            unreachable!()
+        };
         let fast = match watching(true) {
-            Input::Watching { title, episode, total, media_id, cover, playing, .. } => Input::Watching { title, episode, total, media_id, cover, playing, position: Some(300.0), duration: Some(1400.0), rate: 2.0 },
+            Input::Watching {
+                title,
+                episode,
+                total,
+                media_id,
+                cover,
+                playing,
+                ..
+            } => Input::Watching {
+                title,
+                episode,
+                total,
+                media_id,
+                cover,
+                playing,
+                position: Some(300.0),
+                duration: Some(1400.0),
+                rate: 2.0,
+            },
             r => r,
         };
         let a = activity(&fast, &on(), ServiceId::Mal, 10_000).unwrap();
         assert_eq!((a.start, a.end), (Some(9_850), Some(10_550)));
         let open = match watching(true) {
-            Input::Watching { title, episode, media_id, cover, playing, .. } => Input::Watching { title, episode, total: None, media_id, cover, playing, position: Some(60.0), duration: None, rate: 1.0 },
+            Input::Watching {
+                title,
+                episode,
+                media_id,
+                cover,
+                playing,
+                ..
+            } => Input::Watching {
+                title,
+                episode,
+                total: None,
+                media_id,
+                cover,
+                playing,
+                position: Some(60.0),
+                duration: None,
+                rate: 1.0,
+            },
             r => r,
         };
         let a = activity(&open, &on(), ServiceId::Mal, 1_000).unwrap();
-        assert_eq!((a.start, a.end, a.state.as_deref()), (Some(940), None, Some("Episode 7")));
+        assert_eq!(
+            (a.start, a.end, a.state.as_deref()),
+            (Some(940), None, Some("Episode 7"))
+        );
     }
 
     #[test]
     fn paused_shows_no_clock_or_hides() {
         let a = activity(&watching(false), &on(), ServiceId::Mal, 10_000).unwrap();
-        assert_eq!((a.start, a.end, a.state.as_deref()), (None, None, Some("Episode 7 of 24 \u{b7} Paused")));
-        let hide = Opts { hide_paused: true, ..on() };
+        assert_eq!(
+            (a.start, a.end, a.state.as_deref()),
+            (None, None, Some("Episode 7 of 24 \u{b7} Paused"))
+        );
+        let hide = Opts {
+            hide_paused: true,
+            ..on()
+        };
         assert!(activity(&watching(false), &hide, ServiceId::Mal, 0).is_none());
         assert!(activity(&watching(true), &hide, ServiceId::Mal, 0).is_some());
     }
 
     #[test]
     fn privacy_and_options() {
-        let p = activity(&watching(true), &Opts { hide_title: true, ..on() }, ServiceId::Mal, 0).unwrap();
+        let p = activity(
+            &watching(true),
+            &Opts {
+                hide_title: true,
+                ..on()
+            },
+            ServiceId::Mal,
+            0,
+        )
+        .unwrap();
         assert_eq!(p.details, "Watching anime");
-        assert_eq!(p.large.as_ref().unwrap(), &(dc::ICON_ASSET.to_string(), "Kotora".to_string()), "no cover, no title in the hover text");
+        assert_eq!(
+            p.large.as_ref().unwrap(),
+            &(dc::ICON_ASSET.to_string(), "Kotora".to_string()),
+            "no cover, no title in the hover text"
+        );
         assert!(p.small.is_none() && p.button.is_none());
         let json = p.to_json().to_string();
-        assert!(!json.contains("Kagurabachi") && !json.contains("myanimelist") && !json.contains("61"), "{json}");
-        let q = activity(&watching(true), &Opts { cover: false, buttons: false, ..on() }, ServiceId::Mal, 0).unwrap();
+        assert!(
+            !json.contains("Kagurabachi") && !json.contains("myanimelist") && !json.contains("61"),
+            "{json}"
+        );
+        let q = activity(
+            &watching(true),
+            &Opts {
+                cover: false,
+                buttons: false,
+                ..on()
+            },
+            ServiceId::Mal,
+            0,
+        )
+        .unwrap();
         assert_eq!(q.large.unwrap().0, dc::ICON_ASSET);
         assert!(q.button.is_none() && q.small.is_none());
         // A cover that isn't https, or is too long, is not sent.
         let odd = match watching(true) {
-            Input::Watching { title, episode, total, media_id, playing, position, duration, rate, .. } => Input::Watching { title, episode, total, media_id, cover: Some("http://x/y.jpg".into()), playing, position, duration, rate },
+            Input::Watching {
+                title,
+                episode,
+                total,
+                media_id,
+                playing,
+                position,
+                duration,
+                rate,
+                ..
+            } => Input::Watching {
+                title,
+                episode,
+                total,
+                media_id,
+                cover: Some("http://x/y.jpg".into()),
+                playing,
+                position,
+                duration,
+                rate,
+            },
             r => r,
         };
-        assert_eq!(activity(&odd, &on(), ServiceId::Mal, 0).unwrap().large.unwrap().0, dc::ICON_ASSET);
+        assert_eq!(
+            activity(&odd, &on(), ServiceId::Mal, 0)
+                .unwrap()
+                .large
+                .unwrap()
+                .0,
+            dc::ICON_ASSET
+        );
     }
 
     #[test]
     fn show_in_status_maps_to_discords_display_type() {
-        let t = |st: &str| activity(&watching(true), &Opts { status: st.into(), ..on() }, ServiceId::Mal, 0).unwrap().to_json()["status_display_type"].clone();
+        let t = |st: &str| {
+            activity(
+                &watching(true),
+                &Opts {
+                    status: st.into(),
+                    ..on()
+                },
+                ServiceId::Mal,
+                0,
+            )
+            .unwrap()
+            .to_json()["status_display_type"]
+                .clone()
+        };
         assert_eq!(t("title"), 2);
         assert_eq!(t("episode"), 1);
         assert_eq!(t("app"), 0);
         assert_eq!(t("nonsense"), 2, "a bad value is the title");
         assert_eq!(Opts::default().status(), StatusIn::Title, "the default");
         // Paused keeps its second line, so Episode still works; a hidden title shows its stand-in.
-        let a = activity(&watching(false), &Opts { status: "episode".into(), ..on() }, ServiceId::Mal, 0).unwrap();
+        let a = activity(
+            &watching(false),
+            &Opts {
+                status: "episode".into(),
+                ..on()
+            },
+            ServiceId::Mal,
+            0,
+        )
+        .unwrap();
         assert_eq!(a.status_display, 1);
         assert!(a.state.is_some());
-        let r = Input::Reading { title: "Blue Lock".into(), chapter: None, volume: None, media_id: Some(1), cover: None };
-        assert_eq!(activity(&r, &Opts { status: "episode".into(), ..on() }, ServiceId::Mal, 0).unwrap().to_json()["status_display_type"], 2, "no chapter: the title");
+        let r = Input::Reading {
+            title: "Blue Lock".into(),
+            chapter: None,
+            volume: None,
+            media_id: Some(1),
+            cover: None,
+        };
+        assert_eq!(
+            activity(
+                &r,
+                &Opts {
+                    status: "episode".into(),
+                    ..on()
+                },
+                ServiceId::Mal,
+                0
+            )
+            .unwrap()
+            .to_json()["status_display_type"],
+            2,
+            "no chapter: the title"
+        );
     }
 
     #[test]
     fn a_chapter() {
-        let r = Input::Reading { title: "Blue Lock".into(), chapter: Some(362), volume: None, media_id: Some(99), cover: None };
+        let r = Input::Reading {
+            title: "Blue Lock".into(),
+            chapter: Some(362),
+            volume: None,
+            media_id: Some(99),
+            cover: None,
+        };
         let a = activity(&r, &on(), ServiceId::AniList, 5).unwrap();
-        assert_eq!((a.kind, a.details.as_str(), a.state.as_deref()), (0, "Blue Lock", Some("Chapter 362")));
+        assert_eq!(
+            (a.kind, a.details.as_str(), a.state.as_deref()),
+            (0, "Blue Lock", Some("Chapter 362"))
+        );
         assert_eq!(a.button.unwrap().1, "https://anilist.co/manga/99");
         assert!(a.start.is_none());
-        let p = activity(&r, &Opts { hide_title: true, ..on() }, ServiceId::Mal, 5).unwrap();
+        let p = activity(
+            &r,
+            &Opts {
+                hide_title: true,
+                ..on()
+            },
+            ServiceId::Mal,
+            5,
+        )
+        .unwrap();
         assert_eq!(p.details, "Reading manga");
     }
 
@@ -404,17 +694,41 @@ mod tests {
     #[test]
     fn a_comic_being_read_is_shown() {
         let s = reading_state();
-        let Some(Input::Reading { title, chapter, volume, media_id, .. }) = current_at(&s, 1_100) else { panic!("{:?}", current_at(&s, 1_100)) };
-        assert_eq!((title.as_str(), chapter, volume, media_id), ("Inkwell Cartographers", Some(120), Some(12), Some(1)));
-        let a = activity(&current_at(&s, 1_100).unwrap(), &on(), ServiceId::Mal, 1_100).unwrap();
-        assert_eq!((a.kind, a.details.as_str(), a.state.as_deref()), (0, "Inkwell Cartographers", Some("Chapter 120")));
+        let Some(Input::Reading {
+            title,
+            chapter,
+            volume,
+            media_id,
+            ..
+        }) = current_at(&s, 1_100)
+        else {
+            panic!("{:?}", current_at(&s, 1_100))
+        };
+        assert_eq!(
+            (title.as_str(), chapter, volume, media_id),
+            ("Inkwell Cartographers", Some(120), Some(12), Some(1))
+        );
+        let a = activity(
+            &current_at(&s, 1_100).unwrap(),
+            &on(),
+            ServiceId::Mal,
+            1_100,
+        )
+        .unwrap();
+        assert_eq!(
+            (a.kind, a.details.as_str(), a.state.as_deref()),
+            (0, "Inkwell Cartographers", Some("Chapter 120"))
+        );
         assert_eq!(a.button.unwrap().1, "https://myanimelist.net/manga/1");
     }
 
     #[test]
     fn reading_ends_when_the_comic_is_closed_or_cleared() {
         let mut s = reading_state();
-        assert!(current_at(&s, 1_000 + 3 * 3600).is_some(), "open for hours: still read");
+        assert!(
+            current_at(&s, 1_000 + 3 * 3600).is_some(),
+            "open for hours: still read"
+        );
         // The reader closed it: the status goes at once (no timeout).
         s.reading_open(Vec::new());
         assert!(current_at(&s, 1_001).is_none(), "closed");
@@ -423,7 +737,10 @@ mod tests {
         assert!(current_at(&s, 1_100).is_none(), "Manga mode off");
         s.manga.enabled = true;
         s.reading.current = None;
-        assert!(current_at(&s, 1_100).is_none(), "the watch stopped or was reset");
+        assert!(
+            current_at(&s, 1_100).is_none(),
+            "the watch stopped or was reset"
+        );
         // A file that matches nothing shows nothing.
         crate::reading::fake(&mut s, "Nothing Known Anywhere c5.cbz", 14);
         s.reading.current.as_mut().unwrap().read.at = 1_000;
@@ -436,11 +753,17 @@ mod tests {
         s.now = State::fake().now;
         match current_at(&s, 1_100) {
             Some(Input::Watching { .. }) => {}
-            other => assert!(s.now.as_ref().is_none_or(|n| n.gone) || current_watching(&s).is_none(), "{other:?}"),
+            other => assert!(
+                s.now.as_ref().is_none_or(|n| n.gone) || current_watching(&s).is_none(),
+                "{other:?}"
+            ),
         }
         let w = current_watching(&s);
         if w.is_some() {
-            assert!(matches!(current_at(&s, 1_100), Some(Input::Watching { .. })));
+            assert!(matches!(
+                current_at(&s, 1_100),
+                Some(Input::Watching { .. })
+            ));
         }
     }
 

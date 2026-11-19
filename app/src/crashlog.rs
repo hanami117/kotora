@@ -14,12 +14,21 @@ pub fn install() {
     if cfg!(windows) {
         return;
     }
-    let Some(dir) = kotora_core::paths::state_dir() else { return };
+    let Some(dir) = kotora_core::paths::state_dir() else {
+        return;
+    };
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
-        let text = format!("--- kotora {} · unix time {} · thread {thread}\n{info}\n", kotora_ctl::version_line(), kotora_core::time::now_unix());
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string();
+        let text = format!(
+            "--- kotora {} · unix time {} · thread {thread}\n{info}\n",
+            kotora_ctl::version_line(),
+            kotora_core::time::now_unix()
+        );
         let _ = append(&dir, &text);
     }));
 }
@@ -33,7 +42,11 @@ fn append(dir: &Path, text: &str) -> std::io::Result<()> {
     let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX);
     let mut o = std::fs::OpenOptions::new();
     o.create(true);
-    if big { o.write(true).truncate(true) } else { o.append(true) };
+    if big {
+        o.write(true).truncate(true)
+    } else {
+        o.append(true)
+    };
     o.open(&path)?.write_all(text.as_bytes())
 }
 
@@ -43,7 +56,9 @@ mod tests {
 
     #[test]
     fn panics_are_appended_and_the_file_stays_small() {
-        let dir = std::env::temp_dir().join(format!("kotora-crashlog-{}", std::process::id())).join("kotora");
+        let dir = std::env::temp_dir()
+            .join(format!("kotora-crashlog-{}", std::process::id()))
+            .join("kotora");
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
         append(&dir, "one\n").unwrap();
         append(&dir, "two\n").unwrap();
@@ -52,11 +67,19 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700, "a new folder is private");
+            assert_eq!(
+                std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700,
+                "a new folder is private"
+            );
         }
         std::fs::write(&path, vec![b'x'; MAX as usize + 1]).unwrap();
         append(&dir, "three\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "three\n", "past the limit it starts again");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "three\n",
+            "past the limit it starts again"
+        );
         let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 }

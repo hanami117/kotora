@@ -106,7 +106,7 @@ pub struct SearchView {
 }
 
 enum Cmd {
-    Set(Feeds),
+    Set(Box<Feeds>),
     Check,
 }
 
@@ -130,7 +130,11 @@ pub fn span(e: &Entry) -> Option<(u32, u32, u32)> {
 /// What counts as new for the badge, the sidebar and notifications: an episode of an anime on
 /// the list past its progress, not discarded, not an extra (OP, PV…).
 pub fn is_new(e: &Entry) -> bool {
-    !e.state.is_discarded() && e.new_episode && e.anime_id.is_some() && e.category != taiga::Category::Other && e.release.episodes.is_some()
+    !e.state.is_discarded()
+        && e.new_episode
+        && e.anime_id.is_some()
+        && e.category != taiga::Category::Other
+        && e.release.episodes.is_some()
 }
 
 /// A short name for a feed: the host.
@@ -159,7 +163,7 @@ impl State {
 
     fn feeds_apply(&mut self) {
         if let Some(w) = &self.feeds.worker {
-            let _ = w.send(Cmd::Set(self.feeds.cfg.clone()));
+            let _ = w.send(Cmd::Set(Box::new(self.feeds.cfg.clone())));
             return;
         }
         if !self.feeds.cfg.active() {
@@ -170,14 +174,22 @@ impl State {
         let cfg = self.feeds.cfg.clone();
         let service = crate::account::name();
         let anilist = crate::account::active() == kotora_core::service::ServiceId::AniList;
-        if std::thread::Builder::new().name("kotora-feeds".into()).spawn(move || run(h, rx, cfg, service, anilist)).is_ok() {
+        if std::thread::Builder::new()
+            .name("kotora-feeds".into())
+            .spawn(move || run(h, rx, cfg, service, anilist))
+            .is_ok()
+        {
             self.feeds.worker = Some(tx);
         }
     }
 
     /// The list changed: the rows follow (an episode watched drops its row).
     pub fn feeds_list(&mut self, items: &[ListItem]) {
-        self.feeds.list = items.iter().filter(|it| it.media.kind == Kind::Anime).cloned().collect();
+        self.feeds.list = items
+            .iter()
+            .filter(|it| it.media.kind == Kind::Anime)
+            .cloned()
+            .collect();
         if self.feeds.cfg.enabled {
             self.feeds_reselect();
         }
@@ -186,7 +198,11 @@ impl State {
     /// Taiga's `ExamineData`: identify, filter, the archive, then the user's own states.
     pub fn feeds_reselect(&mut self) {
         let entries = self.feeds_examine(&self.feeds.items);
-        let found = self.feeds.search.as_ref().map(|sv| self.feeds_examine(&sv.items));
+        let found = self
+            .feeds
+            .search
+            .as_ref()
+            .map(|sv| self.feeds_examine(&sv.items));
         self.feeds.entries = entries;
         if let (Some(sv), Some(e)) = (self.feeds.search.as_mut(), found) {
             sv.entries = e;
@@ -198,11 +214,25 @@ impl State {
         let empty = Relations::default();
         let rel = f.relations.as_deref().unwrap_or(&empty);
         let (index, got) = (&self.library.index, &f.marks.got);
-        let available = |id: u32, ep: u32| index.by_media.get(&id).is_some_and(|m| m.contains_key(&ep)) || got.keys().any(|(m, a, b)| *m == id && (*a..=*b).contains(&ep));
-        let w = World { list: &f.list, available: &available };
+        let available = |id: u32, ep: u32| {
+            index.by_media.get(&id).is_some_and(|m| m.contains_key(&ep))
+                || got
+                    .keys()
+                    .any(|(m, a, b)| *m == id && (*a..=*b).contains(&ep))
+        };
+        let w = World {
+            list: &f.list,
+            available: &available,
+        };
         let mut entries = taiga::examine(items, &f.list, &f.picks, rel);
         let none = Archive::default();
-        taiga::run_filters(&mut entries, &f.filters, f.cfg.filters_enabled, f.archive.as_ref().unwrap_or(&none), &w);
+        taiga::run_filters(
+            &mut entries,
+            &f.filters,
+            f.cfg.filters_enabled,
+            f.archive.as_ref().unwrap_or(&none),
+            &w,
+        );
         for e in &mut entries {
             if let Some(st) = f.manual.get(&e.item.key()) {
                 e.state = *st;
@@ -233,9 +263,17 @@ impl State {
 
     /// One notification for the rows not notified before (never unsure ones).
     fn feeds_notify(&mut self) {
-        let Some(done) = self.feeds.notified.clone() else { return };
+        let Some(done) = self.feeds.notified.clone() else {
+            return;
+        };
         let mut fresh: Vec<(u32, u32, u32)> = Vec::new();
-        for k in self.feeds.entries.iter().filter(|e| is_new(e)).filter_map(span) {
+        for k in self
+            .feeds
+            .entries
+            .iter()
+            .filter(|e| is_new(e))
+            .filter_map(span)
+        {
             if !done.contains(&k) && !fresh.contains(&k) {
                 fresh.push(k);
             }
@@ -245,16 +283,30 @@ impl State {
         }
         // Taiga's "download new episodes": the items the filters selected, at once.
         if self.feeds.cfg.new_action == "download" {
-            let keys: Vec<String> = self.feeds.entries.iter().filter(|e| e.state == ItemState::Selected && span(e).is_some_and(|k| fresh.contains(&k))).map(|e| e.item.key()).collect();
+            let keys: Vec<String> = self
+                .feeds
+                .entries
+                .iter()
+                .filter(|e| {
+                    e.state == ItemState::Selected && span(e).is_some_and(|k| fresh.contains(&k))
+                })
+                .map(|e| e.item.key())
+                .collect();
             if !keys.is_empty() {
                 self.feeds_download(keys);
             }
         }
-        let Some(done) = self.feeds.notified.as_mut() else { return };
+        let Some(done) = self.feeds.notified.as_mut() else {
+            return;
+        };
         done.extend(fresh.iter().copied());
         let over = done.len().saturating_sub(NOTIFIED_KEEP);
         done.drain(..over);
-        let keep: String = done.iter().map(|(m, a, b)| format!("{m}:{a}-{b}")).collect::<Vec<_>>().join(",");
+        let keep: String = done
+            .iter()
+            .map(|(m, a, b)| format!("{m}:{a}-{b}"))
+            .collect::<Vec<_>>()
+            .join(",");
         if self.handle.is_some() {
             std::thread::spawn(move || {
                 if let Ok(st) = kotora_core::store::Store::open(&paths::db_file()) {
@@ -265,17 +317,35 @@ impl State {
         if !self.prefs.notify.new_release {
             return;
         }
-        let parts: Vec<String> = fresh.iter().take(4).map(|(m, a, b)| format!("{} {}", self.feeds_title(*m), ep_text(*a, *b))).collect();
-        let summary = if fresh.len() == 1 { "New release".to_string() } else { format!("{} new releases", fresh.len()) };
+        let parts: Vec<String> = fresh
+            .iter()
+            .take(4)
+            .map(|(m, a, b)| format!("{} {}", self.feeds_title(*m), ep_text(*a, *b)))
+            .collect();
+        let summary = if fresh.len() == 1 {
+            "New release".to_string()
+        } else {
+            format!("{} new releases", fresh.len())
+        };
         let mut body = parts.join(", ");
         if fresh.len() > 4 {
             body.push_str(&format!(" and {} more", fresh.len() - 4));
         }
-        self.notes.show(crate::notes::Note { id: "kotora-feeds".into(), kind: crate::notes::Kind::Aired, summary, body, tail: None });
+        self.notes.show(crate::notes::Note {
+            id: "kotora-feeds".into(),
+            kind: crate::notes::Kind::Aired,
+            summary,
+            body,
+            tail: None,
+        });
     }
 
     pub fn feeds_title(&self, id: u32) -> String {
-        self.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_else(|| format!("Anime {id}"))
+        self.entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.title.clone())
+            .unwrap_or_else(|| format!("Anime {id}"))
     }
 
     /// The badge's episode for a list entry: the first new one with a release.
@@ -283,7 +353,12 @@ impl State {
         if !self.feeds.cfg.enabled {
             return None;
         }
-        self.feeds.entries.iter().filter(|e| e.anime_id == Some(id) && is_new(e)).filter_map(|e| e.release.episodes).min()
+        self.feeds
+            .entries
+            .iter()
+            .filter(|e| e.anime_id == Some(id) && is_new(e))
+            .filter_map(|e| e.release.episodes)
+            .min()
     }
 
     /// New episodes for the sidebar badge.
@@ -291,7 +366,13 @@ impl State {
         if !self.feeds.cfg.enabled {
             return 0;
         }
-        let set: HashSet<(u32, u32, u32)> = self.feeds.entries.iter().filter(|e| is_new(e)).filter_map(span).collect();
+        let set: HashSet<(u32, u32, u32)> = self
+            .feeds
+            .entries
+            .iter()
+            .filter(|e| is_new(e))
+            .filter_map(span)
+            .collect();
         set.len()
     }
 
@@ -312,14 +393,16 @@ impl State {
 
     fn feeds_save(&mut self, key: &'static str, value: String) {
         let Some(h) = self.handle.clone() else { return };
-        let _ = std::thread::Builder::new().name("kotora-settings".into()).spawn(move || {
-            if let Err(e) = config::write_setting(&paths::config_file(), "feeds", key, &value) {
-                h.update_if(move |s, _| {
-                    s.feeds.error = Some(format!("Can't save the setting: {e}"));
-                    true
-                });
-            }
-        });
+        let _ = std::thread::Builder::new()
+            .name("kotora-settings".into())
+            .spawn(move || {
+                if let Err(e) = config::write_setting(&paths::config_file(), "feeds", key, &value) {
+                    h.update_if(move |s, _| {
+                        s.feeds.error = Some(format!("Can't save the setting: {e}"));
+                        true
+                    });
+                }
+            });
     }
 
     pub fn set_feeds(&mut self, on: bool) {
@@ -347,7 +430,10 @@ impl State {
 
     pub fn set_feeds_minutes(&mut self, m: u32) {
         self.feeds.cfg.interval_minutes = m.max(Feeds::MIN_MINUTES);
-        self.feeds_save("interval_minutes", self.feeds.cfg.interval_minutes.to_string());
+        self.feeds_save(
+            "interval_minutes",
+            self.feeds.cfg.interval_minutes.to_string(),
+        );
         self.feeds_apply();
     }
 
@@ -371,7 +457,8 @@ impl State {
                     (u, n)
                 }
                 None => {
-                    self.feeds.error = Some("A feed address starts with https:// (or http://).".into());
+                    self.feeds.error =
+                        Some("A feed address starts with https:// (or http://).".into());
                     return;
                 }
             },
@@ -384,10 +471,17 @@ impl State {
         if nyaa_defaults(&url).is_some() && self.feeds.cfg.search.trim().is_empty() {
             self.set_feeds_search(NYAA_SEARCH.to_string());
         }
-        self.feeds.cfg.sources.push(FeedSource { name: name.clone(), url });
+        self.feeds.cfg.sources.push(FeedSource {
+            name: name.clone(),
+            url,
+        });
         self.feeds_save("sources", Feeds::sources_toml(&self.feeds.cfg.sources));
         self.feeds.draft = TextEdit::default();
-        self.feeds.note = Some(if masked { format!("Added \u{201c}{name}\u{201d}. Its key is hidden here and never logged.") } else { format!("Added \u{201c}{name}\u{201d}.") });
+        self.feeds.note = Some(if masked {
+            format!("Added \u{201c}{name}\u{201d}. Its key is hidden here and never logged.")
+        } else {
+            format!("Added \u{201c}{name}\u{201d}.")
+        });
         self.feeds_apply();
     }
 
@@ -404,14 +498,23 @@ impl State {
     /// Taiga's Download: each item (in the order given) to the torrent app or the download
     /// folder; it goes into the history, and its episode is marked got.
     pub fn feeds_download(&mut self, keys: Vec<String>) {
-        let all = self.feeds.entries.iter().chain(self.feeds.search.iter().flat_map(|sv| sv.entries.iter()));
+        let all = self
+            .feeds
+            .entries
+            .iter()
+            .chain(self.feeds.search.iter().flat_map(|sv| sv.entries.iter()));
         let mut jobs = Vec::new();
         for k in &keys {
             if self.feeds.busy.contains(k) {
                 continue;
             }
-            let Some(e) = all.clone().find(|e| &e.item.key() == k) else { continue };
-            let anime = e.anime_id.map(|id| self.feeds_title(id)).unwrap_or_else(|| e.anime_title.clone());
+            let Some(e) = all.clone().find(|e| &e.item.key() == k) else {
+                continue;
+            };
+            let anime = e
+                .anime_id
+                .map(|id| self.feeds_title(id))
+                .unwrap_or_else(|| e.anime_title.clone());
             jobs.push((k.clone(), e.item.clone(), anime, span(e), e.release.version));
         }
         if jobs.is_empty() {
@@ -423,11 +526,18 @@ impl State {
             self.feeds.busy.insert(k.clone());
             self.feeds.manual.remove(k);
             if let Some(sp) = sp {
-                self.feeds.marks.got.insert(*sp, (it.info_hash.clone(), *version));
+                self.feeds
+                    .marks
+                    .got
+                    .insert(*sp, (it.info_hash.clone(), *version));
             }
         }
         self.feeds_reselect();
-        self.feeds.said = Some(if jobs.len() == 1 { format!("Downloading {}\u{2026}", jobs[0].1.title) } else { format!("Downloading {} torrents\u{2026}", jobs.len()) });
+        self.feeds.said = Some(if jobs.len() == 1 {
+            format!("Downloading {}\u{2026}", jobs[0].1.title)
+        } else {
+            format!("Downloading {} torrents\u{2026}", jobs.len())
+        });
         let Some(h) = self.handle.clone() else {
             for (k, ..) in &jobs {
                 self.feeds.busy.remove(k);
@@ -436,43 +546,55 @@ impl State {
         };
         let opts = self.feeds.cfg.clone();
         let service = crate::account::name();
-        let _ = std::thread::Builder::new().name("kotora-feed-open".into()).spawn(move || {
-            let mut results = Vec::new();
-            let st = kotora_core::store::Store::open(&paths::db_file()).ok();
-            for (k, it, anime, sp, version) in jobs {
-                let r = crate::torrents::open_one(&it, Some(&anime), &opts);
-                if r.is_ok()
-                    && let (Some(st), Some((m, a, b))) = (&st, sp)
-                {
-                    let at = kotora_core::time::now_unix();
-                    let _ = st.feed_mark(service, m, (a, b), &Mark::Got { info_hash: it.info_hash.clone(), version, title: it.title.clone() }, at);
+        let _ = std::thread::Builder::new()
+            .name("kotora-feed-open".into())
+            .spawn(move || {
+                let mut results = Vec::new();
+                let st = kotora_core::store::Store::open(&paths::db_file()).ok();
+                for (k, it, anime, sp, version) in jobs {
+                    let r = crate::torrents::open_one(&it, Some(&anime), &opts);
+                    if r.is_ok()
+                        && let (Some(st), Some((m, a, b))) = (&st, sp)
+                    {
+                        let at = kotora_core::time::now_unix();
+                        let _ = st.feed_mark(
+                            service,
+                            m,
+                            (a, b),
+                            &Mark::Got {
+                                info_hash: it.info_hash.clone(),
+                                version,
+                                title: it.title.clone(),
+                            },
+                            at,
+                        );
+                    }
+                    results.push((k, it.title, sp, r));
                 }
-                results.push((k, it.title, sp, r));
-            }
-            h.update_if(move |s, _| {
-                let mut said = Vec::new();
-                for (k, title, sp, r) in results {
-                    s.feeds.busy.remove(&k);
-                    match r {
-                        Ok(m) => said.push(m),
-                        Err(e) => {
-                            // Not opened: out of the history again, the row comes back.
-                            if let Some(a) = s.feeds.archive.as_mut() {
-                                a.titles.retain(|t| t != &title);
+                h.update_if(move |s, _| {
+                    let mut said = Vec::new();
+                    for (k, title, sp, r) in results {
+                        s.feeds.busy.remove(&k);
+                        match r {
+                            Ok(m) => said.push(m),
+                            Err(e) => {
+                                // Not opened: out of the history again, the row comes back.
+                                if let Some(a) = s.feeds.archive.as_mut() {
+                                    a.titles.retain(|t| t != &title);
+                                }
+                                if let Some(sp) = sp {
+                                    s.feeds.marks.got.remove(&sp);
+                                }
+                                said.push(mask(&e));
                             }
-                            if let Some(sp) = sp {
-                                s.feeds.marks.got.remove(&sp);
-                            }
-                            said.push(mask(&e));
                         }
                     }
-                }
-                s.feeds_save_archive();
-                s.feeds_reselect();
-                s.feeds.said = said.last().cloned();
-                true
+                    s.feeds_save_archive();
+                    s.feeds_reselect();
+                    s.feeds.said = said.last().cloned();
+                    true
+                });
             });
-        });
     }
 
     /// The history to the store (Taiga keeps `archive_max` titles).
@@ -504,7 +626,10 @@ impl State {
             return;
         }
         if !t.is_empty() && search_url(&t, "x").is_none() {
-            self.feeds.error = Some("The search address needs %title% and must start with https:// (or http://).".into());
+            self.feeds.error = Some(
+                "The search address needs %title% and must start with https:// (or http://)."
+                    .into(),
+            );
             return;
         }
         self.feeds.error = None;
@@ -513,34 +638,54 @@ impl State {
 
     /// Whether "Search releases" can run for an anime on the list.
     pub fn feeds_can_search(&self, id: u32) -> bool {
-        self.feeds.cfg.enabled && !self.feeds.cfg.search.trim().is_empty() && self.entries.iter().any(|e| e.id == id)
+        self.feeds.cfg.enabled
+            && !self.feeds.cfg.search.trim().is_empty()
+            && self.entries.iter().any(|e| e.id == id)
     }
 
     /// Search releases (Taiga's "Search for torrents"): the search address with the anime's
     /// title, read once, shown on the Feeds page.
     pub fn feeds_search(&mut self, id: u32) {
-        let Some(e) = self.entries.iter().find(|e| e.id == id) else { return };
+        let Some(e) = self.entries.iter().find(|e| e.id == id) else {
+            return;
+        };
         let title = e.main_title.clone();
         let Some(url) = search_url(&self.feeds.cfg.search, &title) else {
-            self.feeds.search = Some(SearchView { media_id: id, title, error: Some("Set a search address in Settings \u{2192} Feeds.".into()), ..SearchView::default() });
+            self.feeds.search = Some(SearchView {
+                media_id: id,
+                title,
+                error: Some("Set a search address in Settings \u{2192} Feeds.".into()),
+                ..SearchView::default()
+            });
             self.open_feeds();
             return;
         };
-        self.feeds.search = Some(SearchView { media_id: id, title, loading: true, ..SearchView::default() });
+        self.feeds.search = Some(SearchView {
+            media_id: id,
+            title,
+            loading: true,
+            ..SearchView::default()
+        });
         self.feeds.history = false;
         self.open_feeds();
         let Some(h) = self.handle.clone() else { return };
-        let _ = std::thread::Builder::new().name("kotora-feed-search".into()).spawn(move || {
-            let r = fetch(&url, None, None).and_then(|f| match f {
-                Fetched::New { body, .. } => kotora_core::feeds::parse(&body).map(|f| f.items).map_err(|e| e.to_string()),
-                Fetched::Same => Ok(Vec::new()),
+        let _ = std::thread::Builder::new()
+            .name("kotora-feed-search".into())
+            .spawn(move || {
+                let r = fetch(&url, None, None).and_then(|f| match f {
+                    Fetched::New { body, .. } => kotora_core::feeds::parse(&body)
+                        .map(|f| f.items)
+                        .map_err(|e| e.to_string()),
+                    Fetched::Same => Ok(Vec::new()),
+                });
+                h.update_if(move |s, _| s.feeds_found(id, r));
             });
-            h.update_if(move |s, _| s.feeds_found(id, r));
-        });
     }
 
     pub fn feeds_found(&mut self, id: u32, r: Result<Vec<Item>, String>) -> bool {
-        let Some(sv) = self.feeds.search.as_mut().filter(|sv| sv.media_id == id) else { return false };
+        let Some(sv) = self.feeds.search.as_mut().filter(|sv| sv.media_id == id) else {
+            return false;
+        };
         sv.loading = false;
         match r {
             Ok(items) => sv.items = items.into_iter().map(|i| (-1, i)).collect(),
@@ -553,12 +698,22 @@ impl State {
 
 /// "Ep 8", "Ep 8–12".
 pub fn ep_text(a: u32, b: u32) -> String {
-    if a == b { format!("Ep {a}") } else { format!("Ep {a}\u{2013}{b}") }
+    if a == b {
+        format!("Ep {a}")
+    } else {
+        format!("Ep {a}\u{2013}{b}")
+    }
 }
 
 // ---------------------------------------------------------------------------------- worker
 
-fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'static str, anilist: bool) {
+fn run(
+    h: crate::model::Handle,
+    rx: Receiver<Cmd>,
+    mut cfg: Feeds,
+    service: &'static str,
+    anilist: bool,
+) {
     let mut states: HashMap<String, FeedState> = HashMap::new();
     let mut items: HashMap<String, Vec<Item>> = HashMap::new();
     let mut relations: Option<std::sync::Arc<Relations>> = None;
@@ -576,7 +731,11 @@ fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'st
                 changed = true;
                 match fetch(&src.url, st.etag.as_deref(), st.modified.as_deref()) {
                     Ok(Fetched::Same) => st.ok(now, cfg.minutes(), now as u64 ^ i as u64),
-                    Ok(Fetched::New { body, etag, modified }) => match st.read(&body) {
+                    Ok(Fetched::New {
+                        body,
+                        etag,
+                        modified,
+                    }) => match st.read(&body) {
                         Ok(f) => {
                             st.etag = etag;
                             st.modified = modified;
@@ -590,7 +749,15 @@ fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'st
             }
             force = false;
             if changed || first {
-                let pass = pass(&cfg, &states, &items, service, anilist, &mut relations, first);
+                let pass = pass(
+                    &cfg,
+                    &states,
+                    &items,
+                    service,
+                    anilist,
+                    &mut relations,
+                    first,
+                );
                 first = false;
                 h.update_if(move |s, _| s.feeds_got(pass));
             }
@@ -598,7 +765,13 @@ fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'st
         // Asleep on the channel until the next feed is due (no timer while off).
         let wait = if cfg.active() && cfg.autocheck {
             let now = kotora_core::time::now_unix();
-            let next = cfg.sources.iter().filter_map(|s| states.get(&s.url)).map(|s| s.next).min().unwrap_or(now);
+            let next = cfg
+                .sources
+                .iter()
+                .filter_map(|s| states.get(&s.url))
+                .map(|s| s.next)
+                .min()
+                .unwrap_or(now);
             Some(Duration::from_secs((next - now).clamp(1, 24 * 3600) as u64))
         } else {
             None
@@ -609,12 +782,21 @@ fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'st
         };
         match got {
             Ok(Cmd::Set(c)) => {
+                let c = *c;
                 states.retain(|url, _| c.sources.iter().any(|s| &s.url == url));
                 items.retain(|url, _| c.sources.iter().any(|s| &s.url == url));
                 cfg = c;
                 // A removed feed's items go at once.
                 if cfg.active() {
-                    let pass = pass(&cfg, &states, &items, service, anilist, &mut relations, false);
+                    let pass = pass(
+                        &cfg,
+                        &states,
+                        &items,
+                        service,
+                        anilist,
+                        &mut relations,
+                        false,
+                    );
                     h.update_if(move |s, _| s.feeds_got(pass));
                 }
             }
@@ -625,7 +807,15 @@ fn run(h: crate::model::Handle, rx: Receiver<Cmd>, mut cfg: Feeds, service: &'st
     }
 }
 
-fn pass(cfg: &Feeds, states: &HashMap<String, FeedState>, items: &HashMap<String, Vec<Item>>, service: &str, anilist: bool, relations: &mut Option<std::sync::Arc<Relations>>, first: bool) -> Pass {
+fn pass(
+    cfg: &Feeds,
+    states: &HashMap<String, FeedState>,
+    items: &HashMap<String, Vec<Item>>,
+    service: &str,
+    anilist: bool,
+    relations: &mut Option<std::sync::Arc<Relations>>,
+    first: bool,
+) -> Pass {
     let mut all = Vec::new();
     for (i, src) in cfg.sources.iter().enumerate() {
         for it in items.get(&src.url).into_iter().flatten() {
@@ -645,9 +835,15 @@ fn pass(cfg: &Feeds, states: &HashMap<String, FeedState>, items: &HashMap<String
             }
         }
     }
-    let marks = store.as_ref().and_then(|st| st.feed_marks(service).ok()).unwrap_or_default();
+    let marks = store
+        .as_ref()
+        .and_then(|st| st.feed_marks(service).ok())
+        .unwrap_or_default();
     let notified = if first {
-        let text = store.as_ref().and_then(|st| st.kv_get(NOTIFIED_KEY).ok().flatten()).unwrap_or_default();
+        let text = store
+            .as_ref()
+            .and_then(|st| st.kv_get(NOTIFIED_KEY).ok().flatten())
+            .unwrap_or_default();
         Some(
             text.split(',')
                 .filter_map(|p| {
@@ -667,9 +863,37 @@ fn pass(cfg: &Feeds, states: &HashMap<String, FeedState>, items: &HashMap<String
             std::sync::Arc::new(r)
         })
         .clone();
-    let lines = states.iter().map(|(u, s)| (u.clone(), FeedLine { state: s.clone(), checking: false })).collect();
-    let archive = first.then(|| store.as_ref().and_then(|st| st.kv_get(ARCHIVE_KEY).ok().flatten()).unwrap_or_default().lines().map(str::to_string).filter(|t| !t.is_empty()).collect());
-    Pass { items: all, lines, picks, marks, relations: Some(rel), notified, archive }
+    let lines = states
+        .iter()
+        .map(|(u, s)| {
+            (
+                u.clone(),
+                FeedLine {
+                    state: s.clone(),
+                    checking: false,
+                },
+            )
+        })
+        .collect();
+    let archive = first.then(|| {
+        store
+            .as_ref()
+            .and_then(|st| st.kv_get(ARCHIVE_KEY).ok().flatten())
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .filter(|t| !t.is_empty())
+            .collect()
+    });
+    Pass {
+        items: all,
+        lines,
+        picks,
+        marks,
+        relations: Some(rel),
+        notified,
+        archive,
+    }
 }
 
 /// The scenes' feeds: made-up releases for the fake list's shows, no worker.
@@ -678,7 +902,14 @@ pub fn fake(s: &mut State) {
         .entries
         .iter()
         .map(|e| ListItem {
-            media: kotora_core::Media { id: e.id, title: e.main_title.clone(), title_en: e.title_en.clone(), episodes: e.episodes, format: "tv".into(), ..Default::default() },
+            media: kotora_core::Media {
+                id: e.id,
+                title: e.main_title.clone(),
+                title_en: e.title_en.clone(),
+                episodes: e.episodes,
+                format: "tv".into(),
+                ..Default::default()
+            },
             status: e.status,
             progress: e.progress,
             score: None,
@@ -691,30 +922,81 @@ pub fn fake(s: &mut State) {
     s.feeds.list = list;
     let mut items = Vec::new();
     let mut n = 0u32;
-    for e in s.entries.iter().filter(|e| matches!(e.status, kotora_core::Status::Watching | kotora_core::Status::PlanToWatch | kotora_core::Status::OnHold)).take(5) {
+    for e in s
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.status,
+                kotora_core::Status::Watching
+                    | kotora_core::Status::PlanToWatch
+                    | kotora_core::Status::OnHold
+            )
+        })
+        .take(5)
+    {
         let ep = e.progress + 1;
         if e.episodes.is_some_and(|c| ep > c) {
             continue;
         }
-        for (g, res, seed, size) in [("Hoshi", "1080p", 412, 1_400_000_000u64), ("Tsuki", "720p", 96, 700_000_000), ("Kumo-Subs", "1080p HEVC", 51, 900_000_000)] {
+        for (g, res, seed, size) in [
+            ("Hoshi", "1080p", 412, 1_400_000_000u64),
+            ("Tsuki", "720p", 96, 700_000_000),
+            ("Kumo-Subs", "1080p HEVC", 51, 900_000_000),
+        ] {
             n += 1;
             let title = format!("[{g}] {} - {ep:02} [{res}]", e.main_title);
             items.push((
                 0,
-                Item { guid: format!("fake-{n}"), title, magnet: Some(format!("magnet:?xt=urn:btih:{n:040x}")), size: Some(size), seeders: Some(seed), leechers: Some(seed / 4), description: format!("#{n} | {g}"), page: Some(format!("https://tracker.example/view/{n}")), ..Item::default() },
+                Item {
+                    guid: format!("fake-{n}"),
+                    title,
+                    magnet: Some(format!("magnet:?xt=urn:btih:{n:040x}")),
+                    size: Some(size),
+                    seeders: Some(seed),
+                    leechers: Some(seed / 4),
+                    description: format!("#{n} | {g}"),
+                    page: Some(format!("https://tracker.example/view/{n}")),
+                    ..Item::default()
+                },
             ));
         }
     }
     s.feeds.cfg.enabled = true;
     s.feeds.cfg.sources = vec![
-        FeedSource { name: "nyaa.si: Hoshi".into(), url: "https://nyaa.si/user/Hoshi?page=rss&c=1_2".into() },
-        FeedSource { name: "tracker.example".into(), url: "https://tracker.example/rss?passkey=0123456789abcdef".into() },
+        FeedSource {
+            name: "nyaa.si: Hoshi".into(),
+            url: "https://nyaa.si/user/Hoshi?page=rss&c=1_2".into(),
+        },
+        FeedSource {
+            name: "tracker.example".into(),
+            url: "https://tracker.example/rss?passkey=0123456789abcdef".into(),
+        },
     ];
     s.feeds.cfg.search = NYAA_SEARCH.into();
     s.feeds.search_edit.text = NYAA_SEARCH.into();
     // Not-in-list noise beside the list's shows, and a batch.
-    for (k, t) in ["[Ame] Some Other Show - 03 [1080p]", "[Ame] Some Other Show - 04 [720p]", "[Hoshi] Nobody Knows (01-12) [BD 1080p] [Batch]"].iter().enumerate() {
-        items.push((1, Item { guid: format!("noise-{k}"), title: t.to_string(), magnet: Some(format!("magnet:?xt=urn:btih:{:040x}", 500 + k)), size: Some(300_000_000), seeders: Some(7), leechers: Some(2), description: "#100 | 7 comments".into(), ..Item::default() }));
+    for (k, t) in [
+        "[Ame] Some Other Show - 03 [1080p]",
+        "[Ame] Some Other Show - 04 [720p]",
+        "[Hoshi] Nobody Knows (01-12) [BD 1080p] [Batch]",
+    ]
+    .iter()
+    .enumerate()
+    {
+        items.push((
+            1,
+            Item {
+                guid: format!("noise-{k}"),
+                title: t.to_string(),
+                magnet: Some(format!("magnet:?xt=urn:btih:{:040x}", 500 + k)),
+                size: Some(300_000_000),
+                seeders: Some(7),
+                leechers: Some(2),
+                description: "#100 | 7 comments".into(),
+                ..Item::default()
+            },
+        ));
     }
     s.feeds.items = items;
     s.feeds.notified = Some(Vec::new());
@@ -723,15 +1005,35 @@ pub fn fake(s: &mut State) {
     s.feeds_reselect();
     let now = s.clock();
     for src in &s.feeds.cfg.sources {
-        let st = FeedState { checked: Some(now - 600), next: now + 1200, items: 3, ..FeedState::default() };
-        s.feeds.lines.insert(src.url.clone(), FeedLine { state: st, checking: false });
+        let st = FeedState {
+            checked: Some(now - 600),
+            next: now + 1200,
+            items: 3,
+            ..FeedState::default()
+        };
+        s.feeds.lines.insert(
+            src.url.clone(),
+            FeedLine {
+                state: st,
+                checking: false,
+            },
+        );
     }
 }
 
 // ------------------------------------------------------------------------------------ view
 
-pub(crate) fn small(key: String, label: &str, primary: bool, on: impl Fn(&mut State) + 'static) -> El {
-    let (fg, fill) = if primary { (PAL.on_accent, PAL.accent) } else { (PAL.text, PAL.raised) };
+pub(crate) fn small(
+    key: String,
+    label: &str,
+    primary: bool,
+    on: impl Fn(&mut State) + 'static,
+) -> El {
+    let (fg, fill) = if primary {
+        (PAL.on_accent, PAL.accent)
+    } else {
+        (PAL.text, PAL.raised)
+    };
     let b = row()
         .key(key)
         .role("button")
@@ -743,24 +1045,38 @@ pub(crate) fn small(key: String, label: &str, primary: bool, on: impl Fn(&mut St
         .center_y()
         .radius(theme::R_SM)
         .fill(fill)
-        .hover(if primary { rune::Color::BLACK.alpha(0.08) } else { PAL.hover() })
+        .hover(if primary {
+            rune::Color::BLACK.alpha(0.08)
+        } else {
+            PAL.hover()
+        })
         .press(PAL.press())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
             on(s);
         });
-    let b = if primary { b } else { b.border(1.0, PAL.border_strong) };
+    let b = if primary {
+        b
+    } else {
+        b.border(1.0, PAL.border_strong)
+    };
     b.child(text(label.to_string()).font(theme::LABEL_BTN).color(fg))
 }
 
 pub(crate) fn size_text(n: u64) -> String {
     let gib = n as f64 / (1024.0 * 1024.0 * 1024.0);
-    if gib >= 1.0 { format!("{gib:.1} GiB") } else { format!("{:.0} MiB", n as f64 / (1024.0 * 1024.0)) }
+    if gib >= 1.0 {
+        format!("{gib:.1} GiB")
+    } else {
+        format!("{:.0} MiB", n as f64 / (1024.0 * 1024.0))
+    }
 }
 
 /// A feed's status: "12 items · checked 14:02", "Checking…", the error and the retry.
 pub(crate) fn status_line(s: &State, url: &str) -> (rune::Color, String) {
-    let Some(l) = s.feeds.lines.get(url) else { return (PAL.faint, "Not checked yet".into()) };
+    let Some(l) = s.feeds.lines.get(url) else {
+        return (PAL.faint, "Not checked yet".into());
+    };
     if l.checking {
         return (PAL.faint, "Checking\u{2026}".into());
     }
@@ -769,8 +1085,19 @@ pub(crate) fn status_line(s: &State, url: &str) -> (rune::Color, String) {
         format!("{:02}:{:02}", c.minute / 60, c.minute % 60)
     };
     match (&l.state.error, l.state.checked) {
-        (Some(e), _) => (PAL.warn(), format!("{} \u{b7} retry {}", mask(e), clock(l.state.next))),
-        (None, Some(t)) => (PAL.ok(), format!("{} item{} \u{b7} checked {}", l.state.items, if l.state.items == 1 { "" } else { "s" }, clock(t))),
+        (Some(e), _) => (
+            PAL.warn(),
+            format!("{} \u{b7} retry {}", mask(e), clock(l.state.next)),
+        ),
+        (None, Some(t)) => (
+            PAL.ok(),
+            format!(
+                "{} item{} \u{b7} checked {}",
+                l.state.items,
+                if l.state.items == 1 { "" } else { "s" },
+                clock(t)
+            ),
+        ),
         (None, None) => (PAL.faint, "Not checked yet".into()),
     }
 }
@@ -794,11 +1121,26 @@ pub fn sources_block(s: &State) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(2.0)
-                        .child(text(src.name.clone()).font(theme::BODY_MED).color(PAL.text).truncate())
-                        .child(text(mask(&src.url)).font(TextStyle::new(11.0, 400.0).mono()).color(PAL.dim).truncate())
+                        .child(
+                            text(src.name.clone())
+                                .font(theme::BODY_MED)
+                                .color(PAL.text)
+                                .truncate(),
+                        )
+                        .child(
+                            text(mask(&src.url))
+                                .font(TextStyle::new(11.0, 400.0).mono())
+                                .color(PAL.dim)
+                                .truncate(),
+                        )
                         .child(text(line).font(theme::LABEL).color(PAL.dim)),
                 )
-                .child(small(format!("set/feeds/remove/{}", mask(&src.url)), "Remove", false, move |s| s.feeds_remove(&url))),
+                .child(small(
+                    format!("set/feeds/remove/{}", mask(&src.url)),
+                    "Remove",
+                    false,
+                    move |s| s.feeds_remove(&url),
+                )),
         );
     }
     let input = row()
@@ -811,7 +1153,14 @@ pub fn sources_block(s: &State) -> El {
         .center_y()
         .radius(theme::R_SM)
         .fill(PAL.field)
-        .border(1.0, if f.error.is_some() { PAL.warn() } else { PAL.border_strong })
+        .border(
+            1.0,
+            if f.error.is_some() {
+                PAL.warn()
+            } else {
+                PAL.border_strong
+            },
+        )
         .child(
             text_input(&f.draft, TextStyle::new(12.0, 400.0).mono())
                 .key("set/feeds/input")
@@ -828,19 +1177,54 @@ pub fn sources_block(s: &State) -> El {
                     s.feeds_add();
                 }),
         );
-    c = c.child(row().key("set/feeds/add-row").gap(8.0).pt(8.0).center_y().child(input).child(small("set/feeds/add".into(), "Add", false, |s| s.feeds_add())));
+    c = c.child(
+        row()
+            .key("set/feeds/add-row")
+            .gap(8.0)
+            .pt(8.0)
+            .center_y()
+            .child(input)
+            .child(small("set/feeds/add".into(), "Add", false, |s| {
+                s.feeds_add()
+            })),
+    );
     if let Some(e) = &f.error {
-        c = c.child(text(e.clone()).key("set/feeds/error").font(theme::LABEL).color(PAL.warn()).wrap().pt(4.0));
+        c = c.child(
+            text(e.clone())
+                .key("set/feeds/error")
+                .font(theme::LABEL)
+                .color(PAL.warn())
+                .wrap()
+                .pt(4.0),
+        );
     } else if let Some(n) = &f.note {
-        c = c.child(text(n.clone()).key("set/feeds/note").font(theme::LABEL).color(PAL.dim).wrap().pt(4.0));
+        c = c.child(
+            text(n.clone())
+                .key("set/feeds/note")
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap()
+                .pt(4.0),
+        );
     }
     if !f.cfg.sources.is_empty() {
-        c = c.child(row().pt(8.0).child(spacer()).child(small("set/feeds/check".into(), "Check now", false, |s| s.feeds_check_now())));
+        c = c.child(row().pt(8.0).child(spacer()).child(small(
+            "set/feeds/check".into(),
+            "Check now",
+            false,
+            |s| s.feeds_check_now(),
+        )));
     }
     c
 }
 
-pub(crate) fn word_field(key: &'static str, edit: &TextEdit, hint: &str, get: fn(&mut State) -> &mut TextEdit, submit: fn(&mut State)) -> El {
+pub(crate) fn word_field(
+    key: &'static str,
+    edit: &TextEdit,
+    hint: &str,
+    get: fn(&mut State) -> &mut TextEdit,
+    submit: fn(&mut State),
+) -> El {
     row()
         .key(format!("{key}/box"))
         .role("textbox")
@@ -908,7 +1292,11 @@ pub fn badge(s: &State, id: u32) -> Option<El> {
                 tx.instant();
                 s.open_feeds();
             })
-            .child(text(label).font(theme::CAPTION.tracking(0.0)).color(PAL.accent_hi)),
+            .child(
+                text(label)
+                    .font(theme::CAPTION.tracking(0.0))
+                    .color(PAL.accent_hi),
+            ),
     )
 }
 
@@ -919,6 +1307,14 @@ pub fn search_block(s: &State) -> El {
         .gap(8.0)
         .w_full()
         .center_y()
-        .child(word_field("set/feeds/search-input", &s.feeds.search_edit, NYAA_SEARCH, |s| &mut s.feeds.search_edit, State::feeds_save_search))
-        .child(small("set/feeds/search-save".into(), "Save", false, |s| s.feeds_save_search()))
+        .child(word_field(
+            "set/feeds/search-input",
+            &s.feeds.search_edit,
+            NYAA_SEARCH,
+            |s| &mut s.feeds.search_edit,
+            State::feeds_save_search,
+        ))
+        .child(small("set/feeds/search-save".into(), "Save", false, |s| {
+            s.feeds_save_search()
+        }))
 }

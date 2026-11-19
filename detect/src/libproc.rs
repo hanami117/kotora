@@ -45,7 +45,9 @@ pub struct LibProc {
 impl LibProc {
     pub fn new() -> LibProc {
         // SAFETY: getuid has no preconditions and can't fail.
-        LibProc { uid: unsafe { libc::getuid() } }
+        LibProc {
+            uid: unsafe { libc::getuid() },
+        }
     }
 }
 
@@ -66,18 +68,34 @@ impl Procs for LibProc {
         let cap = need as usize / size_of::<c_int>() + 32;
         let mut buf = vec![0 as c_int; cap];
         // SAFETY: the buffer holds `cap` ints and its size in bytes is passed.
-        let got = unsafe { libc::proc_listpids(PROC_UID_ONLY, self.uid, buf.as_mut_ptr().cast::<c_void>(), (cap * size_of::<c_int>()) as c_int) };
+        let got = unsafe {
+            libc::proc_listpids(
+                PROC_UID_ONLY,
+                self.uid,
+                buf.as_mut_ptr().cast::<c_void>(),
+                (cap * size_of::<c_int>()) as c_int,
+            )
+        };
         if got <= 0 {
             return Vec::new();
         }
         buf.truncate((got as usize / size_of::<c_int>()).min(cap));
-        buf.into_iter().filter(|p| *p > 0).map(|p| p as u32).collect()
+        buf.into_iter()
+            .filter(|p| *p > 0)
+            .map(|p| p as u32)
+            .collect()
     }
 
     fn name(&self, pid: u32) -> Option<String> {
         let mut b = [0u8; 256];
         // SAFETY: the buffer and its size match.
-        let n = unsafe { libc::proc_name(pid as c_int, b.as_mut_ptr().cast::<c_void>(), b.len() as u32) };
+        let n = unsafe {
+            libc::proc_name(
+                pid as c_int,
+                b.as_mut_ptr().cast::<c_void>(),
+                b.len() as u32,
+            )
+        };
         (n > 0).then(|| String::from_utf8_lossy(&b[..(n as usize).min(b.len())]).into_owned())
     }
 
@@ -94,29 +112,62 @@ impl Procs for LibProc {
         let pid = pid as c_int;
         let one = size_of::<libc::proc_fdinfo>();
         // SAFETY: a null buffer asks for the size in bytes.
-        let need = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+        let need =
+            unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
         if need <= 0 {
             return Vec::new();
         }
         let cap = need as usize / one + 16;
-        let mut fds = vec![libc::proc_fdinfo { proc_fd: 0, proc_fdtype: 0 }; cap];
+        let mut fds = vec![
+            libc::proc_fdinfo {
+                proc_fd: 0,
+                proc_fdtype: 0
+            };
+            cap
+        ];
         // SAFETY: the buffer holds `cap` entries and its size in bytes is passed.
-        let got = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast::<c_void>(), (cap * one) as c_int) };
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDLISTFDS,
+                0,
+                fds.as_mut_ptr().cast::<c_void>(),
+                (cap * one) as c_int,
+            )
+        };
         if got <= 0 {
             return Vec::new();
         }
         fds.truncate((got as usize / one).min(cap));
         let mut out = Vec::new();
-        for fd in fds.iter().filter(|f| f.proc_fdtype == libc::PROX_FDTYPE_VNODE as u32) {
+        for fd in fds
+            .iter()
+            .filter(|f| f.proc_fdtype == libc::PROX_FDTYPE_VNODE as u32)
+        {
             // SAFETY: plain C data; all zero bits is a valid value.
             let mut info: VnodeFdInfoWithPath = unsafe { std::mem::zeroed() };
             let size = size_of::<VnodeFdInfoWithPath>();
             // SAFETY: `info` is `size` bytes, the layout of `struct vnode_fdinfowithpath`.
-            let n = unsafe { libc::proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, (&mut info as *mut VnodeFdInfoWithPath).cast::<c_void>(), size as c_int) };
+            let n = unsafe {
+                libc::proc_pidfdinfo(
+                    pid,
+                    fd.proc_fd,
+                    PROC_PIDFDVNODEPATHINFO,
+                    (&mut info as *mut VnodeFdInfoWithPath).cast::<c_void>(),
+                    size as c_int,
+                )
+            };
             if n as usize != size {
                 continue;
             }
-            let bytes: Vec<u8> = info.pvip.vip_path.iter().flatten().map(|c| *c as u8).take_while(|b| *b != 0).collect();
+            let bytes: Vec<u8> = info
+                .pvip
+                .vip_path
+                .iter()
+                .flatten()
+                .map(|c| *c as u8)
+                .take_while(|b| *b != 0)
+                .collect();
             if let Ok(path) = String::from_utf8(bytes)
                 && !path.is_empty()
             {
@@ -130,15 +181,22 @@ impl Procs for LibProc {
 /// The argv in a `KERN_PROCARGS2` block: `argc` (native `int`), the executable's path, NUL
 /// padding, then `argc` NUL-ended strings (the environment follows; it is not read).
 pub fn parse_procargs2(b: &[u8]) -> Vec<String> {
-    let Some(head) = b.get(..4) else { return Vec::new() };
+    let Some(head) = b.get(..4) else {
+        return Vec::new();
+    };
     let argc = i32::from_ne_bytes([head[0], head[1], head[2], head[3]]).max(0) as usize;
     let mut rest = &b[4..];
     // The executable path, then the padding.
-    let Some(end) = rest.iter().position(|c| *c == 0) else { return Vec::new() };
+    let Some(end) = rest.iter().position(|c| *c == 0) else {
+        return Vec::new();
+    };
     rest = &rest[end..];
     let start = rest.iter().position(|c| *c != 0).unwrap_or(rest.len());
     rest = &rest[start..];
-    rest.split(|c| *c == 0).take(argc).map(|a| String::from_utf8_lossy(a).into_owned()).collect()
+    rest.split(|c| *c == 0)
+        .take(argc)
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect()
 }
 
 impl LibProc {
@@ -148,14 +206,35 @@ impl LibProc {
         let mut size = size_of::<c_int>();
         let mut mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
         // SAFETY: `max` is an int and `size` its size.
-        if unsafe { libc::sysctl(mib.as_mut_ptr(), 2, (&mut max as *mut c_int).cast::<c_void>(), &mut size, std::ptr::null_mut(), 0) } != 0 || max <= 0 {
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                2,
+                (&mut max as *mut c_int).cast::<c_void>(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+            || max <= 0
+        {
             return Vec::new();
         }
         let mut buf = vec![0u8; max as usize];
         let mut size = buf.len();
         let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as c_int];
         // SAFETY: the buffer holds `size` bytes.
-        if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast::<c_void>(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                3,
+                buf.as_mut_ptr().cast::<c_void>(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
             return Vec::new();
         }
         buf.truncate(size);
@@ -183,7 +262,9 @@ mod tests {
     #[test]
     #[ignore = "helper process for scanner_finds_players_by_their_open_file"]
     fn hold_open_helper() {
-        let Some(path) = std::env::var_os(HOLD) else { return };
+        let Some(path) = std::env::var_os(HOLD) else {
+            return;
+        };
         let _f = std::fs::File::open(path).unwrap();
         let mut sink = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut sink);
@@ -209,7 +290,13 @@ mod tests {
             std::fs::copy(&me, &exe).unwrap();
         }
         let child = Command::new(&exe)
-            .args(["--ignored", "--exact", "libproc::tests::hold_open_helper", "--test-threads=1", "-q"])
+            .args([
+                "--ignored",
+                "--exact",
+                "libproc::tests::hold_open_helper",
+                "--test-threads=1",
+                "-q",
+            ])
             .env(HOLD, file)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -226,7 +313,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // The kernel reports the real path: `/var/folders` is `/private/var/folders`.
         let dir: PathBuf = dir.canonicalize().unwrap();
-        let cases = [("mpv", "mpv", Switch::Mpv), ("IINA", "IINA", Switch::Iina), ("VLC", "VLC", Switch::Vlc)];
+        let cases = [
+            ("mpv", "mpv", Switch::Mpv),
+            ("IINA", "IINA", Switch::Iina),
+            ("VLC", "VLC", Switch::Vlc),
+        ];
         let mut fakes = Vec::new();
         let mut want = Vec::new();
         for (i, (name, player, switch)) in cases.iter().enumerate() {
@@ -241,13 +332,19 @@ mod tests {
         let mut found = Vec::new();
         while start.elapsed() < Duration::from_secs(10) {
             found = sc.scan();
-            if want.iter().all(|(pid, ..)| found.iter().any(|f| f.pid == *pid && f.file.is_some())) {
+            if want
+                .iter()
+                .all(|(pid, ..)| found.iter().any(|f| f.pid == *pid && f.file.is_some()))
+            {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         for (pid, player, switch, file) in &want {
-            let f = found.iter().find(|f| f.pid == *pid).unwrap_or_else(|| panic!("{player} (pid {pid}) not found: {found:?}"));
+            let f = found
+                .iter()
+                .find(|f| f.pid == *pid)
+                .unwrap_or_else(|| panic!("{player} (pid {pid}) not found: {found:?}"));
             assert_eq!((f.kind.player, f.kind.switch), (*player, *switch));
             assert_eq!(f.file.as_deref(), Some(file.as_str()));
         }
@@ -265,7 +362,8 @@ mod tests {
     /// another name holding a page image inside a comic folder; the real process table.
     #[test]
     fn comic_scanner_finds_open_comics() {
-        let dir = std::env::temp_dir().join(format!("kotora-libproc-comics-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kotora-libproc-comics-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Manga/Kotora Test Comic/Ch 2")).unwrap();
         let dir: PathBuf = dir.canonicalize().unwrap();
@@ -286,10 +384,24 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let v: Vec<(u32, &str, &str)> = found.iter().map(|o| (o.pid, o.app.as_str(), o.path.as_str())).collect();
-        let (cbz, chapter) = (cbz.display().to_string(), dir.join("Manga/Kotora Test Comic/Ch 2").display().to_string());
-        assert!(v.contains(&(reader.child.id(), "Simple Comic", cbz.as_str())), "{v:?}");
-        assert!(v.contains(&(other.child.id(), "pageviewer", chapter.as_str())), "{v:?}");
+        let v: Vec<(u32, &str, &str)> = found
+            .iter()
+            .map(|o| (o.pid, o.app.as_str(), o.path.as_str()))
+            .collect();
+        let (cbz, chapter) = (
+            cbz.display().to_string(),
+            dir.join("Manga/Kotora Test Comic/Ch 2")
+                .display()
+                .to_string(),
+        );
+        assert!(
+            v.contains(&(reader.child.id(), "Simple Comic", cbz.as_str())),
+            "{v:?}"
+        );
+        assert!(
+            v.contains(&(other.child.id(), "pageviewer", chapter.as_str())),
+            "{v:?}"
+        );
         // Without comic folders, the unknown process is not looked at.
         assert!(!sc.scan(&[]).iter().any(|o| o.pid == other.child.id()));
         drop((reader, other));
@@ -316,7 +428,10 @@ mod tests {
         for _ in 0..5 {
             sc.scan(&folders);
         }
-        println!("first scan {first:?}; readers only {readers:?}; with a comic folder {:?}", t.elapsed() / 5);
+        println!(
+            "first scan {first:?}; readers only {readers:?}; with a comic folder {:?}",
+            t.elapsed() / 5
+        );
     }
 
     #[test]
@@ -324,7 +439,14 @@ mod tests {
         let mut b = 3i32.to_ne_bytes().to_vec();
         b.extend_from_slice(b"/Applications/YACReader.app/Contents/MacOS/YACReader\0\0\0\0");
         b.extend_from_slice(b"/Applications/YACReader.app/Contents/MacOS/YACReader\0/Volumes/Disk/Movies\0--comicId=1\0HOME=/x\0");
-        assert_eq!(parse_procargs2(&b), ["/Applications/YACReader.app/Contents/MacOS/YACReader", "/Volumes/Disk/Movies", "--comicId=1"]);
+        assert_eq!(
+            parse_procargs2(&b),
+            [
+                "/Applications/YACReader.app/Contents/MacOS/YACReader",
+                "/Volumes/Disk/Movies",
+                "--comicId=1"
+            ]
+        );
         assert!(parse_procargs2(&[1, 0]).is_empty());
     }
 
@@ -345,7 +467,17 @@ mod tests {
         }
         let lib = dir.display().to_string();
         let child = Command::new(&exe)
-            .args(["--ignored", "--exact", "libproc::tests::hold_open_helper", "--test-threads=1", "-q", "--", &lib, "--comicId=7", "--libraryId=1"])
+            .args([
+                "--ignored",
+                "--exact",
+                "libproc::tests::hold_open_helper",
+                "--test-threads=1",
+                "-q",
+                "--",
+                &lib,
+                "--comicId=7",
+                "--libraryId=1",
+            ])
             .env(HOLD, &file)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -354,14 +486,25 @@ mod tests {
             .unwrap();
         let fake = Fake { child };
         let mut sc = crate::comics::ComicScanner::new(LibProc::new());
-        let opts = crate::comics::ScanOpts { yac_args: true, ..Default::default() };
+        let opts = crate::comics::ScanOpts {
+            yac_args: true,
+            ..Default::default()
+        };
         let start = Instant::now();
         let mut found = Vec::new();
         while start.elapsed() < Duration::from_secs(10) && found.is_empty() {
-            found = sc.scan_with(&opts).into_iter().filter(|o| o.pid == fake.child.id()).collect();
+            found = sc
+                .scan_with(&opts)
+                .into_iter()
+                .filter(|o| o.pid == fake.child.id())
+                .collect();
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert_eq!(found.first().map(|o| (o.path.as_str(), o.yac)), Some((lib.as_str(), Some(7))), "{found:?}");
+        assert_eq!(
+            found.first().map(|o| (o.path.as_str(), o.yac)),
+            Some((lib.as_str(), Some(7))),
+            "{found:?}"
+        );
         drop(fake);
         let _ = std::fs::remove_dir_all(&dir);
     }

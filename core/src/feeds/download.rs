@@ -10,10 +10,23 @@ use std::path::{Path, PathBuf};
 
 /// Taiga's `ValidateFileName`: no characters a file system refuses, no trailing dots or spaces.
 pub fn valid_file_name(s: &str) -> String {
-    let out: String = s.chars().map(|c| if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c }).collect();
+    let out: String = s
+        .chars()
+        .map(|c| {
+            if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     let out = out.trim().trim_end_matches(['.', ' ']).to_string();
     let out: String = out.chars().take(200).collect();
-    if out.is_empty() { "torrent".into() } else { out }
+    if out.is_empty() {
+        "torrent".into()
+    } else {
+        out
+    }
 }
 
 /// Where a .torrent file goes when saved into `folder`: `folder/<anime>/<title>.torrent`
@@ -24,13 +37,23 @@ pub fn saved_path(folder: &Path, subfolders: bool, anime: Option<&str>, title: &
         p.push(valid_file_name(a));
     }
     let name = valid_file_name(title);
-    let name = if name.to_ascii_lowercase().ends_with(".torrent") { name } else { format!("{name}.torrent") };
+    let name = if name.to_ascii_lowercase().ends_with(".torrent") {
+        name
+    } else {
+        format!("{name}.torrent")
+    };
     p.push(name);
     p
 }
 
 /// Copies a fetched .torrent file into the download folder (made when missing).
-pub fn save_into(file: &Path, folder: &Path, subfolders: bool, anime: Option<&str>, title: &str) -> Result<PathBuf, String> {
+pub fn save_into(
+    file: &Path,
+    folder: &Path,
+    subfolders: bool,
+    anime: Option<&str>,
+    title: &str,
+) -> Result<PathBuf, String> {
     if folder.as_os_str().is_empty() || !folder.is_absolute() {
         return Err("Choose a download folder in Settings \u{2192} Feeds.".into());
     }
@@ -50,7 +73,10 @@ pub fn app_command(app: &str, target: &str) -> Option<(String, Vec<String>)> {
         return None;
     }
     if cfg!(target_os = "macos") && app.trim_end_matches('/').ends_with(".app") {
-        return Some(("open".into(), vec!["-a".into(), app.to_string(), target.to_string()]));
+        return Some((
+            "open".into(),
+            vec!["-a".into(), app.to_string(), target.to_string()],
+        ));
     }
     Some((app.to_string(), vec![target.to_string()]))
 }
@@ -61,12 +87,21 @@ mod tests {
 
     #[test]
     fn file_names_and_folders() {
-        assert_eq!(valid_file_name("[Hoshi] A/B: C? - 01 [1080p]."), "[Hoshi] A_B_ C_ - 01 [1080p]");
+        assert_eq!(
+            valid_file_name("[Hoshi] A/B: C? - 01 [1080p]."),
+            "[Hoshi] A_B_ C_ - 01 [1080p]"
+        );
         assert_eq!(valid_file_name("  "), "torrent");
         let p = saved_path(Path::new("/dl"), true, Some("Show: Two"), "[G] Show - 02");
         assert_eq!(p, PathBuf::from("/dl/Show_ Two/[G] Show - 02.torrent"));
-        assert_eq!(saved_path(Path::new("/dl"), false, Some("Show"), "x.torrent"), PathBuf::from("/dl/x.torrent"));
-        assert_eq!(saved_path(Path::new("/dl"), true, None, "x"), PathBuf::from("/dl/x.torrent"));
+        assert_eq!(
+            saved_path(Path::new("/dl"), false, Some("Show"), "x.torrent"),
+            PathBuf::from("/dl/x.torrent")
+        );
+        assert_eq!(
+            saved_path(Path::new("/dl"), true, None, "x"),
+            PathBuf::from("/dl/x.torrent")
+        );
     }
 
     #[test]
@@ -86,9 +121,20 @@ mod tests {
     fn app_commands_are_argument_vectors() {
         assert_eq!(app_command(" ", "magnet:?x"), None);
         let (p, a) = app_command("/usr/bin/qbittorrent", "magnet:?xt=urn:btih:a b").unwrap();
-        assert_eq!((p.as_str(), a), ("/usr/bin/qbittorrent", vec!["magnet:?xt=urn:btih:a b".to_string()]));
+        assert_eq!(
+            (p.as_str(), a),
+            (
+                "/usr/bin/qbittorrent",
+                vec!["magnet:?xt=urn:btih:a b".to_string()]
+            )
+        );
         if cfg!(target_os = "macos") {
-            assert_eq!(app_command("/Applications/Transmission.app", "/t.torrent").unwrap().1, vec!["-a", "/Applications/Transmission.app", "/t.torrent"]);
+            assert_eq!(
+                app_command("/Applications/Transmission.app", "/t.torrent")
+                    .unwrap()
+                    .1,
+                vec!["-a", "/Applications/Transmission.app", "/t.torrent"]
+            );
         }
     }
 }

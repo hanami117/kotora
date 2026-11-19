@@ -36,7 +36,9 @@ impl ServiceId {
     }
 
     pub fn from_name(s: &str) -> Option<ServiceId> {
-        ServiceId::ALL.into_iter().find(|v| v.name() == s.trim().to_ascii_lowercase())
+        ServiceId::ALL
+            .into_iter()
+            .find(|v| v.name() == s.trim().to_ascii_lowercase())
     }
 
     /// The client id built into Kotora for this service, if there is one.
@@ -156,7 +158,11 @@ impl AnimeHit {
             format: self.format.clone(),
             air_status: self.air_status.clone(),
             cover_url: self.cover_url.clone(),
-            start_date: if self.kind == Kind::Manga { self.start_date.clone() } else { None },
+            start_date: if self.kind == Kind::Manga {
+                self.start_date.clone()
+            } else {
+                None
+            },
             broadcast: None,
             authors: self.authors.clone(),
             kind: self.kind,
@@ -360,7 +366,10 @@ pub trait ListService {
     /// The signed-in user with the profile picture and the Profile page's facts, in one
     /// request where the service allows.
     fn user(&mut self) -> Result<User, ServiceError> {
-        Ok(User { name: self.user_name()?, ..Default::default() })
+        Ok(User {
+            name: self.user_name()?,
+            ..Default::default()
+        })
     }
     /// The whole list.
     fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError>;
@@ -371,7 +380,10 @@ pub trait ListService {
     /// Removes one anime from the list ("Remove from list", through the queue). Not on the list
     /// there: nothing to do, `Ok`.
     fn delete_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
-        Err(ServiceError::Other(format!("{} can't remove entries in Kotora yet", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} can't remove entries in Kotora yet",
+            self.title()
+        )))
     }
     /// A title search (recognition's one search for a file not matched on the list).
     fn search(&mut self, _query: &str) -> Result<Vec<SearchHit>, ServiceError> {
@@ -383,18 +395,26 @@ pub trait ListService {
     }
     /// One anime's information page, with the user's entry if it is on the list.
     fn details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
-        Err(ServiceError::Other("this service has no details page".into()))
+        Err(ServiceError::Other(
+            "this service has no details page".into(),
+        ))
     }
     /// The service's anime for MyAnimeList ids (an import into a service keyed by its own ids):
     /// by MyAnimeList id; ids the service doesn't know are left out. Batched; only for ids the
     /// user's own file holds.
     fn media_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
-        Err(ServiceError::Other(format!("{} can't look up MyAnimeList ids", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} can't look up MyAnimeList ids",
+            self.title()
+        )))
     }
     /// The service's manga for MyAnimeList manga ids (an import or the mirror into a service keyed
     /// by its own ids), as [`ListService::media_by_mal_ids`].
     fn manga_by_mal_ids(&mut self, _ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
-        Err(ServiceError::Other(format!("{} can't look up MyAnimeList manga ids", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} can't look up MyAnimeList manga ids",
+            self.title()
+        )))
     }
     /// [`ListService::media_by_mal_ids`] or [`ListService::manga_by_mal_ids`].
     fn media_by_mal_ids_of(&mut self, kind: Kind, ids: &[u32]) -> Result<Vec<Media>, ServiceError> {
@@ -405,19 +425,35 @@ pub trait ListService {
     }
     /// The whole manga list (only asked once the user turned Manga on: see `Store::manga_enabled`).
     fn fetch_manga_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
-        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} has no manga lists in Kotora",
+            self.title()
+        )))
     }
     /// The service's copy of one manga entry; `None` when it is not on the list.
     fn get_manga_entry(&mut self, _media_id: u32) -> Result<Option<Remote>, ServiceError> {
-        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} has no manga lists in Kotora",
+            self.title()
+        )))
     }
     /// Sends one change of a manga entry.
-    fn update_manga_entry(&mut self, _media_id: u32, _change: &Change) -> Result<Remote, ServiceError> {
-        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+    fn update_manga_entry(
+        &mut self,
+        _media_id: u32,
+        _change: &Change,
+    ) -> Result<Remote, ServiceError> {
+        Err(ServiceError::Other(format!(
+            "{} has no manga lists in Kotora",
+            self.title()
+        )))
     }
     /// Removes one manga from the list. Not on the list there: nothing to do, `Ok`.
     fn delete_manga_entry(&mut self, _media_id: u32) -> Result<(), ServiceError> {
-        Err(ServiceError::Other(format!("{} has no manga lists in Kotora", self.title())))
+        Err(ServiceError::Other(format!(
+            "{} has no manga lists in Kotora",
+            self.title()
+        )))
     }
     /// A manga title search for the search bar.
     fn browse_manga(&mut self, _query: &str, _limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
@@ -425,7 +461,9 @@ pub trait ListService {
     }
     /// One manga's information page, with the user's entry if it is on the list.
     fn manga_details(&mut self, _media_id: u32) -> Result<Details, ServiceError> {
-        Err(ServiceError::Other("this service has no manga pages".into()))
+        Err(ServiceError::Other(
+            "this service has no manga pages".into(),
+        ))
     }
     /// [`ListService::fetch_list`] or [`ListService::fetch_manga_list`].
     fn fetch_list_of(&mut self, kind: Kind) -> Result<Vec<ListItem>, ServiceError> {
@@ -442,7 +480,12 @@ pub trait ListService {
         }
     }
     /// One change of an entry of a list of `kind`.
-    fn update_entry_of(&mut self, kind: Kind, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+    fn update_entry_of(
+        &mut self,
+        kind: Kind,
+        media_id: u32,
+        change: &Change,
+    ) -> Result<Remote, ServiceError> {
         match kind {
             Kind::Anime => self.update_entry(media_id, change),
             Kind::Manga => self.update_manga_entry(media_id, change),
@@ -457,7 +500,12 @@ pub trait ListService {
     }
 
     /// The search bar's search in `kind`.
-    fn browse_of(&mut self, kind: Kind, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+    fn browse_of(
+        &mut self,
+        kind: Kind,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<AnimeHit>, ServiceError> {
         match kind {
             Kind::Anime => self.browse(query, limit),
             Kind::Manga => self.browse_manga(query, limit),
@@ -472,7 +520,13 @@ pub trait ListService {
     }
     /// One page of a season's anime, most members first (`page` from 0), and whether more
     /// pages follow.
-    fn season(&mut self, _season: crate::airing::Season, _page: u32) -> Result<(Vec<crate::airing::SeasonAnime>, bool), ServiceError> {
-        Err(ServiceError::Other("this service has no season lists".into()))
+    fn season(
+        &mut self,
+        _season: crate::airing::Season,
+        _page: u32,
+    ) -> Result<(Vec<crate::airing::SeasonAnime>, bool), ServiceError> {
+        Err(ServiceError::Other(
+            "this service has no season lists".into(),
+        ))
     }
 }

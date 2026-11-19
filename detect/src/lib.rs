@@ -26,18 +26,18 @@
 //!
 //! Nothing here knows about anime, the list or the UI: the app gets [`Report`]s.
 
+pub mod comics;
 #[cfg(unix)]
 pub mod dirwatch;
-pub mod comics;
 #[cfg(target_os = "macos")]
 pub mod iinaconf;
 #[cfg(target_os = "macos")]
 pub mod libproc;
 pub mod mpc;
-pub mod mpv;
-pub mod mpvconf;
 #[cfg(target_os = "linux")]
 pub mod mpris;
+pub mod mpv;
+pub mod mpvconf;
 pub mod procfs;
 pub mod run;
 pub mod vlc;
@@ -112,7 +112,10 @@ pub struct Playing {
 impl Playing {
     /// The file this snapshot is about: the path, else the title.
     pub fn file(&self) -> Option<&str> {
-        self.path.as_deref().or(self.title.as_deref()).filter(|s| !s.is_empty())
+        self.path
+            .as_deref()
+            .or(self.title.as_deref())
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -131,7 +134,15 @@ pub enum Switch {
 }
 
 impl Switch {
-    pub const ALL: [Switch; 7] = [Switch::Mpv, Switch::Iina, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris, Switch::Mpc, Switch::PotPlayer];
+    pub const ALL: [Switch; 7] = [
+        Switch::Mpv,
+        Switch::Iina,
+        Switch::Vlc,
+        Switch::MpcQt,
+        Switch::OtherMpris,
+        Switch::Mpc,
+        Switch::PotPlayer,
+    ];
 
     /// The key in `config.toml`'s `[players]`.
     pub fn config_key(self) -> &'static str {
@@ -161,10 +172,17 @@ impl Switch {
     /// The switches Settings shows on this system.
     pub fn here() -> &'static [Switch] {
         if cfg!(windows) {
-            &[Switch::Mpv, Switch::Mpc, Switch::Vlc, Switch::PotPlayer, Switch::MpcQt]
+            &[
+                Switch::Mpv,
+                Switch::Mpc,
+                Switch::Vlc,
+                Switch::PotPlayer,
+                Switch::MpcQt,
+            ]
         } else if cfg!(target_os = "macos") {
             &[Switch::Mpv, Switch::Iina, Switch::Vlc]
-        } else { &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris]
+        } else {
+            &[Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris]
         }
     }
 }
@@ -203,7 +221,11 @@ pub fn file_name(path: &str) -> &str {
 }
 
 fn file_name_on(path: &str, windows: bool) -> &str {
-    let cut = if windows { path.rfind(['/', '\\']) } else { path.rfind('/') };
+    let cut = if windows {
+        path.rfind(['/', '\\'])
+    } else {
+        path.rfind('/')
+    };
     cut.map_or(path, |i| &path[i + 1..])
 }
 
@@ -214,14 +236,24 @@ pub fn is_absolute(path: &str) -> bool {
 
 fn is_absolute_on(path: &str, windows: bool) -> bool {
     let b = path.as_bytes();
-    path.starts_with('/') || (windows && (path.starts_with("\\\\") || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))))
+    path.starts_with('/')
+        || (windows
+            && (path.starts_with("\\\\")
+                || (b.len() >= 3
+                    && b[0].is_ascii_alphabetic()
+                    && b[1] == b':'
+                    && matches!(b[2], b'\\' | b'/'))))
 }
 
 /// `file:///media/b%20c.mkv` → `/media/b c.mkv`; `None` for any other URL. On Windows
 /// `file:///C:/v/b.mkv` → `C:\v\b.mkv`.
 pub fn file_url_path(url: &str) -> Option<String> {
     let path = file_url_path_raw(url)?;
-    Some(if cfg!(windows) { windows_url_path(&path) } else { path })
+    Some(if cfg!(windows) {
+        windows_url_path(&path)
+    } else {
+        path
+    })
 }
 
 /// A `file:` URL as a Windows path, on every system (the Windows players' command lines).
@@ -232,7 +264,11 @@ pub(crate) fn windows_file_url(url: &str) -> Option<String> {
 /// `/C:/v/b.mkv` → `C:\v\b.mkv`; a path with no drive letter keeps its slashes.
 fn windows_url_path(path: &str) -> String {
     let b = path.as_bytes();
-    if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' { path[1..].replace('/', "\\") } else { path.to_string() }
+    if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
+        path[1..].replace('/', "\\")
+    } else {
+        path.to_string()
+    }
 }
 
 fn file_url_path_raw(url: &str) -> Option<String> {
@@ -248,7 +284,8 @@ fn file_url_path_raw(url: &str) -> Option<String> {
     while i < b.len() {
         if b[i] == b'%'
             && i + 2 < b.len()
-            && let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16)
+            && let Ok(v) =
+                u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("zz"), 16)
         {
             out.push(v);
             i += 3;
@@ -270,21 +307,47 @@ mod tests {
         assert_eq!(file_name_on("Show - 01.mkv", false), "Show - 01.mkv");
         // A backslash is an ordinary character in a Unix file name.
         assert_eq!(file_name_on("/v/a\\b.mkv", false), "a\\b.mkv");
-        assert_eq!(file_name_on("D:\\Anime\\Show - 01.mkv", true), "Show - 01.mkv");
-        assert_eq!(file_name_on("D:/Anime/Show - 01.mkv", true), "Show - 01.mkv");
+        assert_eq!(
+            file_name_on("D:\\Anime\\Show - 01.mkv", true),
+            "Show - 01.mkv"
+        );
+        assert_eq!(
+            file_name_on("D:/Anime/Show - 01.mkv", true),
+            "Show - 01.mkv"
+        );
         assert_eq!(file_name_on("D:\\Anime/Show\\01.mkv", true), "01.mkv");
         assert!(is_absolute_on("/v/x.mkv", false) && is_absolute_on("/v/x.mkv", true));
-        assert!(!is_absolute_on("C:\\v\\x.mkv", false) && !is_absolute_on("x.mkv", true) && !is_absolute_on("C:x.mkv", true));
-        assert!(is_absolute_on("C:\\v\\x.mkv", true) && is_absolute_on("c:/v/x.mkv", true) && is_absolute_on("\\\\nas\\v\\x.mkv", true));
-        assert_eq!(windows_url_path("/C:/v/A B - 03.mkv"), "C:\\v\\A B - 03.mkv");
+        assert!(
+            !is_absolute_on("C:\\v\\x.mkv", false)
+                && !is_absolute_on("x.mkv", true)
+                && !is_absolute_on("C:x.mkv", true)
+        );
+        assert!(
+            is_absolute_on("C:\\v\\x.mkv", true)
+                && is_absolute_on("c:/v/x.mkv", true)
+                && is_absolute_on("\\\\nas\\v\\x.mkv", true)
+        );
+        assert_eq!(
+            windows_url_path("/C:/v/A B - 03.mkv"),
+            "C:\\v\\A B - 03.mkv"
+        );
         assert_eq!(windows_url_path("/v/x.mkv"), "/v/x.mkv");
     }
 
     #[test]
     fn file_urls_decode() {
-        assert_eq!(file_url_path("file:///v/A%20B%20-%2003.mkv").as_deref(), Some("/v/A B - 03.mkv"));
-        assert_eq!(file_url_path("file://localhost/v/x.mkv").as_deref(), Some("/v/x.mkv"));
-        assert_eq!(file_url_path("file:///v/%E3%81%82.mkv").as_deref(), Some("/v/\u{3042}.mkv"));
+        assert_eq!(
+            file_url_path("file:///v/A%20B%20-%2003.mkv").as_deref(),
+            Some("/v/A B - 03.mkv")
+        );
+        assert_eq!(
+            file_url_path("file://localhost/v/x.mkv").as_deref(),
+            Some("/v/x.mkv")
+        );
+        assert_eq!(
+            file_url_path("file:///v/%E3%81%82.mkv").as_deref(),
+            Some("/v/\u{3042}.mkv")
+        );
         assert_eq!(file_url_path("https://example.invalid/x.mkv"), None);
         assert_eq!(file_url_path("file://host/x"), None);
         assert_eq!(file_url_path("file:///bad%zz").as_deref(), Some("/bad%zz"));

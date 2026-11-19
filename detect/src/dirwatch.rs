@@ -15,11 +15,16 @@ pub struct DirWatch {
 
 fn cpath(p: &Path) -> io::Result<std::ffi::CString> {
     use std::os::unix::ffi::OsStrExt;
-    std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL byte"))
+    std::ffi::CString::new(p.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL byte"))
 }
 
 fn check(r: libc::c_int) -> io::Result<libc::c_int> {
-    if r < 0 { Err(io::Error::last_os_error()) } else { Ok(r) }
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(r)
+    }
 }
 
 impl DirWatch {
@@ -38,7 +43,12 @@ impl DirWatch {
     pub fn new(dir: &Path) -> io::Result<DirWatch> {
         let path = cpath(dir)?;
         // SAFETY: plain syscalls; each descriptor is owned right away.
-        let dirfd = unsafe { OwnedFd::from_raw_fd(check(libc::open(path.as_ptr(), libc::O_EVTONLY | libc::O_CLOEXEC))?) };
+        let dirfd = unsafe {
+            OwnedFd::from_raw_fd(check(libc::open(
+                path.as_ptr(),
+                libc::O_EVTONLY | libc::O_CLOEXEC,
+            ))?)
+        };
         let kq = unsafe { OwnedFd::from_raw_fd(check(libc::kqueue())?) };
         let ev = libc::kevent {
             ident: dirfd.as_raw_fd() as usize,
@@ -49,8 +59,20 @@ impl DirWatch {
             udata: std::ptr::null_mut(),
         };
         // SAFETY: one valid change, no events out.
-        check(unsafe { libc::kevent(kq.as_raw_fd(), &ev, 1, std::ptr::null_mut(), 0, std::ptr::null()) })?;
-        Ok(DirWatch { fd: kq, _dir: dirfd })
+        check(unsafe {
+            libc::kevent(
+                kq.as_raw_fd(),
+                &ev,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        })?;
+        Ok(DirWatch {
+            fd: kq,
+            _dir: dirfd,
+        })
     }
 
     /// Blocks until something in the folder changes.
@@ -76,7 +98,16 @@ impl DirWatch {
             // SAFETY: an all-zero kevent is a valid out value.
             let mut ev: libc::kevent = unsafe { std::mem::zeroed() };
             // SAFETY: no changes in, one event out, no timeout.
-            let n = unsafe { libc::kevent(self.fd.as_raw_fd(), std::ptr::null(), 0, &mut ev, 1, std::ptr::null()) };
+            let n = unsafe {
+                libc::kevent(
+                    self.fd.as_raw_fd(),
+                    std::ptr::null(),
+                    0,
+                    &mut ev,
+                    1,
+                    std::ptr::null(),
+                )
+            };
             if n > 0 {
                 return Ok(());
             }

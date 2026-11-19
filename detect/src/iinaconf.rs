@@ -38,7 +38,10 @@ pub struct Prefs {
 pub enum Setup {
     /// A socket is set: in the additional mpv options (`file` is `None`) or in the config
     /// folder's `mpv.conf`.
-    Set { socket: PathBuf, file: Option<PathBuf> },
+    Set {
+        socket: PathBuf,
+        file: Option<PathBuf>,
+    },
     /// IINA reads this `mpv.conf` (in its config folder) and it sets no socket: Kotora can add one.
     ConfDir { file: PathBuf },
     /// Only IINA's Settings can turn it on (advanced settings or the config folder are off).
@@ -47,7 +50,10 @@ pub enum Setup {
 
 /// Reads IINA's settings and works out the [`Setup`].
 pub fn check() -> std::io::Result<Setup> {
-    setup(&read_prefs()?, std::env::var_os("HOME").filter(|h| !h.is_empty()))
+    setup(
+        &read_prefs()?,
+        std::env::var_os("HOME").filter(|h| !h.is_empty()),
+    )
 }
 
 /// Adds the IPC socket at `socket` to the `mpv.conf` of IINA's config folder. Nothing is written
@@ -59,17 +65,32 @@ pub fn enable(socket: &Path) -> std::io::Result<Enabled> {
 }
 
 /// [`enable`] for a given setup.
-pub fn enable_with(setup: &Setup, home: Option<OsString>, socket: &Path) -> std::io::Result<Enabled> {
+pub fn enable_with(
+    setup: &Setup,
+    home: Option<OsString>,
+    socket: &Path,
+) -> std::io::Result<Enabled> {
     match setup {
-        Setup::Set { socket, file } => Ok(Enabled::AlreadySet { file: file.clone().unwrap_or_else(|| PathBuf::from("IINA's additional mpv options")), socket: socket.clone() }),
+        Setup::Set { socket, file } => Ok(Enabled::AlreadySet {
+            file: file
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("IINA's additional mpv options")),
+            socket: socket.clone(),
+        }),
         Setup::ConfDir { file } => mpvconf::enable_file(file, &conf_env(file, home), socket),
-        Setup::Manual => Err(std::io::Error::other("IINA reads no mpv.conf: turn on its advanced settings and add the option there")),
+        Setup::Manual => Err(std::io::Error::other(
+            "IINA reads no mpv.conf: turn on its advanced settings and add the option there",
+        )),
     }
 }
 
 /// mpv's environment for the config folder holding `file` (`~~/` means that folder).
 fn conf_env(file: &Path, home: Option<OsString>) -> Env {
-    Env { mpv_home: file.parent().map(|d| d.as_os_str().to_os_string()), xdg_config_home: None, home }
+    Env {
+        mpv_home: file.parent().map(|d| d.as_os_str().to_os_string()),
+        xdg_config_home: None,
+        home,
+    }
 }
 
 /// The [`Setup`] for these settings. Reads the config folder's `mpv.conf` when IINA uses one.
@@ -77,22 +98,49 @@ pub fn setup(p: &Prefs, home: Option<OsString>) -> std::io::Result<Setup> {
     if !p.advanced {
         return Ok(Setup::Manual);
     }
-    let expand = |v: &str| Env { mpv_home: None, xdg_config_home: None, home: home.clone() }.expand(v);
+    let expand = |v: &str| {
+        Env {
+            mpv_home: None,
+            xdg_config_home: None,
+            home: home.clone(),
+        }
+        .expand(v)
+    };
     // mpv keeps the last value; IINA passes these before mpv reads its config.
-    if let Some((_, v)) = p.options.iter().rev().find(|(k, _)| k.trim().trim_start_matches("--") == mpvconf::OPTION)
+    if let Some((_, v)) = p
+        .options
+        .iter()
+        .rev()
+        .find(|(k, _)| k.trim().trim_start_matches("--") == mpvconf::OPTION)
         && !v.trim().is_empty()
     {
-        return Ok(Setup::Set { socket: expand(v.trim()), file: None });
+        return Ok(Setup::Set {
+            socket: expand(v.trim()),
+            file: None,
+        });
     }
-    let Some(dir) = p.conf_dir.as_deref().filter(|d| p.use_conf_dir && !d.trim().is_empty()) else { return Ok(Setup::Manual) };
-    let dir = if dir == "~" { home.as_ref().map(PathBuf::from).unwrap_or_default() } else { expand(dir) };
+    let Some(dir) = p
+        .conf_dir
+        .as_deref()
+        .filter(|d| p.use_conf_dir && !d.trim().is_empty())
+    else {
+        return Ok(Setup::Manual);
+    };
+    let dir = if dir == "~" {
+        home.as_ref().map(PathBuf::from).unwrap_or_default()
+    } else {
+        expand(dir)
+    };
     if !dir.is_absolute() {
         return Ok(Setup::Manual);
     }
     let file = dir.join("mpv.conf");
     let c = mpvconf::check_file(&file, &conf_env(&file, home))?;
     Ok(match c.socket {
-        Some(socket) => Setup::Set { socket, file: Some(file) },
+        Some(socket) => Setup::Set {
+            socket,
+            file: Some(file),
+        },
         None => Setup::ConfDir { file },
     })
 }
@@ -100,7 +148,11 @@ pub fn setup(p: &Prefs, home: Option<OsString>) -> std::io::Result<Setup> {
 /// IINA's settings from `defaults export` (an XML property list). No settings (IINA never ran):
 /// the defaults.
 pub fn read_prefs() -> std::io::Result<Prefs> {
-    let out = std::process::Command::new("/usr/bin/defaults").args(["export", DOMAIN, "-"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output()?;
+    let out = std::process::Command::new("/usr/bin/defaults")
+        .args(["export", DOMAIN, "-"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()?;
     if !out.status.success() {
         return Ok(Prefs::default());
     }
@@ -273,7 +325,9 @@ fn options(toks: &[Tok], start: usize) -> (Vec<(String, String)>, usize) {
                     return (out, i + 1);
                 }
             }
-            Tok::Open("string") if depth == 2 => strings.push(text_until(toks, i + 1, "string").unwrap_or_default()),
+            Tok::Open("string") if depth == 2 => {
+                strings.push(text_until(toks, i + 1, "string").unwrap_or_default())
+            }
             _ => {}
         }
         i += 1;
@@ -331,11 +385,23 @@ mod tests {
         let p = parse(EXPORT);
         assert!(p.advanced && p.use_conf_dir);
         assert_eq!(p.conf_dir.as_deref(), Some("~/.config/iina & mpv"));
-        assert_eq!(p.options, [("sub-auto".to_string(), "fuzzy".to_string()), ("input-ipc-server".to_string(), "/tmp/iina.sock".to_string())]);
+        assert_eq!(
+            p.options,
+            [
+                ("sub-auto".to_string(), "fuzzy".to_string()),
+                ("input-ipc-server".to_string(), "/tmp/iina.sock".to_string())
+            ]
+        );
         // Nothing set (IINA never ran, or a fresh install).
-        assert_eq!(parse("<plist version=\"1.0\"><dict/></plist>"), Prefs::default());
+        assert_eq!(
+            parse("<plist version=\"1.0\"><dict/></plist>"),
+            Prefs::default()
+        );
         assert_eq!(parse(""), Prefs::default());
-        assert_eq!(unescape("a &lt;b&gt; &#233;&#x3042; & c"), "a <b> \u{e9}\u{3042} & c");
+        assert_eq!(
+            unescape("a &lt;b&gt; &#233;&#x3042; & c"),
+            "a <b> \u{e9}\u{3042} & c"
+        );
     }
 
     struct Tmp(PathBuf);
@@ -359,7 +425,15 @@ mod tests {
     }
 
     fn prefs(advanced: bool, dir: Option<&str>, options: &[(&str, &str)]) -> Prefs {
-        Prefs { advanced, use_conf_dir: dir.is_some(), conf_dir: dir.map(str::to_string), options: options.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }
+        Prefs {
+            advanced,
+            use_conf_dir: dir.is_some(),
+            conf_dir: dir.map(str::to_string),
+            options: options
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
     }
 
     #[test]
@@ -367,15 +441,45 @@ mod tests {
         let t = Tmp::new("setup");
         let h = t.home();
         // Advanced settings off: nothing applies, whatever is stored.
-        assert_eq!(setup(&prefs(false, Some("~/.config/iina"), &[("input-ipc-server", "/tmp/iina.sock")]), h.clone()).unwrap(), Setup::Manual);
+        assert_eq!(
+            setup(
+                &prefs(
+                    false,
+                    Some("~/.config/iina"),
+                    &[("input-ipc-server", "/tmp/iina.sock")]
+                ),
+                h.clone()
+            )
+            .unwrap(),
+            Setup::Manual
+        );
         // Advanced on, no config folder, no option.
-        assert_eq!(setup(&prefs(true, None, &[("sub-auto", "fuzzy")]), h.clone()).unwrap(), Setup::Manual);
+        assert_eq!(
+            setup(&prefs(true, None, &[("sub-auto", "fuzzy")]), h.clone()).unwrap(),
+            Setup::Manual
+        );
         // The option in the additional mpv options (last one wins; `~/` expands).
-        let p = prefs(true, None, &[("input-ipc-server", "/tmp/old.sock"), ("--input-ipc-server", "~/iina.sock")]);
-        assert_eq!(setup(&p, h.clone()).unwrap(), Setup::Set { socket: t.0.join("iina.sock"), file: None });
+        let p = prefs(
+            true,
+            None,
+            &[
+                ("input-ipc-server", "/tmp/old.sock"),
+                ("--input-ipc-server", "~/iina.sock"),
+            ],
+        );
+        assert_eq!(
+            setup(&p, h.clone()).unwrap(),
+            Setup::Set {
+                socket: t.0.join("iina.sock"),
+                file: None
+            }
+        );
         // A config folder without mpv.conf: Kotora can add the line.
         let file = t.0.join(".config/iina/mpv.conf");
-        assert_eq!(setup(&prefs(true, Some("~/.config/iina"), &[]), h.clone()).unwrap(), Setup::ConfDir { file: file.clone() });
+        assert_eq!(
+            setup(&prefs(true, Some("~/.config/iina"), &[]), h.clone()).unwrap(),
+            Setup::ConfDir { file: file.clone() }
+        );
         // A folder that isn't used ("Use config directory" off) is ignored.
         let mut p = prefs(true, Some("~/.config/iina"), &[]);
         p.use_conf_dir = false;
@@ -383,7 +487,13 @@ mod tests {
         // Its mpv.conf sets a socket (`~~/` is the folder).
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "hwdec=auto\ninput-ipc-server=~~/ipc.sock\n").unwrap();
-        assert_eq!(setup(&prefs(true, Some("~/.config/iina"), &[]), h).unwrap(), Setup::Set { socket: t.0.join(".config/iina/ipc.sock"), file: Some(file) });
+        assert_eq!(
+            setup(&prefs(true, Some("~/.config/iina"), &[]), h).unwrap(),
+            Setup::Set {
+                socket: t.0.join(".config/iina/ipc.sock"),
+                file: Some(file)
+            }
+        );
     }
 
     #[test]
@@ -396,18 +506,33 @@ mod tests {
         match enable_with(&Setup::ConfDir { file: file.clone() }, t.home(), sock).unwrap() {
             Enabled::Wrote { file: f, text } => {
                 assert_eq!(f, file);
-                assert!(text.ends_with("input-ipc-server=/tmp/iina.sock\n"), "{text}");
+                assert!(
+                    text.ends_with("input-ipc-server=/tmp/iina.sock\n"),
+                    "{text}"
+                );
             }
             e => panic!("{e:?}"),
         }
-        assert!(std::fs::read_to_string(&file).unwrap().starts_with("hwdec=auto\n"));
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .starts_with("hwdec=auto\n")
+        );
         // Twice: nothing more is written.
         let before = std::fs::read_to_string(&file).unwrap();
-        assert!(matches!(enable_with(&Setup::ConfDir { file: file.clone() }, t.home(), sock).unwrap(), Enabled::AlreadySet { .. }));
+        assert!(matches!(
+            enable_with(&Setup::ConfDir { file: file.clone() }, t.home(), sock).unwrap(),
+            Enabled::AlreadySet { .. }
+        ));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
         // Set in IINA's options: said so, nothing written.
-        let set = Setup::Set { socket: sock.to_path_buf(), file: None };
-        assert!(matches!(enable_with(&set, t.home(), sock).unwrap(), Enabled::AlreadySet { socket, .. } if socket == sock));
+        let set = Setup::Set {
+            socket: sock.to_path_buf(),
+            file: None,
+        };
+        assert!(
+            matches!(enable_with(&set, t.home(), sock).unwrap(), Enabled::AlreadySet { socket, .. } if socket == sock)
+        );
         // Manual: an error, no file.
         assert!(enable_with(&Setup::Manual, t.home(), sock).is_err());
     }

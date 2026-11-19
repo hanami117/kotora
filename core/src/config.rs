@@ -192,7 +192,10 @@ impl Feeds {
 
     /// The `sources` value as a TOML inline array.
     pub fn sources_toml(sources: &[FeedSource]) -> String {
-        let items: Vec<String> = sources.iter().map(|s| format!("{{ name = {}, url = {} }}", quote(&s.name), quote(&s.url))).collect();
+        let items: Vec<String> = sources
+            .iter()
+            .map(|s| format!("{{ name = {}, url = {} }}", quote(&s.name), quote(&s.url)))
+            .collect();
         format!("[{}]", items.join(", "))
     }
 }
@@ -242,7 +245,14 @@ pub struct Reading {
 
 impl Default for Reading {
     fn default() -> Self {
-        Reading { yacreader: true, libraries: Vec::new(), find_libraries: true, open_files: false, comic_folders: Vec::new(), open_minutes: 10 }
+        Reading {
+            yacreader: true,
+            libraries: Vec::new(),
+            find_libraries: true,
+            open_files: false,
+            comic_folders: Vec::new(),
+            open_minutes: 10,
+        }
     }
 }
 
@@ -265,7 +275,15 @@ pub struct Discord {
 
 impl Default for Discord {
     fn default() -> Self {
-        Discord { enabled: false, client_id: String::new(), cover: true, buttons: true, hide_paused: false, hide_title: false, status: StatusIn::default().key().into() }
+        Discord {
+            enabled: false,
+            client_id: String::new(),
+            cover: true,
+            buttons: true,
+            hide_paused: false,
+            hide_title: false,
+            status: StatusIn::default().key().into(),
+        }
     }
 }
 
@@ -302,7 +320,9 @@ impl StatusIn {
     }
 
     pub fn from_key(s: &str) -> Option<StatusIn> {
-        StatusIn::ALL.into_iter().find(|m| m.key() == s.trim().to_lowercase())
+        StatusIn::ALL
+            .into_iter()
+            .find(|m| m.key() == s.trim().to_lowercase())
     }
 }
 
@@ -323,7 +343,10 @@ pub struct ReleaseData {
 
 impl Default for ReleaseData {
     fn default() -> Self {
-        ReleaseData { mangaupdates: true, mangadex: true }
+        ReleaseData {
+            mangaupdates: true,
+            mangadex: true,
+        }
     }
 }
 
@@ -338,7 +361,9 @@ pub struct AppSection {
 
 impl Default for AppSection {
     fn default() -> Self {
-        AppSection { check_updates: true }
+        AppSection {
+            check_updates: true,
+        }
     }
 }
 
@@ -369,7 +394,17 @@ pub struct Notifications {
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true, new_release: true }
+        Notifications {
+            detected: false,
+            offer: true,
+            recorded: true,
+            started_airing: true,
+            new_episode: true,
+            new_chapter: false,
+            read_offer: true,
+            read_recorded: true,
+            new_release: true,
+        }
     }
 }
 
@@ -536,7 +571,13 @@ pub struct Display {
 
 impl Default for Display {
     fn default() -> Self {
-        Display { titles: TitleLang::default(), theme: Theme::default(), intro: true, settings_section: String::new(), list_kind: crate::Kind::Anime }
+        Display {
+            titles: TitleLang::default(),
+            theme: Theme::default(),
+            intro: true,
+            settings_section: String::new(),
+            list_kind: crate::Kind::Anime,
+        }
     }
 }
 
@@ -671,7 +712,9 @@ impl OpenOn {
     }
 
     pub fn from_key(s: &str) -> Option<OpenOn> {
-        OpenOn::ALL.into_iter().find(|o| o.key() == s.trim().to_lowercase())
+        OpenOn::ALL
+            .into_iter()
+            .find(|o| o.key() == s.trim().to_lowercase())
     }
 }
 
@@ -706,7 +749,9 @@ impl StartMode {
     }
 
     pub fn from_key(s: &str) -> Option<StartMode> {
-        StartMode::ALL.into_iter().find(|m| m.key() == s.trim().to_lowercase())
+        StartMode::ALL
+            .into_iter()
+            .find(|m| m.key() == s.trim().to_lowercase())
     }
 }
 
@@ -757,13 +802,24 @@ pub struct Library {
 
 impl Default for Library {
     fn default() -> Self {
-        Library { folders: Vec::new(), open_with: "auto".into(), last_player: String::new() }
+        Library {
+            folders: Vec::new(),
+            open_with: "auto".into(),
+            last_player: String::new(),
+        }
     }
 }
 
 /// A TOML array of strings.
 pub fn quote_list(items: &[String]) -> String {
-    format!("[{}]", items.iter().map(|s| quote(s)).collect::<Vec<_>>().join(", "))
+    format!(
+        "[{}]",
+        items
+            .iter()
+            .map(|s| quote(s))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// Recognition settings.
@@ -777,7 +833,9 @@ pub struct Recognition {
 
 impl Default for Recognition {
     fn default() -> Self {
-        Recognition { relations_download: true }
+        Recognition {
+            relations_download: true,
+        }
     }
 }
 
@@ -802,7 +860,11 @@ pub struct Updates {
 
 impl Default for Updates {
     fn default() -> Self {
-        Updates { auto: false, threshold: 80, keep_higher_progress: true }
+        Updates {
+            auto: false,
+            threshold: 80,
+            keep_higher_progress: true,
+        }
     }
 }
 
@@ -828,7 +890,18 @@ pub struct Players {
 
 impl Default for Players {
     fn default() -> Self {
-        Players { mpv: true, iina: true, vlc: true, mpc_qt: true, other_mpris: true, mpc: true, potplayer: true, mpv_sockets: Vec::new(), process_scan: true, process_minutes: 15 }
+        Players {
+            mpv: true,
+            iina: true,
+            vlc: true,
+            mpc_qt: true,
+            other_mpris: true,
+            mpc: true,
+            potplayer: true,
+            mpv_sockets: Vec::new(),
+            process_scan: true,
+            process_minutes: 15,
+        }
     }
 }
 
@@ -870,7 +943,10 @@ pub struct Vlc {
 
 impl Default for Vlc {
     fn default() -> Self {
-        Vlc { port: 8080, password: String::new() }
+        Vlc {
+            port: 8080,
+            password: String::new(),
+        }
     }
 }
 
@@ -891,12 +967,21 @@ impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("service", &self.service)
-            .field("mal_client_id", &self.mal_client_id.as_ref().map(|_| "<set>"))
-            .field("anilist_client_id", &self.anilist_client_id.as_ref().map(|_| "<set>"))
+            .field(
+                "mal_client_id",
+                &self.mal_client_id.as_ref().map(|_| "<set>"),
+            )
+            .field(
+                "anilist_client_id",
+                &self.anilist_client_id.as_ref().map(|_| "<set>"),
+            )
             .field("updates", &self.updates)
             .field("players", &self.players)
             .field("vlc_port", &self.vlc.port)
-            .field("vlc_password", &(!self.vlc.password.is_empty()).then_some("<set>"))
+            .field(
+                "vlc_password",
+                &(!self.vlc.password.is_empty()).then_some("<set>"),
+            )
             .field("notices", &self.notices)
             .field("recognition", &self.recognition)
             .field("display", &self.display)
@@ -975,9 +1060,21 @@ impl Config {
         let mut updates = f.updates;
         updates.threshold = updates.threshold.clamp(50, 100);
         Ok(Config {
-            service: f.account.service.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()),
-            mal_client_id: f.mal.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            anilist_client_id: f.anilist.client_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            service: f
+                .account
+                .service
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty()),
+            mal_client_id: f
+                .mal
+                .client_id
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            anilist_client_id: f
+                .anilist
+                .client_id
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             updates,
             players: f.players,
             vlc: f.vlc,
@@ -986,7 +1083,10 @@ impl Config {
             recognition: f.recognition,
             display: f.display,
             startup: f.startup,
-            discord: Discord { client_id: f.discord.client_id.trim().to_string(), ..f.discord },
+            discord: Discord {
+                client_id: f.discord.client_id.trim().to_string(),
+                ..f.discord
+            },
             views: f.views,
             manga_views: f.manga_views,
             notifications: f.notifications,
@@ -994,7 +1094,11 @@ impl Config {
             app: f.app,
             keys: f.keys,
             // Both off is not a choice: MangaUpdates comes back on.
-            release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
+            release_data: if f.release_data.mangaupdates || f.release_data.mangadex {
+                f.release_data
+            } else {
+                ReleaseData::default()
+            },
             reading: f.reading,
             feeds: f.feeds,
         })
@@ -1004,13 +1108,19 @@ impl Config {
     /// chosen, has no Client ID in the file and has no saved token. Anyone who already uses
     /// Kotora with MyAnimeList skips it, and nothing is written for them.
     pub fn needs_service_choice(&self, has_token: bool) -> bool {
-        self.service.is_none() && self.mal_client_id.is_none() && self.anilist_client_id.is_none() && !has_token
+        self.service.is_none()
+            && self.mal_client_id.is_none()
+            && self.anilist_client_id.is_none()
+            && !has_token
     }
 
     /// The service Kotora keeps the list on: `[account] service`, MyAnimeList when none is
     /// chosen (everybody from 0.1) or the value is unknown.
     pub fn service_id(&self) -> crate::service::ServiceId {
-        self.service.as_deref().and_then(crate::service::ServiceId::from_name).unwrap_or_default()
+        self.service
+            .as_deref()
+            .and_then(crate::service::ServiceId::from_name)
+            .unwrap_or_default()
     }
 
     /// The Client ID of `service`, when one is saved.
@@ -1024,8 +1134,12 @@ impl Config {
     /// The Client ID Kotora signs in with: the environment variable (development), else the
     /// one in `config.toml` ("Use my own client ID"), else the one built into Kotora.
     pub fn effective_client_id(&self, service: crate::service::ServiceId) -> Option<String> {
-        let env = std::env::var(service.client_id_env()).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        env.or_else(|| self.client_id(service).map(str::to_string)).or_else(|| service.built_in_client_id().map(str::to_string))
+        let env = std::env::var(service.client_id_env())
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        env.or_else(|| self.client_id(service).map(str::to_string))
+            .or_else(|| service.built_in_client_id().map(str::to_string))
     }
 
     /// Whether Kotora has a Client ID to sign in with, saved or built in.
@@ -1052,10 +1166,14 @@ pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
     let new_line = format!("{key} = {value}");
     match lines.iter().position(|l| l.trim() == header) {
         Some(start) => {
-            let end = lines[start + 1..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + 1 + i);
+            let end = lines[start + 1..]
+                .iter()
+                .position(|l| is_header(l))
+                .map_or(lines.len(), |i| start + 1 + i);
             let found = lines[start + 1..end].iter().position(|l| {
                 let t = l.trim_start();
-                t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
+                t.strip_prefix(key)
+                    .is_some_and(|rest| rest.trim_start().starts_with('='))
             });
             match found {
                 Some(i) => lines[start + 1 + i] = new_line,
@@ -1063,7 +1181,10 @@ pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
                     // After the section's last setting (blank lines and comments before the next
                     // section belong to that one).
                     let mut at = end;
-                    while at > start + 1 && (lines[at - 1].trim().is_empty() || lines[at - 1].trim_start().starts_with('#')) {
+                    while at > start + 1
+                        && (lines[at - 1].trim().is_empty()
+                            || lines[at - 1].trim_start().starts_with('#'))
+                    {
                         at -= 1;
                     }
                     lines.insert(at, new_line);
@@ -1102,7 +1223,10 @@ pub fn quote(s: &str) -> String {
 /// A pasted MyAnimeList Client ID, checked: trimmed (quotes and spaces around it dropped), not
 /// empty, only hex digits, and about the length MAL gives (32). The error says what to do.
 pub fn check_client_id(raw: &str) -> Result<String, String> {
-    let id = raw.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`').trim();
+    let id = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .trim();
     if id.is_empty() {
         return Err("Paste the Client ID first.".into());
     }
@@ -1115,9 +1239,18 @@ pub fn check_client_id(raw: &str) -> Result<String, String> {
     // MAL's Client IDs have 32 characters and its Client Secrets 64, both hex: a long one is
     // almost surely the secret, which must never be stored.
     match id.len() {
-        0..=19 => Err(format!("That is too short for a Client ID ({} characters; MyAnimeList's have 32). Copy all of it.", id.len())),
-        41..=64 => Err(format!("That looks like the Client Secret ({} characters). Kotora doesn't need it: copy the Client ID instead (32 characters).", id.len())),
-        65.. => Err(format!("That is too long for a Client ID ({} characters; MyAnimeList's have 32).", id.len())),
+        0..=19 => Err(format!(
+            "That is too short for a Client ID ({} characters; MyAnimeList's have 32). Copy all of it.",
+            id.len()
+        )),
+        41..=64 => Err(format!(
+            "That looks like the Client Secret ({} characters). Kotora doesn't need it: copy the Client ID instead (32 characters).",
+            id.len()
+        )),
+        65.. => Err(format!(
+            "That is too long for a Client ID ({} characters; MyAnimeList's have 32).",
+            id.len()
+        )),
         _ => Ok(id.to_ascii_lowercase()),
     }
 }
@@ -1129,7 +1262,10 @@ pub const SERVICE_ANILIST: &str = "anilist";
 /// Checks a pasted AniList Client ID: AniList's are whole numbers (its client secrets are 40
 /// letters and digits, never needed). Returns the cleaned ID.
 pub fn check_anilist_client_id(raw: &str) -> Result<String, String> {
-    let id = raw.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`').trim();
+    let id = raw
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .trim();
     if id.is_empty() {
         return Err("Paste the Client ID first.".into());
     }
@@ -1144,7 +1280,9 @@ pub fn check_anilist_client_id(raw: &str) -> Result<String, String> {
         });
     }
     if id.len() > 10 || id.trim_start_matches('0').is_empty() {
-        return Err("That doesn't look like an AniList Client ID: it is a number, like 12345.".into());
+        return Err(
+            "That doesn't look like an AniList Client ID: it is a number, like 12345.".into(),
+        );
     }
     Ok(id.to_string())
 }
@@ -1157,7 +1295,11 @@ pub fn save_anilist_client_id(path: &Path, raw: &str) -> Result<String, String> 
 }
 
 /// Saves the Client ID of `service`, checked the way that service's IDs look.
-pub fn save_client_id_for(path: &Path, service: crate::service::ServiceId, raw: &str) -> Result<String, String> {
+pub fn save_client_id_for(
+    path: &Path,
+    service: crate::service::ServiceId,
+    raw: &str,
+) -> Result<String, String> {
     match service {
         crate::service::ServiceId::Mal => save_client_id(path, raw),
         crate::service::ServiceId::AniList => save_anilist_client_id(path, raw),
@@ -1199,7 +1341,8 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
     // Never write a file the reader would refuse.
     Config::parse(&new)?;
     if let Some(dir) = path.parent() {
-        crate::paths::create_private_dir(dir).map_err(|e| format!("can't create the config folder: {e}"))?;
+        crate::paths::create_private_dir(dir)
+            .map_err(|e| format!("can't create the config folder: {e}"))?;
     }
     let tmp = path.with_extension("toml.tmp");
     {
@@ -1208,8 +1351,11 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
         o.write(true).create(true).truncate(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-        let mut f = o.open(&tmp).map_err(|e| format!("can't write config.toml: {e}"))?;
-        f.write_all(new.as_bytes()).map_err(|e| format!("can't write config.toml: {e}"))?;
+        let mut f = o
+            .open(&tmp)
+            .map_err(|e| format!("can't write config.toml: {e}"))?;
+        f.write_all(new.as_bytes())
+            .map_err(|e| format!("can't write config.toml: {e}"))?;
     }
     #[cfg(unix)]
     {
@@ -1226,8 +1372,19 @@ mod tests {
     #[test]
     fn discord_is_off_by_default_and_read_leniently() {
         let d = Config::default().discord;
-        assert!(!d.enabled && d.cover && d.buttons && !d.hide_paused && !d.hide_title && d.client_id.is_empty());
-        let c = Config::parse("[discord]\nenabled = true\nclient_id = \" 123 \"\nhide_title = true\ncover = false\n").unwrap().discord;
+        assert!(
+            !d.enabled
+                && d.cover
+                && d.buttons
+                && !d.hide_paused
+                && !d.hide_title
+                && d.client_id.is_empty()
+        );
+        let c = Config::parse(
+            "[discord]\nenabled = true\nclient_id = \" 123 \"\nhide_title = true\ncover = false\n",
+        )
+        .unwrap()
+        .discord;
         assert!(c.enabled && c.hide_title && !c.cover && c.buttons);
         assert_eq!(d.status(), StatusIn::Title, "the title by default");
         let s = Config::parse("[discord]\nstatus = \"Episode\"\n").unwrap();
@@ -1237,26 +1394,70 @@ mod tests {
         assert_eq!(s.discord.status(), StatusIn::Title);
         assert_eq!(s.warnings().len(), 1);
         assert_eq!(c.client_id, "123");
-        assert!(Config::parse("[discord]\nclient_id = 42\n").is_ok(), "a number is no parse error");
+        assert!(
+            Config::parse("[discord]\nclient_id = 42\n").is_ok(),
+            "a number is no parse error"
+        );
     }
 
     #[test]
     fn page_keys_are_ctrl_by_default_and_alt_on_request() {
         assert_eq!(Config::parse("").unwrap().keys.pages, PageKeys::Primary);
-        assert_eq!(Config::parse("[keys]\npages = \"alt\"\n").unwrap().keys.pages, PageKeys::Alt);
-        assert_eq!(Config::parse("[keys]\npages = \"ctrl\"\n").unwrap().keys.pages, PageKeys::Primary);
-        assert_eq!(Config::parse("[keys]\npages = \"cmd\"\n").unwrap().keys.pages, PageKeys::Primary, "the macOS name reads too");
-        assert!(Config::parse("[keys]\npages = \"hyper\"\n").is_err(), "an unknown value is refused");
+        assert_eq!(
+            Config::parse("[keys]\npages = \"alt\"\n")
+                .unwrap()
+                .keys
+                .pages,
+            PageKeys::Alt
+        );
+        assert_eq!(
+            Config::parse("[keys]\npages = \"ctrl\"\n")
+                .unwrap()
+                .keys
+                .pages,
+            PageKeys::Primary
+        );
+        assert_eq!(
+            Config::parse("[keys]\npages = \"cmd\"\n")
+                .unwrap()
+                .keys
+                .pages,
+            PageKeys::Primary,
+            "the macOS name reads too"
+        );
+        assert!(
+            Config::parse("[keys]\npages = \"hyper\"\n").is_err(),
+            "an unknown value is refused"
+        );
         for k in PageKeys::ALL {
-            let t = set_line("[display]\ntheme = \"dark\"\n", "keys", "pages", &quote(k.key()));
+            let t = set_line(
+                "[display]\ntheme = \"dark\"\n",
+                "keys",
+                "pages",
+                &quote(k.key()),
+            );
             let c = Config::parse(&t).unwrap();
             assert_eq!(c.keys.pages, k);
             assert_eq!(c.display.theme, Theme::Dark, "the other sections stay");
         }
         assert_eq!(PageKeys::Alt.chord('3'), "alt+3");
         assert_eq!(PageKeys::Primary.chord('1'), "mod+1");
-        assert_eq!(PageKeys::Alt.hint('2'), if cfg!(target_os = "macos") { "\u{2325} 2" } else { "Alt 2" });
-        assert_eq!(PageKeys::Primary.hint('5'), if cfg!(target_os = "macos") { "\u{2318} 5" } else { "Ctrl 5" });
+        assert_eq!(
+            PageKeys::Alt.hint('2'),
+            if cfg!(target_os = "macos") {
+                "\u{2325} 2"
+            } else {
+                "Alt 2"
+            }
+        );
+        assert_eq!(
+            PageKeys::Primary.hint('5'),
+            if cfg!(target_os = "macos") {
+                "\u{2318} 5"
+            } else {
+                "Ctrl 5"
+            }
+        );
     }
 
     #[test]
@@ -1264,11 +1465,20 @@ mod tests {
         let c = Config::default();
         assert!(c.library.folders.is_empty());
         assert_eq!(c.library.open_with, "auto");
-        let folders = vec!["/Volumes/Disk \"A\"/Anime".to_string(), "/srv/anime\\x".to_string()];
+        let folders = vec![
+            "/Volumes/Disk \"A\"/Anime".to_string(),
+            "/srv/anime\\x".to_string(),
+        ];
         let text = set_line("", "library", "folders", &quote_list(&folders));
         let c = Config::parse(&text).unwrap();
         assert_eq!(c.library.folders, folders);
-        assert_eq!(Config::parse(&set_line(&text, "library", "folders", &quote_list(&[]))).unwrap().library.folders, Vec::<String>::new());
+        assert_eq!(
+            Config::parse(&set_line(&text, "library", "folders", &quote_list(&[])))
+                .unwrap()
+                .library
+                .folders,
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -1276,16 +1486,36 @@ mod tests {
         let none = Config::parse("").unwrap();
         assert_eq!(none.service, None);
         assert!(none.needs_service_choice(false), "a fresh install is asked");
-        assert!(!none.needs_service_choice(true), "a saved token means MyAnimeList already");
+        assert!(
+            !none.needs_service_choice(true),
+            "a saved token means MyAnimeList already"
+        );
         let id = Config::parse("[mal]\nclient_id = \"fake-id\"\n").unwrap();
-        assert!(!id.needs_service_choice(false), "a Client ID in the file counts too");
+        assert!(
+            !id.needs_service_choice(false),
+            "a Client ID in the file counts too"
+        );
         let text = set_line("", "account", "service", &quote(SERVICE_MAL));
         assert_eq!(text, "[account]\nservice = \"mal\"\n");
         let c = Config::parse(&text).unwrap();
         assert_eq!(c.service.as_deref(), Some("mal"));
-        assert!(!c.needs_service_choice(false), "chosen once, never asked again");
-        assert_eq!(Config::parse("[account]\nservice = \" MAL \"\n").unwrap().service.as_deref(), Some("mal"));
-        assert_eq!(Config::parse("[account]\nservice = \"\"\n").unwrap().service, None);
+        assert!(
+            !c.needs_service_choice(false),
+            "chosen once, never asked again"
+        );
+        assert_eq!(
+            Config::parse("[account]\nservice = \" MAL \"\n")
+                .unwrap()
+                .service
+                .as_deref(),
+            Some("mal")
+        );
+        assert_eq!(
+            Config::parse("[account]\nservice = \"\"\n")
+                .unwrap()
+                .service,
+            None
+        );
     }
 
     #[test]
@@ -1301,7 +1531,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1315,46 +1548,111 @@ mod tests {
     #[test]
     fn missing_or_blank_means_none() {
         assert_eq!(Config::parse("").unwrap().mal_client_id, None);
-        assert_eq!(Config::parse("[mal]\nclient_id = \" \"").unwrap().mal_client_id, None);
-        assert_eq!(Config::load(Path::new("/nonexistent/kotora/config.toml")).unwrap(), Config::default());
+        assert_eq!(
+            Config::parse("[mal]\nclient_id = \" \"")
+                .unwrap()
+                .mal_client_id,
+            None
+        );
+        assert_eq!(
+            Config::load(Path::new("/nonexistent/kotora/config.toml")).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]
     fn broken_file_is_an_error_and_debug_hides_secrets() {
         assert!(Config::parse("[mal\n").is_err());
-        let mut c = Config { mal_client_id: Some("fake-secret-looking-id".into()), ..Config::default() };
+        let mut c = Config {
+            mal_client_id: Some("fake-secret-looking-id".into()),
+            ..Config::default()
+        };
         c.vlc.password = "fake-vlc-pass".into();
         let d = format!("{c:?}");
-        assert!(!d.contains("fake-secret") && !d.contains("fake-vlc-pass"), "{d}");
+        assert!(
+            !d.contains("fake-secret") && !d.contains("fake-vlc-pass"),
+            "{d}"
+        );
     }
 
     #[test]
     fn defaults_ask_first() {
         let c = Config::parse("[mal]\nclient_id = \"x\"\n").unwrap();
-        assert_eq!(c.updates, Updates { auto: false, threshold: 80, keep_higher_progress: true });
+        assert_eq!(
+            c.updates,
+            Updates {
+                auto: false,
+                threshold: 80,
+                keep_higher_progress: true
+            }
+        );
         assert!(c.players.mpv && c.players.vlc && c.players.other_mpris);
         assert_eq!((c.vlc.port, c.vlc.password.as_str()), (8080, ""));
         assert!(!c.notices.mpv_precise);
-        assert!(Config::parse("[notices]\nmpv_precise = true\n").unwrap().notices.mpv_precise);
-        assert!(Config::parse("[notices]\niina_precise = true\n").unwrap().notices.iina_precise);
+        assert!(
+            Config::parse("[notices]\nmpv_precise = true\n")
+                .unwrap()
+                .notices
+                .mpv_precise
+        );
+        assert!(
+            Config::parse("[notices]\niina_precise = true\n")
+                .unwrap()
+                .notices
+                .iina_precise
+        );
         assert!(c.recognition.relations_download);
-        assert!(!Config::parse("[recognition]\nrelations_download = false\n").unwrap().recognition.relations_download);
-        assert!(!c.startup.background, "the login start opens the window by default");
-        assert!(Config::parse("[startup]\nbackground = true\n").unwrap().startup.background);
+        assert!(
+            !Config::parse("[recognition]\nrelations_download = false\n")
+                .unwrap()
+                .recognition
+                .relations_download
+        );
+        assert!(
+            !c.startup.background,
+            "the login start opens the window by default"
+        );
+        assert!(
+            Config::parse("[startup]\nbackground = true\n")
+                .unwrap()
+                .startup
+                .background
+        );
         let s = Config::parse("").unwrap();
-        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Home, StartMode::Last), "today's behaviour");
+        assert_eq!(
+            (s.startup.open_on(), s.startup.mode()),
+            (OpenOn::Home, StartMode::Last),
+            "today's behaviour"
+        );
         assert!(s.warnings().is_empty());
         let s = Config::parse("[startup]\nopen_on = \"last\"\nmode = \"Manga\"\n").unwrap();
-        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Last, StartMode::Manga));
+        assert_eq!(
+            (s.startup.open_on(), s.startup.mode()),
+            (OpenOn::Last, StartMode::Manga)
+        );
         let s = Config::parse("[startup]\nopen_on = \"anywhere\"\nmode = \"both\"\n").unwrap();
-        assert_eq!((s.startup.open_on(), s.startup.mode()), (OpenOn::Home, StartMode::Last), "a bad value is not an error");
+        assert_eq!(
+            (s.startup.open_on(), s.startup.mode()),
+            (OpenOn::Home, StartMode::Last),
+            "a bad value is not an error"
+        );
         assert_eq!(s.warnings().len(), 2);
         let s = Config::parse("[startup]\nopen_on = 3\nmode = true\n").unwrap();
-        assert_eq!((s.startup.open_on(), s.startup.mode(), s.warnings().len()), (OpenOn::Home, StartMode::Last, 2), "a wrong type too");
-        assert!(c.app.check_updates, "the update check is on by default (the site says so)");
+        assert_eq!(
+            (s.startup.open_on(), s.startup.mode(), s.warnings().len()),
+            (OpenOn::Home, StartMode::Last, 2),
+            "a wrong type too"
+        );
+        assert!(
+            c.app.check_updates,
+            "the update check is on by default (the site says so)"
+        );
         let off = set_line("[updates]\nauto = true\n", "app", "check_updates", "false");
         let off = Config::parse(&off).unwrap();
-        assert!(!off.app.check_updates && off.updates.auto, "[app] is not the list's [updates]");
+        assert!(
+            !off.app.check_updates && off.updates.auto,
+            "[app] is not the list's [updates]"
+        );
         let c = Config::parse("[updates]\nauto = true\nthreshold = 10\n[players]\nvlc = false\nmpv_sockets = [\"/tmp/a.sock\"]\n").unwrap();
         assert!(c.updates.auto);
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
@@ -1365,11 +1663,27 @@ mod tests {
     #[test]
     fn feeds_are_off_with_no_sources() {
         let f = Config::parse("").unwrap().feeds;
-        assert_eq!((f.enabled, f.sources.len(), f.minutes(), f.active()), (false, 0, 30, false));
+        assert_eq!(
+            (f.enabled, f.sources.len(), f.minutes(), f.active()),
+            (false, 0, 30, false)
+        );
         // Taiga's torrent defaults: auto-check on, notify (no auto-download), filters on, the
         // system's app, no folder.
-        assert_eq!((f.autocheck, f.new_action.as_str(), f.filters_enabled, f.app_mode.as_str(), f.save_to_folder, f.archive_max), (true, "notify", true, "default", false, 1000));
-        let src = vec![FeedSource { name: "A \"b\"".into(), url: "https://x.example/rss?apikey=k".into() }];
+        assert_eq!(
+            (
+                f.autocheck,
+                f.new_action.as_str(),
+                f.filters_enabled,
+                f.app_mode.as_str(),
+                f.save_to_folder,
+                f.archive_max
+            ),
+            (true, "notify", true, "default", false, 1000)
+        );
+        let src = vec![FeedSource {
+            name: "A \"b\"".into(),
+            url: "https://x.example/rss?apikey=k".into(),
+        }];
         let text = set_line("", "feeds", "sources", &Feeds::sources_toml(&src));
         let text = set_line(&text, "feeds", "enabled", "true");
         let text = set_line(&text, "feeds", "interval_minutes", "3");
@@ -1380,25 +1694,78 @@ mod tests {
     #[test]
     fn notifications_offer_and_recorded_on_detected_off() {
         let n = Config::parse("").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true, new_release: true });
+        assert_eq!(
+            n,
+            Notifications {
+                detected: false,
+                offer: true,
+                recorded: true,
+                started_airing: true,
+                new_episode: true,
+                new_chapter: false,
+                read_offer: true,
+                read_recorded: true,
+                new_release: true
+            }
+        );
         // The manga reading switches are their own: turning the anime ones off leaves them on.
-        assert!(Config::parse("[notifications]\noffer = false\nrecorded = false\n").unwrap().notifications.read_offer);
-        let r = Config::parse("[reading]\nfind_libraries = false\nopen_files = true\nopen_minutes = 4\n").unwrap().reading;
-        assert_eq!((r.yacreader, r.find_libraries, r.open_files, r.open_minutes), (true, false, true, 4));
-        assert!(Config::parse("[notifications]\nnew_chapter = true\n").unwrap().notifications.new_chapter);
-        let n = Config::parse("[notifications]\ndetected = true\noffer = false\n").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: true, offer: false, ..Notifications::default() });
-        let n = Config::parse("[notifications]\nstarted_airing = false\nnew_episode = false\n").unwrap().notifications;
-        assert_eq!((n.started_airing, n.new_episode, n.offer), (false, false, true));
+        assert!(
+            Config::parse("[notifications]\noffer = false\nrecorded = false\n")
+                .unwrap()
+                .notifications
+                .read_offer
+        );
+        let r = Config::parse(
+            "[reading]\nfind_libraries = false\nopen_files = true\nopen_minutes = 4\n",
+        )
+        .unwrap()
+        .reading;
+        assert_eq!(
+            (r.yacreader, r.find_libraries, r.open_files, r.open_minutes),
+            (true, false, true, 4)
+        );
+        assert!(
+            Config::parse("[notifications]\nnew_chapter = true\n")
+                .unwrap()
+                .notifications
+                .new_chapter
+        );
+        let n = Config::parse("[notifications]\ndetected = true\noffer = false\n")
+            .unwrap()
+            .notifications;
+        assert_eq!(
+            n,
+            Notifications {
+                detected: true,
+                offer: false,
+                ..Notifications::default()
+            }
+        );
+        let n = Config::parse("[notifications]\nstarted_airing = false\nnew_episode = false\n")
+            .unwrap()
+            .notifications;
+        assert_eq!(
+            (n.started_airing, n.new_episode, n.offer),
+            (false, false, true)
+        );
     }
 
     #[test]
     fn list_views_read_and_write_per_list() {
         use crate::Status;
         let c = Config::parse("").unwrap();
-        assert!(Status::ALL.iter().all(|st| c.views.get(*st) == ListView::List), "the table by default");
+        assert!(
+            Status::ALL
+                .iter()
+                .all(|st| c.views.get(*st) == ListView::List),
+            "the table by default"
+        );
         let mut text = String::new();
-        for (st, v) in [(Status::Watching, ListView::Grid), (Status::Completed, ListView::Large), (Status::OnHold, ListView::Grid)] {
+        for (st, v) in [
+            (Status::Watching, ListView::Grid),
+            (Status::Completed, ListView::Large),
+            (Status::OnHold, ListView::Grid),
+        ] {
             text = set_line(&text, "views", Views::key(st), &quote(v.key()));
         }
         let c = Config::parse(&text).unwrap();
@@ -1409,30 +1776,84 @@ mod tests {
         let mut v = c.views;
         v.set(Status::Dropped, ListView::Large);
         assert_eq!(v.get(Status::Dropped), ListView::Large);
-        assert!(Config::parse("[views]\nwatching = \"mosaic\"\n").is_err(), "an unknown value is refused");
+        assert!(
+            Config::parse("[views]\nwatching = \"mosaic\"\n").is_err(),
+            "an unknown value is refused"
+        );
         // The manga pages keep their own views.
-        let c = Config::parse("[views]\nwatching = \"grid\"\n[manga_views]\nwatching = \"large\"\n").unwrap();
-        assert_eq!((c.views.get(Status::Watching), c.manga_views.get(Status::Watching)), (ListView::Grid, ListView::Large));
+        let c =
+            Config::parse("[views]\nwatching = \"grid\"\n[manga_views]\nwatching = \"large\"\n")
+                .unwrap();
+        assert_eq!(
+            (
+                c.views.get(Status::Watching),
+                c.manga_views.get(Status::Watching)
+            ),
+            (ListView::Grid, ListView::Large)
+        );
         assert_eq!(c.manga_views.get(Status::Completed), ListView::List);
     }
 
     #[test]
     fn theme_setting_reads_writes_and_resolves() {
-        assert_eq!(Config::parse("").unwrap().display.theme, Theme::System, "System by default");
+        assert_eq!(
+            Config::parse("").unwrap().display.theme,
+            Theme::System,
+            "System by default"
+        );
         for t in Theme::ALL {
-            let toml = set_line("[display]\ntitles = \"english\"\n", "display", "theme", &quote(t.key()));
+            let toml = set_line(
+                "[display]\ntitles = \"english\"\n",
+                "display",
+                "theme",
+                &quote(t.key()),
+            );
             let c = Config::parse(&toml).unwrap();
             assert_eq!(c.display.theme, t);
-            assert_eq!(c.display.titles, TitleLang::English, "the other display line stays");
+            assert_eq!(
+                c.display.titles,
+                TitleLang::English,
+                "the other display line stays"
+            );
         }
-        assert!(Config::parse("[display]\ntheme = \"sepia\"\n").is_err(), "an unknown value is refused");
-        assert!(Config::parse("").unwrap().display.intro, "the startup animation is on by default");
-        assert!(!Config::parse("[display]\nintro = false\n").unwrap().display.intro);
-        assert_eq!(Config::parse("").unwrap().display.list_kind, crate::Kind::Anime, "Anime unless the switch was left on Manga");
-        assert_eq!(Config::parse("[display]\nlist_kind = \"manga\"\n").unwrap().display.list_kind, crate::Kind::Manga);
+        assert!(
+            Config::parse("[display]\ntheme = \"sepia\"\n").is_err(),
+            "an unknown value is refused"
+        );
+        assert!(
+            Config::parse("").unwrap().display.intro,
+            "the startup animation is on by default"
+        );
+        assert!(
+            !Config::parse("[display]\nintro = false\n")
+                .unwrap()
+                .display
+                .intro
+        );
+        assert_eq!(
+            Config::parse("").unwrap().display.list_kind,
+            crate::Kind::Anime,
+            "Anime unless the switch was left on Manga"
+        );
+        assert_eq!(
+            Config::parse("[display]\nlist_kind = \"manga\"\n")
+                .unwrap()
+                .display
+                .list_kind,
+            crate::Kind::Manga
+        );
         assert_eq!(Config::parse("").unwrap().display.settings_section, "");
-        assert_eq!(Config::parse("[display]\nsettings_section = \"detection\"\n").unwrap().display.settings_section, "detection");
-        assert!(Theme::System.is_light(false) && !Theme::System.is_light(true), "System follows the desktop");
+        assert_eq!(
+            Config::parse("[display]\nsettings_section = \"detection\"\n")
+                .unwrap()
+                .display
+                .settings_section,
+            "detection"
+        );
+        assert!(
+            Theme::System.is_light(false) && !Theme::System.is_light(true),
+            "System follows the desktop"
+        );
         assert!(Theme::Light.is_light(true) && Theme::Light.is_light(false));
         assert!(!Theme::Dark.is_light(true) && !Theme::Dark.is_light(false));
     }
@@ -1440,46 +1861,113 @@ mod tests {
     #[test]
     fn title_language_falls_back_to_romaji() {
         assert_eq!(Config::parse("").unwrap().display.titles, TitleLang::Romaji);
-        assert_eq!(Config::parse("[display]\ntitles = \"english\"\n").unwrap().display.titles, TitleLang::English);
-        assert_eq!(Config::parse("[display]\ntitles = \"japanese\"\n").unwrap().display.titles, TitleLang::Japanese);
-        assert!(Config::parse("[display]\ntitles = \"klingon\"\n").is_err(), "an unknown value is refused, never written");
+        assert_eq!(
+            Config::parse("[display]\ntitles = \"english\"\n")
+                .unwrap()
+                .display
+                .titles,
+            TitleLang::English
+        );
+        assert_eq!(
+            Config::parse("[display]\ntitles = \"japanese\"\n")
+                .unwrap()
+                .display
+                .titles,
+            TitleLang::Japanese
+        );
+        assert!(
+            Config::parse("[display]\ntitles = \"klingon\"\n").is_err(),
+            "an unknown value is refused, never written"
+        );
         for l in TitleLang::ALL {
             let t = set_line("", "display", "titles", &quote(l.key()));
             assert_eq!(Config::parse(&t).unwrap().display.titles, l);
         }
-        let (main, en, ja) = ("Kirigaoka no Lantern", Some("Lanterns of Kirigaoka"), Some("霧ヶ丘のランタン"));
+        let (main, en, ja) = (
+            "Kirigaoka no Lantern",
+            Some("Lanterns of Kirigaoka"),
+            Some("霧ヶ丘のランタン"),
+        );
         assert_eq!(TitleLang::Romaji.pick(main, en, ja), main);
-        assert_eq!(TitleLang::English.pick(main, en, ja), "Lanterns of Kirigaoka");
+        assert_eq!(
+            TitleLang::English.pick(main, en, ja),
+            "Lanterns of Kirigaoka"
+        );
         assert_eq!(TitleLang::Japanese.pick(main, en, ja), "霧ヶ丘のランタン");
-        assert_eq!(TitleLang::English.pick(main, None, ja), main, "no English title: romaji");
-        assert_eq!(TitleLang::Japanese.pick(main, en, Some("  ")), main, "a blank title counts as none");
+        assert_eq!(
+            TitleLang::English.pick(main, None, ja),
+            main,
+            "no English title: romaji"
+        );
+        assert_eq!(
+            TitleLang::Japanese.pick(main, en, Some("  ")),
+            main,
+            "a blank title counts as none"
+        );
     }
 
     #[test]
     fn set_line_keeps_the_rest() {
         let text = "# my settings\n[mal]\nclient_id = \"x\" # mine\n\n[updates]\nauto = false\n\n# players below\n[players]\nmpv = true\n";
         let t = set_line(text, "updates", "auto", "true");
-        assert_eq!(t, "# my settings\n[mal]\nclient_id = \"x\" # mine\n\n[updates]\nauto = true\n\n# players below\n[players]\nmpv = true\n");
+        assert_eq!(
+            t,
+            "# my settings\n[mal]\nclient_id = \"x\" # mine\n\n[updates]\nauto = true\n\n# players below\n[players]\nmpv = true\n"
+        );
         let t = set_line(&t, "updates", "threshold", "90");
-        assert!(t.contains("[updates]\nauto = true\nthreshold = 90\n\n# players below"), "{t}");
+        assert!(
+            t.contains("[updates]\nauto = true\nthreshold = 90\n\n# players below"),
+            "{t}"
+        );
         let t = set_line(&t, "vlc", "password", &quote("a\"b"));
-        assert!(t.ends_with("mpv = true\n\n[vlc]\npassword = \"a\\\"b\"\n"), "{t}");
+        assert!(
+            t.ends_with("mpv = true\n\n[vlc]\npassword = \"a\\\"b\"\n"),
+            "{t}"
+        );
         assert_eq!(Config::parse(&t).unwrap().vlc.password, "a\"b");
         // `automatic = 1` is another key, not `auto`.
         let t = set_line("[updates]\nautomatic = 1\n", "updates", "auto", "true");
         assert_eq!(t, "[updates]\nautomatic = 1\nauto = true\n");
-        assert_eq!(set_line("", "updates", "auto", "true"), "[updates]\nauto = true\n");
+        assert_eq!(
+            set_line("", "updates", "auto", "true"),
+            "[updates]\nauto = true\n"
+        );
     }
 
     #[test]
     fn anilist_ids_and_the_chosen_service_are_read() {
         use crate::service::ServiceId;
-        let c = Config::parse("[account]\nservice = \"anilist\"\n[anilist]\nclient_id = \" 12345 \"\n").unwrap();
-        assert_eq!((c.service_id(), c.client_id(ServiceId::AniList), c.client_id(ServiceId::Mal)), (ServiceId::AniList, Some("12345"), None));
+        let c =
+            Config::parse("[account]\nservice = \"anilist\"\n[anilist]\nclient_id = \" 12345 \"\n")
+                .unwrap();
+        assert_eq!(
+            (
+                c.service_id(),
+                c.client_id(ServiceId::AniList),
+                c.client_id(ServiceId::Mal)
+            ),
+            (ServiceId::AniList, Some("12345"), None)
+        );
         assert!(!c.needs_service_choice(false));
-        assert!(!Config { anilist_client_id: Some("1".into()), ..Config::default() }.needs_service_choice(false), "an AniList ID counts too");
-        assert_eq!(Config::default().service_id(), ServiceId::Mal, "0.1 users are on MyAnimeList");
-        assert_eq!(Config::parse("[account]\nservice = \"kitsu\"\n").unwrap().service_id(), ServiceId::Mal);
+        assert!(
+            !Config {
+                anilist_client_id: Some("1".into()),
+                ..Config::default()
+            }
+            .needs_service_choice(false),
+            "an AniList ID counts too"
+        );
+        assert_eq!(
+            Config::default().service_id(),
+            ServiceId::Mal,
+            "0.1 users are on MyAnimeList"
+        );
+        assert_eq!(
+            Config::parse("[account]\nservice = \"kitsu\"\n")
+                .unwrap()
+                .service_id(),
+            ServiceId::Mal
+        );
         assert!(!format!("{c:?}").contains("12345"));
     }
 
@@ -1488,16 +1976,33 @@ mod tests {
         use crate::service::{ANILIST_CLIENT_ID, MAL_CLIENT_ID, ServiceId};
         // No environment variable is set for this one in tests.
         let empty = Config::default();
-        assert_eq!(empty.effective_client_id(ServiceId::AniList).as_deref(), Some(ANILIST_CLIENT_ID));
+        assert_eq!(
+            empty.effective_client_id(ServiceId::AniList).as_deref(),
+            Some(ANILIST_CLIENT_ID)
+        );
         assert!(empty.has_client_id(ServiceId::AniList));
         let mal = MAL_CLIENT_ID.unwrap();
         assert_eq!(mal.len(), 32, "a MyAnimeList id: 32 hex characters");
         assert!(check_client_id(mal).is_ok());
-        assert_eq!(empty.effective_client_id(ServiceId::Mal).as_deref(), Some(mal));
+        assert_eq!(
+            empty.effective_client_id(ServiceId::Mal).as_deref(),
+            Some(mal)
+        );
         assert!(empty.has_client_id(ServiceId::Mal));
-        let own = Config { anilist_client_id: Some("777".into()), mal_client_id: Some("m".into()), ..Config::default() };
-        assert_eq!(own.effective_client_id(ServiceId::AniList).as_deref(), Some("777"), "the user's own wins");
-        assert_eq!(own.effective_client_id(ServiceId::Mal).as_deref(), Some("m"));
+        let own = Config {
+            anilist_client_id: Some("777".into()),
+            mal_client_id: Some("m".into()),
+            ..Config::default()
+        };
+        assert_eq!(
+            own.effective_client_id(ServiceId::AniList).as_deref(),
+            Some("777"),
+            "the user's own wins"
+        );
+        assert_eq!(
+            own.effective_client_id(ServiceId::Mal).as_deref(),
+            Some("m")
+        );
         assert!(ANILIST_CLIENT_ID.parse::<u32>().is_ok_and(|n| n > 0));
         // The saved ID alone still says whether the user brought their own.
         assert_eq!(empty.client_id(ServiceId::AniList), None);
@@ -1507,9 +2012,21 @@ mod tests {
     fn anilist_client_ids_are_checked() {
         assert_eq!(check_anilist_client_id(" \"12345\"\n").unwrap(), "12345");
         assert!(check_anilist_client_id("").unwrap_err().contains("Paste"));
-        assert!(check_anilist_client_id("12 345").unwrap_err().contains("no spaces"));
-        assert!(check_anilist_client_id("aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7d").unwrap_err().contains("Client Secret"));
-        assert!(check_anilist_client_id("abc").unwrap_err().contains("a number"));
+        assert!(
+            check_anilist_client_id("12 345")
+                .unwrap_err()
+                .contains("no spaces")
+        );
+        assert!(
+            check_anilist_client_id("aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7d")
+                .unwrap_err()
+                .contains("Client Secret")
+        );
+        assert!(
+            check_anilist_client_id("abc")
+                .unwrap_err()
+                .contains("a number")
+        );
         assert!(check_anilist_client_id("0").is_err());
         assert!(check_anilist_client_id("12345678901").is_err());
     }
@@ -1522,7 +2039,11 @@ mod tests {
         std::fs::write(&path, "[mal]\nclient_id = \"0123456789abcdef0123456789abcdef\" # mine\n\n[anilist]\nclient_id = \"12345\"\n\n[updates]\nauto = true\n").unwrap();
         clear_client_id(&path, crate::service::ServiceId::Mal).unwrap();
         let c = Config::load(&path).unwrap();
-        assert_eq!((c.mal_client_id.as_deref(), c.anilist_client_id.as_deref()), (None, Some("12345")), "only that service's");
+        assert_eq!(
+            (c.mal_client_id.as_deref(), c.anilist_client_id.as_deref()),
+            (None, Some("12345")),
+            "only that service's"
+        );
         clear_client_id(&path, crate::service::ServiceId::AniList).unwrap();
         let c = Config::load(&path).unwrap();
         assert_eq!(c.anilist_client_id, None);
@@ -1533,13 +2054,33 @@ mod tests {
     #[test]
     fn client_ids_are_checked() {
         let good = "0123456789abcdef0123456789ABCDEF";
-        assert_eq!(check_client_id(&format!("  \"{good}\"\n")).unwrap(), good.to_ascii_lowercase());
+        assert_eq!(
+            check_client_id(&format!("  \"{good}\"\n")).unwrap(),
+            good.to_ascii_lowercase()
+        );
         assert!(check_client_id("   ").unwrap_err().contains("Paste"));
-        assert!(check_client_id("0123 4567").unwrap_err().contains("no spaces"));
-        assert!(check_client_id("my-kotora-app-secret-xyz").unwrap_err().contains("not the Client Secret"));
+        assert!(
+            check_client_id("0123 4567")
+                .unwrap_err()
+                .contains("no spaces")
+        );
+        assert!(
+            check_client_id("my-kotora-app-secret-xyz")
+                .unwrap_err()
+                .contains("not the Client Secret")
+        );
         assert!(check_client_id("abc123").unwrap_err().contains("too short"));
-        assert!(check_client_id(&"a".repeat(80)).unwrap_err().contains("too long"));
-        assert!(check_client_id(&"0123456789abcdef".repeat(4)).unwrap_err().contains("Client Secret"), "64 hex: the secret's shape");
+        assert!(
+            check_client_id(&"a".repeat(80))
+                .unwrap_err()
+                .contains("too long")
+        );
+        assert!(
+            check_client_id(&"0123456789abcdef".repeat(4))
+                .unwrap_err()
+                .contains("Client Secret"),
+            "64 hex: the secret's shape"
+        );
         assert!(check_client_id(&"9".repeat(40)).is_ok());
         assert_eq!(client_id_hint(good), "CDEF");
         assert_eq!(client_id_hint("ab"), "ab");
@@ -1553,16 +2094,30 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "# mine\n[updates]\nauto = true\n").unwrap();
         assert!(save_client_id(&path, "nope").is_err());
-        assert_eq!(Config::load(&path).unwrap().mal_client_id, None, "nothing written for a bad ID");
+        assert_eq!(
+            Config::load(&path).unwrap().mal_client_id,
+            None,
+            "nothing written for a bad ID"
+        );
         let id = "fedcba9876543210fedcba9876543210";
         assert_eq!(save_client_id(&path, id).unwrap(), id);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# mine\n[updates]\nauto = true\n"), "{text}");
+        assert!(
+            text.starts_with("# mine\n[updates]\nauto = true\n"),
+            "{text}"
+        );
         let c = Config::load(&path).unwrap();
         assert_eq!(c.mal_client_id.as_deref(), Some(id));
         assert!(c.updates.auto);
         save_client_id(&path, "00000000000000000000000000000000").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap().matches("client_id").count(), 1, "replaced, not added twice");
+        assert_eq!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .matches("client_id")
+                .count(),
+            1,
+            "replaced, not added twice"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1578,9 +2133,15 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
-        assert!(write_setting(&path, "updates", "auto", "\"not a bool\"").is_err(), "a value the reader refuses is not written");
+        assert!(
+            write_setting(&path, "updates", "auto", "\"not a bool\"").is_err(),
+            "a value the reader refuses is not written"
+        );
         assert!(Config::load(&path).unwrap().updates.auto);
         std::fs::remove_dir_all(&dir).unwrap();
     }

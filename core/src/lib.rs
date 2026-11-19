@@ -7,8 +7,8 @@
 
 pub mod activity;
 pub mod airing;
-pub mod anilist;
 pub mod airnotes;
+pub mod anilist;
 pub mod config;
 pub mod covers;
 pub mod discord;
@@ -42,7 +42,9 @@ pub use score::{Score, ScoreFormat};
 /// What a list holds: anime or manga. Part of every key in the store (service + kind + id): MAL
 /// anime and manga ids overlap. Manga counts chapters where anime counts episodes (`progress`,
 /// `episodes`), and volumes besides. Light novels are manga on MAL.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     #[default]
@@ -63,7 +65,11 @@ impl Kind {
 
     /// Unknown names are anime (rows from before manga have no other).
     pub fn from_name(s: &str) -> Kind {
-        if s == "manga" { Kind::Manga } else { Kind::Anime }
+        if s == "manga" {
+            Kind::Manga
+        } else {
+            Kind::Anime
+        }
     }
 
     /// "Anime", "Manga".
@@ -100,13 +106,19 @@ impl<'a> Scope<'a> {
 
 impl<'a> From<&'a str> for Scope<'a> {
     fn from(service: &'a str) -> Self {
-        Scope { service, kind: Kind::Anime }
+        Scope {
+            service,
+            kind: Kind::Anime,
+        }
     }
 }
 
 impl<'a> From<&'a String> for Scope<'a> {
     fn from(service: &'a String) -> Self {
-        Scope { service, kind: Kind::Anime }
+        Scope {
+            service,
+            kind: Kind::Anime,
+        }
     }
 }
 
@@ -129,7 +141,13 @@ pub enum Status {
 
 impl Status {
     /// Sidebar order.
-    pub const ALL: [Status; 5] = [Status::Watching, Status::PlanToWatch, Status::Completed, Status::OnHold, Status::Dropped];
+    pub const ALL: [Status; 5] = [
+        Status::Watching,
+        Status::PlanToWatch,
+        Status::Completed,
+        Status::OnHold,
+        Status::Dropped,
+    ];
 
     /// The name the UI and `kot` show.
     pub fn label(self) -> &'static str {
@@ -208,11 +226,17 @@ mod tests {
     #[test]
     fn manga_names_round_trip_and_differ_only_where_mal_does() {
         for st in Status::ALL {
-            assert_eq!(Status::from_mal_in(Kind::Manga, st.mal_name_in(Kind::Manga)), Some(st));
+            assert_eq!(
+                Status::from_mal_in(Kind::Manga, st.mal_name_in(Kind::Manga)),
+                Some(st)
+            );
             assert_eq!(st.mal_name_in(Kind::Anime), st.mal_name());
         }
         assert_eq!(Status::from_mal_in(Kind::Manga, "watching"), None);
-        assert_eq!(Status::from_mal_in(Kind::Manga, "plan_to_read"), Some(Status::PlanToWatch));
+        assert_eq!(
+            Status::from_mal_in(Kind::Manga, "plan_to_read"),
+            Some(Status::PlanToWatch)
+        );
         assert_eq!(Status::Watching.label_in(Kind::Manga), "Reading");
         assert_eq!(Status::OnHold.label_in(Kind::Manga), "On hold");
         assert_eq!(Status::PlanToWatch.label_in(Kind::Anime), "Plan to watch");

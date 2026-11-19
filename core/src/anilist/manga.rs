@@ -20,7 +20,10 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{AniList, CallError, Client, Cover, FuzzyDate, Title, non_empty, plain, read, save_variables, score100, status_of};
+use super::{
+    AniList, CallError, Client, Cover, FuzzyDate, Title, non_empty, plain, read, save_variables,
+    score100, status_of,
+};
 use crate::http::Transport;
 use crate::service::{AnimeHit, Author, Details, MyEntry, ServiceError};
 use crate::{Change, Kind, ListItem, Media, Remote, Values};
@@ -29,9 +32,11 @@ use crate::{Change, Kind, ListItem, Media, Remote, Values};
 const MEDIA: &str = "id idMal title { romaji english native } synonyms format status chapters volumes countryOfOrigin \
 startDate { year month day } endDate { year month day } averageScore popularity coverImage { medium large }";
 /// The staff asked for authors: the first few by relevance (story and art come first there).
-const STAFF: &str = "staff(sort: [RELEVANCE, ID], perPage: 8) { edges { role node { name { full } } } }";
+const STAFF: &str =
+    "staff(sort: [RELEVANCE, ID], perPage: 8) { edges { role node { name { full } } } }";
 /// One manga list entry; the score on the 100-point scale whatever the user's format.
-const ENTRY: &str = "id mediaId status progress progressVolumes repeat score(format: POINT_100) updatedAt";
+const ENTRY: &str =
+    "id mediaId status progress progressVolumes repeat score(format: POINT_100) updatedAt";
 
 fn list_query() -> String {
     // No staff here: a chunk of 500 with staff would cost AniList far more, and the list shows none.
@@ -42,7 +47,9 @@ fn list_query() -> String {
 }
 
 fn entry_query() -> String {
-    format!("query ($id: Int) {{ Media(id: $id, type: MANGA) {{ id mediaListEntry {{ {ENTRY} }} }} }}")
+    format!(
+        "query ($id: Int) {{ Media(id: $id, type: MANGA) {{ id mediaListEntry {{ {ENTRY} }} }} }}"
+    )
 }
 
 fn save_query() -> String {
@@ -53,12 +60,16 @@ fn save_query() -> String {
 }
 
 fn search_query() -> String {
-    format!("query ($q: String, $n: Int) {{ Page(perPage: $n) {{ media(search: $q, type: MANGA, isAdult: false) {{ {MEDIA} {STAFF} }} }} }}")
+    format!(
+        "query ($q: String, $n: Int) {{ Page(perPage: $n) {{ media(search: $q, type: MANGA, isAdult: false) {{ {MEDIA} {STAFF} }} }} }}"
+    )
 }
 
 /// AniList's manga for MyAnimeList manga ids (an import or the mirror): 50 ids a page.
 fn by_mal_query() -> String {
-    format!("query ($ids: [Int], $page: Int) {{ Page(page: $page, perPage: 50) {{ pageInfo {{ hasNextPage }} media(idMal_in: $ids, type: MANGA) {{ {MEDIA} }} }} }}")
+    format!(
+        "query ($ids: [Int], $page: Int) {{ Page(page: $page, perPage: 50) {{ pageInfo {{ hasNextPage }} media(idMal_in: $ids, type: MANGA) {{ {MEDIA} }} }} }}"
+    )
 }
 
 fn details_query() -> String {
@@ -143,27 +154,47 @@ pub fn publishing_word(status: Option<&str>) -> String {
 /// "Story (ch. 1-20)", is left on).
 fn author_role(role: &str) -> bool {
     let base = role.split('(').next().unwrap_or("").trim();
-    matches!(base, "Story & Art" | "Story" | "Art" | "Original Story" | "Original Creator" | "Illustration")
+    matches!(
+        base,
+        "Story & Art" | "Story" | "Art" | "Original Story" | "Original Creator" | "Illustration"
+    )
 }
 
 impl RawManga {
     fn titles(&self) -> (String, Option<String>, Option<String>) {
-        let main = non_empty(self.title.romaji.clone()).or_else(|| non_empty(self.title.english.clone())).or_else(|| non_empty(self.title.native.clone())).unwrap_or_default();
-        (main, non_empty(self.title.english.clone()), non_empty(self.title.native.clone()))
+        let main = non_empty(self.title.romaji.clone())
+            .or_else(|| non_empty(self.title.english.clone()))
+            .or_else(|| non_empty(self.title.native.clone()))
+            .unwrap_or_default();
+        (
+            main,
+            non_empty(self.title.english.clone()),
+            non_empty(self.title.native.clone()),
+        )
     }
 
     fn authors(&self) -> Vec<Author> {
         let mut out: Vec<Author> = Vec::new();
         for e in self.staff.iter().flat_map(|s| &s.edges) {
-            let (Some(role), Some(name)) = (e.role.as_deref().map(str::trim), e.node.as_ref().and_then(|n| non_empty(n.name.full.clone()))) else { continue };
+            let (Some(role), Some(name)) = (
+                e.role.as_deref().map(str::trim),
+                e.node.as_ref().and_then(|n| non_empty(n.name.full.clone())),
+            ) else {
+                continue;
+            };
             if !author_role(role) {
                 continue;
             }
             // One person with two roles ("Story", then "Art") is one author: "Story & Art".
             match out.iter_mut().find(|a| a.name == name) {
-                Some(a) if !a.role.split(" & ").any(|r| r == role) => a.role = format!("{} & {role}", a.role),
+                Some(a) if !a.role.split(" & ").any(|r| r == role) => {
+                    a.role = format!("{} & {role}", a.role)
+                }
                 Some(_) => {}
-                None => out.push(Author { name, role: role.to_string() }),
+                None => out.push(Author {
+                    name,
+                    role: role.to_string(),
+                }),
             }
         }
         out
@@ -181,11 +212,20 @@ impl RawManga {
             title,
             title_en,
             title_ja,
-            synonyms: self.synonyms.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            synonyms: self
+                .synonyms
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
             episodes: self.chapters.filter(|&c| c > 0),
             format: format_word(self.format.as_deref(), self.country_of_origin.as_deref()),
             air_status: publishing_word(self.status.as_deref()),
-            cover_url: self.cover_image.medium.clone().or_else(|| self.cover_image.large.clone()),
+            cover_url: self
+                .cover_image
+                .medium
+                .clone()
+                .or_else(|| self.cover_image.large.clone()),
             start_date: self.start_date.text(),
             broadcast: None,
             volumes: self.volumes.filter(|&v| v > 0),
@@ -235,11 +275,21 @@ struct RawEntry {
 impl RawEntry {
     fn values(&self) -> Option<Values> {
         let (status, rewatching) = status_of(self.status.as_deref()?)?;
-        Some(Values { status, progress: self.progress, score: score100(self.score), rewatching, times_rewatched: self.repeat, volumes: self.progress_volumes.unwrap_or(0) })
+        Some(Values {
+            status,
+            progress: self.progress,
+            score: score100(self.score),
+            rewatching,
+            times_rewatched: self.repeat,
+            volumes: self.progress_volumes.unwrap_or(0),
+        })
     }
 
     fn remote(&self) -> Option<Remote> {
-        Some(Remote { values: self.values()?, updated_at: self.updated_at })
+        Some(Remote {
+            values: self.values()?,
+            updated_at: self.updated_at,
+        })
     }
 }
 
@@ -273,8 +323,12 @@ pub fn parse_list(data: Value) -> Result<(Vec<ListItem>, bool), ServiceError> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for row in c.lists.into_iter().flat_map(|l| l.entries) {
-        let Some(media) = row.media.filter(|m| m.id != 0) else { continue };
-        let Some(v) = row.entry.values() else { continue };
+        let Some(media) = row.media.filter(|m| m.id != 0) else {
+            continue;
+        };
+        let Some(v) = row.entry.values() else {
+            continue;
+        };
         if !seen.insert(media.id) {
             continue;
         }
@@ -320,7 +374,13 @@ pub fn parse_hits(data: Value) -> Result<Vec<AnimeHit>, ServiceError> {
         media: Vec<RawManga>,
     }
     let d: Data = read(data, "manga search answer")?;
-    Ok(d.page.unwrap_or_default().media.iter().filter(|m| m.id != 0).map(RawManga::hit).collect())
+    Ok(d.page
+        .unwrap_or_default()
+        .media
+        .iter()
+        .filter(|m| m.id != 0)
+        .map(RawManga::hit)
+        .collect())
 }
 
 /// A by-MAL-id page: the manga and whether more pages follow.
@@ -376,9 +436,17 @@ pub fn parse_details(data: Value) -> Result<Details, ServiceError> {
         all_time: bool,
     }
     let d: Data = read(data, "manga's information")?;
-    let f = d.media.filter(|f| f.media.id != 0).ok_or_else(|| ServiceError::Other("AniList sent no manga".into()))?;
+    let f = d
+        .media
+        .filter(|f| f.media.id != 0)
+        .ok_or_else(|| ServiceError::Other("AniList sent no manga".into()))?;
     let m = f.media.media();
-    let rank = |kind: &str| f.rankings.iter().find(|r| r.all_time && r.kind == kind && r.rank > 0).map(|r| r.rank);
+    let rank = |kind: &str| {
+        f.rankings
+            .iter()
+            .find(|r| r.all_time && r.kind == kind && r.rank > 0)
+            .map(|r| r.rank)
+    };
     let mine = f.media_list_entry.as_ref().and_then(|e| {
         let v = e.values()?;
         Some(MyEntry {
@@ -414,8 +482,18 @@ pub fn parse_details(data: Value) -> Result<Details, ServiceError> {
         popularity: rank("POPULAR"),
         members: f.media.popularity,
         synopsis: f.description.as_deref().map(plain).unwrap_or_default(),
-        cover_url: f.media.cover_image.large.clone().or_else(|| f.media.cover_image.medium.clone()),
-        cover_small: f.media.cover_image.medium.clone().or_else(|| f.media.cover_image.large.clone()),
+        cover_url: f
+            .media
+            .cover_image
+            .large
+            .clone()
+            .or_else(|| f.media.cover_image.medium.clone()),
+        cover_small: f
+            .media
+            .cover_image
+            .medium
+            .clone()
+            .or_else(|| f.media.cover_image.large.clone()),
         mine,
         volumes: m.volumes,
         authors: f.media.authors(),
@@ -437,12 +515,17 @@ pub fn save_manga_variables(media_id: u32, change: &Change, current: Option<&Val
 
 impl<T: Transport> Client<T> {
     /// The whole manga list of user `user` (500 entries a chunk).
-    pub fn fetch_manga_list(&mut self, access: &str, user: u32) -> Result<Vec<ListItem>, ServiceError> {
+    pub fn fetch_manga_list(
+        &mut self,
+        access: &str,
+        user: u32,
+    ) -> Result<Vec<ListItem>, ServiceError> {
         let q = list_query();
         let mut all: Vec<ListItem> = Vec::new();
         // A real list is a few chunks; the cap only stops a loop.
         for chunk in 1..=40 {
-            let (items, more) = parse_list(self.query(access, &q, json!({ "user": user, "chunk": chunk }))?)?;
+            let (items, more) =
+                parse_list(self.query(access, &q, json!({ "user": user, "chunk": chunk }))?)?;
             for it in items {
                 if !all.iter().any(|a| a.media.id == it.media.id) {
                     all.push(it);
@@ -452,10 +535,16 @@ impl<T: Transport> Client<T> {
                 return Ok(all);
             }
         }
-        Err(ServiceError::Other("the manga list has too many chunks".into()))
+        Err(ServiceError::Other(
+            "the manga list has too many chunks".into(),
+        ))
     }
 
-    fn raw_manga_entry(&mut self, access: &str, media_id: u32) -> Result<Option<RawEntry>, ServiceError> {
+    fn raw_manga_entry(
+        &mut self,
+        access: &str,
+        media_id: u32,
+    ) -> Result<Option<RawEntry>, ServiceError> {
         match self.query(access, &entry_query(), json!({ "id": media_id })) {
             Err(CallError::NotFound) => Ok(None),
             r => parse_entry(r?),
@@ -463,22 +552,40 @@ impl<T: Transport> Client<T> {
     }
 
     /// The user's entry for one manga; `None` when it is not on the list.
-    pub fn fetch_manga_entry(&mut self, access: &str, media_id: u32) -> Result<Option<Remote>, ServiceError> {
-        Ok(self.raw_manga_entry(access, media_id)?.and_then(|e| e.remote()))
+    pub fn fetch_manga_entry(
+        &mut self,
+        access: &str,
+        media_id: u32,
+    ) -> Result<Option<Remote>, ServiceError> {
+        Ok(self
+            .raw_manga_entry(access, media_id)?
+            .and_then(|e| e.remote()))
     }
 
     /// Sends one manga change (`SaveMediaListEntry`, which also adds a manga not on the list)
     /// and returns the entry AniList saved.
-    pub fn save_manga_entry(&mut self, access: &str, media_id: u32, change: &Change) -> Result<Remote, ServiceError> {
+    pub fn save_manga_entry(
+        &mut self,
+        access: &str,
+        media_id: u32,
+        change: &Change,
+    ) -> Result<Remote, ServiceError> {
         if change.is_empty() {
             return Err(ServiceError::Other("nothing to send".into()));
         }
         // Ending a reread with no status picked: only AniList's status says what it is now.
-        let current = if change.rewatching == Some(false) && change.status.is_none() { self.raw_manga_entry(access, media_id)?.and_then(|e| e.values()) } else { None };
+        let current = if change.rewatching == Some(false) && change.status.is_none() {
+            self.raw_manga_entry(access, media_id)?
+                .and_then(|e| e.values())
+        } else {
+            None
+        };
         let vars = save_manga_variables(media_id, change, current.as_ref());
         if vars.as_object().is_some_and(|o| o.len() == 1) {
             // Only the reread flag, already off there: nothing to send, the entry as it is.
-            return self.fetch_manga_entry(access, media_id)?.ok_or_else(|| ServiceError::Other("that manga is not on your AniList list".into()));
+            return self.fetch_manga_entry(access, media_id)?.ok_or_else(|| {
+                ServiceError::Other("that manga is not on your AniList list".into())
+            });
         }
         let data = self.query(access, &save_query(), vars)?;
         #[derive(Deserialize)]
@@ -487,25 +594,47 @@ impl<T: Transport> Client<T> {
             saved: Option<RawEntry>,
         }
         let d: Data = read(data, "answer")?;
-        d.saved.and_then(|e| e.remote()).ok_or_else(|| ServiceError::Other("AniList's answer has no list entry".into()))
+        d.saved
+            .and_then(|e| e.remote())
+            .ok_or_else(|| ServiceError::Other("AniList's answer has no list entry".into()))
     }
 
     /// Removes one manga from the list (the entry is read first for its own id). Not on the
     /// list: nothing to do.
     pub fn delete_manga_entry(&mut self, access: &str, media_id: u32) -> Result<(), ServiceError> {
-        let Some(e) = self.raw_manga_entry(access, media_id)? else { return Ok(()) };
+        let Some(e) = self.raw_manga_entry(access, media_id)? else {
+            return Ok(());
+        };
         let data = self.query(access, super::DELETE, json!({ "id": e.id }))?;
-        let deleted = data.pointer("/DeleteMediaListEntry/deleted").and_then(Value::as_bool).unwrap_or(false);
-        if deleted { Ok(()) } else { Err(ServiceError::Other("AniList didn't remove the entry".into())) }
+        let deleted = data
+            .pointer("/DeleteMediaListEntry/deleted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if deleted {
+            Ok(())
+        } else {
+            Err(ServiceError::Other(
+                "AniList didn't remove the entry".into(),
+            ))
+        }
     }
 
     /// The search bar's manga search (`limit` up to 25). Under 3 characters nothing is asked.
-    pub fn browse_manga(&mut self, access: &str, query: &str, limit: u32) -> Result<Vec<AnimeHit>, ServiceError> {
+    pub fn browse_manga(
+        &mut self,
+        access: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<AnimeHit>, ServiceError> {
         let q: String = query.trim().chars().take(64).collect();
         if q.chars().count() < 3 {
             return Ok(Vec::new());
         }
-        parse_hits(self.query(access, &search_query(), json!({ "q": q, "n": limit.clamp(1, 25) }))?)
+        parse_hits(self.query(
+            access,
+            &search_query(),
+            json!({ "q": q, "n": limit.clamp(1, 25) }),
+        )?)
     }
 
     /// The AniList manga of these MyAnimeList manga ids, 50 ids a request (the first AniList
@@ -514,10 +643,16 @@ impl<T: Transport> Client<T> {
         let mut out: Vec<Media> = Vec::new();
         for chunk in ids.chunks(super::MAL_IDS_PER_REQUEST) {
             for page in 1..=3 {
-                let (media, more) = parse_page(self.query(access, &by_mal_query(), json!({ "ids": chunk, "page": page }))?)?;
+                let (media, more) = parse_page(self.query(
+                    access,
+                    &by_mal_query(),
+                    json!({ "ids": chunk, "page": page }),
+                )?)?;
                 for m in media.iter().filter(|m| m.id != 0) {
                     let m = m.media();
-                    if m.id_mal.is_some_and(|id| chunk.contains(&id)) && !out.iter().any(|o| o.id_mal == m.id_mal) {
+                    if m.id_mal.is_some_and(|id| chunk.contains(&id))
+                        && !out.iter().any(|o| o.id_mal == m.id_mal)
+                    {
                         out.push(m);
                     }
                 }

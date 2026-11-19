@@ -34,9 +34,17 @@ impl Env {
         // Windows: mpv reads `%APPDATA%\mpv\mpv.conf`, which is the XDG rule with APPDATA as
         // the config home; the home folder is USERPROFILE.
         #[cfg(windows)]
-        return Env { mpv_home: get("MPV_HOME"), xdg_config_home: get("APPDATA"), home: get("USERPROFILE") };
+        return Env {
+            mpv_home: get("MPV_HOME"),
+            xdg_config_home: get("APPDATA"),
+            home: get("USERPROFILE"),
+        };
         #[cfg(not(windows))]
-        Env { mpv_home: get("MPV_HOME"), xdg_config_home: get("XDG_CONFIG_HOME"), home: get("HOME") }
+        Env {
+            mpv_home: get("MPV_HOME"),
+            xdg_config_home: get("XDG_CONFIG_HOME"),
+            home: get("HOME"),
+        }
     }
 
     /// mpv's config folder.
@@ -44,7 +52,11 @@ impl Env {
         if let Some(d) = &self.mpv_home {
             return Some(PathBuf::from(d));
         }
-        if let Some(d) = self.xdg_config_home.as_ref().filter(|d| Path::new(d).is_absolute()) {
+        if let Some(d) = self
+            .xdg_config_home
+            .as_ref()
+            .filter(|d| Path::new(d).is_absolute())
+        {
             return Some(Path::new(d).join("mpv"));
         }
         Some(Path::new(self.home.as_ref()?).join(".config").join("mpv"))
@@ -104,8 +116,16 @@ pub fn check_file(file: &Path, env: &Env) -> std::io::Result<Check> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
-    let socket = text.as_deref().and_then(find).filter(|v| !v.is_empty()).map(|v| env.expand(&v));
-    Ok(Check { file: file.to_path_buf(), exists: text.is_some(), socket })
+    let socket = text
+        .as_deref()
+        .and_then(find)
+        .filter(|v| !v.is_empty())
+        .map(|v| env.expand(&v));
+    Ok(Check {
+        file: file.to_path_buf(),
+        exists: text.is_some(),
+        socket,
+    })
 }
 
 /// The last value of the option for every run (mpv keeps the last one), unquoted.
@@ -127,7 +147,9 @@ fn find(text: &str) -> Option<String> {
             continue;
         }
         let line = line.strip_prefix("--").unwrap_or(line);
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         if k.trim() == OPTION {
             found = Some(unquote(v.trim()));
         }
@@ -136,7 +158,9 @@ fn find(text: &str) -> Option<String> {
 }
 
 fn unquote(v: &str) -> String {
-    if v.len() >= 2 && (v.starts_with('"') && v.ends_with('"') || v.starts_with('\'') && v.ends_with('\'')) {
+    if v.len() >= 2
+        && (v.starts_with('"') && v.ends_with('"') || v.starts_with('\'') && v.ends_with('\''))
+    {
         return v[1..v.len() - 1].to_string();
     }
     // `%N%value`: mpv's length-prefixed form.
@@ -177,9 +201,17 @@ pub fn enable_file(file: &Path, env: &Env, socket: &Path) -> std::io::Result<Ena
         Err(e) => return Err(e),
     };
     if let Some(v) = find(&old).filter(|v| !v.is_empty()) {
-        return Ok(Enabled::AlreadySet { file: file.to_path_buf(), socket: env.expand(&v) });
+        return Ok(Enabled::AlreadySet {
+            file: file.to_path_buf(),
+            socket: env.expand(&v),
+        });
     }
-    let socket = socket.to_str().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "the socket path is not UTF-8"))?;
+    let socket = socket.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the socket path is not UTF-8",
+        )
+    })?;
     let mut text = String::new();
     if !old.is_empty() && !old.ends_with('\n') {
         text.push('\n');
@@ -197,14 +229,23 @@ pub fn enable_file(file: &Path, env: &Env, socket: &Path) -> std::io::Result<Ena
         std::fs::create_dir_all(dir)?;
     }
     // Append only: the user's lines are never rewritten. One write call.
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)?;
     f.write_all(text.as_bytes())?;
     f.flush()?;
-    Ok(Enabled::Wrote { file: file.to_path_buf(), text })
+    Ok(Enabled::Wrote {
+        file: file.to_path_buf(),
+        text,
+    })
 }
 
 fn no_home() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::NotFound, "no HOME, MPV_HOME or XDG_CONFIG_HOME: can't find mpv.conf")
+    std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "no HOME, MPV_HOME or XDG_CONFIG_HOME: can't find mpv.conf",
+    )
 }
 
 // ------------------------------------------------------------------------------------ Windows
@@ -231,17 +272,31 @@ pub struct WinEnv {
 
 impl WinEnv {
     pub fn current() -> WinEnv {
-        let get = |k| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-        WinEnv { appdata: get("APPDATA"), mpv_home: get("MPV_HOME"), mpvnet_home: get("MPVNET_HOME") }
+        let get = |k| {
+            std::env::var_os(k)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        WinEnv {
+            appdata: get("APPDATA"),
+            mpv_home: get("MPV_HOME"),
+            mpvnet_home: get("MPVNET_HOME"),
+        }
     }
 
     /// The `mpv.conf` a player reads. `net`: mpv.net; `exe`: the running program, when known.
     pub fn conf(&self, net: bool, exe: Option<&Path>) -> Option<PathBuf> {
-        let (home, folder) = if net { (&self.mpvnet_home, "mpv.net") } else { (&self.mpv_home, "mpv") };
+        let (home, folder) = if net {
+            (&self.mpvnet_home, "mpv.net")
+        } else {
+            (&self.mpv_home, "mpv")
+        };
         if let Some(h) = home {
             return Some(h.join("mpv.conf"));
         }
-        if let Some(portable) = exe.and_then(Path::parent).map(|d| d.join("portable_config"))
+        if let Some(portable) = exe
+            .and_then(Path::parent)
+            .map(|d| d.join("portable_config"))
             && portable.is_dir()
         {
             return Some(portable.join("mpv.conf"));
@@ -256,7 +311,10 @@ impl WinEnv {
             if let Some(file) = file
                 && !out.iter().any(|t| t.file == file)
             {
-                out.push(Target { player: if net { "mpv.net" } else { "mpv" }, file });
+                out.push(Target {
+                    player: if net { "mpv.net" } else { "mpv" },
+                    file,
+                });
             }
         }
         let mut out: Vec<Target> = Vec::new();
@@ -266,7 +324,11 @@ impl WinEnv {
         if running.is_empty() {
             for net in [true, false] {
                 let file = self.conf(net, None);
-                if file.as_ref().and_then(|f| f.parent()).is_some_and(Path::is_dir) {
+                if file
+                    .as_ref()
+                    .and_then(|f| f.parent())
+                    .is_some_and(Path::is_dir)
+                {
                     add(&mut out, net, file);
                 }
             }
@@ -290,13 +352,19 @@ pub struct Target {
 /// value that doesn't start with it.
 pub fn win_pipe(value: &str) -> PathBuf {
     const PREFIX: &str = r"\\.\pipe\";
-    if value.starts_with(PREFIX) { PathBuf::from(value) } else { PathBuf::from(format!("{PREFIX}{value}")) }
+    if value.starts_with(PREFIX) {
+        PathBuf::from(value)
+    } else {
+        PathBuf::from(format!("{PREFIX}{value}"))
+    }
 }
 
 /// The pipe a Windows `mpv.conf` sets for every run, if any (`None` also for a missing file).
 pub fn win_check(file: &Path) -> std::io::Result<Option<PathBuf>> {
     match std::fs::read(file) {
-        Ok(bytes) => Ok(find(&String::from_utf8_lossy(&bytes)).filter(|v| !v.is_empty()).map(|v| win_pipe(&v))),
+        Ok(bytes) => Ok(find(&String::from_utf8_lossy(&bytes))
+            .filter(|v| !v.is_empty())
+            .map(|v| win_pipe(&v))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
@@ -329,11 +397,23 @@ pub fn win_enable(file: &Path, pipe: &Path) -> std::io::Result<WinEnabled> {
     };
     let old_text = String::from_utf8_lossy(old.as_deref().unwrap_or_default()).into_owned();
     if let Some(v) = find(&old_text).filter(|v| !v.is_empty()) {
-        return Ok(WinEnabled::AlreadySet { file: file.to_path_buf(), pipe: win_pipe(&v) });
+        return Ok(WinEnabled::AlreadySet {
+            file: file.to_path_buf(),
+            pipe: win_pipe(&v),
+        });
     }
-    let pipe = pipe.to_str().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "the pipe name is not UTF-8"))?;
+    let pipe = pipe.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the pipe name is not UTF-8",
+        )
+    })?;
     // The file's own line ends.
-    let eol = if old_text.contains("\r\n") { "\r\n" } else { "\n" };
+    let eol = if old_text.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut text = String::new();
     if !old_text.is_empty() && !old_text.ends_with('\n') {
         text.push_str(eol);
@@ -355,19 +435,38 @@ pub fn win_enable(file: &Path, pipe: &Path) -> std::io::Result<WinEnabled> {
         Some(bytes) if !bytes.is_empty() => Some(write_backup(file, bytes)?),
         _ => None,
     };
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)?;
     f.write_all(text.as_bytes())?;
     f.flush()?;
-    Ok(WinEnabled::Wrote { file: file.to_path_buf(), text, created: old.is_none(), backup })
+    Ok(WinEnabled::Wrote {
+        file: file.to_path_buf(),
+        text,
+        created: old.is_none(),
+        backup,
+    })
 }
 
 /// Copies the file as it was to `mpv.conf.kotora-backup` (`-2`, `-3`, … when that name is
 /// taken: an older backup is never overwritten).
 fn write_backup(file: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
-    let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "mpv.conf".into());
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "mpv.conf".into());
     for n in 1..100 {
-        let backup = file.with_file_name(if n == 1 { format!("{name}.kotora-backup") } else { format!("{name}.kotora-backup-{n}") });
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&backup) {
+        let backup = file.with_file_name(if n == 1 {
+            format!("{name}.kotora-backup")
+        } else {
+            format!("{name}.kotora-backup-{n}")
+        });
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
             Ok(mut f) => {
                 f.write_all(bytes)?;
                 f.flush()?;
@@ -377,7 +476,10 @@ fn write_backup(file: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
             Err(e) => return Err(e),
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "too many mpv.conf backups"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many mpv.conf backups",
+    ))
 }
 
 #[cfg(test)]
@@ -388,14 +490,19 @@ mod tests {
 
     impl Tmp {
         fn new(name: &str) -> Tmp {
-            let d = std::env::temp_dir().join(format!("kotora-mpvconf-{name}-{}", std::process::id()));
+            let d =
+                std::env::temp_dir().join(format!("kotora-mpvconf-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&d);
             std::fs::create_dir_all(&d).unwrap();
             Tmp(d)
         }
 
         fn env(&self) -> Env {
-            Env { mpv_home: None, xdg_config_home: None, home: Some(self.0.clone().into_os_string()) }
+            Env {
+                mpv_home: None,
+                xdg_config_home: None,
+                home: Some(self.0.clone().into_os_string()),
+            }
         }
     }
 
@@ -408,14 +515,43 @@ mod tests {
     #[test]
     fn finds_mpv_conf_like_mpv() {
         // Absolute on every system: a drive in front on Windows.
-        let abs = |p: &str| if cfg!(windows) { format!("C:{p}") } else { p.to_string() };
-        let e = Env { mpv_home: None, xdg_config_home: None, home: Some(abs("/h").into()) };
-        assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/h/.config/mpv/mpv.conf")));
-        let e = Env { xdg_config_home: Some(abs("/x").into()), ..e };
-        assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/x/mpv/mpv.conf")));
-        let e2 = Env { xdg_config_home: Some("relative".into()), ..e.clone() };
-        assert_eq!(e2.conf_file().unwrap(), PathBuf::from(abs("/h/.config/mpv/mpv.conf")), "a relative XDG path is ignored");
-        let e = Env { mpv_home: Some(abs("/m").into()), ..e };
+        let abs = |p: &str| {
+            if cfg!(windows) {
+                format!("C:{p}")
+            } else {
+                p.to_string()
+            }
+        };
+        let e = Env {
+            mpv_home: None,
+            xdg_config_home: None,
+            home: Some(abs("/h").into()),
+        };
+        assert_eq!(
+            e.conf_file().unwrap(),
+            PathBuf::from(abs("/h/.config/mpv/mpv.conf"))
+        );
+        let e = Env {
+            xdg_config_home: Some(abs("/x").into()),
+            ..e
+        };
+        assert_eq!(
+            e.conf_file().unwrap(),
+            PathBuf::from(abs("/x/mpv/mpv.conf"))
+        );
+        let e2 = Env {
+            xdg_config_home: Some("relative".into()),
+            ..e.clone()
+        };
+        assert_eq!(
+            e2.conf_file().unwrap(),
+            PathBuf::from(abs("/h/.config/mpv/mpv.conf")),
+            "a relative XDG path is ignored"
+        );
+        let e = Env {
+            mpv_home: Some(abs("/m").into()),
+            ..e
+        };
         assert_eq!(e.conf_file().unwrap(), PathBuf::from(abs("/m/mpv.conf")));
         assert_eq!(e.expand("~~/sock"), PathBuf::from(abs("/m/sock")));
         assert_eq!(e.expand("~/s"), PathBuf::from(abs("/h/s")));
@@ -424,14 +560,37 @@ mod tests {
 
     #[test]
     fn reads_the_option_for_every_run_only() {
-        assert_eq!(find("input-ipc-server=/tmp/a.sock\n"), Some("/tmp/a.sock".into()));
-        assert_eq!(find("  --input-ipc-server = \"/tmp/b c.sock\"  \n"), Some("/tmp/b c.sock".into()));
-        assert_eq!(find("input-ipc-server=%11%/tmp/x.sock"), Some("/tmp/x.sock".into()));
-        assert_eq!(find("input-ipc-server=/tmp/a.sock # mine"), Some("/tmp/a.sock".into()));
+        assert_eq!(
+            find("input-ipc-server=/tmp/a.sock\n"),
+            Some("/tmp/a.sock".into())
+        );
+        assert_eq!(
+            find("  --input-ipc-server = \"/tmp/b c.sock\"  \n"),
+            Some("/tmp/b c.sock".into())
+        );
+        assert_eq!(
+            find("input-ipc-server=%11%/tmp/x.sock"),
+            Some("/tmp/x.sock".into())
+        );
+        assert_eq!(
+            find("input-ipc-server=/tmp/a.sock # mine"),
+            Some("/tmp/a.sock".into())
+        );
         assert_eq!(find("# input-ipc-server=/tmp/a.sock\nvo=gpu\n"), None);
-        assert_eq!(find("[anime]\ninput-ipc-server=/tmp/a.sock\n"), None, "a profile is not every run");
-        assert_eq!(find("[anime]\nvo=gpu\n[default]\ninput-ipc-server=/tmp/a.sock\n"), Some("/tmp/a.sock".into()));
-        assert_eq!(find("input-ipc-server=/a\ninput-ipc-server=/b\n"), Some("/b".into()), "the last one wins");
+        assert_eq!(
+            find("[anime]\ninput-ipc-server=/tmp/a.sock\n"),
+            None,
+            "a profile is not every run"
+        );
+        assert_eq!(
+            find("[anime]\nvo=gpu\n[default]\ninput-ipc-server=/tmp/a.sock\n"),
+            Some("/tmp/a.sock".into())
+        );
+        assert_eq!(
+            find("input-ipc-server=/a\ninput-ipc-server=/b\n"),
+            Some("/b".into()),
+            "the last one wins"
+        );
     }
 
     #[test]
@@ -448,7 +607,11 @@ mod tests {
         assert!(c.watched(&[t.0.join(".config/mpv/socket")]));
         assert!(!c.watched(&[PathBuf::from("/run/user/1/mpv.sock")]));
         std::fs::write(&file, "input-ipc-server=\n").unwrap();
-        assert_eq!(check_file(&file, &env).unwrap().socket, None, "an empty value turns it off");
+        assert_eq!(
+            check_file(&file, &env).unwrap().socket,
+            None,
+            "an empty value turns it off"
+        );
     }
 
     #[test]
@@ -459,11 +622,26 @@ mod tests {
         let sock = Path::new("/run/user/1000/mpv.sock");
         let r = enable_file(&file, &env, sock).unwrap();
         let want = "# Added by Kotora: lets Kotora see what mpv plays (position and pause).\ninput-ipc-server=/run/user/1000/mpv.sock\n";
-        assert_eq!(r, Enabled::Wrote { file: file.clone(), text: want.into() });
+        assert_eq!(
+            r,
+            Enabled::Wrote {
+                file: file.clone(),
+                text: want.into()
+            }
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), want);
-        assert_eq!(check_file(&file, &env).unwrap().socket.as_deref(), Some(sock));
+        assert_eq!(
+            check_file(&file, &env).unwrap().socket.as_deref(),
+            Some(sock)
+        );
         // Never twice.
-        assert_eq!(enable_file(&file, &env, sock).unwrap(), Enabled::AlreadySet { file: file.clone(), socket: sock.into() });
+        assert_eq!(
+            enable_file(&file, &env, sock).unwrap(),
+            Enabled::AlreadySet {
+                file: file.clone(),
+                socket: sock.into()
+            }
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), want);
     }
 
@@ -476,24 +654,48 @@ mod tests {
         // No final newline, and a profile at the end.
         let mine = "# my config\nvo=gpu-next\n\n[anime]\ndeband=yes";
         std::fs::write(&file, mine).unwrap();
-        let Enabled::Wrote { text, .. } = enable_file(&file, &env, Path::new("/tmp/k.sock")).unwrap() else { panic!() };
+        let Enabled::Wrote { text, .. } =
+            enable_file(&file, &env, Path::new("/tmp/k.sock")).unwrap()
+        else {
+            panic!()
+        };
         let all = std::fs::read_to_string(&file).unwrap();
         assert!(all.starts_with(mine), "{all}");
         assert_eq!(all, format!("{mine}{text}"));
-        assert!(text.contains("\n[default]\ninput-ipc-server=/tmp/k.sock\n"), "{text}");
+        assert!(
+            text.contains("\n[default]\ninput-ipc-server=/tmp/k.sock\n"),
+            "{text}"
+        );
         assert_eq!(find(&all), Some("/tmp/k.sock".into()));
-        assert_eq!(find(&all.replace("[default]\n", "")), None, "without [default] it would be inside the profile");
+        assert_eq!(
+            find(&all.replace("[default]\n", "")),
+            None,
+            "without [default] it would be inside the profile"
+        );
 
         // A socket the user set (elsewhere) is left alone.
         std::fs::write(&file, "input-ipc-server=/tmp/mine.sock\n").unwrap();
-        assert_eq!(enable_file(&file, &env, Path::new("/tmp/k.sock")).unwrap(), Enabled::AlreadySet { file: file.clone(), socket: "/tmp/mine.sock".into() });
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "input-ipc-server=/tmp/mine.sock\n");
+        assert_eq!(
+            enable_file(&file, &env, Path::new("/tmp/k.sock")).unwrap(),
+            Enabled::AlreadySet {
+                file: file.clone(),
+                socket: "/tmp/mine.sock".into()
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "input-ipc-server=/tmp/mine.sock\n"
+        );
     }
 
     const PIPE: &str = r"\\.\pipe\mpvsocket";
 
     fn win_env(t: &Tmp) -> WinEnv {
-        WinEnv { appdata: Some(t.0.join("Roaming")), mpv_home: None, mpvnet_home: None }
+        WinEnv {
+            appdata: Some(t.0.join("Roaming")),
+            mpv_home: None,
+            mpvnet_home: None,
+        }
     }
 
     #[test]
@@ -504,32 +706,80 @@ mod tests {
         // Installed players: the roaming folder, one per player.
         let mpv_exe = t.0.join("Program Files").join("mpv").join("mpv.exe");
         let net_exe = t.0.join("Program Files").join("mpv.net").join("mpvnet.exe");
-        assert_eq!(env.conf(false, Some(&mpv_exe)).unwrap(), roaming.join("mpv").join("mpv.conf"));
-        assert_eq!(env.conf(true, Some(&net_exe)).unwrap(), roaming.join("mpv.net").join("mpv.conf"));
+        assert_eq!(
+            env.conf(false, Some(&mpv_exe)).unwrap(),
+            roaming.join("mpv").join("mpv.conf")
+        );
+        assert_eq!(
+            env.conf(true, Some(&net_exe)).unwrap(),
+            roaming.join("mpv.net").join("mpv.conf")
+        );
         // A portable player (and Scoop's mpv): portable_config beside the program.
         let scoop = t.0.join("scoop").join("apps").join("mpv").join("current");
         std::fs::create_dir_all(scoop.join("portable_config")).unwrap();
-        assert_eq!(env.conf(false, Some(&scoop.join("mpv.exe"))).unwrap(), scoop.join("portable_config").join("mpv.conf"));
+        assert_eq!(
+            env.conf(false, Some(&scoop.join("mpv.exe"))).unwrap(),
+            scoop.join("portable_config").join("mpv.conf")
+        );
         let portable_net = t.0.join("Tools").join("mpv.net");
         std::fs::create_dir_all(portable_net.join("portable_config")).unwrap();
-        assert_eq!(env.conf(true, Some(&portable_net.join("mpvnet.exe"))).unwrap(), portable_net.join("portable_config").join("mpv.conf"));
+        assert_eq!(
+            env.conf(true, Some(&portable_net.join("mpvnet.exe")))
+                .unwrap(),
+            portable_net.join("portable_config").join("mpv.conf")
+        );
         // The environment variables come first.
-        let homes = WinEnv { mpv_home: Some(t.0.join("mh")), mpvnet_home: Some(t.0.join("nh")), ..env.clone() };
-        assert_eq!(homes.conf(false, Some(&scoop.join("mpv.exe"))).unwrap(), t.0.join("mh").join("mpv.conf"));
-        assert_eq!(homes.conf(true, Some(&net_exe)).unwrap(), t.0.join("nh").join("mpv.conf"));
+        let homes = WinEnv {
+            mpv_home: Some(t.0.join("mh")),
+            mpvnet_home: Some(t.0.join("nh")),
+            ..env.clone()
+        };
+        assert_eq!(
+            homes.conf(false, Some(&scoop.join("mpv.exe"))).unwrap(),
+            t.0.join("mh").join("mpv.conf")
+        );
+        assert_eq!(
+            homes.conf(true, Some(&net_exe)).unwrap(),
+            t.0.join("nh").join("mpv.conf")
+        );
         assert_eq!(WinEnv::default().conf(false, None), None);
 
         // Targets: the running players' files, each once.
-        let running = [(true, net_exe.clone()), (false, scoop.join("mpv.exe")), (true, net_exe.clone())];
+        let running = [
+            (true, net_exe.clone()),
+            (false, scoop.join("mpv.exe")),
+            (true, net_exe.clone()),
+        ];
         assert_eq!(
             env.targets(&running),
-            [Target { player: "mpv.net", file: roaming.join("mpv.net").join("mpv.conf") }, Target { player: "mpv", file: scoop.join("portable_config").join("mpv.conf") }]
+            [
+                Target {
+                    player: "mpv.net",
+                    file: roaming.join("mpv.net").join("mpv.conf")
+                },
+                Target {
+                    player: "mpv",
+                    file: scoop.join("portable_config").join("mpv.conf")
+                }
+            ]
         );
         // Nothing runs and no folder exists yet: mpv's own.
-        assert_eq!(env.targets(&[]), [Target { player: "mpv", file: roaming.join("mpv").join("mpv.conf") }]);
+        assert_eq!(
+            env.targets(&[]),
+            [Target {
+                player: "mpv",
+                file: roaming.join("mpv").join("mpv.conf")
+            }]
+        );
         // Nothing runs: the folders that exist.
         std::fs::create_dir_all(roaming.join("mpv.net")).unwrap();
-        assert_eq!(env.targets(&[]), [Target { player: "mpv.net", file: roaming.join("mpv.net").join("mpv.conf") }]);
+        assert_eq!(
+            env.targets(&[]),
+            [Target {
+                player: "mpv.net",
+                file: roaming.join("mpv.net").join("mpv.conf")
+            }]
+        );
         std::fs::create_dir_all(roaming.join("mpv")).unwrap();
         assert_eq!(env.targets(&[]).len(), 2);
     }
@@ -542,13 +792,30 @@ mod tests {
         assert_eq!(win_check(&file).unwrap(), None);
         let r = win_enable(&file, Path::new(PIPE)).unwrap();
         let want = "# Added by Kotora: lets Kotora see what the player plays (position and pause).\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\n";
-        assert_eq!(r, WinEnabled::Wrote { file: file.clone(), text: want.into(), created: true, backup: None });
+        assert_eq!(
+            r,
+            WinEnabled::Wrote {
+                file: file.clone(),
+                text: want.into(),
+                created: true,
+                backup: None
+            }
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), want);
         assert_eq!(win_check(&file).unwrap(), Some(PathBuf::from(PIPE)));
         // Never twice, and no backup of our own file.
-        assert_eq!(win_enable(&file, Path::new(PIPE)).unwrap(), WinEnabled::AlreadySet { file: file.clone(), pipe: PIPE.into() });
+        assert_eq!(
+            win_enable(&file, Path::new(PIPE)).unwrap(),
+            WinEnabled::AlreadySet {
+                file: file.clone(),
+                pipe: PIPE.into()
+            }
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), want);
-        assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(file.parent().unwrap()).unwrap().count(),
+            1
+        );
     }
 
     #[test]
@@ -558,11 +825,23 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         // Windows line ends, a byte order mark, a profile at the end, no final line end, and
         // a byte that isn't UTF-8 in a comment.
-        let mut mine = b"\xef\xbb\xbf# caf\xe9\r\nvo=gpu-next\r\n\r\n[anime]\r\ndeband=yes".to_vec();
+        let mut mine =
+            b"\xef\xbb\xbf# caf\xe9\r\nvo=gpu-next\r\n\r\n[anime]\r\ndeband=yes".to_vec();
         std::fs::write(&file, &mine).unwrap();
-        let WinEnabled::Wrote { text, created, backup, .. } = win_enable(&file, Path::new(PIPE)).unwrap() else { panic!() };
+        let WinEnabled::Wrote {
+            text,
+            created,
+            backup,
+            ..
+        } = win_enable(&file, Path::new(PIPE)).unwrap()
+        else {
+            panic!()
+        };
         assert!(!created);
-        assert_eq!(text, "\r\n\r\n# Added by Kotora: lets Kotora see what the player plays (position and pause).\r\n[default]\r\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\r\n");
+        assert_eq!(
+            text,
+            "\r\n\r\n# Added by Kotora: lets Kotora see what the player plays (position and pause).\r\n[default]\r\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\r\n"
+        );
         // The backup is the file as it was, byte for byte; the file is the old bytes plus ours.
         let backup = backup.unwrap();
         assert_eq!(backup, file.with_file_name("mpv.conf.kotora-backup"));
@@ -573,18 +852,41 @@ mod tests {
 
         // A second change of the file never overwrites the first backup.
         std::fs::write(&file, "vo=gpu\n").unwrap();
-        let WinEnabled::Wrote { backup: second, .. } = win_enable(&file, Path::new(PIPE)).unwrap() else { panic!() };
-        assert_eq!(second.unwrap(), file.with_file_name("mpv.conf.kotora-backup-2"));
-        assert_eq!(std::fs::read(&backup).unwrap().len(), mine.len() - text.len());
+        let WinEnabled::Wrote { backup: second, .. } = win_enable(&file, Path::new(PIPE)).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            second.unwrap(),
+            file.with_file_name("mpv.conf.kotora-backup-2")
+        );
+        assert_eq!(
+            std::fs::read(&backup).unwrap().len(),
+            mine.len() - text.len()
+        );
 
         // A pipe the user set is left alone, in mpv's short form too, and on the first line
         // after a byte order mark.
         std::fs::write(&file, "\u{feff}input-ipc-server=mine\r\n").unwrap();
-        assert_eq!(win_enable(&file, Path::new(PIPE)).unwrap(), WinEnabled::AlreadySet { file: file.clone(), pipe: r"\\.\pipe\mine".into() });
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "\u{feff}input-ipc-server=mine\r\n");
+        assert_eq!(
+            win_enable(&file, Path::new(PIPE)).unwrap(),
+            WinEnabled::AlreadySet {
+                file: file.clone(),
+                pipe: r"\\.\pipe\mine".into()
+            }
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "\u{feff}input-ipc-server=mine\r\n"
+        );
         // An empty file gets no backup.
         std::fs::write(&file, "").unwrap();
-        let WinEnabled::Wrote { created, backup, .. } = win_enable(&file, Path::new(PIPE)).unwrap() else { panic!() };
+        let WinEnabled::Wrote {
+            created, backup, ..
+        } = win_enable(&file, Path::new(PIPE)).unwrap()
+        else {
+            panic!()
+        };
         assert_eq!((created, backup), (false, None));
     }
 }

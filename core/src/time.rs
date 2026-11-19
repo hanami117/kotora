@@ -7,11 +7,24 @@
 /// Parses `2018-02-24T05:34:20+00:00` or `...Z` (fractions are ignored) to unix seconds.
 pub fn parse_rfc3339(s: &str) -> Option<i64> {
     let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !(b[10] == b'T' || b[10] == b' ') || b[13] != b':' || b[16] != b':' {
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || !(b[10] == b'T' || b[10] == b' ')
+        || b[13] != b':'
+        || b[16] != b':'
+    {
         return None;
     }
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
-    let (y, mo, d, h, mi, se) = (n(0..4)?, n(5..7)?, n(8..10)?, n(11..13)?, n(14..16)?, n(17..19)?);
+    let (y, mo, d, h, mi, se) = (
+        n(0..4)?,
+        n(5..7)?,
+        n(8..10)?,
+        n(11..13)?,
+        n(14..16)?,
+        n(17..19)?,
+    );
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
@@ -38,11 +51,24 @@ pub fn parse_rfc2822(s: &str) -> Option<i64> {
     let mut it = s.split_whitespace();
     let d: i64 = it.next()?.parse().ok()?;
     let mon = it.next()?.get(..3)?.to_ascii_lowercase();
-    let mo = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].iter().position(|m| *m == mon)? as i64 + 1;
+    let mo = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ]
+    .iter()
+    .position(|m| *m == mon)? as i64
+        + 1;
     let y: i64 = it.next()?.parse().ok()?;
-    let y = if y < 100 { y + if y < 50 { 2000 } else { 1900 } } else { y };
+    let y = if y < 100 {
+        y + if y < 50 { 2000 } else { 1900 }
+    } else {
+        y
+    };
     let mut hms = it.next()?.split(':').map(|p| p.parse::<i64>().ok());
-    let (h, mi, se) = (hms.next()??, hms.next()??, hms.next().flatten().unwrap_or(0));
+    let (h, mi, se) = (
+        hms.next()??,
+        hms.next()??,
+        hms.next().flatten().unwrap_or(0),
+    );
     if !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
@@ -97,7 +123,11 @@ pub fn weekday(days: i64) -> u8 {
 /// `2026-10-04` → its day number. A shorter date (`2026-10`, `2026`) is `None`.
 pub fn parse_date(s: &str) -> Option<i64> {
     let mut it = s.trim().splitn(3, '-');
-    let (y, m, d) = (it.next()?.parse::<i64>().ok()?, it.next()?.parse::<i64>().ok()?, it.next()?.parse::<i64>().ok()?);
+    let (y, m, d) = (
+        it.next()?.parse::<i64>().ok()?,
+        it.next()?.parse::<i64>().ok()?,
+        it.next()?.parse::<i64>().ok()?,
+    );
     ((1..=12).contains(&m) && (1..=31).contains(&d)).then(|| days_from_civil(y, m, d))
 }
 
@@ -123,7 +153,15 @@ impl Clock {
         let local = t + offset;
         let day = local.div_euclid(86_400);
         let (year, month, date) = civil_from_days(day);
-        Clock { day, year, month, date, weekday: weekday(day), minute: (local.rem_euclid(86_400) / 60) as u32, offset }
+        Clock {
+            day,
+            year,
+            month,
+            date,
+            weekday: weekday(day),
+            minute: (local.rem_euclid(86_400) / 60) as u32,
+            offset,
+        }
     }
 
     /// `t` in the user's time zone (the C library's `localtime_r`).
@@ -166,7 +204,9 @@ pub fn local_offset(t: i64) -> i64 {
 #[cfg(windows)]
 fn windows_offset(t: i64) -> Option<i64> {
     use windows_sys::Win32::Foundation::SYSTEMTIME;
-    use windows_sys::Win32::System::Time::{GetTimeZoneInformationForYear, SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION};
+    use windows_sys::Win32::System::Time::{
+        GetTimeZoneInformationForYear, SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION,
+    };
     let day = t.div_euclid(86_400);
     let secs = t.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(day);
@@ -196,12 +236,21 @@ fn windows_offset(t: i64) -> Option<i64> {
         }
         local
     };
-    let wall = days_from_civil(i64::from(local.wYear), i64::from(local.wMonth), i64::from(local.wDay)) * 86_400 + i64::from(local.wHour) * 3600 + i64::from(local.wMinute) * 60 + i64::from(local.wSecond);
+    let wall = days_from_civil(
+        i64::from(local.wYear),
+        i64::from(local.wMonth),
+        i64::from(local.wDay),
+    ) * 86_400
+        + i64::from(local.wHour) * 3600
+        + i64::from(local.wMinute) * 60
+        + i64::from(local.wSecond);
     Some(wall - t)
 }
 
 pub fn now_unix() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// "now", "2 h", "3 days", "1 week", "2 months", "1 year" (the list's Updated column).
@@ -228,11 +277,26 @@ mod tests {
 
     #[test]
     fn parses_rfc2822() {
-        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 05:34:20 +0000"), Some(1_519_450_460));
-        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 07:34:20 +0200"), Some(1_519_450_460));
-        assert_eq!(parse_rfc2822("24 Feb 2018 05:34:20 GMT"), Some(1_519_450_460));
-        assert_eq!(parse_rfc2822("Sat, 24 Feb 2018 00:34:20 EST"), Some(1_519_450_460));
-        assert_eq!(parse_rfc2822("Sat, 24 Feb 18 05:34 GMT"), Some(1_519_450_440));
+        assert_eq!(
+            parse_rfc2822("Sat, 24 Feb 2018 05:34:20 +0000"),
+            Some(1_519_450_460)
+        );
+        assert_eq!(
+            parse_rfc2822("Sat, 24 Feb 2018 07:34:20 +0200"),
+            Some(1_519_450_460)
+        );
+        assert_eq!(
+            parse_rfc2822("24 Feb 2018 05:34:20 GMT"),
+            Some(1_519_450_460)
+        );
+        assert_eq!(
+            parse_rfc2822("Sat, 24 Feb 2018 00:34:20 EST"),
+            Some(1_519_450_460)
+        );
+        assert_eq!(
+            parse_rfc2822("Sat, 24 Feb 18 05:34 GMT"),
+            Some(1_519_450_440)
+        );
         assert_eq!(parse_rfc2822("2018-02-24"), None);
         assert_eq!(parse_rfc2822("Sat, 24 Foo 2018 05:34:20 GMT"), None);
     }
@@ -240,9 +304,15 @@ mod tests {
     #[test]
     fn parses_rfc3339() {
         assert_eq!(parse_rfc3339("1970-01-01T00:00:00+00:00"), Some(0));
-        assert_eq!(parse_rfc3339("2018-02-24T05:34:20+00:00"), Some(1_519_450_460));
+        assert_eq!(
+            parse_rfc3339("2018-02-24T05:34:20+00:00"),
+            Some(1_519_450_460)
+        );
         assert_eq!(parse_rfc3339("2018-02-24T05:34:20Z"), Some(1_519_450_460));
-        assert_eq!(parse_rfc3339("2018-02-24T07:34:20.123+02:00"), Some(1_519_450_460));
+        assert_eq!(
+            parse_rfc3339("2018-02-24T07:34:20.123+02:00"),
+            Some(1_519_450_460)
+        );
         assert_eq!(parse_rfc3339("2018-02-24"), None);
         assert_eq!(parse_rfc3339("2018-13-24T05:34:20Z"), None);
     }
@@ -263,14 +333,20 @@ mod tests {
         // Saturday 2026-10-03 23:30 JST is 14:30 UTC, and 16:30 in Central Europe (summer time).
         let t = parse_date("2026-10-03").unwrap() * 86_400 + (23 * 60 + 30) * 60 - 9 * 3600;
         let jst = Clock::at(t, 9 * 3600);
-        assert_eq!((jst.weekday, jst.hhmm().as_str(), jst.date), (5, "23:30", 3));
+        assert_eq!(
+            (jst.weekday, jst.hhmm().as_str(), jst.date),
+            (5, "23:30", 3)
+        );
         let cest = Clock::at(t, 2 * 3600);
         assert_eq!((cest.weekday, cest.hhmm().as_str()), (5, "16:30"));
         // Across midnight: 01:00 JST Sunday is Saturday evening in New York (UTC-4).
         let t = parse_date("2026-10-04").unwrap() * 86_400 + 3600 - 9 * 3600;
         let ny = Clock::at(t, -4 * 3600);
         assert_eq!((ny.weekday, ny.hhmm().as_str(), ny.date), (5, "12:00", 3));
-        assert_eq!(Clock::at(t, -4 * 3600).midnight(), parse_date("2026-10-03").unwrap() * 86_400 + 4 * 3600);
+        assert_eq!(
+            Clock::at(t, -4 * 3600).midnight(),
+            parse_date("2026-10-03").unwrap() * 86_400 + 4 * 3600
+        );
     }
 
     #[test]

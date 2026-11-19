@@ -64,7 +64,11 @@ pub struct Item {
 /// Taiga's `TidyFeedItemDescription`: line breaks for `</p>` and `<br>`, no tags, lines joined
 /// with " | ", single spaces.
 pub fn tidy_description(html: &str) -> String {
-    let s = html.replace("</p>", "\n").replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n");
+    let s = html
+        .replace("</p>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("<br>", "\n");
     let mut out = String::with_capacity(s.len());
     let mut in_tag = false;
     for c in s.chars() {
@@ -75,8 +79,17 @@ pub fn tidy_description(html: &str) -> String {
             _ => {}
         }
     }
-    let out = out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'");
-    let lines: Vec<String> = out.split('\n').map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect();
+    let out = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+    let lines: Vec<String> = out
+        .split('\n')
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .collect();
     lines.join(" | ")
 }
 
@@ -130,12 +143,17 @@ fn local<'a>(n: &Node<'a, '_>) -> &'a str {
 }
 
 fn child<'a, 'i>(n: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>> {
-    n.children().find(|c| c.is_element() && local(c).eq_ignore_ascii_case(name))
+    n.children()
+        .find(|c| c.is_element() && local(c).eq_ignore_ascii_case(name))
 }
 
 /// All text inside (CDATA too), trimmed; empty is `None`.
 fn text_of(n: Node) -> Option<String> {
-    let s: String = n.descendants().filter(|d| d.is_text()).filter_map(|d| d.text()).collect();
+    let s: String = n
+        .descendants()
+        .filter(|d| d.is_text())
+        .filter_map(|d| d.text())
+        .collect();
     let s = s.trim();
     (!s.is_empty()).then(|| s.to_string())
 }
@@ -147,7 +165,9 @@ fn child_text(n: Node, name: &str) -> Option<String> {
 /// `magnet:?…xt=urn:btih:…` or `urn:btmh:`, nothing else; no spaces or control characters.
 pub fn safe_magnet(s: &str) -> Option<String> {
     let s = s.trim();
-    let ok = s.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("magnet:?"))
+    let ok = s
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("magnet:?"))
         && !s.chars().any(|c| c.is_whitespace() || c.is_control())
         && magnet_hash(s).is_some();
     ok.then(|| s.to_string())
@@ -157,8 +177,13 @@ pub fn safe_magnet(s: &str) -> Option<String> {
 pub fn safe_http(s: &str) -> Option<String> {
     let s = s.trim();
     let lower = s.to_ascii_lowercase();
-    let rest = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://"))?;
-    let host_ok = rest.split(['/', '?', '#']).next().is_some_and(|h| !h.is_empty());
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))?;
+    let host_ok = rest
+        .split(['/', '?', '#'])
+        .next()
+        .is_some_and(|h| !h.is_empty());
     (host_ok && !s.chars().any(|c| c.is_whitespace() || c.is_control())).then(|| s.to_string())
 }
 
@@ -197,14 +222,18 @@ pub fn magnet_hash(m: &str) -> Option<String> {
             return None;
         }
         let v = v.to_ascii_lowercase();
-        v.strip_prefix("urn:btih:").or_else(|| v.strip_prefix("urn:btmh:")).and_then(normalize_hash)
+        v.strip_prefix("urn:btih:")
+            .or_else(|| v.strip_prefix("urn:btmh:"))
+            .and_then(normalize_hash)
     })
 }
 
 /// "1.2 GiB", "734.5 MiB", "700MB", "123456" (bytes).
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.trim();
-    let cut = s.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ',')).unwrap_or(s.len());
+    let cut = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
+        .unwrap_or(s.len());
     let n: f64 = s[..cut].replace(',', "").parse().ok()?;
     let unit = s[cut..].trim().to_ascii_lowercase();
     let m: f64 = match unit.as_str() {
@@ -223,7 +252,11 @@ pub fn parse_size(s: &str) -> Option<u64> {
 }
 
 fn looks_like_torrent(url: &str) -> bool {
-    let path = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
     path.ends_with(".torrent") || path.contains("/download/")
 }
 
@@ -251,7 +284,9 @@ fn extras(n: Node, it: &mut Item, torznab: &mut bool) {
         match name.as_str() {
             "attr" => {
                 *torznab = true;
-                let (Some(k), Some(v)) = (c.attribute("name"), c.attribute("value")) else { continue };
+                let (Some(k), Some(v)) = (c.attribute("name"), c.attribute("value")) else {
+                    continue;
+                };
                 match k.to_ascii_lowercase().as_str() {
                     "magneturl" => place(it, v, false),
                     "infohash" => it.info_hash = it.info_hash.take().or_else(|| normalize_hash(v)),
@@ -268,11 +303,20 @@ fn extras(n: Node, it: &mut Item, torznab: &mut bool) {
                     _ => {}
                 }
             }
-            "infohash" => it.info_hash = it.info_hash.take().or_else(|| text_of(c).and_then(|t| normalize_hash(&t))),
+            "infohash" => {
+                it.info_hash = it
+                    .info_hash
+                    .take()
+                    .or_else(|| text_of(c).and_then(|t| normalize_hash(&t)))
+            }
             "seeders" => it.seeders = it.seeders.or_else(|| text_of(c).and_then(|t| number(&t))),
             "leechers" => it.leechers = it.leechers.or_else(|| text_of(c).and_then(|t| number(&t))),
-            "downloads" => it.downloads = it.downloads.or_else(|| text_of(c).and_then(|t| number(&t))),
-            "size" | "contentlength" => it.size = it.size.or_else(|| text_of(c).and_then(|t| parse_size(&t))),
+            "downloads" => {
+                it.downloads = it.downloads.or_else(|| text_of(c).and_then(|t| number(&t)))
+            }
+            "size" | "contentlength" => {
+                it.size = it.size.or_else(|| text_of(c).and_then(|t| parse_size(&t)))
+            }
             "magneturi" => {
                 if let Some(t) = text_of(c) {
                     place(it, &t, false);
@@ -291,20 +335,35 @@ fn finish(mut it: Item) -> Option<Item> {
         it.info_hash = it.magnet.as_deref().and_then(magnet_hash);
     }
     if it.guid.is_empty() {
-        it.guid = it.page.clone().or_else(|| it.torrent.clone()).or_else(|| it.magnet.clone()).unwrap_or_else(|| it.title.clone());
+        it.guid = it
+            .page
+            .clone()
+            .or_else(|| it.torrent.clone())
+            .or_else(|| it.magnet.clone())
+            .unwrap_or_else(|| it.title.clone());
     }
     Some(it)
 }
 
 fn rss_item(n: Node, torznab: &mut bool) -> Option<Item> {
-    let mut it = Item { title: child_text(n, "title").unwrap_or_default(), ..Item::default() };
+    let mut it = Item {
+        title: child_text(n, "title").unwrap_or_default(),
+        ..Item::default()
+    };
     // Enclosures first: Jackett's link is its enclosure, with no ".torrent" to tell.
-    for e in n.children().filter(|c| c.is_element() && local(c) == "enclosure") {
-        let Some(url) = e.attribute("url") else { continue };
+    for e in n
+        .children()
+        .filter(|c| c.is_element() && local(c) == "enclosure")
+    {
+        let Some(url) = e.attribute("url") else {
+            continue;
+        };
         let kind = e.attribute("type").unwrap_or("").to_ascii_lowercase();
         place(&mut it, url, kind.contains("bittorrent"));
         if kind.contains("bittorrent") || safe_magnet(url).is_some() {
-            it.size = it.size.or_else(|| e.attribute("length").and_then(number).filter(|l| *l > 0));
+            it.size = it
+                .size
+                .or_else(|| e.attribute("length").and_then(number).filter(|l| *l > 0));
         }
     }
     if let Some(l) = child_text(n, "link")
@@ -326,7 +385,9 @@ fn rss_item(n: Node, torznab: &mut bool) -> Option<Item> {
         it.page = safe_http(&c);
     }
     extras(n, &mut it, torznab);
-    it.description = child_text(n, "description").map(|d| tidy_description(&d)).unwrap_or_default();
+    it.description = child_text(n, "description")
+        .map(|d| tidy_description(&d))
+        .unwrap_or_default();
     // nyaa's own category beats the plain RSS one (a Torznab number).
     it.category = n
         .children()
@@ -334,26 +395,53 @@ fn rss_item(n: Node, torznab: &mut bool) -> Option<Item> {
         .filter_map(text_of)
         .rfind(|t| !t.chars().all(|c| c.is_ascii_digit()))
         .unwrap_or_default();
-    it.published = child_text(n, "pubDate").or_else(|| child_text(n, "date")).and_then(|d| parse_rfc2822(&d).or_else(|| parse_rfc3339(&d)));
+    it.published = child_text(n, "pubDate")
+        .or_else(|| child_text(n, "date"))
+        .and_then(|d| parse_rfc2822(&d).or_else(|| parse_rfc3339(&d)));
     finish(it)
 }
 
 fn atom_entry(n: Node, torznab: &mut bool) -> Option<Item> {
-    let mut it = Item { title: child_text(n, "title").unwrap_or_default(), ..Item::default() };
-    for l in n.children().filter(|c| c.is_element() && local(c) == "link") {
-        let Some(href) = l.attribute("href") else { continue };
+    let mut it = Item {
+        title: child_text(n, "title").unwrap_or_default(),
+        ..Item::default()
+    };
+    for l in n
+        .children()
+        .filter(|c| c.is_element() && local(c) == "link")
+    {
+        let Some(href) = l.attribute("href") else {
+            continue;
+        };
         let rel = l.attribute("rel").unwrap_or("alternate");
         let kind = l.attribute("type").unwrap_or("").to_ascii_lowercase();
-        place(&mut it, href, rel == "enclosure" && (kind.contains("bittorrent") || kind.is_empty()));
+        place(
+            &mut it,
+            href,
+            rel == "enclosure" && (kind.contains("bittorrent") || kind.is_empty()),
+        );
         if rel == "enclosure" {
-            it.size = it.size.or_else(|| l.attribute("length").and_then(number).filter(|l| *l > 0));
+            it.size = it
+                .size
+                .or_else(|| l.attribute("length").and_then(number).filter(|l| *l > 0));
         }
     }
     it.guid = child_text(n, "id").unwrap_or_default();
     extras(n, &mut it, torznab);
-    it.description = child_text(n, "summary").or_else(|| child_text(n, "content")).map(|d| tidy_description(&d)).unwrap_or_default();
-    it.category = child(n, "category").and_then(|c| c.attribute("term").map(str::to_string).or_else(|| text_of(c))).unwrap_or_default();
-    it.published = child_text(n, "published").or_else(|| child_text(n, "updated")).and_then(|d| parse_rfc3339(&d).or_else(|| parse_rfc2822(&d)));
+    it.description = child_text(n, "summary")
+        .or_else(|| child_text(n, "content"))
+        .map(|d| tidy_description(&d))
+        .unwrap_or_default();
+    it.category = child(n, "category")
+        .and_then(|c| {
+            c.attribute("term")
+                .map(str::to_string)
+                .or_else(|| text_of(c))
+        })
+        .unwrap_or_default();
+    it.published = child_text(n, "published")
+        .or_else(|| child_text(n, "updated"))
+        .and_then(|d| parse_rfc3339(&d).or_else(|| parse_rfc2822(&d)));
     finish(it)
 }
 
@@ -368,28 +456,70 @@ pub fn parse(body: &str) -> Result<Feed, FeedError> {
     let root = doc.root_element();
     let mut torznab = false;
     match local(&root).to_ascii_lowercase().as_str() {
-        "error" => Err(FeedError::Indexer(root.attribute("description").unwrap_or("an error").chars().take(200).collect())),
+        "error" => Err(FeedError::Indexer(
+            root.attribute("description")
+                .unwrap_or("an error")
+                .chars()
+                .take(200)
+                .collect(),
+        )),
         "feed" => {
-            let items = root.children().filter(|c| c.is_element() && local(c) == "entry").filter_map(|e| atom_entry(e, &mut torznab)).collect();
-            Ok(Feed { format: Format::Atom, title: child_text(root, "title"), ttl: None, items })
+            let items = root
+                .children()
+                .filter(|c| c.is_element() && local(c) == "entry")
+                .filter_map(|e| atom_entry(e, &mut torznab))
+                .collect();
+            Ok(Feed {
+                format: Format::Atom,
+                title: child_text(root, "title"),
+                ttl: None,
+                items,
+            })
         }
         "rss" | "rdf" => {
             let channel = child(root, "channel");
             // RSS 1.0 keeps its items beside the channel.
             let is_item = |c: &Node| c.is_element() && local(c) == "item";
-            let mut nodes: Vec<Node> = channel.map(|c| c.children().filter(is_item).collect()).unwrap_or_default();
+            let mut nodes: Vec<Node> = channel
+                .map(|c| c.children().filter(is_item).collect())
+                .unwrap_or_default();
             nodes.extend(root.children().filter(is_item));
-            let items = nodes.into_iter().filter_map(|n| rss_item(n, &mut torznab)).collect();
+            let items = nodes
+                .into_iter()
+                .filter_map(|n| rss_item(n, &mut torznab))
+                .collect();
             let title = channel.and_then(|c| child_text(c, "title"));
-            let ttl = channel.and_then(|c| child_text(c, "ttl")).and_then(|t| number(&t)).filter(|t| *t > 0);
-            Ok(Feed { format: if torznab { Format::Torznab } else { Format::Rss }, title, ttl, items })
+            let ttl = channel
+                .and_then(|c| child_text(c, "ttl"))
+                .and_then(|t| number(&t))
+                .filter(|t| *t > 0);
+            Ok(Feed {
+                format: if torznab {
+                    Format::Torznab
+                } else {
+                    Format::Rss
+                },
+                title,
+                ttl,
+                items,
+            })
         }
         _ => Err(FeedError::NotAFeed),
     }
 }
 
 /// Query keys whose values are secrets.
-const SECRET_KEYS: [&str; 9] = ["apikey", "api_key", "api-key", "passkey", "key", "token", "auth", "authkey", "torrent_pass"];
+const SECRET_KEYS: [&str; 9] = [
+    "apikey",
+    "api_key",
+    "api-key",
+    "passkey",
+    "key",
+    "token",
+    "auth",
+    "authkey",
+    "torrent_pass",
+];
 
 /// The URL carries a secret: a user:password, or a key in its query.
 pub fn has_secret(url: &str) -> bool {
@@ -425,7 +555,11 @@ pub fn mask(url: &str) -> String {
         let parts: Vec<String> = q
             .split('&')
             .map(|kv| match kv.split_once('=') {
-                Some((k, v)) if !v.is_empty() && SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str()) => format!("{k}=•••"),
+                Some((k, v))
+                    if !v.is_empty() && SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str()) =>
+                {
+                    format!("{k}=•••")
+                }
                 _ => kv.to_string(),
             })
             .collect();
@@ -453,7 +587,10 @@ fn url_decode(s: &str) -> String {
     while i < b.len() {
         match b[i] {
             b'+' => out.push(b' '),
-            b'%' if i + 2 < b.len() => match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            b'%' if i + 2 < b.len() => match std::str::from_utf8(&b[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
                 Some(v) => {
                     out.push(v);
                     i += 2;
@@ -480,7 +617,9 @@ pub fn search_url(template: &str, title: &str) -> Option<String> {
     let mut enc = String::new();
     for b in title.trim().bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => enc.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                enc.push(b as char)
+            }
             b' ' => enc.push('+'),
             _ => enc.push_str(&format!("%{b:02X}")),
         }
@@ -496,7 +635,10 @@ pub const NYAA_ANIME_ENGLISH: &str = "1_2";
 /// uploader ("nyaa.si: Lanterns 1080p"). Only reads the text: no request. Other sites: `None`.
 pub fn nyaa_defaults(url: &str) -> Option<NyaaDefaults> {
     let u = url.trim();
-    let rest = u.strip_prefix("https://").or_else(|| u.strip_prefix("http://")).unwrap_or(u);
+    let rest = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .unwrap_or(u);
     let (host, tail) = rest.split_at(rest.find(['/', '?']).unwrap_or(rest.len()));
     let host = host.to_ascii_lowercase();
     if host != "nyaa.si" && host != "www.nyaa.si" {
@@ -504,15 +646,31 @@ pub fn nyaa_defaults(url: &str) -> Option<NyaaDefaults> {
     }
     let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
     let query = query.split('#').next().unwrap_or("");
-    let mut pairs: Vec<(String, String)> = query.split('&').filter(|p| !p.is_empty()).map(|p| p.split_once('=').map_or((p.to_string(), String::new()), |(k, v)| (k.to_string(), v.to_string()))).collect();
+    let mut pairs: Vec<(String, String)> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            p.split_once('=')
+                .map_or((p.to_string(), String::new()), |(k, v)| {
+                    (k.to_string(), v.to_string())
+                })
+        })
+        .collect();
     pairs.retain(|(k, _)| k != "page");
     pairs.insert(0, ("page".into(), "rss".into()));
     if !pairs.iter().any(|(k, v)| k == "c" && !v.is_empty()) {
         pairs.retain(|(k, _)| k != "c");
         pairs.push(("c".into(), NYAA_ANIME_ENGLISH.into()));
     }
-    let q = pairs.iter().find(|(k, _)| k == "q").map(|(_, v)| url_decode(v).trim().to_string()).filter(|v| !v.is_empty());
-    let user = path.strip_prefix("/user/").map(|u| url_decode(u.trim_end_matches('/'))).filter(|u| !u.is_empty());
+    let q = pairs
+        .iter()
+        .find(|(k, _)| k == "q")
+        .map(|(_, v)| url_decode(v).trim().to_string())
+        .filter(|v| !v.is_empty());
+    let user = path
+        .strip_prefix("/user/")
+        .map(|u| url_decode(u.trim_end_matches('/')))
+        .filter(|u| !u.is_empty());
     let name = match (user, q) {
         (Some(u), Some(q)) => format!("nyaa.si: {u}, {q}"),
         (Some(u), None) => format!("nyaa.si: {u}"),
@@ -520,8 +678,20 @@ pub fn nyaa_defaults(url: &str) -> Option<NyaaDefaults> {
         (None, None) => "nyaa.si".to_string(),
     };
     let path = if path.is_empty() { "/" } else { path };
-    let query: Vec<String> = pairs.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect();
-    Some(NyaaDefaults { url: format!("https://nyaa.si{path}?{}", query.join("&")), name })
+    let query: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| {
+            if v.is_empty() {
+                k.clone()
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect();
+    Some(NyaaDefaults {
+        url: format!("https://nyaa.si{path}?{}", query.join("&")),
+        name,
+    })
 }
 
 #[cfg(test)]

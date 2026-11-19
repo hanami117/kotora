@@ -20,7 +20,11 @@ static ACTIVE: AtomicU8 = AtomicU8::new(0);
 pub type Service = Box<dyn ListService + Send>;
 
 pub fn active() -> ServiceId {
-    if ACTIVE.load(Ordering::Relaxed) == 1 { ServiceId::AniList } else { ServiceId::Mal }
+    if ACTIVE.load(Ordering::Relaxed) == 1 {
+        ServiceId::AniList
+    } else {
+        ServiceId::Mal
+    }
 }
 
 pub fn set_active(id: ServiceId) {
@@ -34,14 +38,18 @@ pub fn name() -> &'static str {
 
 /// Reads `[account] service` at start (MyAnimeList when none is chosen).
 pub fn load() -> ServiceId {
-    let id = Config::load(&paths::config_file()).map(|c| c.service_id()).unwrap_or_default();
+    let id = Config::load(&paths::config_file())
+        .map(|c| c.service_id())
+        .unwrap_or_default();
     set_active(id);
     id
 }
 
 /// Whether a token of `id` is saved.
 pub fn has_token(id: ServiceId) -> bool {
-    TokenStore::new(paths::token_file()).load(id.name()).is_some()
+    TokenStore::new(paths::token_file())
+        .load(id.name())
+        .is_some()
 }
 
 /// A signed-in client of the active service for a short worker (sync, queue, search, details,
@@ -59,10 +67,18 @@ pub fn open_for(id: ServiceId) -> Option<Service> {
     tokens.load(id.name())?;
     match id {
         ServiceId::Mal => {
-            let cid = Config::load(&paths::config_file()).ok()?.effective_client_id(ServiceId::Mal)?;
-            Some(Box::new(Mal::new(Client::new(cid, UreqTransport::default()), tokens)))
+            let cid = Config::load(&paths::config_file())
+                .ok()?
+                .effective_client_id(ServiceId::Mal)?;
+            Some(Box::new(Mal::new(
+                Client::new(cid, UreqTransport::default()),
+                tokens,
+            )))
         }
         // AniList needs its Client ID only to sign in: the token works alone.
-        ServiceId::AniList => Some(Box::new(AniList::new(anilist::Client::new(UreqTransport::default()), tokens))),
+        ServiceId::AniList => Some(Box::new(AniList::new(
+            anilist::Client::new(UreqTransport::default()),
+            tokens,
+        ))),
     }
 }

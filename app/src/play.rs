@@ -19,7 +19,11 @@ pub enum Player {
 impl Player {
     /// The choices on this system, in the Settings order.
     pub fn here() -> &'static [Player] {
-        if cfg!(target_os = "macos") { &[Player::System, Player::Mpv, Player::Iina, Player::Vlc] } else { &[Player::System, Player::Mpv, Player::Vlc] }
+        if cfg!(target_os = "macos") {
+            &[Player::System, Player::Mpv, Player::Iina, Player::Vlc]
+        } else {
+            &[Player::System, Player::Mpv, Player::Vlc]
+        }
     }
 
     /// The `[library] open_with` value.
@@ -67,7 +71,9 @@ pub fn resolve(open_with: &str, last_seen: &str, installed: &[Player]) -> Player
     let ok = |p: Player| installed.contains(&p);
     match Player::from_key(open_with).filter(|p| ok(*p)) {
         Some(p) => p,
-        None => Player::from_key(last_seen).filter(|p| *p != Player::System && ok(*p)).unwrap_or(Player::System),
+        None => Player::from_key(last_seen)
+            .filter(|p| *p != Player::System && ok(*p))
+            .unwrap_or(Player::System),
     }
 }
 
@@ -101,16 +107,39 @@ fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     // A GUI start on macOS has a short PATH: Homebrew's folders too.
     let extra = if cfg!(target_os = "macos") {
-        vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]
+        vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
     } else if cfg!(windows) {
         // Windows installers don't put players on PATH: the usual folders too.
-        let under = |var: &str, rest: &[&str]| std::env::var_os(var).filter(|v| !v.is_empty()).map(|base| rest.iter().fold(PathBuf::from(base), |p, part| p.join(part)));
-        [under("ProgramFiles", &["VideoLAN", "VLC"]), under("ProgramFiles(x86)", &["VideoLAN", "VLC"]), under("ProgramFiles", &["mpv"]), under("LOCALAPPDATA", &["Programs", "mpv"])].into_iter().flatten().collect()
+        let under = |var: &str, rest: &[&str]| {
+            std::env::var_os(var).filter(|v| !v.is_empty()).map(|base| {
+                rest.iter()
+                    .fold(PathBuf::from(base), |p, part| p.join(part))
+            })
+        };
+        [
+            under("ProgramFiles", &["VideoLAN", "VLC"]),
+            under("ProgramFiles(x86)", &["VideoLAN", "VLC"]),
+            under("ProgramFiles", &["mpv"]),
+            under("LOCALAPPDATA", &["Programs", "mpv"]),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     } else {
         vec![]
     };
-    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
-    std::env::split_paths(&path).chain(extra).map(|d| d.join(&file)).find(|p| is_exec(p))
+    let file = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    std::env::split_paths(&path)
+        .chain(extra)
+        .map(|d| d.join(&file))
+        .find(|p| is_exec(p))
 }
 
 #[cfg(unix)]
@@ -126,7 +155,13 @@ fn is_exec(p: &Path) -> bool {
 
 fn app_bundle(name: &str) -> bool {
     let home = kotora_core::paths::home_dir();
-    [Some(PathBuf::from("/Applications")), home.map(|h| h.join("Applications"))].into_iter().flatten().any(|d| d.join(format!("{name}.app")).is_dir())
+    [
+        Some(PathBuf::from("/Applications")),
+        home.map(|h| h.join("Applications")),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|d| d.join(format!("{name}.app")).is_dir())
 }
 
 /// Looks for the players (a few `stat`s; run off the UI thread).
@@ -144,14 +179,27 @@ pub fn find() -> Found {
 /// The command that opens `file` in `p`.
 pub fn command(p: Player, file: &str, found: &Found, mac: bool) -> (String, Vec<String>) {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    let mpv_bin = |bin: &Path| (bin.to_string_lossy().into_owned(), s(&["--player-operation-mode=pseudo-gui", "--", file]));
+    let mpv_bin = |bin: &Path| {
+        (
+            bin.to_string_lossy().into_owned(),
+            s(&["--player-operation-mode=pseudo-gui", "--", file]),
+        )
+    };
     match (p, mac) {
         (Player::System, true) => ("open".into(), s(&["--", file])),
         (Player::System, false) => ("xdg-open".into(), s(&[file])),
         (Player::Iina, _) => ("open".into(), s(&["-a", "IINA", "--", file])),
         (Player::Vlc, true) => ("open".into(), s(&["-a", "VLC", "--", file])),
-        (Player::Vlc, false) => (found.vlc_bin.as_ref().map_or("vlc".into(), |b| b.to_string_lossy().into_owned()), s(&["--", file])),
-        (Player::Mpv, true) if found.mpv_app || found.mpv_bin.is_none() => ("open".into(), s(&["-a", "mpv", "--", file])),
+        (Player::Vlc, false) => (
+            found
+                .vlc_bin
+                .as_ref()
+                .map_or("vlc".into(), |b| b.to_string_lossy().into_owned()),
+            s(&["--", file]),
+        ),
+        (Player::Mpv, true) if found.mpv_app || found.mpv_bin.is_none() => {
+            ("open".into(), s(&["-a", "mpv", "--", file]))
+        }
         (Player::Mpv, _) => mpv_bin(found.mpv_bin.as_deref().unwrap_or(Path::new("mpv"))),
     }
 }
@@ -179,9 +227,11 @@ pub fn open(p: Player, file: &str, found: &Found) -> Result<(), String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("Can't start {}: {e}", p.label()))?;
-    let _ = std::thread::Builder::new().name("kotora-player".into()).spawn(move || {
-        let _ = child.wait();
-    });
+    let _ = std::thread::Builder::new()
+        .name("kotora-player".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
     Ok(())
 }
 
@@ -194,9 +244,17 @@ mod tests {
         let all = [Player::System, Player::Mpv, Player::Vlc];
         assert_eq!(resolve("auto", "vlc", &all), Player::Vlc);
         assert_eq!(resolve("auto", "", &all), Player::System);
-        assert_eq!(resolve("auto", "mpv", &[Player::System]), Player::System, "not installed any more");
+        assert_eq!(
+            resolve("auto", "mpv", &[Player::System]),
+            Player::System,
+            "not installed any more"
+        );
         assert_eq!(resolve("mpv", "vlc", &all), Player::Mpv, "a pick wins");
-        assert_eq!(resolve("vlc", "mpv", &[Player::System, Player::Mpv]), Player::Mpv, "a pick that's gone: auto");
+        assert_eq!(
+            resolve("vlc", "mpv", &[Player::System, Player::Mpv]),
+            Player::Mpv,
+            "a pick that's gone: auto"
+        );
         assert_eq!(resolve("default", "mpv", &all), Player::System);
     }
 
@@ -206,7 +264,14 @@ mod tests {
         assert_eq!(Player::from_seen("VLC media player"), Some(Player::Vlc));
         assert_eq!(Player::from_seen("mpc-qt"), None);
         assert_eq!(Player::from_seen("Haruna"), None);
-        assert_eq!(Player::from_seen("IINA"), if cfg!(target_os = "macos") { Some(Player::Iina) } else { None });
+        assert_eq!(
+            Player::from_seen("IINA"),
+            if cfg!(target_os = "macos") {
+                Some(Player::Iina)
+            } else {
+                None
+            }
+        );
     }
 
     #[test]
@@ -217,20 +282,71 @@ mod tests {
             let (prog, args) = command(p, f, found, mac);
             format!("{prog} {}", args.join(" "))
         };
-        assert_eq!(cmd(Player::System, &none, true), "open -- /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::Iina, &none, true), "open -a IINA -- /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::Vlc, &none, true), "open -a VLC -- /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::Mpv, &Found { mpv_app: true, ..none.clone() }, true), "open -a mpv -- /m/a/Show - 07.mkv");
-        let brew = Found { mpv_bin: Some("/opt/homebrew/bin/mpv".into()), ..none.clone() };
-        assert_eq!(cmd(Player::Mpv, &brew, true), "/opt/homebrew/bin/mpv --player-operation-mode=pseudo-gui -- /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::System, &none, false), "xdg-open /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::Vlc, &Found { vlc_bin: Some("/usr/bin/vlc".into()), ..none.clone() }, false), "/usr/bin/vlc -- /m/a/Show - 07.mkv");
-        assert_eq!(cmd(Player::Mpv, &Found { mpv_bin: Some("/usr/bin/mpv".into()), ..none }, false), "/usr/bin/mpv --player-operation-mode=pseudo-gui -- /m/a/Show - 07.mkv");
+        assert_eq!(
+            cmd(Player::System, &none, true),
+            "open -- /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(Player::Iina, &none, true),
+            "open -a IINA -- /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(Player::Vlc, &none, true),
+            "open -a VLC -- /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(
+                Player::Mpv,
+                &Found {
+                    mpv_app: true,
+                    ..none.clone()
+                },
+                true
+            ),
+            "open -a mpv -- /m/a/Show - 07.mkv"
+        );
+        let brew = Found {
+            mpv_bin: Some("/opt/homebrew/bin/mpv".into()),
+            ..none.clone()
+        };
+        assert_eq!(
+            cmd(Player::Mpv, &brew, true),
+            "/opt/homebrew/bin/mpv --player-operation-mode=pseudo-gui -- /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(Player::System, &none, false),
+            "xdg-open /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(
+                Player::Vlc,
+                &Found {
+                    vlc_bin: Some("/usr/bin/vlc".into()),
+                    ..none.clone()
+                },
+                false
+            ),
+            "/usr/bin/vlc -- /m/a/Show - 07.mkv"
+        );
+        assert_eq!(
+            cmd(
+                Player::Mpv,
+                &Found {
+                    mpv_bin: Some("/usr/bin/mpv".into()),
+                    ..none
+                },
+                false
+            ),
+            "/usr/bin/mpv --player-operation-mode=pseudo-gui -- /m/a/Show - 07.mkv"
+        );
     }
 
     #[test]
     fn installed_lists_what_was_found() {
-        let f = Found { mpv_bin: Some("/usr/bin/mpv".into()), ..Found::default() };
+        let f = Found {
+            mpv_bin: Some("/usr/bin/mpv".into()),
+            ..Found::default()
+        };
         assert_eq!(f.installed(), [Player::System, Player::Mpv]);
     }
 }

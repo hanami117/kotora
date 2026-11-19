@@ -54,7 +54,9 @@ pub fn start(on_action: OnAction, on_support: OnSupport) -> Box<dyn Backend> {
 
 /// Runs from a `.app` with a bundle identifier.
 fn bundled() -> bool {
-    let Some(class) = AnyClass::get(c"NSBundle") else { return false };
+    let Some(class) = AnyClass::get(c"NSBundle") else {
+        return false;
+    };
     // SAFETY: no-argument getters on the main bundle.
     unsafe {
         let bundle: Option<Retained<AnyObject>> = msg_send![class, mainBundle];
@@ -81,11 +83,27 @@ fn install() {
         let _: () = msg_send![&*center, setDelegate: &*delegate];
         std::mem::forget(delegate);
     }
-    let (Some(action_class), Some(category_class), Some(set_class)) = (AnyClass::get(c"UNNotificationAction"), AnyClass::get(c"UNNotificationCategory"), AnyClass::get(c"NSSet")) else {
+    let (Some(action_class), Some(category_class), Some(set_class)) = (
+        AnyClass::get(c"UNNotificationAction"),
+        AnyClass::get(c"UNNotificationCategory"),
+        AnyClass::get(c"NSSet"),
+    ) else {
         return;
     };
     let mut categories: Vec<Retained<AnyObject>> = Vec::new();
-    for kind in [Kind::Detected, Kind::Offer, Kind::Rewatch, Kind::Recorded, Kind::Started, Kind::Aired, Kind::AiredPlay, Kind::Chapter, Kind::ReadOffer, Kind::Reread, Kind::ReadRecorded] {
+    for kind in [
+        Kind::Detected,
+        Kind::Offer,
+        Kind::Rewatch,
+        Kind::Recorded,
+        Kind::Started,
+        Kind::Aired,
+        Kind::AiredPlay,
+        Kind::Chapter,
+        Kind::ReadOffer,
+        Kind::Reread,
+        Kind::ReadRecorded,
+    ] {
         // SAFETY: the documented factory methods, with NSString / NSArray arguments and option
         // masks of 0 (no foreground launch, no authentication, not destructive).
         unsafe {
@@ -122,7 +140,11 @@ fn read_status(on_support: OnSupport) {
         }
         // SAFETY: `settings` is a UNNotificationSettings for the length of the block.
         let status: isize = unsafe { msg_send![settings, authorizationStatus] };
-        on_support(if status == STATUS_DENIED { Support::Denied } else { Support::Buttons });
+        on_support(if status == STATUS_DENIED {
+            Support::Denied
+        } else {
+            Support::Buttons
+        });
     });
     // SAFETY: the selector takes a `void (^)(UNNotificationSettings *)`, copied by the center.
     unsafe {
@@ -142,7 +164,11 @@ impl Center {
         let on_support = self.on_support.clone();
         let done = RcBlock::new(move |granted: Bool, _error: *mut AnyObject| {
             let granted = granted.as_bool();
-            on_support(if granted { Support::Buttons } else { Support::Denied });
+            on_support(if granted {
+                Support::Buttons
+            } else {
+                Support::Denied
+            });
             if granted {
                 then();
             }
@@ -167,7 +193,8 @@ impl Backend for Center {
         // SAFETY: both take an NSArray of identifiers.
         unsafe {
             let _: () = msg_send![&*center, removeDeliveredNotificationsWithIdentifiers: &*ids];
-            let _: () = msg_send![&*center, removePendingNotificationRequestsWithIdentifiers: &*ids];
+            let _: () =
+                msg_send![&*center, removePendingNotificationRequestsWithIdentifiers: &*ids];
         }
     }
 
@@ -177,7 +204,11 @@ impl Backend for Center {
 }
 
 fn add(note: &Note) {
-    let (Some(center), Some(content_class), Some(request_class)) = (center(), AnyClass::get(c"UNMutableNotificationContent"), AnyClass::get(c"UNNotificationRequest")) else {
+    let (Some(center), Some(content_class), Some(request_class)) = (
+        center(),
+        AnyClass::get(c"UNMutableNotificationContent"),
+        AnyClass::get(c"UNNotificationRequest"),
+    ) else {
         return;
     };
     objc2::rc::autoreleasepool(|_| {
@@ -221,7 +252,13 @@ fn act_for(identifier: &str) -> Option<Act> {
     Act::from_key(identifier).filter(|a| *a != Act::Open)
 }
 
-extern "C-unwind" fn did_receive(_this: *mut AnyObject, _cmd: Sel, _center: *mut AnyObject, response: *mut AnyObject, done: &DynBlock<dyn Fn()>) {
+extern "C-unwind" fn did_receive(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _center: *mut AnyObject,
+    response: *mut AnyObject,
+    done: &DynBlock<dyn Fn()>,
+) {
     let got = objc2::rc::autoreleasepool(|_| {
         if response.is_null() {
             return None;
@@ -243,7 +280,13 @@ extern "C-unwind" fn did_receive(_this: *mut AnyObject, _cmd: Sel, _center: *mut
     done.call(());
 }
 
-extern "C-unwind" fn will_present(_this: *mut AnyObject, _cmd: Sel, _center: *mut AnyObject, _notification: *mut AnyObject, done: &DynBlock<dyn Fn(usize)>) {
+extern "C-unwind" fn will_present(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _center: *mut AnyObject,
+    _notification: *mut AnyObject,
+    done: &DynBlock<dyn Fn(usize)>,
+) {
     done.call((PRESENT_LIST_BANNER,));
 }
 
@@ -252,14 +295,21 @@ fn delegate_class() -> &'static AnyClass {
         return c;
     }
     let superclass = AnyClass::get(c"NSObject").expect("NSObject");
-    let mut b = ClassBuilder::new(c"KotoraNotificationDelegate", superclass).expect("a new class name");
+    let mut b =
+        ClassBuilder::new(c"KotoraNotificationDelegate", superclass).expect("a new class name");
     if let Some(p) = AnyProtocol::get(c"UNUserNotificationCenterDelegate") {
         b.add_protocol(p);
     }
     // SAFETY: the signatures are the protocol's (center, response or notification, block).
     unsafe {
-        b.add_method(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:), did_receive as extern "C-unwind" fn(_, _, _, _, _));
-        b.add_method(sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:), will_present as extern "C-unwind" fn(_, _, _, _, _));
+        b.add_method(
+            sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:),
+            did_receive as extern "C-unwind" fn(_, _, _, _, _),
+        );
+        b.add_method(
+            sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
+            will_present as extern "C-unwind" fn(_, _, _, _, _),
+        );
     }
     b.register()
 }
@@ -298,7 +348,10 @@ mod tests {
         assert_eq!(act_for("not-now"), Some(Act::NotNow));
         assert_eq!(act_for("undo"), Some(Act::Undo));
         // Dismissing is not an answer; "default" is only the D-Bus name.
-        assert_eq!(act_for("com.apple.UNNotificationDismissActionIdentifier"), None);
+        assert_eq!(
+            act_for("com.apple.UNNotificationDismissActionIdentifier"),
+            None
+        );
         assert_eq!(act_for("default"), None);
     }
 
@@ -310,7 +363,11 @@ mod tests {
     #[test]
     fn the_delegate_class_has_both_methods() {
         let c = delegate_class();
-        assert!(c.responds_to(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)));
-        assert!(c.responds_to(sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:)));
+        assert!(c.responds_to(
+            sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)
+        ));
+        assert!(c.responds_to(
+            sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:)
+        ));
     }
 }

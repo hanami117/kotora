@@ -38,7 +38,12 @@ pub struct PlayerState {
 
 impl From<SourceStatus> for PlayerState {
     fn from(s: SourceStatus) -> Self {
-        PlayerState { switch: s.switch, via: s.via.label(), line: s.line, led: s.led }
+        PlayerState {
+            switch: s.switch,
+            via: s.via.label(),
+            line: s.line,
+            led: s.led,
+        }
     }
 }
 
@@ -50,9 +55,16 @@ fn live(led: Led) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Precise {
     /// Lines appended to the file.
-    Wrote { file: String, text: String },
+    Wrote {
+        file: String,
+        text: String,
+    },
     /// `mpv.conf` already sets a socket: nothing written. `watched`: Kotora watches that path.
-    AlreadySet { file: String, socket: String, watched: bool },
+    AlreadySet {
+        file: String,
+        socket: String,
+        watched: bool,
+    },
     Failed(String),
 }
 
@@ -95,14 +107,22 @@ impl State {
     /// Windows: the process scan sees an mpv or mpv.net.
     #[cfg(windows)]
     pub fn mpv_process_live(&self) -> bool {
-        self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
+        self.players
+            .iter()
+            .any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
     }
 
     /// mpv is seen by its process only: no IPC socket answers.
     fn mpv_seen_by_process(&self) -> bool {
         self.prefs.players.mpv
-            && self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
-            && !self.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led))
+            && self
+                .players
+                .iter()
+                .any(|p| p.switch == Switch::Mpv && p.via == VIA_PROCESS && live(p.led))
+            && !self
+                .players
+                .iter()
+                .any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led))
     }
 
     /// The banner shows: the offer (once ever), or its answer until closed. On Now Playing the
@@ -111,8 +131,11 @@ impl State {
         if self.precise.hidden {
             return false;
         }
-        let prompted = self.page == crate::model::Page::NowPlaying && self.precise_prompt().is_some();
-        self.precise.done.is_some() || self.precise.busy || (!self.prefs.precise_answered && self.mpv_process_only() && !prompted)
+        let prompted =
+            self.page == crate::model::Page::NowPlaying && self.precise_prompt().is_some();
+        self.precise.done.is_some()
+            || self.precise.busy
+            || (!self.prefs.precise_answered && self.mpv_process_only() && !prompted)
     }
 
     /// Now Playing's prompt: the followed player is seen by its open file only, precise
@@ -124,14 +147,24 @@ impl State {
             return None;
         }
         match n.switch {
-            Switch::Mpv if self.prefs.players.mpv && !self.prefs.precise_answered && !self.precise.conf_watched && !self.precise.busy => Some(Switch::Mpv),
+            Switch::Mpv
+                if self.prefs.players.mpv
+                    && !self.prefs.precise_answered
+                    && !self.precise.conf_watched
+                    && !self.precise.busy =>
+            {
+                Some(Switch::Mpv)
+            }
             #[cfg(target_os = "macos")]
             Switch::Iina
                 if self.prefs.players.iina
                     && !self.prefs.iina_precise_answered
                     && !self.iina.busy
                     && self.iina.done.is_none()
-                    && matches!(self.iina.setup, Some(kotora_detect::iinaconf::Setup::ConfDir { .. })) =>
+                    && matches!(
+                        self.iina.setup,
+                        Some(kotora_detect::iinaconf::Setup::ConfDir { .. })
+                    ) =>
             {
                 Some(Switch::Iina)
             }
@@ -201,23 +234,28 @@ impl State {
         self.precise.busy = true;
         #[cfg(windows)]
         let detector = self.glue.as_ref().map(|g| g.detector());
-        let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
-            #[cfg(not(windows))]
-            let (r, who, note) = (write_mpv_conf(), None, None);
-            #[cfg(windows)]
-            let (r, who, note) = write_mpv_conf_win(detector.as_deref());
-            h.update_if(move |s, _| {
-                s.precise.who = who;
-                s.precise.note = note;
-                s.precise_written(r)
+        let _ = std::thread::Builder::new()
+            .name("kotora-mpv-conf".into())
+            .spawn(move || {
+                #[cfg(not(windows))]
+                let (r, who, note) = (write_mpv_conf(), None, None);
+                #[cfg(windows)]
+                let (r, who, note) = write_mpv_conf_win(detector.as_deref());
+                h.update_if(move |s, _| {
+                    s.precise.who = who;
+                    s.precise.note = note;
+                    s.precise_written(r)
+                });
             });
-        });
     }
 
     pub fn precise_written(&mut self, r: Precise) -> bool {
         self.precise.busy = false;
         self.precise.for_iina = false;
-        if matches!(r, Precise::Wrote { .. } | Precise::AlreadySet { watched: true, .. }) {
+        if matches!(
+            r,
+            Precise::Wrote { .. } | Precise::AlreadySet { watched: true, .. }
+        ) {
             self.precise.conf_watched = true;
         }
         self.precise.done = Some(r);
@@ -265,14 +303,17 @@ pub(crate) fn watched_sockets() -> Vec<std::path::PathBuf> {
 /// watches? Then mpv only needs a restart and no offer is shown.
 #[cfg(not(windows))]
 pub fn check_conf(h: crate::model::Handle) {
-    let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
-        let watched = kotora_detect::mpvconf::check().is_ok_and(|c| c.watched(&watched_sockets()));
-        h.update_if(move |s, _| {
-            let changed = s.precise.conf_watched != watched;
-            s.precise.conf_watched = watched;
-            changed
+    let _ = std::thread::Builder::new()
+        .name("kotora-mpv-conf".into())
+        .spawn(move || {
+            let watched =
+                kotora_detect::mpvconf::check().is_ok_and(|c| c.watched(&watched_sockets()));
+            h.update_if(move |s, _| {
+                let changed = s.precise.conf_watched != watched;
+                s.precise.conf_watched = watched;
+                changed
+            });
         });
-    });
 }
 
 /// Windows, at start and when an mpv or mpv.net process appears (never headless; on a short
@@ -282,38 +323,64 @@ pub fn check_conf(h: crate::model::Handle) {
 #[cfg(windows)]
 pub fn check_conf_win(h: crate::model::Handle, detector: std::sync::Arc<kotora_detect::Detector>) {
     use kotora_detect::mpvconf::{WinEnv, win_check};
-    let _ = std::thread::Builder::new().name("kotora-mpv-conf".into()).spawn(move || {
-        let targets = WinEnv::current().targets(&running_mpvs());
-        let pipes: Vec<Option<std::path::PathBuf>> = targets.iter().map(|t| win_check(&t.file).ok().flatten()).collect();
-        for pipe in pipes.iter().flatten() {
-            detector.watch_socket(pipe);
-        }
-        let watched = !pipes.is_empty() && pipes.iter().all(Option::is_some);
-        h.update_if(move |s, _| {
-            let changed = s.precise.conf_watched != watched;
-            s.precise.conf_watched = watched;
-            changed
+    let _ = std::thread::Builder::new()
+        .name("kotora-mpv-conf".into())
+        .spawn(move || {
+            let targets = WinEnv::current().targets(&running_mpvs());
+            let pipes: Vec<Option<std::path::PathBuf>> = targets
+                .iter()
+                .map(|t| win_check(&t.file).ok().flatten())
+                .collect();
+            for pipe in pipes.iter().flatten() {
+                detector.watch_socket(pipe);
+            }
+            let watched = !pipes.is_empty() && pipes.iter().all(Option::is_some);
+            h.update_if(move |s, _| {
+                let changed = s.precise.conf_watched != watched;
+                s.precise.conf_watched = watched;
+                changed
+            });
         });
-    });
 }
 
 /// The mpv and mpv.net processes running now: (mpv.net?, program path).
 #[cfg(windows)]
 fn running_mpvs() -> Vec<(bool, std::path::PathBuf)> {
-    kotora_detect::winproc::players().iter().filter_map(|p| Some((p.family.mpv_net()?, std::path::PathBuf::from(&p.exe)))).collect()
+    kotora_detect::winproc::players()
+        .iter()
+        .filter_map(|p| Some((p.family.mpv_net()?, std::path::PathBuf::from(&p.exe))))
+        .collect()
 }
 
 /// Windows: adds mpv's IPC pipe (the first name Kotora watches) to the `mpv.conf` of the
 /// players that run, or of the config folders that exist: the file is created when missing and
 /// backed up when not. Runs on a short thread. With the answer: the player's name and a note.
 #[cfg(windows)]
-fn write_mpv_conf_win(detector: Option<&kotora_detect::Detector>) -> (Precise, Option<String>, Option<String>) {
+fn write_mpv_conf_win(
+    detector: Option<&kotora_detect::Detector>,
+) -> (Precise, Option<String>, Option<String>) {
     use kotora_detect::mpvconf::{WinEnabled, WinEnv, win_enable};
     let sockets = watched_sockets();
     let Some(pipe) = sockets.first() else {
-        return (Precise::Failed("No mpv pipe name is set: add one to [players] mpv_sockets in config.toml.".into()), None, None);
+        return (
+            Precise::Failed(
+                "No mpv pipe name is set: add one to [players] mpv_sockets in config.toml.".into(),
+            ),
+            None,
+            None,
+        );
     };
-    let results: Vec<_> = WinEnv::current().targets(&running_mpvs()).into_iter().map(|t| (t.player, win_enable(&t.file, pipe).map_err(|e| format!("Can't write {}: {e}", t.file.display())))).collect();
+    let results: Vec<_> = WinEnv::current()
+        .targets(&running_mpvs())
+        .into_iter()
+        .map(|t| {
+            (
+                t.player,
+                win_enable(&t.file, pipe)
+                    .map_err(|e| format!("Can't write {}: {e}", t.file.display())),
+            )
+        })
+        .collect();
     // A pipe the user set under another name is watched from now on.
     for (_, r) in &results {
         if let (Ok(WinEnabled::AlreadySet { pipe, .. }), Some(d)) = (r, detector) {
@@ -326,7 +393,12 @@ fn write_mpv_conf_win(detector: Option<&kotora_detect::Detector>) -> (Precise, O
 /// Puts the answers for one or two `mpv.conf` files into one: what was written wins over
 /// "already set", which wins over an error.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn win_answer(results: Vec<(&'static str, Result<kotora_detect::mpvconf::WinEnabled, String>)>) -> (Precise, Option<String>, Option<String>) {
+pub(crate) fn win_answer(
+    results: Vec<(
+        &'static str,
+        Result<kotora_detect::mpvconf::WinEnabled, String>,
+    )>,
+) -> (Precise, Option<String>, Option<String>) {
     use kotora_detect::mpvconf::WinEnabled;
     let both = |v: Vec<String>| v.join(" and ");
     let names = |keep: &dyn Fn(&Result<WinEnabled, String>) -> bool| {
@@ -338,28 +410,82 @@ pub(crate) fn win_answer(results: Vec<(&'static str, Result<kotora_detect::mpvco
         }
         both(v)
     };
-    let wrote: Vec<_> = results.iter().filter_map(|(_, r)| if let Ok(WinEnabled::Wrote { file, text, created, backup }) = r { Some((file, text, *created, backup)) } else { None }).collect();
+    let wrote: Vec<_> = results
+        .iter()
+        .filter_map(|(_, r)| {
+            if let Ok(WinEnabled::Wrote {
+                file,
+                text,
+                created,
+                backup,
+            }) = r
+            {
+                Some((file, text, *created, backup))
+            } else {
+                None
+            }
+        })
+        .collect();
     if let Some((_, text, _, _)) = wrote.first() {
         let mut notes = Vec::new();
         for (file, _, created, backup) in &wrote {
             let name = tilde(&file.display().to_string());
             match backup {
-                Some(b) => notes.push(format!("{name} was copied to {} first.", b.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())),
-                None if *created => notes.push(format!("{name} didn\u{2019}t exist: Kotora made it.")),
+                Some(b) => notes.push(format!(
+                    "{name} was copied to {} first.",
+                    b.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                )),
+                None if *created => {
+                    notes.push(format!("{name} didn\u{2019}t exist: Kotora made it."))
+                }
                 None => {}
             }
         }
         let who = names(&|r| matches!(r, Ok(WinEnabled::Wrote { .. })));
         notes.push(format!("Close {who} and open it again once."));
-        let file = both(wrote.iter().map(|(f, ..)| f.display().to_string()).collect());
-        return (Precise::Wrote { file, text: text.replace("\r\n", "\n") }, Some(who), Some(notes.join(" ")));
+        let file = both(
+            wrote
+                .iter()
+                .map(|(f, ..)| f.display().to_string())
+                .collect(),
+        );
+        return (
+            Precise::Wrote {
+                file,
+                text: text.replace("\r\n", "\n"),
+            },
+            Some(who),
+            Some(notes.join(" ")),
+        );
     }
-    let set: Vec<_> = results.iter().filter_map(|(_, r)| if let Ok(WinEnabled::AlreadySet { file, pipe }) = r { Some((file, pipe)) } else { None }).collect();
+    let set: Vec<_> = results
+        .iter()
+        .filter_map(|(_, r)| {
+            if let Ok(WinEnabled::AlreadySet { file, pipe }) = r {
+                Some((file, pipe))
+            } else {
+                None
+            }
+        })
+        .collect();
     if let Some((file, pipe)) = set.first() {
         let who = names(&|r| matches!(r, Ok(WinEnabled::AlreadySet { .. })));
-        return (Precise::AlreadySet { file: file.display().to_string(), socket: pipe.display().to_string(), watched: true }, Some(who), None);
+        return (
+            Precise::AlreadySet {
+                file: file.display().to_string(),
+                socket: pipe.display().to_string(),
+                watched: true,
+            },
+            Some(who),
+            None,
+        );
     }
-    let error = results.into_iter().find_map(|(_, r)| r.err()).unwrap_or_else(|| "No mpv.conf was found: APPDATA is not set.".into());
+    let error = results
+        .into_iter()
+        .find_map(|(_, r)| r.err())
+        .unwrap_or_else(|| "No mpv.conf was found: APPDATA is not set.".into());
     (Precise::Failed(error), None, None)
 }
 
@@ -370,13 +496,22 @@ fn write_mpv_conf() -> Precise {
     use kotora_detect::mpvconf::{self, Enabled};
     let sockets = watched_sockets();
     let Some(socket) = sockets.first() else {
-        return Precise::Failed("No mpv socket path is set: add one to [players] mpv_sockets in config.toml.".into());
+        return Precise::Failed(
+            "No mpv socket path is set: add one to [players] mpv_sockets in config.toml.".into(),
+        );
     };
     match mpvconf::enable(socket) {
-        Ok(Enabled::Wrote { file, text }) => Precise::Wrote { file: file.display().to_string(), text },
+        Ok(Enabled::Wrote { file, text }) => Precise::Wrote {
+            file: file.display().to_string(),
+            text,
+        },
         Ok(Enabled::AlreadySet { file, socket }) => {
             let watched = sockets.contains(&socket);
-            Precise::AlreadySet { file: file.display().to_string(), socket: socket.display().to_string(), watched }
+            Precise::AlreadySet {
+                file: file.display().to_string(),
+                socket: socket.display().to_string(),
+                watched,
+            }
         }
         Err(e) => Precise::Failed(format!("Can't write mpv.conf: {e}")),
     }
@@ -384,7 +519,11 @@ fn write_mpv_conf() -> Precise {
 
 /// The banner on top of the pages (below the Now Playing banner, never with it).
 pub fn banner(s: &State) -> El {
-    let who = if s.precise.for_iina { "IINA" } else { s.precise.who.as_deref().unwrap_or("mpv") };
+    let who = if s.precise.for_iina {
+        "IINA"
+    } else {
+        s.precise.who.as_deref().unwrap_or("mpv")
+    };
     let info = PAL.st_completed;
     let base = row()
         .key("precise")
@@ -398,7 +537,14 @@ pub fn banner(s: &State) -> El {
         .fill(info.alpha(0.08))
         .border(1.0, info.alpha(0.3));
     let mono = TextStyle::new(12.0, 400.0).mono();
-    let words = |head: &str, body: El| col().grow(1.0).min_w(0.0).gap(4.0).child(text(head.to_string()).font(theme::BODY_MED).color(PAL.text)).child(body);
+    let words = |head: &str, body: El| {
+        col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(4.0)
+            .child(text(head.to_string()).font(theme::BODY_MED).color(PAL.text))
+            .child(body)
+    };
     match &s.precise.done {
         Some(Precise::Wrote { file, text: lines }) => base
             .child(icon(&icons::CHECK, 18.0).color(PAL.ok()))
@@ -461,7 +607,11 @@ pub fn banner(s: &State) -> El {
 /// "Turn on precise detection for IINA: Kotora counts at 80% instead of after 15 min".
 pub fn prompt_line(s: &State, sw: Switch) -> String {
     let minutes = s.prefs.players.process_minutes.clamp(1, 180);
-    format!("Turn on precise detection for {}: Kotora counts at {}% instead of after {minutes} min", sw.label(), s.prefs.threshold)
+    format!(
+        "Turn on precise detection for {}: Kotora counts at {}% instead of after {minutes} min",
+        sw.label(),
+        s.prefs.threshold
+    )
 }
 
 /// Now Playing's prompt for the followed player (on top of the page, under the episode banner):
@@ -526,11 +676,29 @@ pub fn settings_hint(s: &State) -> Option<El> {
 /// exist yet, and nothing else says how to make it).
 pub(crate) fn settings_hint_on(s: &State, windows: bool) -> Option<El> {
     let seen = s.mpv_seen_by_process();
-    let ipc_live = s.players.iter().any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led));
+    let ipc_live = s
+        .players
+        .iter()
+        .any(|p| p.switch == Switch::Mpv && p.via == VIA_IPC && live(p.led));
     if !seen && !(windows && s.prefs.players.mpv && !ipc_live && !s.precise.conf_watched) {
         return None;
     }
-    let turn_on = || Some(small_button("set/precise-on", if s.precise.busy { "Turning on\u{2026}" } else { "Turn on" }, false, if s.precise.busy { None } else { Some(State::enable_precise) }));
+    let turn_on = || {
+        Some(small_button(
+            "set/precise-on",
+            if s.precise.busy {
+                "Turning on\u{2026}"
+            } else {
+                "Turn on"
+            },
+            false,
+            if s.precise.busy {
+                None
+            } else {
+                Some(State::enable_precise)
+            },
+        ))
+    };
     let (line, action) = match (s.precise.conf_watched, windows) {
         (true, true) => ("mpv.conf sets the IPC pipe Kotora watches: close the player and open it again to use it.".to_string(), None),
         (true, false) => ("mpv.conf sets the IPC socket Kotora watches; restart mpv to use it.".to_string(), None),
@@ -549,7 +717,14 @@ pub(crate) fn settings_hint_on(s: &State, windows: bool) -> Option<El> {
         .radius(theme::R_MD)
         .fill(PAL.st_completed.alpha(0.08))
         .border(1.0, PAL.st_completed.alpha(0.25))
-        .child(text(line).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0));
+        .child(
+            text(line)
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap()
+                .grow(1.0)
+                .min_w(0.0),
+        );
     if let Some(a) = action {
         r = r.child(a);
     }
@@ -559,12 +734,42 @@ pub(crate) fn settings_hint_on(s: &State, windows: bool) -> Option<El> {
 /// Fake players for the scenes: mpv seen by its process only, playing.
 pub fn fake_process_players() -> Vec<PlayerState> {
     vec![
-        PlayerState { switch: Switch::Mpv, via: VIA_PROCESS, line: "playing".into(), led: Led::Playing },
-        PlayerState { switch: Switch::Mpv, via: VIA_IPC, line: "$XDG_RUNTIME_DIR/mpv.sock: not running".into(), led: Led::Off },
-        PlayerState { switch: Switch::Vlc, via: VIA_PROCESS, line: "running, nothing open".into(), led: Led::Idle },
-        PlayerState { switch: Switch::Vlc, via: "MPRIS", line: "running, nothing playing".into(), led: Led::Idle },
-        PlayerState { switch: Switch::MpcQt, via: "MPRIS", line: "not running".into(), led: Led::Off },
-        PlayerState { switch: Switch::OtherMpris, via: VIA_PROCESS, line: "Celluloid, nothing open".into(), led: Led::Idle },
+        PlayerState {
+            switch: Switch::Mpv,
+            via: VIA_PROCESS,
+            line: "playing".into(),
+            led: Led::Playing,
+        },
+        PlayerState {
+            switch: Switch::Mpv,
+            via: VIA_IPC,
+            line: "$XDG_RUNTIME_DIR/mpv.sock: not running".into(),
+            led: Led::Off,
+        },
+        PlayerState {
+            switch: Switch::Vlc,
+            via: VIA_PROCESS,
+            line: "running, nothing open".into(),
+            led: Led::Idle,
+        },
+        PlayerState {
+            switch: Switch::Vlc,
+            via: "MPRIS",
+            line: "running, nothing playing".into(),
+            led: Led::Idle,
+        },
+        PlayerState {
+            switch: Switch::MpcQt,
+            via: "MPRIS",
+            line: "not running".into(),
+            led: Led::Off,
+        },
+        PlayerState {
+            switch: Switch::OtherMpris,
+            via: VIA_PROCESS,
+            line: "Celluloid, nothing open".into(),
+            led: Led::Idle,
+        },
     ]
 }
 
@@ -592,7 +797,12 @@ mod tests {
         assert!(!s.precise_banner() && settings_hint(&s).is_some());
         // The socket answers: nothing to offer.
         let mut s = process_only();
-        s.players.push(PlayerState { switch: Switch::Mpv, via: VIA_IPC, line: "playing".into(), led: Led::Playing });
+        s.players.push(PlayerState {
+            switch: Switch::Mpv,
+            via: VIA_IPC,
+            line: "playing".into(),
+            led: Led::Playing,
+        });
         assert!(!s.mpv_process_only() && !s.precise_banner());
         // mpv switched off in Settings: nothing either.
         let mut s = process_only();
@@ -605,7 +815,10 @@ mod tests {
         let mut s = process_only();
         s.enable_precise();
         assert!(s.prefs.precise_answered);
-        s.precise_written(Precise::Wrote { file: "/tmp/mpv/mpv.conf".into(), text: "input-ipc-server=/run/user/1000/mpv.sock\n".into() });
+        s.precise_written(Precise::Wrote {
+            file: "/tmp/mpv/mpv.conf".into(),
+            text: "input-ipc-server=/run/user/1000/mpv.sock\n".into(),
+        });
         assert!(s.precise_banner() && s.precise.conf_watched);
         s.close_precise();
         assert!(!s.precise_banner());
@@ -620,7 +833,11 @@ mod tests {
         assert!(!s.mpv_process_only() && !s.precise_banner());
         // A socket Kotora doesn't watch: the answer says so and the offer stays possible.
         let mut s = process_only();
-        s.precise_written(Precise::AlreadySet { file: "/tmp/mpv.conf".into(), socket: "/tmp/other.sock".into(), watched: false });
+        s.precise_written(Precise::AlreadySet {
+            file: "/tmp/mpv.conf".into(),
+            socket: "/tmp/other.sock".into(),
+            watched: false,
+        });
         assert!(!s.precise.conf_watched);
     }
 
@@ -640,7 +857,10 @@ mod tests {
     fn the_prompt_asks_for_the_followed_player_until_answered() {
         let s = followed_by_process(Switch::Mpv);
         assert_eq!(s.precise_prompt(), Some(Switch::Mpv));
-        assert!(!s.precise_banner(), "the page's prompt instead of the offer on top");
+        assert!(
+            !s.precise_banner(),
+            "the page's prompt instead of the offer on top"
+        );
         assert!(prompt(&s).is_some());
         // By IPC: nothing to turn on.
         let mut s = followed_by_process(Switch::Mpv);
@@ -670,8 +890,14 @@ mod tests {
     fn turn_on_is_settings_turn_on() {
         let mut s = followed_by_process(Switch::Mpv);
         s.precise_prompt_on();
-        assert!(s.prefs.precise_answered, "answered, as with Settings' button");
-        s.precise_written(Precise::Wrote { file: "/tmp/mpv/mpv.conf".into(), text: "input-ipc-server=/tmp/mpv.sock\n".into() });
+        assert!(
+            s.prefs.precise_answered,
+            "answered, as with Settings' button"
+        );
+        s.precise_written(Precise::Wrote {
+            file: "/tmp/mpv/mpv.conf".into(),
+            text: "input-ipc-server=/tmp/mpv.sock\n".into(),
+        });
         assert!(s.precise_banner() && s.precise.conf_watched && s.precise_prompt().is_none());
     }
 
@@ -680,8 +906,14 @@ mod tests {
         let mut s = followed_by_process(Switch::Mpv);
         s.prefs.threshold = 90;
         s.prefs.players.process_minutes = 20;
-        assert_eq!(prompt_line(&s, Switch::Mpv), "Turn on precise detection for mpv: Kotora counts at 90% instead of after 20 min");
-        assert_eq!(prompt_line(&s, Switch::Iina), "Turn on precise detection for IINA: Kotora counts at 90% instead of after 20 min");
+        assert_eq!(
+            prompt_line(&s, Switch::Mpv),
+            "Turn on precise detection for mpv: Kotora counts at 90% instead of after 20 min"
+        );
+        assert_eq!(
+            prompt_line(&s, Switch::Iina),
+            "Turn on precise detection for IINA: Kotora counts at 90% instead of after 20 min"
+        );
     }
 
     #[test]
@@ -690,29 +922,68 @@ mod tests {
         use std::path::PathBuf;
         let text = "# Added by Kotora\r\ninput-ipc-server=\\\\.\\pipe\\mpvsocket\r\n".to_string();
         // mpv.net fresh from its installer: the file is made.
-        let made = WinEnabled::Wrote { file: PathBuf::from("/a/mpv.net/mpv.conf"), text: text.clone(), created: true, backup: None };
+        let made = WinEnabled::Wrote {
+            file: PathBuf::from("/a/mpv.net/mpv.conf"),
+            text: text.clone(),
+            created: true,
+            backup: None,
+        };
         let (r, who, note) = win_answer(vec![("mpv.net", Ok(made.clone()))]);
-        assert_eq!(r, Precise::Wrote { file: "/a/mpv.net/mpv.conf".into(), text: text.replace("\r\n", "\n") });
+        assert_eq!(
+            r,
+            Precise::Wrote {
+                file: "/a/mpv.net/mpv.conf".into(),
+                text: text.replace("\r\n", "\n")
+            }
+        );
         assert_eq!(who.as_deref(), Some("mpv.net"));
-        assert_eq!(note.as_deref(), Some("/a/mpv.net/mpv.conf didn\u{2019}t exist: Kotora made it. Close mpv.net and open it again once."));
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "/a/mpv.net/mpv.conf didn\u{2019}t exist: Kotora made it. Close mpv.net and open it again once."
+            )
+        );
         // An existing file: where its copy is.
-        let kept = WinEnabled::Wrote { file: PathBuf::from("/a/mpv/mpv.conf"), text: text.clone(), created: false, backup: Some(PathBuf::from("/a/mpv/mpv.conf.kotora-backup")) };
+        let kept = WinEnabled::Wrote {
+            file: PathBuf::from("/a/mpv/mpv.conf"),
+            text: text.clone(),
+            created: false,
+            backup: Some(PathBuf::from("/a/mpv/mpv.conf.kotora-backup")),
+        };
         let (_, who, note) = win_answer(vec![("mpv", Ok(kept.clone()))]);
         assert_eq!(who.as_deref(), Some("mpv"));
-        assert_eq!(note.as_deref(), Some("/a/mpv/mpv.conf was copied to mpv.conf.kotora-backup first. Close mpv and open it again once."));
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "/a/mpv/mpv.conf was copied to mpv.conf.kotora-backup first. Close mpv and open it again once."
+            )
+        );
         // Two players, one already set: what was written is what is shown.
-        let set = WinEnabled::AlreadySet { file: PathBuf::from("/a/mpv/mpv.conf"), pipe: PathBuf::from(r"\\.\pipe\mine") };
+        let set = WinEnabled::AlreadySet {
+            file: PathBuf::from("/a/mpv/mpv.conf"),
+            pipe: PathBuf::from(r"\\.\pipe\mine"),
+        };
         let (r, who, _) = win_answer(vec![("mpv", Ok(set.clone())), ("mpv.net", Ok(made))]);
         assert!(matches!(r, Precise::Wrote { .. }));
         assert_eq!(who.as_deref(), Some("mpv.net"));
         // Only "already set": watched from now on, so only a restart is asked.
         let (r, who, note) = win_answer(vec![("mpv", Ok(set))]);
-        assert_eq!(r, Precise::AlreadySet { file: "/a/mpv/mpv.conf".into(), socket: r"\\.\pipe\mine".into(), watched: true });
+        assert_eq!(
+            r,
+            Precise::AlreadySet {
+                file: "/a/mpv/mpv.conf".into(),
+                socket: r"\\.\pipe\mine".into(),
+                watched: true
+            }
+        );
         assert_eq!((who.as_deref(), note), (Some("mpv"), None));
         // An error alone is the answer; beside a written file it isn't.
         let (r, ..) = win_answer(vec![("mpv", Err("Can't write X: denied".into()))]);
         assert_eq!(r, Precise::Failed("Can't write X: denied".into()));
-        let (r, ..) = win_answer(vec![("mpv", Err("Can't write X: denied".into())), ("mpv.net", Ok(kept))]);
+        let (r, ..) = win_answer(vec![
+            ("mpv", Err("Can't write X: denied".into())),
+            ("mpv.net", Ok(kept)),
+        ]);
         assert!(matches!(r, Precise::Wrote { .. }));
     }
 
@@ -721,14 +992,22 @@ mod tests {
         let mut s = State::fake();
         s.now = None;
         s.players = Vec::new();
-        assert!(settings_hint_on(&s, false).is_none(), "elsewhere mpv is found first");
+        assert!(
+            settings_hint_on(&s, false).is_none(),
+            "elsewhere mpv is found first"
+        );
         assert!(settings_hint_on(&s, true).is_some());
         // mpv.conf already sets the pipe: nothing to turn on while no mpv runs.
         s.precise.conf_watched = true;
         assert!(settings_hint_on(&s, true).is_none());
         // The pipe answers: nothing to say.
         s.precise.conf_watched = false;
-        s.players = vec![PlayerState { switch: Switch::Mpv, via: VIA_IPC, line: "playing".into(), led: Led::Playing }];
+        s.players = vec![PlayerState {
+            switch: Switch::Mpv,
+            via: VIA_IPC,
+            line: "playing".into(),
+            led: Led::Playing,
+        }];
         assert!(settings_hint_on(&s, true).is_none());
         // Switched off: nothing.
         s.players = Vec::new();
@@ -738,7 +1017,12 @@ mod tests {
 
     #[test]
     fn source_states_keep_their_label() {
-        let p = PlayerState::from(SourceStatus { switch: Switch::Vlc, via: kotora_detect::Via::Mpris, line: "playing".into(), led: Led::Playing });
+        let p = PlayerState::from(SourceStatus {
+            switch: Switch::Vlc,
+            via: kotora_detect::Via::Mpris,
+            line: "playing".into(),
+            led: Led::Playing,
+        });
         assert_eq!(p.via, "MPRIS");
         assert_eq!(VIA_PROCESS, kotora_detect::Via::Process.label());
         assert_eq!(VIA_IPC, kotora_detect::Via::MpvIpc.label());

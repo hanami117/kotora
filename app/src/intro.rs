@@ -57,12 +57,19 @@ struct Fit {
 impl Fit {
     fn new([w, h]: [f32; 2]) -> Fit {
         let (w, h) = (w.max(1.0), h.max(1.0));
-        Fit { w, h, k: (w / VW).max(h / VH) }
+        Fit {
+            w,
+            h,
+            k: (w / VW).max(h / VH),
+        }
     }
 
     /// A box point in window points.
     fn pt(self, p: [f32; 2]) -> [f32; 2] {
-        [(p[0] - VW / 2.0) * self.k + self.w / 2.0, (p[1] - VH / 2.0) * self.k + self.h / 2.0]
+        [
+            (p[0] - VW / 2.0) * self.k + self.w / 2.0,
+            (p[1] - VH / 2.0) * self.k + self.h / 2.0,
+        ]
     }
 
     fn pts(self, v: Vec<[f32; 2]>) -> Vec<[f32; 2]> {
@@ -71,7 +78,9 @@ impl Fit {
 
     /// A shape whose points are already in window points.
     fn shape(self, pts: Vec<[f32; 2]>, color: Color) -> Shape {
-        Shape::new().fill(self.pts(pts), color).view_box(self.w, self.h)
+        Shape::new()
+            .fill(self.pts(pts), color)
+            .view_box(self.w, self.h)
     }
 }
 
@@ -126,7 +135,11 @@ const REDUCED_FADE: Track = Track::new(0.12, 0.25, Easing::EASE_OUT);
 pub const REDUCED_TOTAL: f32 = 0.4;
 
 fn slash_track(k: usize) -> Track {
-    Track::new(HOLD + SLASH_GAP * k as f32, SLASH, Easing::cubic(0.3, 0.0, 0.2, 1.0))
+    Track::new(
+        HOLD + SLASH_GAP * k as f32,
+        SLASH,
+        Easing::cubic(0.3, 0.0, 0.2, 1.0),
+    )
 }
 /// The cuts fade as the strips part (the app shows through the gaps then).
 const CUT_FADE: Track = Track::new(SPLIT_AT + 0.04, 0.16, Easing::EASE_IN);
@@ -148,7 +161,10 @@ fn claw(k: usize) -> [[f32; 2]; 3] {
     let bow = [52.0, 70.0, 58.0][k];
     let (p0, p2) = ([1250.0 + dx, -70.0], [350.0 + dx, 1070.0]);
     let n = normal(p0, p2);
-    let mid = [(p0[0] + p2[0]) / 2.0 + n[0] * bow, (p0[1] + p2[1]) / 2.0 + n[1] * bow];
+    let mid = [
+        (p0[0] + p2[0]) / 2.0 + n[0] * bow,
+        (p0[1] + p2[1]) / 2.0 + n[1] * bow,
+    ];
     [p0, mid, p2]
 }
 
@@ -265,7 +281,10 @@ fn slash_shapes(k: usize, fit: Fit) -> [(&'static str, Shape); 3] {
     [
         ("rim", one(mark(k, w * 1.5, 0.0), rim())),
         ("cut", one(mark(k, w, 0.0), PAL.bg)),
-        ("glint", one(mark(k, w * 0.26, 0.24), hex("#fff6e6").alpha(0.95))),
+        (
+            "glint",
+            one(mark(k, w * 0.26, 0.24), hex("#fff6e6").alpha(0.95)),
+        ),
     ]
 }
 
@@ -285,7 +304,11 @@ fn strip_shape(k: usize, fit: Fit) -> Shape {
 /// 小虎's colour over the orange: cream in the dark theme, the dark brown text on the accent
 /// has in the light one.
 fn name_color() -> Color {
-    if PAL.light { PAL.on_accent } else { hex("#fff7ec") }
+    if PAL.light {
+        PAL.on_accent
+    } else {
+        hex("#fff7ec")
+    }
 }
 
 // ---- state ----
@@ -339,29 +362,53 @@ pub fn at_launch(l: Launch) -> Option<Intro> {
 
 impl Intro {
     fn new() -> Intro {
-        Intro { phase: Phase::Start, armed: false, since: None, arm_at: None, frozen: None, reduced: Cell::new(false), force_reduced: false, size: None, changed: None }
+        Intro {
+            phase: Phase::Start,
+            armed: false,
+            since: None,
+            arm_at: None,
+            frozen: None,
+            reduced: Cell::new(false),
+            force_reduced: false,
+            size: None,
+            changed: None,
+        }
     }
 
     /// Scenes: the intro held at `progress` (0 to 1) of its run.
     pub fn frozen(progress: f32, reduced: bool) -> Intro {
         let total = if reduced { REDUCED_TOTAL } else { TOTAL };
-        Intro { frozen: Some(progress.clamp(0.0, 1.0) * total), force_reduced: reduced, ..Intro::new() }
+        Intro {
+            frozen: Some(progress.clamp(0.0, 1.0) * total),
+            force_reduced: reduced,
+            ..Intro::new()
+        }
     }
 
     /// Scenes: the live intro, which a headless `--video` records (its clock runs there).
     pub fn live() -> Intro {
-        Intro { armed: true, ..Intro::new() }
+        Intro {
+            armed: true,
+            ..Intro::new()
+        }
     }
 
     /// Scenes: the live intro whose first frame comes `late` seconds in (a slow window or first
     /// view): it must wait in the start pose, then play whole.
     pub fn live_late(late: f64) -> Intro {
-        Intro { arm_at: Some(late), ..Intro::new() }
+        Intro {
+            arm_at: Some(late),
+            ..Intro::new()
+        }
     }
 
     /// Scenes: the live Reduce Motion fade.
     pub fn live_reduced() -> Intro {
-        Intro { armed: true, force_reduced: true, ..Intro::new() }
+        Intro {
+            armed: true,
+            force_reduced: true,
+            ..Intro::new()
+        }
     }
 }
 
@@ -405,7 +452,11 @@ fn hold(armed: f64, changed: Option<f64>, now: f64) -> Hold {
     let lead = LEAD - waited;
     let settle = changed.map_or(0.0, |c| SETTLE - (now - c));
     let left = lead.max(settle);
-    if left <= EPS { Hold::Go } else { Hold::Wait(left.min(MAX_WAIT - waited)) }
+    if left <= EPS {
+        Hold::Go
+    } else {
+        Hold::Wait(left.min(MAX_WAIT - waited))
+    }
 }
 
 /// Any click or key: the layer goes at once (its own fade-out, 0.15 s).
@@ -417,7 +468,9 @@ pub fn skip(s: &mut State) {
 /// The window going (closed to the tray mid-intro) drops it too: it never replays later.
 pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     let size = s.main_size.get();
-    let Some(i) = s.intro.as_mut() else { return false };
+    let Some(i) = s.intro.as_mut() else {
+        return false;
+    };
     if i.frozen.is_some() {
         return false;
     }
@@ -463,7 +516,11 @@ pub fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
             }
         },
         (Phase::Run, Some(since)) => {
-            let total = if i.reduced.get() || i.force_reduced { REDUCED_TOTAL } else { TOTAL } as f64;
+            let total = if i.reduced.get() || i.force_reduced {
+                REDUCED_TOTAL
+            } else {
+                TOTAL
+            } as f64;
             if t - since >= total {
                 s.intro = None;
                 tx.instant();
@@ -527,28 +584,55 @@ pub fn overlay(s: &State, cx: &Cx<State>) -> Option<El> {
     // The geometry follows the window's size as it is now (every build; a resize rebuilds).
     let fit = Fit::new(cx.layout_size("root").unwrap_or([1280.0, 800.0]));
     let pin = Some(0.0);
-    let layer = el().key("intro").role("image").label("Kotora").pin(pin, pin, pin, pin)
+    let layer = el()
+        .key("intro")
+        .role("image")
+        .label("Kotora")
+        .pin(pin, pin, pin, pin)
         // Esc, any click or key skips; the app underneath takes none until the layer is gone.
         .modal(false, skip)
         .on_press(skip);
-    let name = el().key("intro/name").pin(pin, pin, pin, pin).center().child(crate::kanji::name(132.0, true, name_color()));
+    let name = el()
+        .key("intro/name")
+        .pin(pin, pin, pin, pin)
+        .center()
+        .child(crate::kanji::name(132.0, true, name_color()));
 
     if reduced {
-        let fade = |e: El, track: Track| set_opacity(e, 1.0 - track.at_time(t), motion.then_some(track));
+        let fade =
+            |e: El, track: Track| set_opacity(e, 1.0 - track.at_time(t), motion.then_some(track));
         let layer = fade(layer.fill(PAL.accent), REDUCED_FADE);
         return Some(layer.child(name));
     }
 
-    let base = el().key("intro/base").pin(pin, pin, pin, pin).fill(PAL.accent);
-    let mut layer = layer.child(set_opacity(base, 1.0 - BASE_OFF.at_time(t), motion.then_some(BASE_OFF)));
+    let base = el()
+        .key("intro/base")
+        .pin(pin, pin, pin, pin)
+        .fill(PAL.accent);
+    let mut layer = layer.child(set_opacity(
+        base,
+        1.0 - BASE_OFF.at_time(t),
+        motion.then_some(BASE_OFF),
+    ));
     for k in 0..4 {
         let away = strip_away(k);
         let m = STRIP_MOVE.at_time(t);
-        let e = el().key(format!("intro/strip/{k}")).pin(pin, pin, pin, pin).shape(strip_shape(k, fit));
+        let e = el()
+            .key(format!("intro/strip/{k}"))
+            .pin(pin, pin, pin, pin)
+            .shape(strip_shape(k, fit));
         let e = set_offset(e, [away[0] * m, away[1] * m], motion.then_some(STRIP_MOVE));
-        layer = layer.child(set_opacity(e, 1.0 - STRIP_FADE.at_time(t), motion.then_some(STRIP_FADE)));
+        layer = layer.child(set_opacity(
+            e,
+            1.0 - STRIP_FADE.at_time(t),
+            motion.then_some(STRIP_FADE),
+        ));
     }
-    let name = set_opacity(name, 1.0 - NAME_FADE.at_time(t), motion.then_some(NAME_FADE));
+    let name = set_opacity(
+        name,
+        1.0 - NAME_FADE.at_time(t),
+        motion.then_some(NAME_FADE),
+    );
     layer = layer.child(name);
     for k in 0..3 {
         let track = slash_track(k);
@@ -556,9 +640,17 @@ pub fn overlay(s: &State, cx: &Cx<State>) -> Option<El> {
         // The mark grows out of its starting point, so it rips across from the top right.
         let [ox, oy] = fit.pt(c[0]);
         for (part, shape) in slash_shapes(k, fit) {
-            let e = el().key(format!("intro/slash/{k}/{part}")).pin(pin, pin, pin, pin).shape(shape).origin(ox / fit.w, oy / fit.h);
+            let e = el()
+                .key(format!("intro/slash/{k}/{part}"))
+                .pin(pin, pin, pin, pin)
+                .shape(shape)
+                .origin(ox / fit.w, oy / fit.h);
             let e = set_scale(e, track.at_time(t).max(0.001), motion.then_some(track));
-            layer = layer.child(set_opacity(e, 1.0 - CUT_FADE.at_time(t), motion.then_some(CUT_FADE)));
+            layer = layer.child(set_opacity(
+                e,
+                1.0 - CUT_FADE.at_time(t),
+                motion.then_some(CUT_FADE),
+            ));
         }
     }
     Some(layer)
@@ -592,16 +684,52 @@ mod tests {
     use super::*;
 
     fn launch() -> Launch {
-        Launch { enabled: true, hidden: false, test_instance: false, headless: false }
+        Launch {
+            enabled: true,
+            hidden: false,
+            test_instance: false,
+            headless: false,
+        }
     }
 
     #[test]
     fn only_a_real_cold_start_with_a_window_plays_it() {
-        assert!(at_launch(launch()).is_some(), "a cold start with the window");
-        assert!(at_launch(Launch { enabled: false, ..launch() }).is_none(), "Settings switch off");
-        assert!(at_launch(Launch { hidden: true, ..launch() }).is_none(), "--hidden (login start)");
-        assert!(at_launch(Launch { test_instance: true, ..launch() }).is_none(), "test instance");
-        assert!(at_launch(Launch { headless: true, ..launch() }).is_none(), "headless");
+        assert!(
+            at_launch(launch()).is_some(),
+            "a cold start with the window"
+        );
+        assert!(
+            at_launch(Launch {
+                enabled: false,
+                ..launch()
+            })
+            .is_none(),
+            "Settings switch off"
+        );
+        assert!(
+            at_launch(Launch {
+                hidden: true,
+                ..launch()
+            })
+            .is_none(),
+            "--hidden (login start)"
+        );
+        assert!(
+            at_launch(Launch {
+                test_instance: true,
+                ..launch()
+            })
+            .is_none(),
+            "test instance"
+        );
+        assert!(
+            at_launch(Launch {
+                headless: true,
+                ..launch()
+            })
+            .is_none(),
+            "headless"
+        );
     }
 
     fn poll_at(s: &mut State, t: f64) -> bool {
@@ -625,7 +753,10 @@ mod tests {
     fn it_runs_once_then_goes() {
         let mut s = running();
         present(&mut s);
-        assert!(!poll_at(&mut s, 10.0), "armed: the hold starts, the cover stays in its start pose");
+        assert!(
+            !poll_at(&mut s, 10.0),
+            "armed: the hold starts, the cover stays in its start pose"
+        );
         assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Start));
         assert!(!poll_at(&mut s, 10.0 + LEAD * 0.5));
         assert!(poll_at(&mut s, 10.0 + LEAD), "then it runs");
@@ -648,14 +779,23 @@ mod tests {
         for t in [0.0, 0.2, 0.5, 0.9, 1.0] {
             assert!(!poll_at(&mut s, t));
             let i = s.intro.as_ref().expect("still up");
-            assert!(i.phase == Phase::Start && i.since.is_none() && !i.armed, "no clock at {t}");
+            assert!(
+                i.phase == Phase::Start && i.since.is_none() && !i.armed,
+                "no clock at {t}"
+            );
         }
         // The first frame lands at 1.0: the hold and the run are timed from there.
         present(&mut s);
         assert!(!poll_at(&mut s, 1.0));
         assert!(!poll_at(&mut s, 1.0 + LEAD * 0.9), "still holding");
-        assert!(poll_at(&mut s, 1.0 + LEAD), "runs from the first frame + the hold");
-        assert!(!poll_at(&mut s, 1.0 + LEAD + TOTAL as f64 - 0.01), "the whole run is seen");
+        assert!(
+            poll_at(&mut s, 1.0 + LEAD),
+            "runs from the first frame + the hold"
+        );
+        assert!(
+            !poll_at(&mut s, 1.0 + LEAD + TOTAL as f64 - 0.01),
+            "the whole run is seen"
+        );
         assert!(poll_at(&mut s, 1.0 + LEAD + TOTAL as f64));
         assert!(s.intro.is_none());
     }
@@ -685,9 +825,17 @@ mod tests {
             rt.frame(1.0 / 30.0);
         }
         let all = rt.elements();
-        let op = |key: &str| all.iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.opacity);
+        let op = |key: &str| {
+            all.iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .map(|e| e.opacity)
+        };
         for key in ["intro/base", "intro/strip/0", "intro/strip/3", "intro/name"] {
-            assert!(op(key).is_some_and(|o| (o - 1.0).abs() < 1e-3), "{key}: {:?}", op(key));
+            assert!(
+                op(key).is_some_and(|o| (o - 1.0).abs() < 1e-3),
+                "{key}: {:?}",
+                op(key)
+            );
         }
         assert!(rt.state.intro.is_some(), "not dropped by the time passing");
     }
@@ -709,11 +857,19 @@ mod tests {
         let mut s = running();
         s.window = false;
         poll_at(&mut s, 0.0);
-        assert!(s.intro.as_ref().is_some_and(|i| i.since.is_none() && !i.armed), "waits, not started");
+        assert!(
+            s.intro
+                .as_ref()
+                .is_some_and(|i| i.since.is_none() && !i.armed),
+            "waits, not started"
+        );
         s.window = true;
         present(&mut s);
         poll_at(&mut s, 1.0);
-        assert!(poll_at(&mut s, 1.0 + LEAD), "plays once the window shows and a frame is up");
+        assert!(
+            poll_at(&mut s, 1.0 + LEAD),
+            "plays once the window shows and a frame is up"
+        );
     }
 
     #[test]
@@ -739,7 +895,15 @@ mod tests {
     }
 
     fn runtime(s: State, reduced: bool) -> rune::Runtime<State> {
-        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 800.0), rune::Env { system_dark: true, scale: 1.0 });
+        let mut rt = rune::Runtime::new(
+            s,
+            crate::ui::view,
+            (1280.0, 800.0),
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         rt.poll = Some(crate::ui::poll);
         rt.on_key = Some(crate::ui::on_key);
         rt.set_system_reduced_motion(reduced);
@@ -765,7 +929,10 @@ mod tests {
     fn reduce_motion_draws_only_the_fade() {
         let rt = runtime(live(), true);
         assert!(rt.find("intro").is_some() && rt.find("intro/name").is_some());
-        assert!(rt.find("intro/strip/0").is_none() && rt.find("intro/slash/0/cut").is_none(), "no claws, no strips");
+        assert!(
+            rt.find("intro/strip/0").is_none() && rt.find("intro/slash/0/cut").is_none(),
+            "no claws, no strips"
+        );
         let rt = runtime(live(), false);
         assert!(rt.find("intro/strip/3").is_some() && rt.find("intro/slash/2/glint").is_some());
     }
@@ -784,7 +951,10 @@ mod tests {
     #[test]
     fn a_key_skips() {
         let mut rt = runtime(live(), false);
-        rt.key(rune::KeyEvent { key: rune::Key::Text("k".into()), mods: Default::default() });
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("k".into()),
+            mods: Default::default(),
+        });
         rt.frame(1.0 / 60.0);
         assert!(rt.state.intro.is_none());
     }
@@ -820,7 +990,14 @@ mod tests {
     #[test]
     fn tracks_finish_within_the_total() {
         let mut end: f32 = 0.0;
-        for tr in [slash_track(2), CUT_FADE, STRIP_MOVE, STRIP_FADE, NAME_FADE, BASE_OFF] {
+        for tr in [
+            slash_track(2),
+            CUT_FADE,
+            STRIP_MOVE,
+            STRIP_FADE,
+            NAME_FADE,
+            BASE_OFF,
+        ] {
             end = end.max(tr.at + tr.dur);
         }
         assert!(end <= TOTAL + 1e-3, "{end}");
@@ -839,10 +1016,14 @@ mod tests {
         assert_eq!(hold(10.0, None, 10.0 + LEAD), Hold::Go);
         // A resize at 50 ms: the run waits for it to be still for SETTLE (until 170 ms).
         let changed = Some(10.05);
-        assert!(matches!(hold(10.0, changed, 10.0 + LEAD), Hold::Wait(l) if (l - 0.07).abs() < EPS));
+        assert!(
+            matches!(hold(10.0, changed, 10.0 + LEAD), Hold::Wait(l) if (l - 0.07).abs() < EPS)
+        );
         assert_eq!(hold(10.0, changed, 10.0 + 0.05 + SETTLE), Hold::Go);
         // A window that keeps changing: gone at the cap, from the first frame.
-        assert!(matches!(hold(10.0, Some(10.39), 10.39), Hold::Wait(l) if l <= MAX_WAIT - 0.39 + EPS));
+        assert!(
+            matches!(hold(10.0, Some(10.39), 10.39), Hold::Wait(l) if l <= MAX_WAIT - 0.39 + EPS)
+        );
         assert_eq!(hold(10.0, Some(10.39), 10.0 + MAX_WAIT), Hold::Go);
         // A resize before the first frame that has settled by then costs nothing.
         assert_eq!(hold(10.0, Some(9.8), 10.0 + LEAD), Hold::Go);
@@ -860,14 +1041,24 @@ mod tests {
         present(&mut s);
         assert!(!poll_at(&mut s, 5.0));
         // The window manager enlarges it in steps at 40, 80 and 120 ms.
-        for (t, size) in [(5.04, [1400.0, 860.0]), (5.08, [1550.0, 930.0]), (5.12, [1700.0, 1000.0])] {
+        for (t, size) in [
+            (5.04, [1400.0, 860.0]),
+            (5.08, [1550.0, 930.0]),
+            (5.12, [1700.0, 1000.0]),
+        ] {
             resize_to(&mut s, size);
             assert!(!poll_at(&mut s, t), "still solid orange at {t}");
             assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Start));
         }
         // LEAD alone has long passed, but the size changed at 5.12.
-        assert!(!poll_at(&mut s, 5.12 + SETTLE - 0.02), "waits for SETTLE after the last change");
-        assert!(poll_at(&mut s, 5.12 + SETTLE), "starts once the size has been still");
+        assert!(
+            !poll_at(&mut s, 5.12 + SETTLE - 0.02),
+            "waits for SETTLE after the last change"
+        );
+        assert!(
+            poll_at(&mut s, 5.12 + SETTLE),
+            "starts once the size has been still"
+        );
         assert_eq!(s.intro.as_ref().map(|i| i.phase), Some(Phase::Run));
         // Played whole from there, unchanged.
         assert!(!poll_at(&mut s, 5.12 + SETTLE + TOTAL as f64 - 0.01));
@@ -927,18 +1118,35 @@ mod tests {
             rt.frame(1.0 / 60.0); // 0.1 s hold + about 0.6 s of the run
         }
         let info = |rt: &rune::Runtime<State>| {
-            rt.elements().into_iter().find(|e| e.key.as_deref() == Some("intro/strip/3")).expect("the strip")
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("intro/strip/3"))
+                .expect("the strip")
         };
         let before = info(&rt);
-        assert!(before.rect != before.target, "mid-slide: {:?} {:?}", before.rect, before.target);
+        assert!(
+            before.rect != before.target,
+            "mid-slide: {:?} {:?}",
+            before.rect,
+            before.target
+        );
         rt.set_viewport((1700.0, 1000.0), 1.0);
         rt.frame(1.0 / 60.0);
         assert!(rt.state.intro.is_some(), "still playing");
         let after = info(&rt);
-        assert!(after.rect != after.target, "not snapped to its end: {:?} {:?}", after.rect, after.target);
+        assert!(
+            after.rect != after.target,
+            "not snapped to its end: {:?} {:?}",
+            after.rect,
+            after.target
+        );
         assert!(after.moving, "its tween runs on");
         // While the page under it did reflow at once (the rule still holds for `root`).
-        let root = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("root")).expect("root");
+        let root = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("root"))
+            .expect("root");
         assert_eq!(root.target[2].round() as i32, 1700);
     }
 
@@ -946,15 +1154,31 @@ mod tests {
 
     #[test]
     fn the_box_covers_the_window_at_any_size_and_shape() {
-        for size in [[1280.0, 800.0], [1700.0, 1000.0], [960.0, 600.0], [2560.0, 1300.0], [900.0, 1400.0], [3440.0, 1440.0]] {
+        for size in [
+            [1280.0, 800.0],
+            [1700.0, 1000.0],
+            [960.0, 600.0],
+            [2560.0, 1300.0],
+            [900.0, 1400.0],
+            [3440.0, 1440.0],
+        ] {
             let f = Fit::new(size);
             let (a, b) = (f.pt([0.0, 0.0]), f.pt([VW, VH]));
-            assert!(a[0] <= 0.5 && a[1] <= 0.5 && b[0] >= size[0] - 0.5 && b[1] >= size[1] - 0.5, "{size:?} covered");
+            assert!(
+                a[0] <= 0.5 && a[1] <= 0.5 && b[0] >= size[0] - 0.5 && b[1] >= size[1] - 0.5,
+                "{size:?} covered"
+            );
             let m = f.pt([VW / 2.0, VH / 2.0]);
-            assert!((m[0] - size[0] / 2.0).abs() < 1e-3 && (m[1] - size[1] / 2.0).abs() < 1e-3, "centred");
+            assert!(
+                (m[0] - size[0] / 2.0).abs() < 1e-3 && (m[1] - size[1] / 2.0).abs() < 1e-3,
+                "centred"
+            );
             // One scale on both axes: a claw keeps its angle.
             let (p, q) = (f.pt([100.0, 100.0]), f.pt([200.0, 300.0]));
-            assert!(((q[0] - p[0]) / (q[1] - p[1]) - 0.5).abs() < 1e-4, "angle kept");
+            assert!(
+                ((q[0] - p[0]) / (q[1] - p[1]) - 0.5).abs() < 1e-4,
+                "angle kept"
+            );
         }
         // The same window: the identity at the design size.
         assert_eq!(Fit::new([VW, VH]).pt([321.0, 654.0]), [321.0, 654.0]);
@@ -968,11 +1192,20 @@ mod tests {
         rt.set_viewport((1700.0, 1000.0), 1.0);
         rt.frame(1.0 / 60.0);
         let cover = |rt: &rune::Runtime<State>, key: &str| {
-            rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.target)
+            rt.elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .map(|e| e.target)
         };
         for key in ["intro", "intro/strip/0", "intro/slash/1/cut"] {
             let [x, y, w, h] = cover(&rt, key).expect(key);
-            assert!(x.abs() < 0.5 && y.abs() < 0.5 && (w - 1700.0).abs() < 0.5 && (h - 1000.0).abs() < 0.5, "{key}: {x} {y} {w} {h}");
+            assert!(
+                x.abs() < 0.5
+                    && y.abs() < 0.5
+                    && (w - 1700.0).abs() < 0.5
+                    && (h - 1000.0).abs() < 0.5,
+                "{key}: {x} {y} {w} {h}"
+            );
         }
     }
 }

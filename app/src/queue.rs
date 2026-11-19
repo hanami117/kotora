@@ -8,9 +8,9 @@
 //! Every change reaches the UI as [`Msg::Queue`] through `AppHandle::update_if`. Nothing here runs
 //! headless: without an app handle, [`send`] does nothing.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use kotora_core::queue::{self, Outcome, Step};
@@ -20,15 +20,24 @@ use kotora_core::{Change, Kind, Media, Status, paths};
 
 use crate::model::{Fail, Handle, Msg, State};
 
-
 #[derive(Clone, Debug)]
 pub enum Cmd {
     /// An edit of an anime or a manga (the queue is shared by both kinds).
-    Edit { kind: Kind, media_id: u32, change: Change },
+    Edit {
+        kind: Kind,
+        media_id: u32,
+        change: Change,
+    },
     /// Put an anime on the list (search and add), at `progress` when given.
-    Add { media: Box<Media>, status: Status, progress: Option<u32> },
+    Add {
+        media: Box<Media>,
+        status: Status,
+        progress: Option<u32>,
+    },
     /// Send what waits now (no backoff wait); `refresh`: read the whole list afterwards.
-    Kick { refresh: bool },
+    Kick {
+        refresh: bool,
+    },
     KeepMine(i64),
     TakeTheirs(i64),
     Discard(i64),
@@ -41,9 +50,15 @@ pub enum Cmd {
     /// Takes them back while they wait.
     UndoFillVolumes(Vec<i64>),
     /// Remove from list: off the saved list, the removal queued.
-    Remove { kind: Kind, media_id: u32 },
+    Remove {
+        kind: Kind,
+        media_id: u32,
+    },
     /// Undo of a removal that hasn't left: its queued removal is discarded.
-    UndoRemove { kind: Kind, media_id: u32 },
+    UndoRemove {
+        kind: Kind,
+        media_id: u32,
+    },
 }
 
 /// The worker's mailbox. `slot` holds the sender while a worker thread runs.
@@ -73,7 +88,9 @@ pub fn send(s: &mut State, cmd: Cmd) {
     *slot = Some(tx);
     drop(slot);
     let w2 = w.clone();
-    let spawned = std::thread::Builder::new().name("kotora-queue".into()).spawn(move || run(&h, &w2, &rx));
+    let spawned = std::thread::Builder::new()
+        .name("kotora-queue".into())
+        .spawn(move || run(&h, &w2, &rx));
     if spawned.is_err() {
         *w.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
@@ -97,7 +114,12 @@ fn snapshot(store: &Store, touched: &[u32], offline: Option<bool>) -> Msg {
             Err(_) => {}
         }
     }
-    Msg::Queue { ops, items, gone, offline }
+    Msg::Queue {
+        ops,
+        items,
+        gone,
+        offline,
+    }
 }
 
 /// The touched manga as the UI shows them (their rows and editor).
@@ -116,7 +138,13 @@ fn manga_snapshot(store: &Store, touched: &[u32]) -> Msg {
 
 /// The queue and the touched entries of both kinds.
 fn report_touched(h: &Handle, store: &Store, touched: &[(Kind, u32)], offline: Option<bool>) {
-    let of = |k: Kind| touched.iter().filter(|(kind, _)| *kind == k).map(|(_, id)| *id).collect::<Vec<u32>>();
+    let of = |k: Kind| {
+        touched
+            .iter()
+            .filter(|(kind, _)| *kind == k)
+            .map(|(_, id)| *id)
+            .collect::<Vec<u32>>()
+    };
     let manga = of(Kind::Manga);
     report(h, snapshot(store, &of(Kind::Anime), offline));
     if !manga.is_empty() {
@@ -138,15 +166,25 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
                     Action::Update { kind, media_id, .. } => (*kind, *media_id),
                 })
                 .collect();
-            let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The import can't be saved: {e}"));
+            let r = store
+                .import(service, &actions, now_unix())
+                .map_err(|e| format!("The import can't be saved: {e}"));
             let ok = r.is_ok();
             h.update_if(move |s, _| crate::transfer::imported(s, r));
             if ok { touched } else { Vec::new() }
         }
         Cmd::UndoImport(ids) => {
             let now = now_unix();
-            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
-            let r = store.undo_import(service, &ids, now).map_err(|e| format!("The import can't be taken back: {e}"));
+            let touched: Vec<(Kind, u32)> = store
+                .queue(service, now)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|o| ids.contains(&o.id))
+                .map(|o| (o.kind, o.media_id))
+                .collect();
+            let r = store
+                .undo_import(service, &ids, now)
+                .map_err(|e| format!("The import can't be taken back: {e}"));
             h.update_if(move |s, _| crate::transfer::undone(s, r));
             touched
         }
@@ -158,15 +196,25 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
                     Action::Add { .. } => None,
                 })
                 .collect();
-            let r = store.import(service, &actions, now_unix()).map_err(|e| format!("The volumes can't be saved: {e}"));
+            let r = store
+                .import(service, &actions, now_unix())
+                .map_err(|e| format!("The volumes can't be saved: {e}"));
             let ok = r.is_ok();
             h.update_if(move |s, _| crate::volfill::applied(s, r));
             if ok { touched } else { Vec::new() }
         }
         Cmd::UndoFillVolumes(ids) => {
             let now = now_unix();
-            let touched: Vec<(Kind, u32)> = store.queue(service, now).unwrap_or_default().into_iter().filter(|o| ids.contains(&o.id)).map(|o| (o.kind, o.media_id)).collect();
-            let r = store.undo_import(service, &ids, now).map_err(|e| format!("The volumes can't be taken back: {e}"));
+            let touched: Vec<(Kind, u32)> = store
+                .queue(service, now)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|o| ids.contains(&o.id))
+                .map(|o| (o.kind, o.media_id))
+                .collect();
+            let r = store
+                .undo_import(service, &ids, now)
+                .map_err(|e| format!("The volumes can't be taken back: {e}"));
             h.update_if(move |s, _| crate::volfill::undone(s, r));
             touched
         }
@@ -177,10 +225,28 @@ fn transfer(h: &Handle, store: &mut Store, cmd: Cmd) -> Vec<(Kind, u32)> {
 /// Applies one command to the store; returns the entry it touched.
 fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind, u32)>, String> {
     let now = now_unix();
-    let media = |store: &Store, id: i64| store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.id == id)).map(|o| (o.kind, o.media_id));
+    let media = |store: &Store, id: i64| {
+        store
+            .queue(crate::account::name(), now)
+            .ok()
+            .and_then(|q| q.into_iter().find(|o| o.id == id))
+            .map(|o| (o.kind, o.media_id))
+    };
     let r = match cmd {
-        Cmd::Edit { kind, media_id, change } => store.enqueue((crate::account::name(), kind), media_id, change, now).map(|_| Some((kind, media_id))),
-        Cmd::Add { media, status, progress } => store.add_to_list(crate::account::name(), &media, status, progress, now).map(|_| Some((media.kind, media.id))),
+        Cmd::Edit {
+            kind,
+            media_id,
+            change,
+        } => store
+            .enqueue((crate::account::name(), kind), media_id, change, now)
+            .map(|_| Some((kind, media_id))),
+        Cmd::Add {
+            media,
+            status,
+            progress,
+        } => store
+            .add_to_list(crate::account::name(), &media, status, progress, now)
+            .map(|_| Some((media.kind, media.id))),
         Cmd::Kick { refresh: r } => {
             *refresh |= r;
             store.retry_now(crate::account::name()).map(|_| None)
@@ -191,22 +257,37 @@ fn apply(store: &mut Store, cmd: Cmd, refresh: &mut bool) -> Result<Option<(Kind
         }
         Cmd::TakeTheirs(id) => {
             let m = media(store, id);
-            store.take_theirs(crate::account::name(), id, now).map(|_| m)
+            store
+                .take_theirs(crate::account::name(), id, now)
+                .map(|_| m)
         }
         Cmd::Discard(id) => {
             let m = media(store, id);
             store.discard(crate::account::name(), id, now).map(|_| m)
         }
         // Handled by `transfer`.
-        Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_) => Ok(None),
-        Cmd::Remove { kind, media_id } => store.remove_from_list((crate::account::name(), kind), media_id, now).map(|_| Some((kind, media_id))),
+        Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_) => {
+            Ok(None)
+        }
+        Cmd::Remove { kind, media_id } => store
+            .remove_from_list((crate::account::name(), kind), media_id, now)
+            .map(|_| Some((kind, media_id))),
         Cmd::UndoRemove { kind, media_id } => {
-            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| q.into_iter().find(|o| o.removed && o.media_id == media_id && o.kind == kind && o.state.is_open()));
+            let waiting = store.queue(crate::account::name(), now).ok().and_then(|q| {
+                q.into_iter().find(|o| {
+                    o.removed && o.media_id == media_id && o.kind == kind && o.state.is_open()
+                })
+            });
             match waiting {
-                Some(op) if op.state != queue::OpState::Sending => store.discard(crate::account::name(), op.id, now).map(|_| Some((kind, media_id))),
+                Some(op) if op.state != queue::OpState::Sending => store
+                    .discard(crate::account::name(), op.id, now)
+                    .map(|_| Some((kind, media_id))),
                 // Too late: the run loop's snapshot of the entry takes it off the list again.
                 _ => {
-                    return Err(format!("It was already removed on {}. Add it again from Search.", crate::account::active().title()));
+                    return Err(format!(
+                        "It was already removed on {}. Add it again from Search.",
+                        crate::account::active().title()
+                    ));
                 }
             }
         }
@@ -227,7 +308,10 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
         Ok(s) => s,
         Err(e) => {
             *w.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            return report(h, Msg::QueueError(format!("Can't open the saved list: {e}")));
+            return report(
+                h,
+                Msg::QueueError(format!("Can't open the saved list: {e}")),
+            );
         }
     };
     let _ = store.queue_start(crate::account::name(), now_unix());
@@ -242,14 +326,21 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             if let Cmd::Add { media, .. } = &cmd {
                 added.push(media.id);
             }
-            if matches!(cmd, Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_)) {
+            if matches!(
+                cmd,
+                Cmd::Import(_) | Cmd::UndoImport(_) | Cmd::FillVolumes(_) | Cmd::UndoFillVolumes(_)
+            ) {
                 // Read the whole list once the queue is empty: the imported adds get their
                 // covers and episodes from the service.
                 refresh |= matches!(cmd, Cmd::Import(_));
                 touched.extend(transfer(h, &mut store, cmd));
                 continue;
             }
-            let undo = if let Cmd::UndoRemove { kind, media_id } = &cmd { Some((*kind, *media_id)) } else { None };
+            let undo = if let Cmd::UndoRemove { kind, media_id } = &cmd {
+                Some((*kind, *media_id))
+            } else {
+                None
+            };
             match apply(&mut store, cmd, &mut refresh) {
                 Ok(Some(t)) => touched.push(t),
                 Ok(None) => {}
@@ -266,7 +357,10 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             crate::mirror::kick(h, false);
         }
         // A switch to the other service: its client from now on.
-        if svc.as_ref().is_some_and(|c| c.name() != crate::account::name()) {
+        if svc
+            .as_ref()
+            .is_some_and(|c| c.name() != crate::account::name())
+        {
             svc = None;
         }
         if svc.is_none() {
@@ -283,8 +377,17 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
             }
         }
         let wait = match svc.as_deref_mut() {
-            Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(&mut store, service, now_unix(), !w.ask_on_higher.load(Ordering::Relaxed)) {
-                Ok(Step::Handled { kind, media_id, outcome }) => {
+            Some(service) if !w.hold.load(Ordering::Relaxed) => match queue::step_with(
+                &mut store,
+                service,
+                now_unix(),
+                !w.ask_on_higher.load(Ordering::Relaxed),
+            ) {
+                Ok(Step::Handled {
+                    kind,
+                    media_id,
+                    outcome,
+                }) => {
                     let offline = match outcome {
                         Outcome::Retry(_) => Some(true),
                         Outcome::Sent | Outcome::AlreadyThere => Some(false),
@@ -293,7 +396,9 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                     report_touched(h, &store, &[(kind, media_id)], offline);
                     continue;
                 }
-                Ok(Step::Wait(secs)) => Some(Duration::from_secs(secs.clamp(1, queue::MAX_BACKOFF) as u64)),
+                Ok(Step::Wait(secs)) => {
+                    Some(Duration::from_secs(secs.clamp(1, queue::MAX_BACKOFF) as u64))
+                }
                 Ok(Step::Idle) => None,
                 Ok(Step::SignInAgain) => {
                     w.hold.store(true, Ordering::Relaxed);
@@ -302,7 +407,10 @@ fn run(h: &Handle, w: &Worker, rx: &Receiver<Cmd>) {
                     None
                 }
                 Err(e) => {
-                    report(h, Msg::QueueError(format!("The sync queue can't be saved: {e}")));
+                    report(
+                        h,
+                        Msg::QueueError(format!("The sync queue can't be saved: {e}")),
+                    );
                     None
                 }
             },

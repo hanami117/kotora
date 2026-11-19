@@ -30,7 +30,11 @@ impl State {
     /// The question the bar and `kot remove` ask.
     pub fn remove_question(&self, id: u32) -> Option<String> {
         let e = self.entries.iter().find(|e| e.id == id)?;
-        let mut q = format!("Remove {} from your list? It goes from your {} list too, with its progress and score.", e.title, self.service.title());
+        let mut q = format!(
+            "Remove {} from your list? It goes from your {} list too, with its progress and score.",
+            e.title,
+            self.service.title()
+        );
         if let Some(other) = self.mirror_target() {
             q.push_str(&format!(" Also removes it from {other}."));
         }
@@ -43,14 +47,21 @@ impl State {
         let what = crate::transfer::plural(n, one, many);
         let main = self.service.title();
         match self.mirror_target() {
-            Some(to) => format!("Queued {what} for {main}, mirrored to {to}. They go out at each service\u{2019}s pace; the Queue page shows them."),
-            None => format!("Queued {what} for {main}. They go out at its pace; the Queue page shows them."),
+            Some(to) => format!(
+                "Queued {what} for {main}, mirrored to {to}. They go out at each service\u{2019}s pace; the Queue page shows them."
+            ),
+            None => format!(
+                "Queued {what} for {main}. They go out at its pace; the Queue page shows them."
+            ),
         }
     }
 
     /// With the mirror on: the other service's name (a removal goes there too).
     pub fn mirror_target(&self) -> Option<&'static str> {
-        self.mirror.link.filter(|l| l.main == self.service).map(|l| l.to.title())
+        self.mirror
+            .link
+            .filter(|l| l.main == self.service)
+            .map(|l| l.to.title())
     }
 
     /// Removes the entry now: off the list at once, its removal queued, a toast with Undo.
@@ -59,16 +70,31 @@ impl State {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
-        let i = self.entries.iter().position(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let i = self
+            .entries
+            .iter()
+            .position(|e| e.id == id)
+            .ok_or("That anime is not on your list.")?;
         let e = self.entries.remove(i);
         if self.editor.is_some_and(|ed| ed.id == id) {
             self.editor = None;
         }
-        crate::queue::send(self, Cmd::Remove { kind: kotora_core::Kind::Anime, media_id: id });
+        crate::queue::send(
+            self,
+            Cmd::Remove {
+                kind: kotora_core::Kind::Anime,
+                media_id: id,
+            },
+        );
         self.recheck_now();
         self.refresh();
         let text = format!("Removed {} from your list", e.title);
-        self.toast = Some(Toast { text, warn: false, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS), undo: Some(Undo::Remove(Box::new(e))) });
+        self.toast = Some(Toast {
+            text,
+            warn: false,
+            until: std::time::Instant::now() + std::time::Duration::from_secs_f64(UNDO_SECS),
+            undo: Some(Undo::Remove(Box::new(e))),
+        });
         Ok(())
     }
 
@@ -80,7 +106,13 @@ impl State {
             return;
         }
         self.entries.push(e);
-        crate::queue::send(self, Cmd::UndoRemove { kind: kotora_core::Kind::Anime, media_id: id });
+        crate::queue::send(
+            self,
+            Cmd::UndoRemove {
+                kind: kotora_core::Kind::Anime,
+                media_id: id,
+            },
+        );
         self.recheck_now();
         self.refresh();
     }
@@ -88,7 +120,11 @@ impl State {
 
 /// "Remove … from your list?": Remove or Cancel (Escape). `kind`: an anime or a manga.
 pub fn bar(s: &State, kind: kotora_core::Kind, id: u32) -> Option<El> {
-    let question = if kind == kotora_core::Kind::Manga { s.manga_remove_question(id)? } else { s.remove_question(id)? };
+    let question = if kind == kotora_core::Kind::Manga {
+        s.manga_remove_question(id)?
+    } else {
+        s.remove_question(id)?
+    };
     Some(
         row()
             .key("remove")
@@ -143,17 +179,36 @@ mod tests {
         let title = s.entries[2].title.clone();
         s.open_ctx(id, crate::ctxmenu::At::Point(10.0, 10.0));
         s.ask_remove(id);
-        assert_eq!((s.ctx.is_none(), s.confirm_remove), (true, Some(id)), "the menu closes, the bar asks");
-        assert!(s.remove_question(id).unwrap().starts_with(&format!("Remove {title} from your list?")));
+        assert_eq!(
+            (s.ctx.is_none(), s.confirm_remove),
+            (true, Some(id)),
+            "the menu closes, the bar asks"
+        );
+        assert!(
+            s.remove_question(id)
+                .unwrap()
+                .starts_with(&format!("Remove {title} from your list?"))
+        );
         assert!(titled(&s, id).is_some(), "nothing goes before the answer");
         s.remove_entry(id).unwrap();
         assert!(titled(&s, id).is_none() && s.confirm_remove.is_none());
-        assert!(!s.rows.iter().any(|&k| s.entries[k].id == id), "gone from the page");
-        assert!(s.toast.as_ref().is_some_and(|t| t.text == format!("Removed {title} from your list") && matches!(t.undo, Some(Undo::Remove(_)))));
+        assert!(
+            !s.rows.iter().any(|&k| s.entries[k].id == id),
+            "gone from the page"
+        );
+        assert!(
+            s.toast
+                .as_ref()
+                .is_some_and(|t| t.text == format!("Removed {title} from your list")
+                    && matches!(t.undo, Some(Undo::Remove(_))))
+        );
         s.toast_undo();
         let e = titled(&s, id).unwrap();
         assert_eq!(e.title, title);
-        assert!(s.rows.iter().any(|&k| s.entries[k].id == id), "back on the page");
+        assert!(
+            s.rows.iter().any(|&k| s.entries[k].id == id),
+            "back on the page"
+        );
         assert!(s.remove_entry(9_999_999).is_err());
     }
 
@@ -164,7 +219,11 @@ mod tests {
         assert!(!s.remove_question(id).unwrap().contains("Also removes"));
         s.mirror.link = Some(kotora_core::mirror::Link::of(s.service));
         let other = kotora_core::mirror::Link::of(s.service).to.title();
-        assert!(s.remove_question(id).unwrap().ends_with(&format!("Also removes it from {other}.")));
+        assert!(
+            s.remove_question(id)
+                .unwrap()
+                .ends_with(&format!("Also removes it from {other}."))
+        );
     }
 
     #[test]

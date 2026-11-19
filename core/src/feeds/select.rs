@@ -20,7 +20,11 @@ use super::Item;
 
 /// What a list entry must be for its releases to count.
 pub fn counts(it: &ListItem) -> bool {
-    it.rewatching || matches!(it.status, Status::Watching | Status::PlanToWatch | Status::OnHold)
+    it.rewatching
+        || matches!(
+            it.status,
+            Status::Watching | Status::PlanToWatch | Status::OnHold
+        )
 }
 
 /// What to do with batches (ranges, season packs, "Complete").
@@ -162,7 +166,10 @@ impl std::fmt::Display for Hidden {
 
 /// The name's words, lower case, letters and digits only.
 fn words(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 /// `phrase`'s words appear in a row in `ws` (whole words, any case).
@@ -184,7 +191,11 @@ pub fn hidden(f: &Filter, item: &Item, rel: &Release, it: &ListItem, feed: i64) 
     if let Some(w) = f.exclude.iter().find(|w| has_words(&ws, w)) {
         return Some(Hidden::ExcludeWord(w.trim().to_string()));
     }
-    if let Some(w) = f.include.iter().find(|w| !words(w).is_empty() && !has_words(&ws, w)) {
+    if let Some(w) = f
+        .include
+        .iter()
+        .find(|w| !words(w).is_empty() && !has_words(&ws, w))
+    {
         return Some(Hidden::MissingWord(w.trim().to_string()));
     }
     let group = rel.parsed.group.as_deref().unwrap_or("");
@@ -207,7 +218,9 @@ pub fn hidden(f: &Filter, item: &Item, rel: &Release, it: &ListItem, feed: i64) 
         match f.batches {
             Batches::Show => {}
             Batches::Hide => return Some(Hidden::Batch),
-            Batches::AfterFinished if it.media.air_status != "finished_airing" => return Some(Hidden::BatchBeforeEnd),
+            Batches::AfterFinished if it.media.air_status != "finished_airing" => {
+                return Some(Hidden::BatchBeforeEnd);
+            }
             Batches::AfterFinished => {}
         }
     }
@@ -242,7 +255,8 @@ pub fn new_part(it: &ListItem, rel: &Release, aired: Option<u32>) -> Option<(u32
         None => return None,
     };
     if it.status == Status::PlanToWatch && !it.rewatching {
-        return (span.0 <= 1 && span.1 >= 1 && it.progress == 0).then(|| (1, span.1.min(cap.unwrap_or(span.1))));
+        return (span.0 <= 1 && span.1 >= 1 && it.progress == 0)
+            .then(|| (1, span.1.min(cap.unwrap_or(span.1))));
     }
     let first = span.0.max(it.progress + 1);
     let last = cap.map_or(span.1, |c| span.1.min(c));
@@ -265,11 +279,16 @@ pub struct Marks {
 impl Marks {
     /// A got mark covering all of `span`, if any: its version.
     fn got_covering(&self, media: u32, span: (u32, u32)) -> Option<Option<u32>> {
-        self.got.iter().find(|((m, a, b), _)| *m == media && *a <= span.0 && *b >= span.1).map(|(_, (_, v))| *v)
+        self.got
+            .iter()
+            .find(|((m, a, b), _)| *m == media && *a <= span.0 && *b >= span.1)
+            .map(|(_, (_, v))| *v)
     }
 
     fn hidden_covering(&self, media: u32, span: (u32, u32)) -> bool {
-        self.hidden.iter().any(|(m, a, b)| *m == media && *a <= span.0 && *b >= span.1)
+        self.hidden
+            .iter()
+            .any(|(m, a, b)| *m == media && *a <= span.0 && *b >= span.1)
     }
 }
 
@@ -324,15 +343,28 @@ impl Selection {
 /// The best release first: preferred group order, resolution, version, seeders.
 fn rank(f: &Filter, rel: &Release, item: &Item) -> (usize, bool, i64, u32, u32) {
     let group = rel.parsed.group.as_deref().unwrap_or("");
-    let g = f.groups_preferred.iter().position(|p| same_group(p, group)).unwrap_or(f.groups_preferred.len());
+    let g = f
+        .groups_preferred
+        .iter()
+        .position(|p| same_group(p, group))
+        .unwrap_or(f.groups_preferred.len());
     let h = i64::from(rel.height().unwrap_or(0));
     let res = if f.prefer_highest {
         -h
     } else {
-        f.resolutions.iter().position(|r| i64::from(*r) == h).unwrap_or(f.resolutions.len()) as i64
+        f.resolutions
+            .iter()
+            .position(|r| i64::from(*r) == h)
+            .unwrap_or(f.resolutions.len()) as i64
     };
     let not_preferred = f.prefer_resolution.is_some_and(|p| rel.height() != Some(p));
-    (g, not_preferred, res, u32::MAX - rel.version.unwrap_or(1), u32::MAX - item.seeders.unwrap_or(0))
+    (
+        g,
+        not_preferred,
+        res,
+        u32::MAX - rel.version.unwrap_or(1),
+        u32::MAX - item.seeders.unwrap_or(0),
+    )
 }
 
 /// The match of one release name: `Some((media, sure, why))` on the list's counting entries.
@@ -355,7 +387,9 @@ fn find(rel: &mut Release, ctx: &Ctx, entries: &[ListItem]) -> Option<(u32, bool
             let fa = recognize::redirect(found.clone(), &mut pa, entries, ctx.relations);
             let fb = recognize::redirect(found.clone(), &mut pb, entries, ctx.relations);
             match (&fa, &fb) {
-                (Found::List { media_id: x, .. }, Found::List { media_id: y, .. }) if x == y && fa != found => {
+                (Found::List { media_id: x, .. }, Found::List { media_id: y, .. })
+                    if x == y && fa != found =>
+                {
                     rel.episodes = Some((pa.episode.unwrap_or(a), pb.episode.unwrap_or(b)));
                     rel.parsed.episode = pb.episode;
                     fb
@@ -366,7 +400,11 @@ fn find(rel: &mut Release, ctx: &Ctx, entries: &[ListItem]) -> Option<(u32, bool
         None => found,
     };
     match found {
-        Found::List { media_id, sure, why } => Some((media_id, sure, why)),
+        Found::List {
+            media_id,
+            sure,
+            why,
+        } => Some((media_id, sure, why)),
         _ => None,
     }
 }
@@ -387,17 +425,30 @@ pub fn select(items: &[(i64, Item)], ctx: &Ctx) -> Selection {
         }
         let mut rel = parse_release(&item.title);
         let key = rel.parsed.key();
-        let Some((media, sure, why)) = find(&mut rel, ctx, &entries) else { continue };
+        let Some((media, sure, why)) = find(&mut rel, ctx, &entries) else {
+            continue;
+        };
         if ctx.marks.not_this.contains(&(media, key)) {
             continue;
         }
-        let Some(it) = entries.iter().find(|e| e.media.id == media) else { continue };
-        let Some(span) = new_part(it, &rel, ctx.aired.get(&media).copied()) else { continue };
+        let Some(it) = entries.iter().find(|e| e.media.id == media) else {
+            continue;
+        };
+        let Some(span) = new_part(it, &rel, ctx.aired.get(&media).copied()) else {
+            continue;
+        };
         if !sure {
-            out.unsure.push(Unsure { item: i, media_id: media, why });
+            out.unsure.push(Unsure {
+                item: i,
+                media_id: media,
+                why,
+            });
             continue;
         }
-        let f = ctx.series.get(&media).map_or_else(|| ctx.filter.clone(), |s| ctx.filter.with(s));
+        let f = ctx
+            .series
+            .get(&media)
+            .map_or_else(|| ctx.filter.clone(), |s| ctx.filter.with(s));
         if let Some(h) = hidden(&f, item, &rel, it, *feed) {
             out.hidden.push((i, media, h));
             continue;
@@ -408,7 +459,10 @@ pub fn select(items: &[(i64, Item)], ctx: &Ctx) -> Selection {
         groups.entry((media, span)).or_default().push((i, rel));
     }
     for ((media, span), mut rels) in groups {
-        let f = ctx.series.get(&media).map_or_else(|| ctx.filter.clone(), |s| ctx.filter.with(s));
+        let f = ctx
+            .series
+            .get(&media)
+            .map_or_else(|| ctx.filter.clone(), |s| ctx.filter.with(s));
         rels.sort_by_key(|(i, r)| (rank(&f, r, &items[*i].1), *i));
         let version_out = match ctx.marks.got_covering(media, span) {
             None => false,
@@ -421,10 +475,21 @@ pub fn select(items: &[(i64, Item)], ctx: &Ctx) -> Selection {
                 true
             }
         };
-        out.rows.push(Row { media_id: media, episodes: span, releases: rels.into_iter().map(|(i, _)| i).collect(), version_out });
+        out.rows.push(Row {
+            media_id: media,
+            episodes: span,
+            releases: rels.into_iter().map(|(i, _)| i).collect(),
+            version_out,
+        });
     }
     // List order: series by title, then episode.
-    let title = |m: u32| ctx.list.iter().find(|it| it.media.id == m).map(|it| it.media.title.to_lowercase()).unwrap_or_default();
+    let title = |m: u32| {
+        ctx.list
+            .iter()
+            .find(|it| it.media.id == m)
+            .map(|it| it.media.title.to_lowercase())
+            .unwrap_or_default()
+    };
     out.rows.sort_by_key(|r| (title(r.media_id), r.episodes));
     out
 }

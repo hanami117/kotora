@@ -10,10 +10,10 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
 
+use zbus::MatchRule;
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::message::Type;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::MatchRule;
 
 use crate::run::Input;
 use crate::{Led, PlayState, Playing, SourceStatus, Switch, Via};
@@ -24,7 +24,10 @@ const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
 /// The Settings switch of a bus name: `org.mpris.MediaPlayer2.vlc`, `….MpcQt.instance2`, ….
 pub fn switch_for(bus_name: &str) -> Switch {
-    let n = bus_name.strip_prefix(PREFIX).unwrap_or(bus_name).to_lowercase();
+    let n = bus_name
+        .strip_prefix(PREFIX)
+        .unwrap_or(bus_name)
+        .to_lowercase();
     if n.starts_with("vlc") {
         Switch::Vlc
     } else if n.starts_with("mpcqt") || n.starts_with("mpc-qt") || n.starts_with("mpc_qt") {
@@ -64,7 +67,12 @@ fn as_f64(v: &Value) -> Option<f64> {
 
 /// The player's `org.mpris.MediaPlayer2.Player` properties → a snapshot. `None` when it plays
 /// no local file.
-pub fn from_props(bus_name: &str, identity: &str, props: &HashMap<String, OwnedValue>, at: f64) -> Option<Playing> {
+pub fn from_props(
+    bus_name: &str,
+    identity: &str,
+    props: &HashMap<String, OwnedValue>,
+    at: f64,
+) -> Option<Playing> {
     let mut url = None;
     let mut length = None;
     if let Some(Value::Dict(md)) = props.get("Metadata").map(|v| unbox(v)) {
@@ -77,23 +85,41 @@ pub fn from_props(bus_name: &str, identity: &str, props: &HashMap<String, OwnedV
         }
     }
     let path = crate::file_url_path(url.as_deref()?)?;
-    let state = match props.get("PlaybackStatus").and_then(|v| as_str(v)).as_deref() {
+    let state = match props
+        .get("PlaybackStatus")
+        .and_then(|v| as_str(v))
+        .as_deref()
+    {
         Some("Playing") => PlayState::Playing,
         Some("Paused") => PlayState::Paused,
         _ => PlayState::Stopped,
     };
     Some(Playing {
         key: format!("mpris:{bus_name}"),
-        player: if identity.is_empty() { bus_name.strip_prefix(PREFIX).unwrap_or(bus_name).to_string() } else { identity.to_string() },
+        player: if identity.is_empty() {
+            bus_name
+                .strip_prefix(PREFIX)
+                .unwrap_or(bus_name)
+                .to_string()
+        } else {
+            identity.to_string()
+        },
         switch: switch_for(bus_name),
         via: Via::Mpris,
         path: Some(path),
         title: None,
         // Microseconds on the bus.
-        position: props.get("Position").and_then(|v| as_f64(v)).map(|us| us / 1e6),
+        position: props
+            .get("Position")
+            .and_then(|v| as_f64(v))
+            .map(|us| us / 1e6),
         duration: length.map(|us| us / 1e6).filter(|d| *d > 0.0),
         state,
-        rate: props.get("Rate").and_then(|v| as_f64(v)).filter(|r| *r > 0.0).unwrap_or(1.0),
+        rate: props
+            .get("Rate")
+            .and_then(|v| as_f64(v))
+            .filter(|r| *r > 0.0)
+            .unwrap_or(1.0),
         at,
     })
 }
@@ -112,22 +138,38 @@ struct Player {
 }
 
 fn status_for(players: &[Player], playing: &HashMap<String, bool>, switch: Switch) -> SourceStatus {
-    let mine: Vec<&Player> = players.iter().filter(|p| switch_for(&p.name) == switch).collect();
+    let mine: Vec<&Player> = players
+        .iter()
+        .filter(|p| switch_for(&p.name) == switch)
+        .collect();
     let (line, led) = if mine.is_empty() {
         ("not running".to_string(), Led::Off)
-    } else if mine.iter().any(|p| playing.get(&p.name).copied().unwrap_or(false)) {
+    } else if mine
+        .iter()
+        .any(|p| playing.get(&p.name).copied().unwrap_or(false))
+    {
         ("playing".to_string(), Led::Playing)
     } else {
         ("running, nothing playing".to_string(), Led::Idle)
     };
-    SourceStatus { switch, via: Via::Mpris, line, led }
+    SourceStatus {
+        switch,
+        via: Via::Mpris,
+        line,
+        led,
+    }
 }
 
 /// The thread: follows MPRIS players until the bus goes away.
 pub fn run(tx: Sender<Input>) {
     let fail = |m: String| {
         for sw in [Switch::Mpv, Switch::Vlc, Switch::MpcQt, Switch::OtherMpris] {
-            let _ = tx.send(Input::Status(SourceStatus { switch: sw, via: Via::Mpris, line: m.clone(), led: Led::Problem }));
+            let _ = tx.send(Input::Status(SourceStatus {
+                switch: sw,
+                via: Via::Mpris,
+                line: m.clone(),
+                led: Led::Problem,
+            }));
         }
     };
     let conn = match Connection::session() {
@@ -149,26 +191,38 @@ fn follow(conn: &Connection, tx: &Sender<Input>) -> zbus::Result<()> {
         .arg0ns("org.mpris.MediaPlayer2")?
         .build();
     let owners = MessageIterator::for_match_rule(owners, conn, Some(64))?;
-    let signals = MatchRule::builder().msg_type(Type::Signal).path(PATH)?.build();
+    let signals = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .path(PATH)?
+        .build();
     let signals = MessageIterator::for_match_rule(signals, conn, Some(64))?;
     let t1 = etx.clone();
-    std::thread::Builder::new().name("kotora-mpris-names".into()).spawn(move || {
-        for m in owners.flatten() {
-            if let Ok((name, _old, new_owner)) = m.body().deserialize::<(String, String, String)>()
-                && t1.send(Ev::Owner { name, new_owner }).is_err()
-            {
-                return;
+    std::thread::Builder::new()
+        .name("kotora-mpris-names".into())
+        .spawn(move || {
+            for m in owners.flatten() {
+                if let Ok((name, _old, new_owner)) =
+                    m.body().deserialize::<(String, String, String)>()
+                    && t1.send(Ev::Owner { name, new_owner }).is_err()
+                {
+                    return;
+                }
             }
-        }
-    })?;
-    std::thread::Builder::new().name("kotora-mpris-signals".into()).spawn(move || {
-        for m in signals.flatten() {
-            let sender = m.header().sender().map(|s| s.to_string()).unwrap_or_default();
-            if etx.send(Ev::Signal { sender }).is_err() {
-                return;
+        })?;
+    std::thread::Builder::new()
+        .name("kotora-mpris-signals".into())
+        .spawn(move || {
+            for m in signals.flatten() {
+                let sender = m
+                    .header()
+                    .sender()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if etx.send(Ev::Signal { sender }).is_err() {
+                    return;
+                }
             }
-        }
-    })?;
+        })?;
 
     let dbus = zbus::blocking::fdo::DBusProxy::new(conn)?;
     let mut players: Vec<Player> = Vec::new();
@@ -176,8 +230,16 @@ fn follow(conn: &Connection, tx: &Sender<Input>) -> zbus::Result<()> {
     for name in dbus.list_names()? {
         let name = name.to_string();
         if name.starts_with(PREFIX) {
-            let owner = dbus.get_name_owner(name.as_str().try_into()?).map(|o| o.to_string()).unwrap_or_default();
-            players.push(Player { identity: identity(conn, &name), name, owner, shown: false });
+            let owner = dbus
+                .get_name_owner(name.as_str().try_into()?)
+                .map(|o| o.to_string())
+                .unwrap_or_default();
+            players.push(Player {
+                identity: identity(conn, &name),
+                name,
+                owner,
+                shown: false,
+            });
         }
     }
     let names: Vec<String> = players.iter().map(|p| p.name.clone()).collect();
@@ -196,12 +258,23 @@ fn follow(conn: &Connection, tx: &Sender<Input>) -> zbus::Result<()> {
                     }
                 }
                 if !new_owner.is_empty() {
-                    players.push(Player { identity: identity(conn, &name), name: name.clone(), owner: new_owner, shown: false });
+                    players.push(Player {
+                        identity: identity(conn, &name),
+                        name: name.clone(),
+                        owner: new_owner,
+                        shown: false,
+                    });
                     refresh(conn, &mut players, &mut playing, &name, tx);
                 }
             }
             Ev::Signal { sender } => {
-                let Some(name) = players.iter().find(|p| p.owner == sender).map(|p| p.name.clone()) else { continue };
+                let Some(name) = players
+                    .iter()
+                    .find(|p| p.owner == sender)
+                    .map(|p| p.name.clone())
+                else {
+                    continue;
+                };
                 refresh(conn, &mut players, &mut playing, &name, tx);
             }
         }
@@ -217,21 +290,44 @@ fn send_states(players: &[Player], playing: &HashMap<String, bool>, tx: &Sender<
 }
 
 fn identity(conn: &Connection, name: &str) -> String {
-    conn.call_method(Some(name), PATH, Some("org.freedesktop.DBus.Properties"), "Get", &("org.mpris.MediaPlayer2", "Identity"))
-        .ok()
-        .and_then(|r| r.body().deserialize::<OwnedValue>().ok())
-        .and_then(|v| as_str(&v))
-        .unwrap_or_default()
+    conn.call_method(
+        Some(name),
+        PATH,
+        Some("org.freedesktop.DBus.Properties"),
+        "Get",
+        &("org.mpris.MediaPlayer2", "Identity"),
+    )
+    .ok()
+    .and_then(|r| r.body().deserialize::<OwnedValue>().ok())
+    .and_then(|v| as_str(&v))
+    .unwrap_or_default()
 }
 
-fn refresh(conn: &Connection, players: &mut [Player], playing: &mut HashMap<String, bool>, name: &str, tx: &Sender<Input>) {
-    let Some(p) = players.iter_mut().find(|p| p.name == name) else { return };
+fn refresh(
+    conn: &Connection,
+    players: &mut [Player],
+    playing: &mut HashMap<String, bool>,
+    name: &str,
+    tx: &Sender<Input>,
+) {
+    let Some(p) = players.iter_mut().find(|p| p.name == name) else {
+        return;
+    };
     let props = conn
-        .call_method(Some(name), PATH, Some("org.freedesktop.DBus.Properties"), "GetAll", &(PLAYER,))
+        .call_method(
+            Some(name),
+            PATH,
+            Some("org.freedesktop.DBus.Properties"),
+            "GetAll",
+            &(PLAYER,),
+        )
         .ok()
         .and_then(|r| r.body().deserialize::<HashMap<String, OwnedValue>>().ok());
     let snap = props.and_then(|props| from_props(name, &p.identity, &props, crate::clock()));
-    playing.insert(name.to_string(), snap.as_ref().is_some_and(|s| s.state == PlayState::Playing));
+    playing.insert(
+        name.to_string(),
+        snap.as_ref().is_some_and(|s| s.state == PlayState::Playing),
+    );
     match snap {
         Some(s) => {
             p.shown = true;
@@ -258,13 +354,24 @@ mod tests {
     fn vlc_props(url: &str) -> HashMap<String, OwnedValue> {
         let mut md: HashMap<String, Value> = HashMap::new();
         md.insert("xesam:url".into(), Value::new(url.to_string()));
-        md.insert("xesam:title".into(), Value::new("Lanterns of Kirigaoka - 06".to_string()));
+        md.insert(
+            "xesam:title".into(),
+            Value::new("Lanterns of Kirigaoka - 06".to_string()),
+        );
         md.insert("mpris:length".into(), Value::new(1_420_500_000i64));
-        md.insert("mpris:trackid".into(), Value::new(zbus::zvariant::ObjectPath::try_from("/org/videolan/vlc/playlist/4").unwrap()));
+        md.insert(
+            "mpris:trackid".into(),
+            Value::new(
+                zbus::zvariant::ObjectPath::try_from("/org/videolan/vlc/playlist/4").unwrap(),
+            ),
+        );
         let md = Dict::from(md);
         let mut p = HashMap::new();
         p.insert("Metadata".into(), ov(Value::Dict(md)));
-        p.insert("PlaybackStatus".into(), ov(Value::new("Playing".to_string())));
+        p.insert(
+            "PlaybackStatus".into(),
+            ov(Value::new("Playing".to_string())),
+        );
         p.insert("Position".into(), ov(Value::new(731_000_000i64)));
         p.insert("Rate".into(), ov(Value::new(1.0f64)));
         p
@@ -272,21 +379,47 @@ mod tests {
 
     #[test]
     fn reads_a_players_properties() {
-        let p = from_props("org.mpris.MediaPlayer2.vlc", "VLC media player", &vlc_props("file:///v/%5BHoshi%5D%20Lanterns%20of%20Kirigaoka%20-%2006.mkv"), 2.0).unwrap();
+        let p = from_props(
+            "org.mpris.MediaPlayer2.vlc",
+            "VLC media player",
+            &vlc_props("file:///v/%5BHoshi%5D%20Lanterns%20of%20Kirigaoka%20-%2006.mkv"),
+            2.0,
+        )
+        .unwrap();
         assert_eq!(p.key, "mpris:org.mpris.MediaPlayer2.vlc");
         assert_eq!(p.player, "VLC media player");
-        assert_eq!(p.path.as_deref(), Some("/v/[Hoshi] Lanterns of Kirigaoka - 06.mkv"));
-        assert_eq!((p.state, p.position, p.duration, p.switch), (PlayState::Playing, Some(731.0), Some(1420.5), Switch::Vlc));
+        assert_eq!(
+            p.path.as_deref(),
+            Some("/v/[Hoshi] Lanterns of Kirigaoka - 06.mkv")
+        );
+        assert_eq!(
+            (p.state, p.position, p.duration, p.switch),
+            (PlayState::Playing, Some(731.0), Some(1420.5), Switch::Vlc)
+        );
         // A stream or a browser tab: skipped.
-        assert!(from_props("org.mpris.MediaPlayer2.firefox", "", &vlc_props("https://example.invalid/watch"), 0.0).is_none());
+        assert!(
+            from_props(
+                "org.mpris.MediaPlayer2.firefox",
+                "",
+                &vlc_props("https://example.invalid/watch"),
+                0.0
+            )
+            .is_none()
+        );
         assert!(from_props("org.mpris.MediaPlayer2.x", "", &HashMap::new(), 0.0).is_none());
     }
 
     #[test]
     fn bus_names_pick_their_switch() {
         assert_eq!(switch_for("org.mpris.MediaPlayer2.vlc"), Switch::Vlc);
-        assert_eq!(switch_for("org.mpris.MediaPlayer2.MpcQt.instance2"), Switch::MpcQt);
+        assert_eq!(
+            switch_for("org.mpris.MediaPlayer2.MpcQt.instance2"),
+            Switch::MpcQt
+        );
         assert_eq!(switch_for("org.mpris.MediaPlayer2.mpv"), Switch::Mpv);
-        assert_eq!(switch_for("org.mpris.MediaPlayer2.haruna"), Switch::OtherMpris);
+        assert_eq!(
+            switch_for("org.mpris.MediaPlayer2.haruna"),
+            Switch::OtherMpris
+        );
     }
 }

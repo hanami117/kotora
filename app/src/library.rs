@@ -34,7 +34,6 @@ pub const REFRESH_AFTER: Duration = Duration::from_secs(60);
 /// Most anime in the tray's Play next menu.
 pub const PLAY_MENU_MAX: usize = 8;
 
-
 /// A folder of Settings → Library.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Folder {
@@ -49,7 +48,12 @@ pub struct Folder {
 
 impl Folder {
     fn new(path: &str) -> Folder {
-        Folder { path: path.to_string(), online: true, files: 0, scanned: false }
+        Folder {
+            path: path.to_string(),
+            online: true,
+            files: 0,
+            scanned: false,
+        }
     }
 }
 
@@ -136,7 +140,9 @@ pub fn start(s: &mut State) {
     l.tx = Some(tx);
     l.last_walk = Some(Instant::now());
     let folders = c.library.folders;
-    let _ = std::thread::Builder::new().name("kotora-library".into()).spawn(move || run(&h, &rx, folders));
+    let _ = std::thread::Builder::new()
+        .name("kotora-library".into())
+        .spawn(move || run(&h, &rx, folders));
 }
 
 fn run(h: &Handle, rx: &Receiver<Cmd>, mut folders: Vec<String>) {
@@ -187,8 +193,17 @@ fn pass(st: &mut Store, folders: &[String], walk: bool) -> (Vec<Folder>, Index) 
     let mut shown = Vec::new();
     for f in folders {
         let r = if walk { lib::scan(st, f).ok() } else { None };
-        let r = r.unwrap_or_else(|| lib::Scan { online: Path::new(f).is_dir(), files: lib::load_folder(st, f).map_or(0, |v| v.len()), ..Default::default() });
-        shown.push(Folder { path: f.clone(), online: r.online, files: r.files, scanned: true });
+        let r = r.unwrap_or_else(|| lib::Scan {
+            online: Path::new(f).is_dir(),
+            files: lib::load_folder(st, f).map_or(0, |v| v.len()),
+            ..Default::default()
+        });
+        shown.push(Folder {
+            path: f.clone(),
+            online: r.online,
+            files: r.files,
+            scanned: true,
+        });
     }
     let rows = lib::load_all(st).unwrap_or_default();
     let items = st.load_list(crate::account::name()).unwrap_or_default();
@@ -204,7 +219,9 @@ pub fn list_changed(s: &State) {
 
 /// Detection saw a player: remember it for "Open with: Automatic" (saved when it changes).
 pub fn saw_player(s: &mut State, name: &str) {
-    let Some(p) = Player::from_seen(name) else { return };
+    let Some(p) = Player::from_seen(name) else {
+        return;
+    };
     if s.library.last_player == p.key() || s.handle.is_none() {
         return;
     }
@@ -215,14 +232,16 @@ pub fn saw_player(s: &mut State, name: &str) {
 /// Writes `[library] key = value` off the UI thread.
 fn save(s: &State, key: &'static str, value: String) {
     let Some(h) = s.handle.clone() else { return };
-    let _ = std::thread::Builder::new().name("kotora-settings".into()).spawn(move || {
-        if let Err(e) = config::write_setting(&paths::config_file(), "library", key, &value) {
-            h.update_if(move |s, _| {
-                s.library.error = Some(format!("Can't save the setting: {e}"));
-                true
-            });
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("kotora-settings".into())
+        .spawn(move || {
+            if let Err(e) = config::write_setting(&paths::config_file(), "library", key, &value) {
+                h.update_if(move |s, _| {
+                    s.library.error = Some(format!("Can't save the setting: {e}"));
+                    true
+                });
+            }
+        });
 }
 
 fn save_folders(s: &mut State) {
@@ -245,14 +264,22 @@ pub(crate) fn tidy(raw: &str) -> String {
         return tidy_windows(&t);
     }
     let trimmed = t.trim_end_matches('/');
-    if trimmed.is_empty() && t.starts_with('/') { "/".into() } else { trimmed.to_string() }
+    if trimmed.is_empty() && t.starts_with('/') {
+        "/".into()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Windows: no trailing separator, but a drive's root keeps its own (`D:\`).
 #[cfg_attr(not(windows), allow(dead_code))]
 fn tidy_windows(t: &str) -> String {
     let trimmed = t.trim_end_matches(['\\', '/']);
-    if trimmed.len() == 2 && trimmed.ends_with(':') && trimmed.len() < t.len() { format!("{trimmed}\\") } else { trimmed.to_string() }
+    if trimmed.len() == 2 && trimmed.ends_with(':') && trimmed.len() < t.len() {
+        format!("{trimmed}\\")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Adds a folder. `check`: it must be there now (a folder typed in; a picked one is).
@@ -268,8 +295,17 @@ pub fn add_folder(s: &mut State, raw: &str) -> Result<(), String> {
     } else if !path.starts_with('/') {
         return Err("Give the whole path, from / (or ~/).".into());
     }
-    if let Some(f) = s.library.folders.iter().find(|f| lib::overlaps(&f.path, &path)) {
-        return Err(if f.path == path { "That folder is already in the list.".into() } else { format!("That overlaps {}, already in the list.", f.path) });
+    if let Some(f) = s
+        .library
+        .folders
+        .iter()
+        .find(|f| lib::overlaps(&f.path, &path))
+    {
+        return Err(if f.path == path {
+            "That folder is already in the list.".into()
+        } else {
+            format!("That overlaps {}, already in the list.", f.path)
+        });
     }
     if !Path::new(&path).is_dir() {
         return Err(format!("No folder at {path}."));
@@ -314,7 +350,10 @@ fn choose(s: &mut State) {
 /// picker could run (Linux without zenity or kdialog); a cancel runs nothing. macOS: AppKit's
 /// own panel, in this process, so it follows Kotora's theme (`chrome.rs`); elsewhere a short
 /// thread.
-pub(crate) fn choose_folder(prompt: &'static str, picked: impl Fn(Result<String, String>) + Send + 'static) -> Result<(), String> {
+pub(crate) fn choose_folder(
+    prompt: &'static str,
+    picked: impl Fn(Result<String, String>) + Send + 'static,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         crate::chrome::pick_folder(prompt, move |p| {
@@ -325,13 +364,13 @@ pub(crate) fn choose_folder(prompt: &'static str, picked: impl Fn(Result<String,
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = std::thread::Builder::new().name("kotora-choose".into()).spawn(move || {
-            match pick_folder(prompt) {
+        let _ = std::thread::Builder::new()
+            .name("kotora-choose".into())
+            .spawn(move || match pick_folder(prompt) {
                 Ok(Some(p)) => picked(Ok(p)),
                 Ok(None) => {}
                 Err(e) => picked(Err(e)),
-            }
-        });
+            });
         Ok(())
     }
 }
@@ -346,9 +385,16 @@ fn pick_folder(prompt: &str) -> Result<Option<String>, String> {
 #[cfg(not(any(target_os = "macos", windows)))]
 fn pick_folder(prompt: &str) -> Result<Option<String>, String> {
     let title = format!("--title={prompt}");
-    let tries: [(&str, Vec<&str>); 2] = [("zenity", vec!["--file-selection", "--directory", &title]), ("kdialog", vec!["--getexistingdirectory", "--title", prompt])];
+    let tries: [(&str, Vec<&str>); 2] = [
+        ("zenity", vec!["--file-selection", "--directory", &title]),
+        ("kdialog", vec!["--getexistingdirectory", "--title", prompt]),
+    ];
     for (prog, args) in &tries {
-        match std::process::Command::new(prog).args(args).stdin(std::process::Stdio::null()).output() {
+        match std::process::Command::new(prog)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+        {
             Ok(out) if out.status.success() => {
                 let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 return Ok((!p.is_empty()).then_some(p));
@@ -374,7 +420,10 @@ fn rescan(s: &mut State) {
 /// stat each.
 pub fn refresh(s: &mut State) {
     let l = &mut s.library;
-    if l.tx.is_none() || l.folders.is_empty() || l.last_walk.is_some_and(|t| t.elapsed() < REFRESH_AFTER) {
+    if l.tx.is_none()
+        || l.folders.is_empty()
+        || l.last_walk.is_some_and(|t| t.elapsed() < REFRESH_AFTER)
+    {
         return;
     }
     l.last_walk = Some(Instant::now());
@@ -393,7 +442,11 @@ pub fn next_for(s: &State, e: &Entry) -> Option<Next> {
     if s.library.folders.is_empty() {
         return None;
     }
-    Some(s.library.index.next(e.id, e.progress, e.episodes, &|f| s.library.online(f)))
+    Some(
+        s.library
+            .index
+            .next(e.id, e.progress, e.episodes, &|f| s.library.online(f)),
+    )
 }
 
 /// Whether the entry's next episode is a file in an online folder.
@@ -408,12 +461,18 @@ pub fn play_menu(s: &State) -> Vec<(u32, String)> {
     if s.library.folders.is_empty() {
         return Vec::new();
     }
-    let mut watching: Vec<&Entry> = s.entries.iter().filter(|e| e.status == Status::Watching || e.rewatching).collect();
+    let mut watching: Vec<&Entry> = s
+        .entries
+        .iter()
+        .filter(|e| e.status == Status::Watching || e.rewatching)
+        .collect();
     watching.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
     watching
         .into_iter()
         .filter_map(|e| match next_for(s, e) {
-            Some(Next::Ready { episode, .. }) => Some((e.id, format!("{} \u{b7} Ep {episode}", e.title))),
+            Some(Next::Ready { episode, .. }) => {
+                Some((e.id, format!("{} \u{b7} Ep {episode}", e.title)))
+            }
             _ => None,
         })
         .take(PLAY_MENU_MAX)
@@ -422,30 +481,54 @@ pub fn play_menu(s: &State) -> Vec<(u32, String)> {
 
 /// Opens the next episode's file in the player. `Ok`: what it does, in a sentence.
 pub fn play_next(s: &mut State, id: u32) -> Result<String, String> {
-    let e = s.entries.iter().find(|e| e.id == id).ok_or("That anime isn't on your list.")?;
-    let next = next_for(s, e).ok_or("No library folders yet: add one in Settings \u{2192} Library.")?;
-    let Next::Ready { episode, path } = next else { return Err(next.reason().unwrap_or_default()) };
+    let e = s
+        .entries
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or("That anime isn't on your list.")?;
+    let next =
+        next_for(s, e).ok_or("No library folders yet: add one in Settings \u{2192} Library.")?;
+    let Next::Ready { episode, path } = next else {
+        return Err(next.reason().unwrap_or_default());
+    };
     let player = s.library.player();
     let found = s.library.found.clone();
-    let note = format!("Opening episode {episode} of {} in {}", e.title, if player == Player::System { "the default player" } else { player.label() });
+    let note = format!(
+        "Opening episode {episode} of {} in {}",
+        e.title,
+        if player == Player::System {
+            "the default player"
+        } else {
+            player.label()
+        }
+    );
     s.library.note = Some(note.clone());
     // The file is looked at off the UI thread: a sleeping drive may take seconds.
     let h = s.handle.clone();
-    let _ = std::thread::Builder::new().name("kotora-play".into()).spawn(move || {
-        let r = if Path::new(&path).is_file() || rune::is_headless() {
-            play::open(player, &path, &found)
-        } else {
-            Err(format!("Episode {episode} is gone from {}: looking again.", lib::folder_name(Path::new(&path).parent().map_or("", |p| p.to_str().unwrap_or("")))))
-        };
-        if let (Err(m), Some(h)) = (r, h) {
-            h.update_if(move |s, _| {
-                s.library.note = None;
-                s.error = Some(m);
-                rescan(s);
-                true
-            });
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("kotora-play".into())
+        .spawn(move || {
+            let r = if Path::new(&path).is_file() || rune::is_headless() {
+                play::open(player, &path, &found)
+            } else {
+                Err(format!(
+                    "Episode {episode} is gone from {}: looking again.",
+                    lib::folder_name(
+                        Path::new(&path)
+                            .parent()
+                            .map_or("", |p| p.to_str().unwrap_or(""))
+                    )
+                ))
+            };
+            if let (Err(m), Some(h)) = (r, h) {
+                h.update_if(move |s, _| {
+                    s.library.note = None;
+                    s.error = Some(m);
+                    rescan(s);
+                    true
+                });
+            }
+        });
     Ok(note)
 }
 
@@ -479,7 +562,9 @@ impl PartialEq for Undo {
             (Undo::Edit(a, c), Undo::Edit(b, d)) => a == b && c == d,
             (Undo::Remove(a), Undo::Remove(b)) => a.id == b.id && a.updated_at == b.updated_at,
             (Undo::MangaEdit(a, c), Undo::MangaEdit(b, d)) => a == b && c == d,
-            (Undo::MangaRemove(a), Undo::MangaRemove(b)) => a.id == b.id && a.updated_at == b.updated_at,
+            (Undo::MangaRemove(a), Undo::MangaRemove(b)) => {
+                a.id == b.id && a.updated_at == b.updated_at
+            }
             _ => false,
         }
     }
@@ -496,7 +581,12 @@ impl State {
             Ok(note) => (note, false),
             Err(m) => (m, true),
         };
-        self.toast = Some(Toast { text, warn, until: std::time::Instant::now() + std::time::Duration::from_secs_f64(TOAST_SECS), undo: None });
+        self.toast = Some(Toast {
+            text,
+            warn,
+            until: std::time::Instant::now() + std::time::Duration::from_secs_f64(TOAST_SECS),
+            undo: None,
+        });
     }
 
     /// The entry P plays: the grid's selection, the list row whose editor is open, or the
@@ -504,11 +594,17 @@ impl State {
     pub fn play_target(&self) -> Option<u32> {
         let on_list = |id: u32| self.entries.iter().any(|e| e.id == id).then_some(id);
         match self.page {
-            Page::List(st) if self.view_of(st) != kotora_core::config::ListView::List => {
-                self.grid.sel.filter(|id| self.rows.iter().any(|&k| self.entries[k].id == *id))
-            }
+            Page::List(st) if self.view_of(st) != kotora_core::config::ListView::List => self
+                .grid
+                .sel
+                .filter(|id| self.rows.iter().any(|&k| self.entries[k].id == *id)),
             Page::List(_) => self.editor.map(|ed| ed.id).and_then(on_list),
-            Page::Details => self.detail.as_ref().filter(|d| !d.is_manga()).map(|d| d.id()).and_then(on_list),
+            Page::Details => self
+                .detail
+                .as_ref()
+                .filter(|d| !d.is_manga())
+                .map(|d| d.id())
+                .and_then(on_list),
             _ => None,
         }
     }
@@ -542,12 +638,30 @@ pub fn toast(t: &Toast) -> El {
         .radius(theme::R_LG)
         .fill(PAL.raised)
         .border(1.0, PAL.border_strong)
-        .shadow(8.0, 24.0, rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
+        .shadow(
+            8.0,
+            24.0,
+            rune::Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }),
+        )
         .child(el().size(8.0, 8.0).radius(4.0).fill(c))
         // The text gives way to the button: it wraps (3 lines at most), and a word too long for the
         // toast is cut at the toast's edge instead of running under Undo.
-        .child(row().shrink().min_w(0.0).clip_rounded(0.0).child(text(t.text.clone()).font(theme::BODY).color(PAL.text).wrap().max_lines(3).shrink().min_w(0.0)))
-        .children(t.undo.is_some().then(|| crate::ui::button("toast/undo", "Undo", false, Some(State::toast_undo)).h(26.0).px(10.0)))
+        .child(
+            row().shrink().min_w(0.0).clip_rounded(0.0).child(
+                text(t.text.clone())
+                    .font(theme::BODY)
+                    .color(PAL.text)
+                    .wrap()
+                    .max_lines(3)
+                    .shrink()
+                    .min_w(0.0),
+            ),
+        )
+        .children(t.undo.is_some().then(|| {
+            crate::ui::button("toast/undo", "Undo", false, Some(State::toast_undo))
+                .h(26.0)
+                .px(10.0)
+        }))
 }
 
 pub(crate) fn press_play(s: &mut State, id: u32) {
@@ -619,13 +733,28 @@ pub fn details_block(s: &State, id: u32) -> Option<El> {
         return None;
     }
     let eps = s.library.index.episodes(id);
-    let have = if eps.is_empty() { "No episodes in your folders.".to_string() } else { format!("Episodes {} in your folders", lib::ranges(&eps)) };
-    let mut c = card("det-library", "On your disk").child(text(have).key("det/local-episodes").font(theme::LABEL).color(PAL.dim).wrap().pt(4.0));
+    let have = if eps.is_empty() {
+        "No episodes in your folders.".to_string()
+    } else {
+        format!("Episodes {} in your folders", lib::ranges(&eps))
+    };
+    let mut c = card("det-library", "On your disk").child(
+        text(have)
+            .key("det/local-episodes")
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .wrap()
+            .pt(4.0),
+    );
     if let Some(e) = s.entries.iter().find(|e| e.id == id)
         && let Some(next) = next_for(s, e)
         && next != Next::Done
     {
-        c = c.child(row().pt(10.0).child(play_button("det/play".into(), &next, id)));
+        c = c.child(
+            row()
+                .pt(10.0)
+                .child(play_button("det/play".into(), &next, id)),
+        );
         if let Some(n) = s.library.note.as_ref().filter(|n| n.contains(&e.title)) {
             c = c.child(text(n.clone()).font(theme::LABEL).color(PAL.faint).pt(6.0));
         }
@@ -640,7 +769,11 @@ pub fn up_next_card(s: &State) -> Option<El> {
         .entries
         .iter()
         .filter(|e| e.status == Status::Watching || e.rewatching)
-        .filter_map(|e| next_for(s, e).filter(|n| matches!(n, Next::Ready { .. })).map(|n| (e, n)))
+        .filter_map(|e| {
+            next_for(s, e)
+                .filter(|n| matches!(n, Next::Ready { .. }))
+                .map(|n| (e, n))
+        })
         .collect();
     if ready.is_empty() {
         return None;
@@ -654,7 +787,14 @@ pub fn up_next_card(s: &State) -> Option<El> {
                 .gap(12.0)
                 .py(6.0)
                 .center_y()
-                .child(text(e.title.clone()).font(theme::BODY_MED).color(PAL.text).truncate().grow(1.0).min_w(0.0))
+                .child(
+                    text(e.title.clone())
+                        .font(theme::BODY_MED)
+                        .color(PAL.text)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0),
+                )
                 .child(play_button(format!("np/play/{}", e.id), &n, e.id)),
         );
     }
@@ -665,7 +805,14 @@ pub fn up_next_card(s: &State) -> Option<El> {
         Player::System => "your default player".to_string(),
         p => p.label().to_string(),
     };
-    Some(c.child(text(format!("Opens in {who} (Settings \u{2192} Library).")).font(theme::LABEL).color(PAL.faint).pt(4.0)))
+    Some(
+        c.child(
+            text(format!("Opens in {who} (Settings \u{2192} Library)."))
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .pt(4.0),
+        ),
+    )
 }
 
 // ------------------------------------------------------------------------------------- settings
@@ -680,8 +827,22 @@ pub fn folders_block(s: &State) -> El {
     for f in &l.folders {
         let (dot, state) = match (f.scanned, f.online) {
             (false, _) => (PAL.faint, "Looking\u{2026}".to_string()),
-            (true, true) => (PAL.ok(), format!("{} episode file{}", f.files, if f.files == 1 { "" } else { "s" })),
-            (true, false) => (PAL.warn(), format!("Offline (drive not connected?) \u{b7} {} file{} remembered", f.files, if f.files == 1 { "" } else { "s" })),
+            (true, true) => (
+                PAL.ok(),
+                format!(
+                    "{} episode file{}",
+                    f.files,
+                    if f.files == 1 { "" } else { "s" }
+                ),
+            ),
+            (true, false) => (
+                PAL.warn(),
+                format!(
+                    "Offline (drive not connected?) \u{b7} {} file{} remembered",
+                    f.files,
+                    if f.files == 1 { "" } else { "s" }
+                ),
+            ),
         };
         let path = f.path.clone();
         c = c.child(
@@ -696,10 +857,19 @@ pub fn folders_block(s: &State) -> El {
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(2.0)
-                        .child(text(f.path.clone()).font(theme::BODY_MED).color(PAL.text).truncate())
+                        .child(
+                            text(f.path.clone())
+                                .font(theme::BODY_MED)
+                                .color(PAL.text)
+                                .truncate(),
+                        )
                         .child(text(state).font(theme::LABEL).color(PAL.dim)),
                 )
-                .child(ghost(&format!("set/library/remove/{}", f.path), "Remove", move |s| remove_folder(s, &path))),
+                .child(ghost(
+                    &format!("set/library/remove/{}", f.path),
+                    "Remove",
+                    move |s| remove_folder(s, &path),
+                )),
         );
     }
     let input = row()
@@ -712,7 +882,14 @@ pub fn folders_block(s: &State) -> El {
         .center_y()
         .radius(theme::R_SM)
         .fill(PAL.field)
-        .border(1.0, if l.error.is_some() { PAL.warn() } else { PAL.border_strong })
+        .border(
+            1.0,
+            if l.error.is_some() {
+                PAL.warn()
+            } else {
+                PAL.border_strong
+            },
+        )
         .child(
             text_input(&l.draft, TextStyle::new(12.0, 400.0).mono())
                 .key("set/library/input")
@@ -720,13 +897,19 @@ pub fn folders_block(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&l.draft, if cfg!(target_os = "macos") {
-                    "/Volumes/Disk/Anime"
-                } else if cfg!(windows) {
-                    "D:\\Anime"
-                } else {
-                    "~/Videos/Anime"
-                }), PAL.faint)
+                .placeholder(
+                    field_hint(
+                        &l.draft,
+                        if cfg!(target_os = "macos") {
+                            "/Volumes/Disk/Anime"
+                        } else if cfg!(windows) {
+                            "D:\\Anime"
+                        } else {
+                            "~/Videos/Anime"
+                        },
+                    ),
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.library.draft)
                 .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.library.error = None)
@@ -743,17 +926,41 @@ pub fn folders_block(s: &State) -> El {
             .center_y()
             .child(input)
             .child(button("set/library/add", "Add", false, Some(add_typed)))
-            .child(button("set/library/choose", "Choose\u{2026}", false, Some(choose))),
+            .child(button(
+                "set/library/choose",
+                "Choose\u{2026}",
+                false,
+                Some(choose),
+            )),
     );
     if let Some(e) = &l.error {
-        c = c.child(text(e.clone()).key("set/library/error").font(theme::LABEL).color(PAL.warn()).wrap().pt(4.0));
+        c = c.child(
+            text(e.clone())
+                .key("set/library/error")
+                .font(theme::LABEL)
+                .color(PAL.warn())
+                .wrap()
+                .pt(4.0),
+        );
     }
     if !l.folders.is_empty() {
         let anime = l.index.by_media.len();
-        let files: usize = l.index.by_media.values().flat_map(|m| m.values()).map(Vec::len).sum();
-        let mut line = format!("{files} file{} of {anime} anime on your list", if files == 1 { "" } else { "s" });
+        let files: usize = l
+            .index
+            .by_media
+            .values()
+            .flat_map(|m| m.values())
+            .map(Vec::len)
+            .sum();
+        let mut line = format!(
+            "{files} file{} of {anime} anime on your list",
+            if files == 1 { "" } else { "s" }
+        );
         if l.index.unmatched > 0 {
-            line.push_str(&format!(" \u{b7} {} not matched (not on your list, or unsure)", l.index.unmatched));
+            line.push_str(&format!(
+                " \u{b7} {} not matched (not on your list, or unsure)",
+                l.index.unmatched
+            ));
         }
         c = c.child(
             row()
@@ -761,8 +968,19 @@ pub fn folders_block(s: &State) -> El {
                 .gap(12.0)
                 .pt(8.0)
                 .center_y()
-                .child(text(line).font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0))
-                .child(if l.scanning { button("set/library/rescan", "Looking\u{2026}", false, None) } else { button("set/library/rescan", "Rescan", false, Some(rescan)) }),
+                .child(
+                    text(line)
+                        .font(theme::LABEL)
+                        .color(PAL.dim)
+                        .wrap()
+                        .grow(1.0)
+                        .min_w(0.0),
+                )
+                .child(if l.scanning {
+                    button("set/library/rescan", "Looking\u{2026}", false, None)
+                } else {
+                    button("set/library/rescan", "Rescan", false, Some(rescan))
+                }),
         );
     }
     c
@@ -772,16 +990,33 @@ pub fn folders_block(s: &State) -> El {
 pub fn open_with_choice(s: &State) -> El {
     let l = &s.library;
     let mut choice = row().key("set/open-with").flex_wrap().gap(6.0);
-    let last = Player::from_key(&l.last_player).filter(|p| *p != Player::System && l.installed().contains(p));
+    let last = Player::from_key(&l.last_player)
+        .filter(|p| *p != Player::System && l.installed().contains(p));
     let auto_label = match last {
         Some(p) => format!("Automatic ({})", p.label()),
         None => "Automatic".to_string(),
     };
     let on_auto = Player::from_key(&l.open_with).is_none_or(|p| !l.installed().contains(&p));
-    choice = choice.child(cell("set/open-with/auto".into(), auto_label.clone(), on_auto, |s| set_open_with(s, "auto")).child(text(auto_label).font(theme::LABEL).color(PAL.text)));
+    choice = choice.child(
+        cell(
+            "set/open-with/auto".into(),
+            auto_label.clone(),
+            on_auto,
+            |s| set_open_with(s, "auto"),
+        )
+        .child(text(auto_label).font(theme::LABEL).color(PAL.text)),
+    );
     for p in l.installed() {
         let on = !on_auto && l.open_with == p.key();
-        choice = choice.child(cell(format!("set/open-with/{}", p.key()), format!("Open with {}", p.label()), on, move |s| set_open_with(s, p.key())).child(text(p.label()).font(theme::LABEL).color(PAL.text)));
+        choice = choice.child(
+            cell(
+                format!("set/open-with/{}", p.key()),
+                format!("Open with {}", p.label()),
+                on,
+                move |s| set_open_with(s, p.key()),
+            )
+            .child(text(p.label()).font(theme::LABEL).color(PAL.text)),
+        );
     }
     choice
 }
@@ -797,19 +1032,47 @@ pub fn fake(s: &mut State) {
     use kotora_core::library::Local;
     let l = &mut s.library;
     l.folders = vec![
-        Folder { path: "/Volumes/Media/Anime".into(), online: true, files: 148, scanned: true },
-        Folder { path: "/Volumes/Archive/Anime".into(), online: false, files: 312, scanned: true },
+        Folder {
+            path: "/Volumes/Media/Anime".into(),
+            online: true,
+            files: 148,
+            scanned: true,
+        },
+        Folder {
+            path: "/Volumes/Archive/Anime".into(),
+            online: false,
+            files: 312,
+            scanned: true,
+        },
     ];
-    l.found = play::Found { mpv_bin: Some("/opt/homebrew/bin/mpv".into()), iina: true, vlc_app: true, ..Default::default() };
+    l.found = play::Found {
+        mpv_bin: Some("/opt/homebrew/bin/mpv".into()),
+        iina: true,
+        vlc_app: true,
+        ..Default::default()
+    };
     l.last_player = "iina".into();
     l.open_with = "auto".into();
     l.index = Index::default();
     l.index.unmatched = 9;
-    let local = |folder: &str, ep: u32| Local { path: format!("{folder}/Show/[Hoshi] Show - {ep:02} [1080p].mkv"), folder: folder.into(), group: Some("Hoshi".into()), mtime: 0 };
+    let local = |folder: &str, ep: u32| Local {
+        path: format!("{folder}/Show/[Hoshi] Show - {ep:02} [1080p].mkv"),
+        folder: folder.into(),
+        group: Some("Hoshi".into()),
+        mtime: 0,
+    };
     let on = "/Volumes/Media/Anime";
     let off = "/Volumes/Archive/Anime";
     // id: (episodes in the folders, folder)
-    for (id, eps, folder) in [(0u32, 1..=6, on), (1, 1..=9, on), (3, 1..=4, on), (4, 20..=26, off), (6, 1..=3, on), (8, 1..=2, on), (10, 1..=12, on)] {
+    for (id, eps, folder) in [
+        (0u32, 1..=6, on),
+        (1, 1..=9, on),
+        (3, 1..=4, on),
+        (4, 20..=26, off),
+        (6, 1..=3, on),
+        (8, 1..=2, on),
+        (10, 1..=12, on),
+    ] {
         let m = l.index.by_media.entry(id).or_default();
         for ep in eps {
             m.entry(ep).or_default().push(local(folder, ep));
@@ -837,7 +1100,10 @@ mod tests {
         for (id, label) in &menu {
             let e = s.entries.iter().find(|e| e.id == *id).expect("on the list");
             assert!(e.status == Status::Watching || e.rewatching, "{label}");
-            assert!(matches!(next_for(&s, e), Some(Next::Ready { .. })), "{label}");
+            assert!(
+                matches!(next_for(&s, e), Some(Next::Ready { .. })),
+                "{label}"
+            );
             assert_eq!(*label, format!("{} \u{b7} Ep {}", e.title, e.progress + 1));
             assert!(e.updated_at <= last, "newest first");
             last = e.updated_at;
@@ -861,7 +1127,10 @@ mod tests {
         refresh(&mut s);
         assert!(matches!(rx.try_recv(), Ok(Cmd::Rescan)));
         refresh(&mut s);
-        assert!(rx.try_recv().is_err(), "a second ask right after is skipped");
+        assert!(
+            rx.try_recv().is_err(),
+            "a second ask right after is skipped"
+        );
         s.library.last_walk = Instant::now().checked_sub(REFRESH_AFTER + Duration::from_secs(1));
         refresh(&mut s);
         assert!(matches!(rx.try_recv(), Ok(Cmd::Rescan)));
@@ -891,15 +1160,30 @@ mod tests {
     fn adding_checks_the_folder() {
         let mut s = State::fake();
         assert!(add_folder(&mut s, "relative/path").is_err());
-        let missing = if cfg!(windows) { "C:\\nonexistent\\kotora-anime" } else { "/nonexistent/kotora-anime" };
-        assert!(add_folder(&mut s, missing).unwrap_err().starts_with("No folder at"));
+        let missing = if cfg!(windows) {
+            "C:\\nonexistent\\kotora-anime"
+        } else {
+            "/nonexistent/kotora-anime"
+        };
+        assert!(
+            add_folder(&mut s, missing)
+                .unwrap_err()
+                .starts_with("No folder at")
+        );
         let d = std::env::temp_dir().join(format!("kot-addlib-{}", std::process::id()));
         std::fs::create_dir_all(d.join("Show")).unwrap();
         let p = d.to_string_lossy().into_owned();
         add_folder(&mut s, &p).unwrap();
         assert_eq!(s.library.folders.len(), 1);
-        assert_eq!(add_folder(&mut s, &p).unwrap_err(), "That folder is already in the list.");
-        assert!(add_folder(&mut s, &format!("{p}{}Show", std::path::MAIN_SEPARATOR)).unwrap_err().starts_with("That overlaps"));
+        assert_eq!(
+            add_folder(&mut s, &p).unwrap_err(),
+            "That folder is already in the list."
+        );
+        assert!(
+            add_folder(&mut s, &format!("{p}{}Show", std::path::MAIN_SEPARATOR))
+                .unwrap_err()
+                .starts_with("That overlaps")
+        );
         remove_folder(&mut s, &p);
         assert!(s.library.folders.is_empty());
         std::fs::remove_dir_all(&d).unwrap();
@@ -908,19 +1192,38 @@ mod tests {
     #[test]
     fn play_says_why_it_cant() {
         let mut s = State::fake();
-        assert!(next_for(&s, &s.entries[0]).is_none(), "no folders, no button");
+        assert!(
+            next_for(&s, &s.entries[0]).is_none(),
+            "no folders, no button"
+        );
         fake(&mut s);
         let e = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().clone();
         // Lanterns: progress 5, episode 6 is there.
-        assert!(matches!(next_for(&s, &e(&s, 0)), Some(Next::Ready { episode: 6, .. })));
+        assert!(matches!(
+            next_for(&s, &e(&s, 0)),
+            Some(Next::Ready { episode: 6, .. })
+        ));
         // The last player seen was IINA, which is macOS only (elsewhere Automatic falls back to the system's).
         let said = play_next(&mut s, 0).unwrap();
-        assert!(said.contains("episode 6 of Lanterns of Kirigaoka in "), "{said}");
-        assert_eq!(said.ends_with("in IINA"), cfg!(target_os = "macos"), "{said}");
+        assert!(
+            said.contains("episode 6 of Lanterns of Kirigaoka in "),
+            "{said}"
+        );
+        assert_eq!(
+            said.ends_with("in IINA"),
+            cfg!(target_os = "macos"),
+            "{said}"
+        );
         // Neon Ronin: progress 22, on the unplugged drive.
-        assert_eq!(play_next(&mut s, 4).unwrap_err(), "Episode 23 is on Archive, which is offline");
+        assert_eq!(
+            play_next(&mut s, 4).unwrap_err(),
+            "Episode 23 is on Archive, which is offline"
+        );
         // Ghost of the Library Stacks: progress 11, files up to 10.
-        assert_eq!(play_next(&mut s, 7).unwrap_err(), "Episode 12 not in your folders");
+        assert_eq!(
+            play_next(&mut s, 7).unwrap_err(),
+            "Episode 12 not in your folders"
+        );
         // The pick wins over Automatic.
         s.library.open_with = "vlc".into();
         assert!(play_next(&mut s, 1).unwrap().ends_with("in VLC"));
@@ -930,12 +1233,23 @@ mod tests {
     fn a_scan_answer_redraws_only_on_change() {
         let mut s = State::fake();
         s.library.folders = vec![Folder::new("/m/a")];
-        let done = vec![Folder { path: "/m/a".into(), online: true, files: 3, scanned: true }];
+        let done = vec![Folder {
+            path: "/m/a".into(),
+            online: true,
+            files: 3,
+            scanned: true,
+        }];
         assert!(s.library.update(done.clone(), Index::default()));
-        assert!(!s.library.update(done, Index::default()), "the same again: no redraw");
+        assert!(
+            !s.library.update(done, Index::default()),
+            "the same again: no redraw"
+        );
         // A folder removed while the scan ran stays removed.
         s.library.folders.clear();
-        assert!(!s.library.update(vec![Folder::new("/m/a")], Index::default()));
+        assert!(
+            !s.library
+                .update(vec![Folder::new("/m/a")], Index::default())
+        );
         assert!(s.library.folders.is_empty());
     }
 }

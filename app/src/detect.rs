@@ -24,11 +24,13 @@ use kotora_detect::{Detector, Report, Settings, Switch};
 use crate::model::{Handle, Msg, State};
 use crate::now::{AltTitles, Prefs, Relation, Seen};
 
-
 enum In {
     Report(Report),
     /// The user's pick for a title key (`None`: not an anime).
-    Correct { key: String, media_id: Option<u32> },
+    Correct {
+        key: String,
+        media_id: Option<u32>,
+    },
     /// A newer anime-relations file was downloaded.
     Relations(Box<Relations>),
     /// The list gained or lost entries: the playing file is recognised again.
@@ -54,8 +56,15 @@ pub fn settings(c: &Config) -> Settings {
     let d = Settings::default();
     Settings {
         threshold: f64::from(c.updates.threshold) / 100.0,
-        off: Switch::ALL.into_iter().filter(|sw| !c.players.get(sw.config_key())).collect(),
-        mpv_sockets: if c.players.mpv_sockets.is_empty() { d.mpv_sockets } else { c.players.mpv_sockets.iter().map(PathBuf::from).collect() },
+        off: Switch::ALL
+            .into_iter()
+            .filter(|sw| !c.players.get(sw.config_key()))
+            .collect(),
+        mpv_sockets: if c.players.mpv_sockets.is_empty() {
+            d.mpv_sockets
+        } else {
+            c.players.mpv_sockets.iter().map(PathBuf::from).collect()
+        },
         vlc_port: c.vlc.port,
         vlc_password: c.vlc.password.clone(),
         processes: c.players.process_scan,
@@ -80,7 +89,10 @@ pub fn start(s: &mut State) {
     crate::reading::load(s, &c);
     s.feeds_load(&c);
     s.prefs.login = crate::autostart::read();
-    s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
+    s.worker.ask_on_higher.store(
+        !c.updates.keep_higher_progress,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     #[cfg(not(windows))]
     crate::precise::check_conf(h.clone());
     let (tx, rx) = mpsc::channel::<In>();
@@ -97,7 +109,9 @@ pub fn start(s: &mut State) {
     // Windows: which mpv.conf applies depends on the players that run; a pipe it names is watched.
     #[cfg(windows)]
     crate::precise::check_conf_win(h.clone(), detector.clone());
-    let _ = std::thread::Builder::new().name("kotora-recognize".into()).spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
+    let _ = std::thread::Builder::new()
+        .name("kotora-recognize".into())
+        .spawn(move || run(&h, &rx, &tx_for_refresh, relations_download));
     s.glue = Some(Glue { tx, detector });
 }
 
@@ -118,18 +132,24 @@ pub fn list_changed(s: &State) {
 
 /// Writes one setting to `config.toml` and applies it to the sources, off the UI thread.
 pub fn save_setting(s: &mut State, section: &'static str, key: &'static str, value: String) {
-    let (Some(h), Some(g)) = (s.handle.clone(), s.glue.as_ref()) else { return };
+    let (Some(h), Some(g)) = (s.handle.clone(), s.glue.as_ref()) else {
+        return;
+    };
     let detector = g.detector.clone();
-    let _ = std::thread::Builder::new().name("kotora-settings".into()).spawn(move || {
-        let path = paths::config_file();
-        if let Err(e) = config::write_setting(&path, section, key, &value) {
-            h.update_if(move |s, _| s.apply(Msg::QueueError(format!("Can't save the setting: {e}"))));
-            return;
-        }
-        if let Ok(c) = Config::load(&path) {
-            detector.set(settings(&c));
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("kotora-settings".into())
+        .spawn(move || {
+            let path = paths::config_file();
+            if let Err(e) = config::write_setting(&path, section, key, &value) {
+                h.update_if(move |s, _| {
+                    s.apply(Msg::QueueError(format!("Can't save the setting: {e}")))
+                });
+                return;
+            }
+            if let Ok(c) = Config::load(&path) {
+                detector.set(settings(&c));
+            }
+        });
 }
 
 fn send(h: &Handle, msg: Msg) {
@@ -158,11 +178,15 @@ fn rules<'a>(rel: &'a mut Option<Relations>, tx: &Sender<In>, download: bool) ->
         let dir = paths::cache_dir();
         if download && !paths::offline_forced() && relations::due(&dir, now_unix().max(0) as u64) {
             let tx = tx.clone();
-            let _ = std::thread::Builder::new().name("kotora-relations".into()).spawn(move || {
-                if let Ok(Some(r)) = relations::refresh(&dir, now_unix().max(0) as u64, relations::fetch_github) {
-                    let _ = tx.send(In::Relations(Box::new(r)));
-                }
-            });
+            let _ = std::thread::Builder::new()
+                .name("kotora-relations".into())
+                .spawn(move || {
+                    if let Ok(Some(r)) =
+                        relations::refresh(&dir, now_unix().max(0) as u64, relations::fetch_github)
+                    {
+                        let _ = tx.send(In::Relations(Box::new(r)));
+                    }
+                });
         }
         relations::load(&paths::cache_dir())
     });
@@ -195,7 +219,9 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                 last = Some(track);
             }
             In::ListChanged => {
-                let (Some(c), Some(track)) = (&current, &last) else { continue };
+                let (Some(c), Some(track)) = (&current, &last) else {
+                    continue;
+                };
                 let fresh = recognise(&mut store, &c.file, rules(&mut rel, tx, download));
                 send(h, Msg::Now(Some(Box::new(seen(&fresh, track.clone())))));
                 current = Some(fresh);
@@ -209,7 +235,9 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                         Some(id) => (id, "user"),
                         None => (0, "ignore"),
                     };
-                    if let Err(e) = st.set_recognition(crate::account::name(), &key, id, source, "", now_unix()) {
+                    if let Err(e) =
+                        st.set_recognition(crate::account::name(), &key, id, source, "", now_unix())
+                    {
                         send(h, Msg::QueueError(format!("Can't save your pick: {e}")));
                     }
                 }
@@ -217,14 +245,21 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
                     && c.parsed.as_ref().is_some_and(|p| p.key() == key)
                 {
                     let found = match media_id {
-                        Some(media_id) => Found::List { media_id, sure: true, why: "you picked it".into() },
+                        Some(media_id) => Found::List {
+                            media_id,
+                            sure: true,
+                            why: "you picked it".into(),
+                        },
                         None => Found::Ignored,
                     };
                     // The picked anime may move the file's episode (or not move it).
-                    let items = open(&mut store).and_then(|st| st.load_list(crate::account::name()).ok()).unwrap_or_default();
+                    let items = open(&mut store)
+                        .and_then(|st| st.load_list(crate::account::name()).ok())
+                        .unwrap_or_default();
                     if let Some(p) = &mut c.parsed {
                         p.episode = c.file_episode;
-                        c.found = recognize::redirect(found, p, &items, rules(&mut rel, tx, download));
+                        c.found =
+                            recognize::redirect(found, p, &items, rules(&mut rel, tx, download));
                     }
                 }
             }
@@ -233,7 +268,15 @@ fn run(h: &Handle, rx: &Receiver<In>, tx: &Sender<In>, download: bool) {
 }
 
 fn seen(c: &Current, track: kotora_detect::Track) -> Seen {
-    Seen { track, parsed: c.parsed.clone(), found: c.found.clone(), candidates: c.candidates.clone(), cover_url: c.cover_url.clone(), alt_titles: c.alt_titles.clone(), relation: c.relation.clone() }
+    Seen {
+        track,
+        parsed: c.parsed.clone(),
+        found: c.found.clone(),
+        candidates: c.candidates.clone(),
+        cover_url: c.cover_url.clone(),
+        alt_titles: c.alt_titles.clone(),
+        relation: c.relation.clone(),
+    }
 }
 
 fn open(store: &mut Option<Store>) -> Option<&mut Store> {
@@ -254,15 +297,26 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
         alt_titles: AltTitles::default(),
         relation: None,
     };
-    let Some(mut parsed) = recognize::parse(file) else { return nothing(None) };
+    let Some(mut parsed) = recognize::parse(file) else {
+        return nothing(None);
+    };
     let file_episode = parsed.episode;
-    let Some(st) = open(store) else { return nothing(Some(parsed)) };
+    let Some(st) = open(store) else {
+        return nothing(Some(parsed));
+    };
     let items = st.load_list(crate::account::name()).unwrap_or_default();
     let key = parsed.key();
     let cached = st.recognition(crate::account::name(), &key).ok().flatten();
-    let candidates = recognize::candidates(&parsed, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    let candidates = recognize::candidates(&parsed, &items)
+        .into_iter()
+        .take(8)
+        .map(|c| (c.media_id, c.title))
+        .collect();
     // A pick `on_list` passed over (another season than the file's): the search may beat it.
-    let pick = cached.as_ref().filter(|(id, src, _)| src == "user" && items.iter().any(|it| it.media.id == *id)).map(|(id, _, _)| *id);
+    let pick = cached
+        .as_ref()
+        .filter(|(id, src, _)| src == "user" && items.iter().any(|it| it.media.id == *id))
+        .map(|(id, _, _)| *id);
     let found = match recognize::on_list(&parsed, &items, &cached, rel) {
         Some(f) => f,
         None => match cached_search(cached, &items) {
@@ -277,17 +331,40 @@ fn recognise(store: &mut Option<Store>, file: &str, rel: &Relations) -> Current 
         Found::NotOnList { media_id, .. } => not_on_list_details(st, *media_id),
         _ => (None, AltTitles::default()),
     };
-    Current { file: file.to_string(), parsed: Some(parsed), found, candidates, cover_url, alt_titles, file_episode, relation }
+    Current {
+        file: file.to_string(),
+        parsed: Some(parsed),
+        found,
+        candidates,
+        cover_url,
+        alt_titles,
+        file_episode,
+        relation,
+    }
 }
 
 /// Why the file is an anime that isn't on the list, when anime-relations moved it there (a list
 /// match carries its reason in `why` already). The words are put together when shown
 /// (`State::relation_text`), in the chosen title language: "episode 15 of Re:Zero 2nd Season is
 /// episode 2 of Re:Zero 2nd Season Part 2 (anime-relations)".
-fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Option<u32>, items: &[kotora_core::ListItem]) -> Option<Relation> {
-    let Found::NotOnList { media_id: to, .. } = after else { return None };
+fn relation_reason(
+    before: &Found,
+    after: &Found,
+    file_ep: Option<u32>,
+    ep: Option<u32>,
+    items: &[kotora_core::ListItem],
+) -> Option<Relation> {
+    let Found::NotOnList { media_id: to, .. } = after else {
+        return None;
+    };
     let (from, from_title) = match before {
-        Found::List { media_id, .. } => (*media_id, items.iter().find(|it| it.media.id == *media_id).map(|it| it.media.title.clone())),
+        Found::List { media_id, .. } => (
+            *media_id,
+            items
+                .iter()
+                .find(|it| it.media.id == *media_id)
+                .map(|it| it.media.title.clone()),
+        ),
         Found::NotOnList { media_id, title } => (*media_id, Some(title.clone())),
         _ => return None,
     };
@@ -295,7 +372,12 @@ fn relation_reason(before: &Found, after: &Found, file_ep: Option<u32>, ep: Opti
     if from == *to && file_ep == ep {
         return None;
     }
-    Some(Relation { file_ep, from_id: from, from_title, ep })
+    Some(Relation {
+        file_ep,
+        from_id: from,
+        from_title,
+        ep,
+    })
 }
 
 /// The cover and the other titles of an anime that isn't on the list: from its saved details,
@@ -305,50 +387,98 @@ fn not_on_list_details(st: &Store, id: u32) -> (Option<String>, AltTitles) {
     let d = match st.details(crate::account::name(), id).ok().flatten() {
         Some((d, _)) => d,
         None => {
-            let Some(d) = crate::account::open().and_then(|mut m| m.details(id).ok()) else { return (None, AltTitles::default()) };
+            let Some(d) = crate::account::open().and_then(|mut m| m.details(id).ok()) else {
+                return (None, AltTitles::default());
+            };
             let _ = st.save_details(crate::account::name(), &d, now_unix());
             d
         }
     };
-    (d.cover_url, AltTitles { en: d.title_en, ja: d.title_ja })
+    (
+        d.cover_url,
+        AltTitles {
+            en: d.title_en,
+            ja: d.title_ja,
+        },
+    )
 }
 
 /// A search answer from the cache (30 days: no second call), checked against the list as it is
 /// now. `None`: no search answer, or one that left the list with no title saved (search again).
-fn cached_search(cached: kotora_core::recognize::Cached, items: &[kotora_core::ListItem]) -> Option<Found> {
+fn cached_search(
+    cached: kotora_core::recognize::Cached,
+    items: &[kotora_core::ListItem],
+) -> Option<Found> {
     let (id, _, title) = cached.filter(|(_, src, _)| src == "search")?;
     Some(match id {
         0 => Found::Nothing,
-        id if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
+        id if items.iter().any(|it| it.media.id == id) => Found::List {
+            media_id: id,
+            sure: false,
+            why: format!("found by a {} search", crate::account::active().title()),
+        },
         _ if title.is_empty() => return None,
-        id => Found::NotOnList { media_id: id, title },
+        id => Found::NotOnList {
+            media_id: id,
+            title,
+        },
     })
 }
 
 /// The one search (signed in and online only). The answer is cached either way, except a pick
 /// that still stands: it stays the cached answer. `pick`: the user's pick of another season
 /// (unsure when the search can't run).
-fn search(st: &Store, parsed: &Parsed, items: &[kotora_core::ListItem], key: &str, pick: Option<u32>) -> Found {
+fn search(
+    st: &Store,
+    parsed: &Parsed,
+    items: &[kotora_core::ListItem],
+    key: &str,
+    pick: Option<u32>,
+) -> Found {
     let unsure_pick = || match pick {
-        Some(id) => Found::List { media_id: id, sure: false, why: format!("you picked it, but the file says season {}", recognize::file_season(parsed).unwrap_or(1)) },
+        Some(id) => Found::List {
+            media_id: id,
+            sure: false,
+            why: format!(
+                "you picked it, but the file says season {}",
+                recognize::file_season(parsed).unwrap_or(1)
+            ),
+        },
         None => Found::Nothing,
     };
     if paths::offline_forced() || items.is_empty() {
         return unsure_pick();
     }
-    let Some(mut svc) = crate::account::open() else { return unsure_pick() };
-    let Ok(hits) = svc.search(&parsed.title) else { return unsure_pick() };
+    let Some(mut svc) = crate::account::open() else {
+        return unsure_pick();
+    };
+    let Ok(hits) = svc.search(&parsed.title) else {
+        return unsure_pick();
+    };
     let found = recognize::from_search_picked(parsed, &hits, items, pick);
     if matches!(found, Found::List { media_id, sure: true, .. } if Some(media_id) == pick) {
         return found;
     }
     // The title is kept for a hit on the list too: it may leave the list.
     let (mid, title) = match &found {
-        Found::List { media_id, .. } => (*media_id, hits.iter().find(|h| h.id == *media_id).map(|h| h.title.clone()).unwrap_or_default()),
+        Found::List { media_id, .. } => (
+            *media_id,
+            hits.iter()
+                .find(|h| h.id == *media_id)
+                .map(|h| h.title.clone())
+                .unwrap_or_default(),
+        ),
         Found::NotOnList { media_id, title } => (*media_id, title.clone()),
         _ => (0, String::new()),
     };
-    let _ = st.set_recognition(crate::account::name(), key, mid, "search", &title, now_unix());
+    let _ = st.set_recognition(
+        crate::account::name(),
+        key,
+        mid,
+        "search",
+        &title,
+        now_unix(),
+    );
     found
 }
 
@@ -364,34 +494,88 @@ mod tests {
         assert_eq!(s.off, vec![Switch::Vlc]);
         assert_eq!(s.mpv_sockets, vec![PathBuf::from("/tmp/x.sock")]);
         assert_eq!((s.vlc_port, s.vlc_password.as_str()), (9090, "p"));
-        assert_eq!(settings(&Config::default()).mpv_sockets, Settings::default().mpv_sockets);
+        assert_eq!(
+            settings(&Config::default()).mpv_sockets,
+            Settings::default().mpv_sockets
+        );
         assert!(s.processes && s.process_minutes == 15);
         let c = Config::parse("[players]\nprocess_scan = false\nprocess_minutes = 0\n").unwrap();
-        assert_eq!((settings(&c).processes, settings(&c).process_minutes), (false, 1));
+        assert_eq!(
+            (settings(&c).processes, settings(&c).process_minutes),
+            (false, 1)
+        );
     }
 
     /// A search answer cached while its hit was on the list: removed since, it is "not on your
     /// list" with its title, or searched again when an older row kept no title.
     #[test]
     fn a_cached_search_hit_follows_the_list() {
-        let media = kotora_core::Media { id: 7, title: "Lanterns of Kirigaoka".into(), ..Default::default() };
-        let it = kotora_core::ListItem { media, status: kotora_core::Status::Watching, progress: 1, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: 0 };
+        let media = kotora_core::Media {
+            id: 7,
+            title: "Lanterns of Kirigaoka".into(),
+            ..Default::default()
+        };
+        let it = kotora_core::ListItem {
+            media,
+            status: kotora_core::Status::Watching,
+            progress: 1,
+            score: None,
+            rewatching: false,
+            times_rewatched: 0,
+            volumes: 0,
+            updated_at: 0,
+        };
         let row = |id: u32, title: &str| Some((id, "search".to_string(), title.to_string()));
-        assert!(matches!(cached_search(row(7, "Lanterns of Kirigaoka"), std::slice::from_ref(&it)), Some(Found::List { media_id: 7, sure: false, .. })));
-        assert_eq!(cached_search(row(7, "Lanterns of Kirigaoka"), &[]), Some(Found::NotOnList { media_id: 7, title: "Lanterns of Kirigaoka".into() }));
+        assert!(matches!(
+            cached_search(row(7, "Lanterns of Kirigaoka"), std::slice::from_ref(&it)),
+            Some(Found::List {
+                media_id: 7,
+                sure: false,
+                ..
+            })
+        ));
+        assert_eq!(
+            cached_search(row(7, "Lanterns of Kirigaoka"), &[]),
+            Some(Found::NotOnList {
+                media_id: 7,
+                title: "Lanterns of Kirigaoka".into()
+            })
+        );
         assert_eq!(cached_search(row(7, ""), &[]), None, "search again");
         assert_eq!(cached_search(row(0, ""), &[]), Some(Found::Nothing));
-        assert_eq!(cached_search(Some((7, "user".into(), String::new())), &[]), None);
+        assert_eq!(
+            cached_search(Some((7, "user".into(), String::new())), &[]),
+            None
+        );
     }
 
     #[test]
     fn a_redirect_off_the_list_says_why() {
-        let list = Found::List { media_id: 31240, sure: true, why: "same title in your list".into() };
-        let off = Found::NotOnList { media_id: 42203, title: "Re:Zero 2nd Season Part 2".into() };
+        let list = Found::List {
+            media_id: 31240,
+            sure: true,
+            why: "same title in your list".into(),
+        };
+        let off = Found::NotOnList {
+            media_id: 42203,
+            title: "Re:Zero 2nd Season Part 2".into(),
+        };
         let why = relation_reason(&list, &off, Some(15), Some(2), &[]).unwrap();
-        assert_eq!(why, Relation { file_ep: 15, from_id: 31240, from_title: None, ep: 2 });
+        assert_eq!(
+            why,
+            Relation {
+                file_ep: 15,
+                from_id: 31240,
+                from_title: None,
+                ep: 2
+            }
+        );
         // Found by a search and not moved: no reason line.
         assert_eq!(relation_reason(&off, &off, Some(2), Some(2), &[]), None);
-        assert_eq!(relation_reason(&list, &list, Some(15), Some(2), &[]), None, "a list match says it in `why`");
+        assert_eq!(
+            relation_reason(&list, &list, Some(15), Some(2), &[]),
+            None,
+            "a list match says it in `why`"
+        );
     }
 }

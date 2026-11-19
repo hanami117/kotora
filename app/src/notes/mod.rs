@@ -122,7 +122,9 @@ impl Act {
     }
 
     pub fn from_key(key: &str) -> Option<Act> {
-        [Act::Update, Act::NotNow, Act::Undo, Act::Play, Act::Open].into_iter().find(|a| a.key() == key)
+        [Act::Update, Act::NotNow, Act::Undo, Act::Play, Act::Open]
+            .into_iter()
+            .find(|a| a.key() == key)
     }
 }
 
@@ -204,9 +206,10 @@ impl Notifier {
             return Notifier::default();
         }
         let h = handle.clone();
-        let on_action: Arc<dyn Fn(String, Act) + Send + Sync> = Arc::new(move |id: String, act: Act| {
-            h.update_if(move |s, _| s.note_action(&id, act));
-        });
+        let on_action: Arc<dyn Fn(String, Act) + Send + Sync> =
+            Arc::new(move |id: String, act: Act| {
+                h.update_if(move |s, _| s.note_action(&id, act));
+            });
         let h = handle;
         let on_support: Arc<dyn Fn(Support) + Send + Sync> = Arc::new(move |sup: Support| {
             h.update_if(move |s, _| {
@@ -216,17 +219,22 @@ impl Notifier {
             });
         });
         #[cfg(target_os = "linux")]
-        let backend: Option<Box<dyn Backend>> = Some(Box::new(linux::Sys::start(on_action, on_support)));
+        let backend: Option<Box<dyn Backend>> =
+            Some(Box::new(linux::Sys::start(on_action, on_support)));
         #[cfg(target_os = "macos")]
         let backend: Option<Box<dyn Backend>> = Some(mac::start(on_action, on_support));
         #[cfg(windows)]
-        let backend: Option<Box<dyn Backend>> = Some(Box::new(windows::Sys::start(on_action, on_support)));
+        let backend: Option<Box<dyn Backend>> =
+            Some(Box::new(windows::Sys::start(on_action, on_support)));
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let backend: Option<Box<dyn Backend>> = {
             let _ = (on_action, on_support);
             None
         };
-        Notifier { backend, ..Default::default() }
+        Notifier {
+            backend,
+            ..Default::default()
+        }
     }
 
     pub fn show(&mut self, note: Note) {
@@ -246,7 +254,9 @@ impl Notifier {
 
     /// Takes the notification about this episode away (answered in the window or with `kot`).
     pub fn withdraw(&mut self, id: &str) {
-        let Some(i) = self.out.iter().position(|o| o == id) else { return };
+        let Some(i) = self.out.iter().position(|o| o == id) else {
+            return;
+        };
         self.out.remove(i);
         if self.last.as_ref().is_some_and(|n| n.id == id) {
             self.last = None;
@@ -293,21 +303,46 @@ impl State {
             Kind::Offer | Kind::Rewatch => self.prefs.notify.offer,
             Kind::Recorded => self.prefs.notify.recorded,
             // Not about the playing episode: `air_notes`.
-            Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer | Kind::Reread | Kind::ReadRecorded => false,
+            Kind::Started
+            | Kind::Aired
+            | Kind::AiredPlay
+            | Kind::Chapter
+            | Kind::ReadOffer
+            | Kind::Reread
+            | Kind::ReadRecorded => false,
         };
-        let Some(id) = self.note_id().filter(|_| on) else { return };
+        let Some(id) = self.note_id().filter(|_| on) else {
+            return;
+        };
         let tail = match kind {
-            Kind::Detected | Kind::Started | Kind::Aired | Kind::AiredPlay | Kind::Chapter | Kind::ReadOffer | Kind::Reread | Kind::ReadRecorded => None,
+            Kind::Detected
+            | Kind::Started
+            | Kind::Aired
+            | Kind::AiredPlay
+            | Kind::Chapter
+            | Kind::ReadOffer
+            | Kind::Reread
+            | Kind::ReadRecorded => None,
             Kind::Offer | Kind::Rewatch => Some(ANSWER.to_string()),
             Kind::Recorded => Some("Undo is in Kotora's banner.".to_string()),
         };
-        self.notes.show(Note { id, kind, summary, body, tail });
+        self.notes.show(Note {
+            id,
+            kind,
+            summary,
+            body,
+            tail,
+        });
     }
 
     /// "Recorded · Ep 6", with Undo. With the switch off, the offer's notification goes.
     pub(crate) fn notify_recorded(&mut self, title: &str, ep: u32) {
         if self.prefs.notify.recorded {
-            self.notify(Kind::Recorded, format!("Recorded \u{b7} Ep {ep}"), title.to_string());
+            self.notify(
+                Kind::Recorded,
+                format!("Recorded \u{b7} Ep {ep}"),
+                title.to_string(),
+            );
         } else {
             self.withdraw_note();
         }
@@ -316,7 +351,12 @@ impl State {
     /// "Title · Ep 6" once per file, when it is recognised and plays (switch off by default).
     pub(crate) fn announce(&mut self) {
         let Some(n) = &self.now else { return };
-        if n.announced || !n.playing || n.recognizing || !self.prefs.notify.detected || self.note_id().is_none() {
+        if n.announced
+            || !n.playing
+            || n.recognizing
+            || !self.prefs.notify.detected
+            || self.note_id().is_none()
+        {
             return;
         }
         let (_, title) = crate::ui::now_title(self, n);
@@ -447,7 +487,13 @@ mod tests {
     use super::*;
 
     fn note(kind: Kind) -> Note {
-        Note { id: "kotora-7-6".into(), kind, summary: "Update Lanterns to episode 6?".into(), body: String::new(), tail: Some("Open Kotora, or run kot confirm.".into()) }
+        Note {
+            id: "kotora-7-6".into(),
+            kind,
+            summary: "Update Lanterns to episode 6?".into(),
+            body: String::new(),
+            tail: Some("Open Kotora, or run kot confirm.".into()),
+        }
     }
 
     #[test]
@@ -455,10 +501,19 @@ mod tests {
         let n = note(Kind::Offer);
         assert_eq!(n.text(true), "");
         assert_eq!(n.text(false), "Open Kotora, or run kot confirm.");
-        let n = Note { body: "Skips episode 5.".into(), ..note(Kind::Offer) };
-        assert_eq!(n.text(false), "Skips episode 5. Open Kotora, or run kot confirm.");
+        let n = Note {
+            body: "Skips episode 5.".into(),
+            ..note(Kind::Offer)
+        };
+        assert_eq!(
+            n.text(false),
+            "Skips episode 5. Open Kotora, or run kot confirm."
+        );
         // No buttons for this kind anyway: the tail stays.
-        assert_eq!(note(Kind::Detected).text(true), "Open Kotora, or run kot confirm.");
+        assert_eq!(
+            note(Kind::Detected).text(true),
+            "Open Kotora, or run kot confirm."
+        );
     }
 
     #[test]
@@ -466,8 +521,18 @@ mod tests {
         for a in [Act::Update, Act::NotNow, Act::Undo, Act::Play, Act::Open] {
             assert_eq!(Act::from_key(a.key()), Some(a));
         }
-        assert_eq!(Act::from_key("com.apple.UNNotificationDismissActionIdentifier"), None);
-        assert_eq!(Kind::Offer.actions().iter().map(|(a, _)| *a).collect::<Vec<_>>(), [Act::Update, Act::NotNow]);
+        assert_eq!(
+            Act::from_key("com.apple.UNNotificationDismissActionIdentifier"),
+            None
+        );
+        assert_eq!(
+            Kind::Offer
+                .actions()
+                .iter()
+                .map(|(a, _)| *a)
+                .collect::<Vec<_>>(),
+            [Act::Update, Act::NotNow]
+        );
         assert_eq!(Kind::Recorded.actions()[0], (Act::Undo, "Undo"));
         assert!(Kind::Detected.actions().is_empty());
     }
@@ -513,9 +578,17 @@ mod tests {
             at: kotora_detect::clock(),
         };
         Seen {
-            track: Track { playing, played: 900.0, reached },
+            track: Track {
+                playing,
+                played: 900.0,
+                reached,
+            },
             parsed: kotora_core::recognize::parse(&format!("/v/{file}")),
-            found: Found::List { media_id: 0, sure: true, why: "test".into() },
+            found: Found::List {
+                media_id: 0,
+                sure: true,
+                why: "test".into(),
+            },
             candidates: vec![],
             cover_url: None,
             alt_titles: Default::default(),
@@ -530,7 +603,17 @@ mod tests {
     }
 
     fn shown(s: &State) -> Vec<Note> {
-        s.notes.log.iter().filter_map(|x| if let Sent::Show(n) = x { Some(n.clone()) } else { None }).collect()
+        s.notes
+            .log
+            .iter()
+            .filter_map(|x| {
+                if let Sent::Show(n) = x {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn progress(s: &State) -> u32 {
@@ -550,7 +633,14 @@ mod tests {
         s.now_seen(Some(seen(EP6, false)));
         let n = shown(&s);
         assert_eq!(n.len(), 1, "one per file: {n:?}");
-        assert_eq!((n[0].kind, n[0].summary.as_str(), n[0].body.as_str()), (Kind::Detected, "Lanterns of Kirigaoka \u{b7} Ep 6", "Playing in mpv"));
+        assert_eq!(
+            (n[0].kind, n[0].summary.as_str(), n[0].body.as_str()),
+            (
+                Kind::Detected,
+                "Lanterns of Kirigaoka \u{b7} Ep 6",
+                "Playing in mpv"
+            )
+        );
         assert_eq!(n[0].id, "kotora-0-ep6");
         // Not recognised: nothing.
         let mut s = fresh();
@@ -567,20 +657,40 @@ mod tests {
         s.prefs.notify.detected = true;
         s.now_seen(Some(seen(EP6, true)));
         let n = shown(&s);
-        assert_eq!(n.iter().map(|n| n.kind).collect::<Vec<_>>(), [Kind::Detected, Kind::Offer]);
+        assert_eq!(
+            n.iter().map(|n| n.kind).collect::<Vec<_>>(),
+            [Kind::Detected, Kind::Offer]
+        );
         assert_eq!(n[1].summary, "Update Lanterns of Kirigaoka to episode 6?");
-        assert_eq!(n[1].text(false), "Open Kotora, or run kot confirm.", "the old text without buttons");
+        assert_eq!(
+            n[1].text(false),
+            "Open Kotora, or run kot confirm.",
+            "the old text without buttons"
+        );
         // The Update button: recorded through the queue, and the Recorded note replaces it.
         assert!(s.note_action("kotora-0-ep6", Act::Update));
         assert_eq!(progress(&s), 6);
         let n = shown(&s);
         let last = n.last().unwrap();
-        assert_eq!((last.kind, last.summary.as_str(), last.body.as_str()), (Kind::Recorded, "Recorded \u{b7} Ep 6", "Lanterns of Kirigaoka"));
-        assert!(n.iter().all(|x| x.id == "kotora-0-ep6"), "one id per episode");
+        assert_eq!(
+            (last.kind, last.summary.as_str(), last.body.as_str()),
+            (
+                Kind::Recorded,
+                "Recorded \u{b7} Ep 6",
+                "Lanterns of Kirigaoka"
+            )
+        );
+        assert!(
+            n.iter().all(|x| x.id == "kotora-0-ep6"),
+            "one id per episode"
+        );
         // Undo from the notification: back to 5, and it goes.
         assert!(s.note_action("kotora-0-ep6", Act::Undo));
         assert_eq!(progress(&s), 5);
-        assert_eq!(s.notes.log.last(), Some(&Sent::Withdraw("kotora-0-ep6".into())));
+        assert_eq!(
+            s.notes.log.last(),
+            Some(&Sent::Withdraw("kotora-0-ep6".into()))
+        );
         assert!(!s.banner());
     }
 
@@ -601,8 +711,14 @@ mod tests {
         s.now_seen(Some(seen(EP6, true)));
         assert_eq!(progress(&s), 6);
         let n = shown(&s);
-        assert_eq!(n.iter().map(|n| n.kind).collect::<Vec<_>>(), [Kind::Recorded]);
-        assert_eq!(n[0].text(false), "Lanterns of Kirigaoka Undo is in Kotora's banner.");
+        assert_eq!(
+            n.iter().map(|n| n.kind).collect::<Vec<_>>(),
+            [Kind::Recorded]
+        );
+        assert_eq!(
+            n[0].text(false),
+            "Lanterns of Kirigaoka Undo is in Kotora's banner."
+        );
         assert_eq!(n[0].text(true), "Lanterns of Kirigaoka");
     }
 
@@ -625,11 +741,17 @@ mod tests {
         let mut s = fresh();
         s.now_seen(Some(seen(EP6, true)));
         s.confirm_offer().unwrap();
-        assert_eq!(s.notes.log.last(), Some(&Sent::Withdraw("kotora-0-ep6".into())));
+        assert_eq!(
+            s.notes.log.last(),
+            Some(&Sent::Withdraw("kotora-0-ep6".into()))
+        );
         let mut s = fresh();
         s.now_seen(Some(seen(EP6, true)));
         s.dismiss_now();
-        assert_eq!(s.notes.log.last(), Some(&Sent::Withdraw("kotora-0-ep6".into())));
+        assert_eq!(
+            s.notes.log.last(),
+            Some(&Sent::Withdraw("kotora-0-ep6".into()))
+        );
     }
 
     #[test]
@@ -642,13 +764,24 @@ mod tests {
         s.note_action("kotora-0-ep6", Act::Update);
         s.note_action("kotora-0-ep6", Act::Undo);
         assert_eq!(progress(&s), 5);
-        assert_eq!(s.page, crate::model::Page::NowPlaying, "it opens what plays instead");
+        assert_eq!(
+            s.page,
+            crate::model::Page::NowPlaying,
+            "it opens what plays instead"
+        );
         // Update twice (two clicks, or a click after the banner's Update) records once.
         let mut s = fresh();
         s.now_seen(Some(seen(EP6, true)));
         s.note_action("kotora-0-ep6", Act::Update);
         s.note_action("kotora-0-ep6", Act::Update);
         assert_eq!(progress(&s), 6);
-        assert!(s.now.as_ref().unwrap().recorded.is_some_and(|r| r.episode == 6 && r.old_progress == 5), "the second click didn't record again");
+        assert!(
+            s.now
+                .as_ref()
+                .unwrap()
+                .recorded
+                .is_some_and(|r| r.episode == 6 && r.old_progress == 5),
+            "the second click didn't record again"
+        );
     }
 }

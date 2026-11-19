@@ -39,12 +39,20 @@ impl Resume {
             (Some(v), Some(c)) => format!("Vol {v} Ch {c}"),
             (Some(v), None) => format!("Vol {v}"),
             (None, Some(c)) => format!("Ch {c}"),
-            (None, None) => self.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            (None, None) => self
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         };
         if self.next || self.pages <= 0 || self.page <= 1 {
             what
         } else {
-            format!("{what} \u{b7} p. {}/{}", self.page.min(self.pages), self.pages)
+            format!(
+                "{what} \u{b7} p. {}/{}",
+                self.page.min(self.pages),
+                self.pages
+            )
         }
     }
 }
@@ -55,7 +63,10 @@ fn whole(n: f64) -> Option<u32> {
 
 /// (volume, chapter) for "the next one".
 fn place(o: &Opened) -> (f64, f64) {
-    (o.parsed.volume.map_or(0.0, |v| v.last), o.parsed.chapter.map_or(0.0, |c| c.last))
+    (
+        o.parsed.volume.map_or(0.0, |v| v.last),
+        o.parsed.chapter.map_or(0.0, |c| c.last),
+    )
 }
 
 /// Whether the comic's series is this manga: the same title (sure, see [`reading::on_list`]),
@@ -67,8 +78,13 @@ fn is_of(o: &Opened, item: &ListItem, picked: &[String]) -> bool {
     }
     // Sure, or the series is one of the manga's own titles (VIZ's "Dragon Ball Z" is Dragon Ball).
     picked.contains(&reading::key(series))
-        || matches!(reading::on_list(series, std::slice::from_ref(item), &None), Some(Found::List { sure: true, .. }))
-        || reading::candidates(series, std::slice::from_ref(item)).first().is_some_and(|c| c.score >= reading::ALT_TITLE)
+        || matches!(
+            reading::on_list(series, std::slice::from_ref(item), &None),
+            Some(Found::List { sure: true, .. })
+        )
+        || reading::candidates(series, std::slice::from_ref(item))
+            .first()
+            .is_some_and(|c| c.score >= reading::ALT_TITLE)
 }
 
 fn resume_of(lib: &Library, o: &Opened, next: bool) -> Resume {
@@ -91,9 +107,13 @@ pub fn resume(libs: &[Library], item: &ListItem, picked: &[String]) -> Option<Re
     let mut last: Option<(&Library, Opened)> = None;
     for lib in libs {
         let Ok(db) = lib.open() else { continue };
-        let Ok(opened) = db.opened_since(0) else { continue };
+        let Ok(opened) = db.opened_since(0) else {
+            continue;
+        };
         if let Some(o) = opened.into_iter().find(|o| is_of(o, item, picked))
-            && last.as_ref().is_none_or(|(_, l)| o.last_opened > l.last_opened)
+            && last
+                .as_ref()
+                .is_none_or(|(_, l)| o.last_opened > l.last_opened)
         {
             last = Some((lib, o));
         }
@@ -104,7 +124,14 @@ pub fn resume(libs: &[Library], item: &ListItem, picked: &[String]) -> Option<Re
         let key = reading::key(o.series());
         let after = place(&o);
         let all = lib.open().ok()?.comics().ok()?;
-        let n = all.into_iter().filter(|c| reading::key(c.series()) == key && place(c) > after).min_by(|a, b| place(a).partial_cmp(&place(b)).unwrap_or(std::cmp::Ordering::Equal))?;
+        let n = all
+            .into_iter()
+            .filter(|c| reading::key(c.series()) == key && place(c) > after)
+            .min_by(|a, b| {
+                place(a)
+                    .partial_cmp(&place(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })?;
         resume_of(lib, &n, true)
     } else {
         resume_of(lib, &o, false)
@@ -170,54 +197,164 @@ INSERT INTO db_info (version) VALUES ('10.5.0');
                 fs::write(f, b"").unwrap();
             }
         }
-        Library { name: "Comics".into(), path: lib, id: Some(1) }
+        Library {
+            name: "Comics".into(),
+            path: lib,
+            id: Some(1),
+        }
     }
 
     fn manga(id: u32, title: &str) -> ListItem {
-        let media = Media { id, kind: Kind::Manga, title: title.into(), ..Default::default() };
-        ListItem { media, status: Status::Watching, progress: 0, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: 0 }
+        let media = Media {
+            id,
+            kind: Kind::Manga,
+            title: title.into(),
+            ..Default::default()
+        };
+        ListItem {
+            media,
+            status: Status::Watching,
+            progress: 0,
+            score: None,
+            rewatching: false,
+            times_rewatched: 0,
+            volumes: 0,
+            updated_at: 0,
+        }
     }
 
     #[test]
     fn where_the_user_stopped() {
         let s = scratch("stopped");
-        let lib = library(&s.0, &[("/Dragon Ball Z v10.cbz", 190, 190, true, Some(100)), ("/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 87, 190, false, Some(200)), ("/Other v01.cbz", 3, 50, false, Some(300))]);
+        let lib = library(
+            &s.0,
+            &[
+                ("/Dragon Ball Z v10.cbz", 190, 190, true, Some(100)),
+                (
+                    "/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz",
+                    87,
+                    190,
+                    false,
+                    Some(200),
+                ),
+                ("/Other v01.cbz", 3, 50, false, Some(300)),
+            ],
+        );
         let r = resume(std::slice::from_ref(&lib), &manga(1, "Dragon Ball Z"), &[]).unwrap();
-        assert_eq!((r.comic_id, r.volume, r.page, r.pages, r.next, r.library_id), (2, Some(11), 87, 190, false, Some(1)));
+        assert_eq!(
+            (r.comic_id, r.volume, r.page, r.pages, r.next, r.library_id),
+            (2, Some(11), 87, 190, false, Some(1))
+        );
         assert_eq!(r.label(), "Vol 11 \u{b7} p. 87/190");
         // Another series that starts alike is not this one.
-        assert_eq!(resume(std::slice::from_ref(&lib), &manga(2, "Dragon Ball"), &[]), None);
+        assert_eq!(
+            resume(std::slice::from_ref(&lib), &manga(2, "Dragon Ball"), &[]),
+            None
+        );
         // Unless the user picked it.
-        assert!(resume(std::slice::from_ref(&lib), &manga(2, "Dragon Ball"), &["dragon ball z".into()]).is_some());
+        assert!(
+            resume(
+                std::slice::from_ref(&lib),
+                &manga(2, "Dragon Ball"),
+                &["dragon ball z".into()]
+            )
+            .is_some()
+        );
     }
 
     #[test]
     fn read_to_the_end_gives_the_next_one_or_nothing() {
         let s = scratch("next");
-        let lib = library(&s.0, &[("/Glass Lantern Club/c012.cbz", 20, 20, true, Some(500)), ("/Glass Lantern Club/c014.cbz", 1, 20, false, None), ("/Glass Lantern Club/c013.cbz", 1, 20, false, None)]);
-        let r = resume(std::slice::from_ref(&lib), &manga(1, "Glass Lantern Club"), &[]).unwrap();
-        assert_eq!((r.chapter, r.next, r.page, r.comic_id), (Some(13), true, 1, 3));
+        let lib = library(
+            &s.0,
+            &[
+                ("/Glass Lantern Club/c012.cbz", 20, 20, true, Some(500)),
+                ("/Glass Lantern Club/c014.cbz", 1, 20, false, None),
+                ("/Glass Lantern Club/c013.cbz", 1, 20, false, None),
+            ],
+        );
+        let r = resume(
+            std::slice::from_ref(&lib),
+            &manga(1, "Glass Lantern Club"),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            (r.chapter, r.next, r.page, r.comic_id),
+            (Some(13), true, 1, 3)
+        );
         assert_eq!(r.label(), "Ch 13");
         let s2 = scratch("last");
-        let lib = library(&s2.0, &[("/Glass Lantern Club/c012.cbz", 20, 20, true, Some(500))]);
-        assert_eq!(resume(std::slice::from_ref(&lib), &manga(1, "Glass Lantern Club"), &[]), None, "read to the end, no next one");
+        let lib = library(
+            &s2.0,
+            &[("/Glass Lantern Club/c012.cbz", 20, 20, true, Some(500))],
+        );
+        assert_eq!(
+            resume(
+                std::slice::from_ref(&lib),
+                &manga(1, "Glass Lantern Club"),
+                &[]
+            ),
+            None,
+            "read to the end, no next one"
+        );
     }
 
     #[test]
     fn unknown_or_gone_is_nothing() {
         let s = scratch("gone");
-        let lib = library(&s.0, &[("/gone/Tsuki no Niwa c003.cbz", 5, 20, false, Some(100)), ("/Never Opened/c001.cbz", 1, 20, false, None)]);
-        assert_eq!(resume(std::slice::from_ref(&lib), &manga(1, "Tsuki no Niwa"), &[]), None, "the file is gone");
-        assert_eq!(resume(std::slice::from_ref(&lib), &manga(2, "Never Opened"), &[]), None, "never opened");
-        let none = Library { name: "x".into(), path: s.0.join("nowhere"), id: None };
+        let lib = library(
+            &s.0,
+            &[
+                ("/gone/Tsuki no Niwa c003.cbz", 5, 20, false, Some(100)),
+                ("/Never Opened/c001.cbz", 1, 20, false, None),
+            ],
+        );
+        assert_eq!(
+            resume(std::slice::from_ref(&lib), &manga(1, "Tsuki no Niwa"), &[]),
+            None,
+            "the file is gone"
+        );
+        assert_eq!(
+            resume(std::slice::from_ref(&lib), &manga(2, "Never Opened"), &[]),
+            None,
+            "never opened"
+        );
+        let none = Library {
+            name: "x".into(),
+            path: s.0.join("nowhere"),
+            id: None,
+        };
         assert_eq!(resume(&[none], &manga(1, "Tsuki no Niwa"), &[]), None);
     }
 
     #[test]
     fn ids_come_from_yacreaders_settings() {
-        let a = Library { name: "Movies".into(), path: PathBuf::from("/m"), id: None };
-        let known = [Library { name: "Movies".into(), path: PathBuf::from("/m"), id: Some(3) }];
+        let a = Library {
+            name: "Movies".into(),
+            path: PathBuf::from("/m"),
+            id: None,
+        };
+        let known = [Library {
+            name: "Movies".into(),
+            path: PathBuf::from("/m"),
+            id: Some(3),
+        }];
         assert_eq!(with_ids(vec![a], &known)[0].id, Some(3));
-        assert_eq!(Resume { library: "/m".into(), library_id: None, comic_id: 1, path: "/m/x c120.cbz".into(), chapter: Some(120), volume: None, page: 12, pages: 20, next: false }.label(), "Ch 120 \u{b7} p. 12/20");
+        assert_eq!(
+            Resume {
+                library: "/m".into(),
+                library_id: None,
+                comic_id: 1,
+                path: "/m/x c120.cbz".into(),
+                chapter: Some(120),
+                volume: None,
+                page: 12,
+                pages: 20,
+                next: false
+            }
+            .label(),
+            "Ch 120 \u{b7} p. 12/20"
+        );
     }
 }

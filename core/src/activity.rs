@@ -54,29 +54,57 @@ impl Row {
 
 /// Called inside every store call that changes a main entry (`queue.rs`), after the change.
 /// `before`: the entry before the call (`None`: it wasn't on the list).
-pub(crate) fn follow(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>, now: i64) -> Result<()> {
+pub(crate) fn follow(
+    tx: &Connection,
+    sc: Scope,
+    media_id: u32,
+    before: Option<Values>,
+    now: i64,
+) -> Result<()> {
     follow_with(tx, sc, media_id, before, now, true)
 }
 
 /// As [`follow`], but only a lowered progress counts (Take theirs: the website's count won; a
 /// higher one there was watched elsewhere, at a time Kotora doesn't know).
-pub(crate) fn follow_down(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>, now: i64) -> Result<()> {
+pub(crate) fn follow_down(
+    tx: &Connection,
+    sc: Scope,
+    media_id: u32,
+    before: Option<Values>,
+    now: i64,
+) -> Result<()> {
     follow_with(tx, sc, media_id, before, now, false)
 }
 
-fn follow_with(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>, now: i64, ups: bool) -> Result<()> {
+fn follow_with(
+    tx: &Connection,
+    sc: Scope,
+    media_id: u32,
+    before: Option<Values>,
+    now: i64,
+    ups: bool,
+) -> Result<()> {
     if crate::mirror::is_mirror(tx, sc.service)? {
         return Ok(());
     }
-    let Some((after, _)) = crate::queue::entry_values(tx, sc, media_id)? else { return Ok(()) };
+    let Some((after, _)) = crate::queue::entry_values(tx, sc, media_id)? else {
+        return Ok(());
+    };
     let (from, vol_from) = match before {
         // Added as Completed: watched before. Added at episode N: that one episode.
         None if after.status == Status::Completed => return Ok(()),
-        None => (after.progress.saturating_sub(1), after.volumes.saturating_sub(1)),
-        Some(b) if b.status == Status::PlanToWatch && after.status == Status::Completed => return Ok(()),
+        None => (
+            after.progress.saturating_sub(1),
+            after.volumes.saturating_sub(1),
+        ),
+        Some(b) if b.status == Status::PlanToWatch && after.status == Status::Completed => {
+            return Ok(());
+        }
         Some(b) => (b.progress, b.volumes),
     };
-    let rewatch_start = before.is_some_and(|b| (after.rewatching && !b.rewatching) || after.times_rewatched > b.times_rewatched);
+    let rewatch_start = before.is_some_and(|b| {
+        (after.rewatching && !b.rewatching) || after.times_rewatched > b.times_rewatched
+    });
     if after.progress < from && !rewatch_start {
         take_back(tx, sc, media_id, after.progress, Col::Progress, now)?;
     }
@@ -88,8 +116,16 @@ fn follow_with(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>
     if !ups || (!up && !vol_up) {
         return Ok(());
     }
-    let (from, to) = if up { (from, after.progress) } else { (after.progress, after.progress) };
-    let (vol_from, vol_to) = if vol_up { (vol_from, after.volumes) } else { (after.volumes, after.volumes) };
+    let (from, to) = if up {
+        (from, after.progress)
+    } else {
+        (after.progress, after.progress)
+    };
+    let (vol_from, vol_to) = if vol_up {
+        (vol_from, after.volumes)
+    } else {
+        (after.volumes, after.volumes)
+    };
     tx.execute(
         "INSERT INTO activity (service, kind, media_id, at, p_from, p_to, v_from, v_to) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![sc.service, sc.kind.name(), media_id, now, from, to, vol_from, vol_to],
@@ -114,10 +150,19 @@ fn take_back(tx: &Connection, sc: Scope, media_id: u32, to: u32, col: Col, now: 
     let since = now - TAKE_BACK;
     let args = params![sc.service, sc.kind.name(), media_id, since, to];
     // A row that started at or above `to` gives it all back; one across it ends at it.
-    tx.execute(&format!("UPDATE activity SET {f} = ?5, {t} = ?5 WHERE {base} AND {f} >= ?5"), args)?;
-    tx.execute(&format!("UPDATE activity SET {t} = ?5 WHERE {base} AND {t} > ?5"), args)?;
+    tx.execute(
+        &format!("UPDATE activity SET {f} = ?5, {t} = ?5 WHERE {base} AND {f} >= ?5"),
+        args,
+    )?;
+    tx.execute(
+        &format!("UPDATE activity SET {t} = ?5 WHERE {base} AND {t} > ?5"),
+        args,
+    )?;
     // Rows with nothing left in either column.
-    tx.execute(&format!("DELETE FROM activity WHERE {base} AND p_to <= p_from AND v_to <= v_from"), params![sc.service, sc.kind.name(), media_id, since])?;
+    tx.execute(
+        &format!("DELETE FROM activity WHERE {base} AND p_to <= p_from AND v_to <= v_from"),
+        params![sc.service, sc.kind.name(), media_id, since],
+    )?;
     Ok(())
 }
 
@@ -133,7 +178,11 @@ pub(crate) fn start(c: &Connection, now: i64) -> Result<()> {
 
 /// When the log started (unix seconds), if it has.
 pub fn since(c: &Connection) -> Result<Option<i64>> {
-    let v: Option<String> = c.query_row("SELECT value FROM kv WHERE key = ?1", [SINCE_KEY], |r| r.get(0)).optional()?;
+    let v: Option<String> = c
+        .query_row("SELECT value FROM kv WHERE key = ?1", [SINCE_KEY], |r| {
+            r.get(0)
+        })
+        .optional()?;
     Ok(v.and_then(|v| v.parse().ok()))
 }
 
@@ -143,7 +192,14 @@ pub fn rows(c: &Connection, sc: Scope) -> Result<Vec<Row>> {
         "SELECT media_id, at, p_from, p_to, v_from, v_to FROM activity WHERE service = ?1 AND kind = ?2 ORDER BY at, id",
     )?;
     let rows = st.query_map(params![sc.service, sc.kind.name()], |r| {
-        Ok(Row { media_id: r.get(0)?, at: r.get(1)?, from: r.get(2)?, to: r.get(3)?, vol_from: r.get(4)?, vol_to: r.get(5)? })
+        Ok(Row {
+            media_id: r.get(0)?,
+            at: r.get(1)?,
+            from: r.get(2)?,
+            to: r.get(3)?,
+            vol_from: r.get(4)?,
+            vol_to: r.get(5)?,
+        })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

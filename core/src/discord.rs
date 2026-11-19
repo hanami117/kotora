@@ -35,7 +35,11 @@ pub const ICON_ASSET: &str = "kotora";
 /// The id the user's `config.toml` or the built-in one gives: digits only, else the built-in.
 pub fn client_id(configured: &str) -> String {
     let c = configured.trim();
-    if !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()) { c.to_string() } else { DEFAULT_CLIENT_ID.to_string() }
+    if !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()) {
+        c.to_string()
+    } else {
+        DEFAULT_CLIENT_ID.to_string()
+    }
 }
 
 /// Whether the built-in id is still the placeholder (nothing to show until a real one is set).
@@ -118,8 +122,13 @@ impl Activity {
         if !assets.is_empty() {
             a["assets"] = Value::Object(assets);
         }
-        if let Some((label, url)) = self.button.as_ref().filter(|(_, u)| u.starts_with("https://") && u.len() <= 512) {
-            a["buttons"] = json!([{ "label": label.chars().take(32).collect::<String>(), "url": url }]);
+        if let Some((label, url)) = self
+            .button
+            .as_ref()
+            .filter(|(_, u)| u.starts_with("https://") && u.len() <= 512)
+        {
+            a["buttons"] =
+                json!([{ "label": label.chars().take(32).collect::<String>(), "url": url }]);
         }
         a
     }
@@ -132,7 +141,16 @@ impl Activity {
             (None, None) => true,
             _ => false,
         };
-        Activity { start: None, end: None, ..self.clone() } == Activity { start: None, end: None, ..o.clone() } && near(self.start, o.start) && near(self.end, o.end)
+        Activity {
+            start: None,
+            end: None,
+            ..self.clone()
+        } == Activity {
+            start: None,
+            end: None,
+            ..o.clone()
+        } && near(self.start, o.start)
+            && near(self.end, o.end)
     }
 }
 
@@ -188,7 +206,9 @@ pub fn socket_candidates(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
             dirs.push(d);
         }
     };
-    let runtime = env("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from);
+    let runtime = env("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     for k in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
         if let Some(v) = env(k).filter(|v| !v.is_empty()) {
             add(PathBuf::from(v));
@@ -203,7 +223,13 @@ pub fn socket_candidates(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     }
     // Flatpak and Snap keep the socket in their own folders under the runtime dir.
     if let Some(r) = runtime {
-        for sub in ["app/com.discordapp.Discord", "app/com.discordapp.DiscordCanary", "app/dev.vencord.Vesktop", "snap.discord", "snap.discord-canary"] {
+        for sub in [
+            "app/com.discordapp.Discord",
+            "app/com.discordapp.DiscordCanary",
+            "app/dev.vencord.Vesktop",
+            "snap.discord",
+            "snap.discord-canary",
+        ] {
             for n in 0..10 {
                 out.push(r.join(sub).join(format!("discord-ipc-{n}")));
             }
@@ -227,12 +253,19 @@ pub fn system_connector() -> Connector {
         #[cfg(windows)]
         {
             for n in 0..10 {
-                if let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(format!(r"\\.\pipe\discord-ipc-{n}")) {
+                if let Ok(f) = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(format!(r"\\.\pipe\discord-ipc-{n}"))
+                {
                     return Ok(Box::new(f) as Box<dyn Stream>);
                 }
             }
         }
-        Err(io::Error::new(io::ErrorKind::NotFound, "Discord is not running"))
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Discord is not running",
+        ))
     })
 }
 
@@ -251,9 +284,16 @@ impl Conn {
             match op {
                 // A frame: READY, or an ERROR event (a bad Application ID).
                 1 if v["evt"] == "READY" => break,
-                1 if v["evt"] == "ERROR" => return Err(io::Error::other("Discord refused the Application ID")),
+                1 if v["evt"] == "ERROR" => {
+                    return Err(io::Error::other("Discord refused the Application ID"));
+                }
                 // Close.
-                2 => return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "Discord closed the connection")),
+                2 => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "Discord closed the connection",
+                    ));
+                }
                 3 => s.write_all(&frame(4, &v))?,
                 _ => {}
             }
@@ -275,7 +315,12 @@ impl Conn {
             let (op, v) = read_frame(&mut self.s)?;
             match op {
                 1 if v["nonce"] == nonce.as_str() => return Ok(()),
-                2 => return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "Discord closed the connection")),
+                2 => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "Discord closed the connection",
+                    ));
+                }
                 3 => self.s.write_all(&frame(4, &v))?,
                 _ => {}
             }
@@ -309,7 +354,10 @@ pub struct Timing {
 
 impl Default for Timing {
     fn default() -> Self {
-        Timing { retry: RETRY, min_gap: MIN_GAP }
+        Timing {
+            retry: RETRY,
+            min_gap: MIN_GAP,
+        }
     }
 }
 
@@ -317,11 +365,17 @@ impl Worker {
     pub fn start(client_id: String, connect: Connector, timing: Timing) -> Worker {
         let (tx, rx) = mpsc::channel();
         let (dtx, done) = mpsc::channel();
-        let thread = std::thread::Builder::new().name("kotora-discord".into()).spawn(move || {
-            run(&client_id, connect, timing, &rx);
-            let _ = dtx.send(());
-        });
-        Worker { tx, done, thread: thread.ok() }
+        let thread = std::thread::Builder::new()
+            .name("kotora-discord".into())
+            .spawn(move || {
+                run(&client_id, connect, timing, &rx);
+                let _ = dtx.send(());
+            });
+        Worker {
+            tx,
+            done,
+            thread: thread.ok(),
+        }
     }
 
     /// The status to show (`None`: nothing). Never blocks.
@@ -370,7 +424,8 @@ fn run(client_id: &str, mut connect: Connector, t: Timing, rx: &Receiver<Cmd>) {
         }
         if let Some(c) = conn.as_mut().filter(|_| dirty) {
             // A clear is never held back; an update waits for the rate limit.
-            let ready = want.is_none() || last_set.is_none_or(|l| now.duration_since(l) >= t.min_gap);
+            let ready =
+                want.is_none() || last_set.is_none_or(|l| now.duration_since(l) >= t.min_gap);
             if ready {
                 match c.set(want.as_ref()) {
                     Ok(()) => {
@@ -384,7 +439,10 @@ fn run(client_id: &str, mut connect: Connector, t: Timing, rx: &Receiver<Cmd>) {
                 }
                 continue;
             }
-            wait = wait.min(t.min_gap.saturating_sub(now.duration_since(last_set.unwrap_or(now))));
+            wait = wait.min(
+                t.min_gap
+                    .saturating_sub(now.duration_since(last_set.unwrap_or(now))),
+            );
         }
         match rx.recv_timeout(wait.max(Duration::from_millis(1))) {
             Ok(Cmd::Set(a)) => {
@@ -397,7 +455,9 @@ fn run(client_id: &str, mut connect: Connector, t: Timing, rx: &Receiver<Cmd>) {
                     }
                 }
             }
-            Ok(Cmd::Stop) | Err(RecvTimeoutError::Disconnected) => return finish(conn, shown.is_some()),
+            Ok(Cmd::Stop) | Err(RecvTimeoutError::Disconnected) => {
+                return finish(conn, shown.is_some());
+            }
             Err(RecvTimeoutError::Timeout) => {}
         }
     }
@@ -426,7 +486,20 @@ mod tests {
     use super::*;
 
     fn act(title: &str) -> Activity {
-        Activity { kind: 3, details: title.into(), state: Some("Episode 7 of 24".into()), start: Some(1000), end: Some(2400), large: Some(("https://cdn.example/a.jpg".into(), title.into())), small: Some((ICON_ASSET.into(), "Kotora".into())), status_display: 2, button: Some(("View on AniList".into(), "https://anilist.co/anime/1".into())) }
+        Activity {
+            kind: 3,
+            details: title.into(),
+            state: Some("Episode 7 of 24".into()),
+            start: Some(1000),
+            end: Some(2400),
+            large: Some(("https://cdn.example/a.jpg".into(), title.into())),
+            small: Some((ICON_ASSET.into(), "Kotora".into())),
+            status_display: 2,
+            button: Some((
+                "View on AniList".into(),
+                "https://anilist.co/anime/1".into(),
+            )),
+        }
     }
 
     #[test]
@@ -451,7 +524,11 @@ mod tests {
         }
         a.status_display = 1;
         a.state = None;
-        assert_eq!(a.to_json()["status_display_type"], 2, "no second line: the first");
+        assert_eq!(
+            a.to_json()["status_display_type"],
+            2,
+            "no second line: the first"
+        );
     }
 
     #[test]
@@ -465,9 +542,16 @@ mod tests {
         a.button = Some(("b".into(), "http://insecure.example".into()));
         a.end = Some(5);
         let j = a.to_json();
-        assert!(j["assets"].get("large_image").is_none(), "a URL over 256 characters is dropped");
+        assert!(
+            j["assets"].get("large_image").is_none(),
+            "a URL over 256 characters is dropped"
+        );
         assert!(j.get("buttons").is_none(), "http is refused");
-        assert_eq!(j["timestamps"], json!({ "start": 1000 }), "an end before the start is dropped");
+        assert_eq!(
+            j["timestamps"],
+            json!({ "start": 1000 }),
+            "an end before the start is dropped"
+        );
     }
 
     #[test]
@@ -503,8 +587,16 @@ mod tests {
         assert_eq!(c[0], PathBuf::from("/run/user/1000/discord-ipc-0"));
         assert!(c.contains(&PathBuf::from("/var/tmp/x/discord-ipc-3")));
         assert!(c.contains(&PathBuf::from("/tmp/discord-ipc-9")));
-        assert!(c.contains(&PathBuf::from("/run/user/1000/app/com.discordapp.Discord/discord-ipc-0")), "Flatpak");
-        assert!(c.contains(&PathBuf::from("/run/user/1000/snap.discord/discord-ipc-1")), "Snap");
+        assert!(
+            c.contains(&PathBuf::from(
+                "/run/user/1000/app/com.discordapp.Discord/discord-ipc-0"
+            )),
+            "Flatpak"
+        );
+        assert!(
+            c.contains(&PathBuf::from("/run/user/1000/snap.discord/discord-ipc-1")),
+            "Snap"
+        );
         let none = socket_candidates(&|_| None);
         assert_eq!(none.len(), 10, "only /tmp without a runtime dir");
     }
@@ -536,7 +628,8 @@ mod tests {
         }
 
         pub fn serve(name: &str) -> Server {
-            let dir = std::env::temp_dir().join(format!("kotora-discord-test-{}-{name}", std::process::id()));
+            let dir = std::env::temp_dir()
+                .join(format!("kotora-discord-test-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let path = dir.join("discord-ipc-0");
@@ -556,7 +649,11 @@ mod tests {
                             g.lock().unwrap().push((op, v.clone()));
                             match op {
                                 0 => {
-                                    s.write_all(&frame(1, &json!({ "cmd": "DISPATCH", "evt": "READY", "data": {} }))).unwrap();
+                                    s.write_all(&frame(
+                                        1,
+                                        &json!({ "cmd": "DISPATCH", "evt": "READY", "data": {} }),
+                                    ))
+                                    .unwrap();
                                     // A ping first, to see it is answered.
                                     s.write_all(&frame(3, &json!({ "n": 1 }))).unwrap();
                                 }
@@ -575,11 +672,18 @@ mod tests {
                     });
                 }
             });
-            Server { path, got, accepted, drop_after }
+            Server {
+                path,
+                got,
+                accepted,
+                drop_after,
+            }
         }
 
         pub fn connector(path: PathBuf) -> Connector {
-            Box::new(move || Ok(Box::new(std::os::unix::net::UnixStream::connect(&path)?) as Box<dyn Stream>))
+            Box::new(move || {
+                Ok(Box::new(std::os::unix::net::UnixStream::connect(&path)?) as Box<dyn Stream>)
+            })
         }
 
         pub fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
@@ -595,12 +699,21 @@ mod tests {
 
     #[cfg(unix)]
     fn quick() -> Timing {
-        Timing { retry: Duration::from_millis(60), min_gap: Duration::from_millis(40) }
+        Timing {
+            retry: Duration::from_millis(60),
+            min_gap: Duration::from_millis(40),
+        }
     }
 
     #[cfg(unix)]
     fn sets(s: &fake::Server) -> Vec<Value> {
-        s.got.lock().unwrap().iter().filter(|(op, v)| *op == 1 && v["cmd"] == "SET_ACTIVITY").map(|(_, v)| v.clone()).collect()
+        s.got
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(op, v)| *op == 1 && v["cmd"] == "SET_ACTIVITY")
+            .map(|(_, v)| v.clone())
+            .collect()
     }
 
     #[cfg(unix)]
@@ -617,7 +730,10 @@ mod tests {
             assert_eq!(got[1].0, 1);
             assert_eq!(got[1].1["args"]["activity"]["details"], "Kagurabachi");
             assert_eq!(got[1].1["args"]["pid"], std::process::id());
-            assert!(got.iter().any(|(op, v)| *op == 4 && v["n"] == 1), "the ping was answered");
+            assert!(
+                got.iter().any(|(op, v)| *op == 4 && v["n"] == 1),
+                "the ping was answered"
+            );
         }
         // The same status again sends nothing; a changed one does.
         w.set(Some(act("Kagurabachi")));
@@ -633,7 +749,10 @@ mod tests {
         w.stop(Duration::from_secs(2));
         assert_eq!(sets(&s).len(), 5);
         assert!(sets(&s)[4]["args"]["activity"].is_null());
-        assert!(s.got.lock().unwrap().iter().any(|(op, _)| *op == 2), "a close frame");
+        assert!(
+            s.got.lock().unwrap().iter().any(|(op, _)| *op == 2),
+            "a close frame"
+        );
         assert_eq!(*s.accepted.lock().unwrap(), 1);
     }
 
@@ -641,7 +760,10 @@ mod tests {
     #[test]
     fn updates_wait_for_the_rate_limit() {
         let s = fake::serve("gap");
-        let t = Timing { retry: Duration::from_millis(60), min_gap: Duration::from_millis(300) };
+        let t = Timing {
+            retry: Duration::from_millis(60),
+            min_gap: Duration::from_millis(300),
+        };
         let w = Worker::start("1".into(), fake::connector(s.path.clone()), t);
         w.set(Some(act("Title A")));
         fake::wait_for("first", || sets(&s).len() == 1);
@@ -650,7 +772,11 @@ mod tests {
         w.set(Some(act("Title C")));
         fake::wait_for("the latest", || sets(&s).len() == 2);
         assert!(t0.elapsed() >= Duration::from_millis(200), "held back");
-        assert_eq!(sets(&s)[1]["args"]["activity"]["details"], "Title C", "B was skipped");
+        assert_eq!(
+            sets(&s)[1]["args"]["activity"]["details"],
+            "Title C",
+            "B was skipped"
+        );
         w.stop(Duration::from_secs(2));
     }
 
@@ -658,7 +784,8 @@ mod tests {
     #[test]
     fn it_waits_for_discord_and_sends_what_was_wanted() {
         // Nothing listens yet: the worker keeps trying, quietly, and sends the latest when Discord appears.
-        let dir = std::env::temp_dir().join(format!("kotora-discord-test-{}-late", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kotora-discord-test-{}-late", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("discord-ipc-0");
@@ -671,7 +798,9 @@ mod tests {
         let w = Worker::start("1".into(), connect, quick());
         w.set(Some(act("Early")));
         w.set(Some(act("Late")));
-        fake::wait_for("two tries", || tries.load(std::sync::atomic::Ordering::Relaxed) >= 2);
+        fake::wait_for("two tries", || {
+            tries.load(std::sync::atomic::Ordering::Relaxed) >= 2
+        });
         // Discord starts: rename its socket into place.
         let s = fake::serve("late-real");
         std::fs::rename(&s.path, &path).unwrap();
@@ -692,7 +821,11 @@ mod tests {
         w.set(Some(act("Title B")));
         // The write may succeed into a dead socket; the next one fails, then a new connection sends the latest.
         fake::wait_for("a second connection", || *s.accepted.lock().unwrap() >= 2);
-        fake::wait_for("B shown", || sets(&s).iter().any(|v| v["args"]["activity"]["details"] == "Title B"));
+        fake::wait_for("B shown", || {
+            sets(&s)
+                .iter()
+                .any(|v| v["args"]["activity"]["details"] == "Title B")
+        });
         w.stop(Duration::from_secs(2));
     }
 
@@ -700,7 +833,8 @@ mod tests {
     #[test]
     fn a_refused_id_is_an_error_not_a_hang() {
         use std::os::unix::net::UnixListener;
-        let dir = std::env::temp_dir().join(format!("kotora-discord-test-{}-bad", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kotora-discord-test-{}-bad", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("discord-ipc-0");
@@ -709,7 +843,10 @@ mod tests {
             for s in l.incoming() {
                 let mut s = s.unwrap();
                 let _ = read_frame(&mut s);
-                let _ = s.write_all(&frame(1, &json!({ "evt": "ERROR", "data": { "code": 4000 } })));
+                let _ = s.write_all(&frame(
+                    1,
+                    &json!({ "evt": "ERROR", "data": { "code": 4000 } }),
+                ));
             }
         });
         let stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
@@ -718,7 +855,14 @@ mod tests {
 
     #[test]
     fn nothing_listening_is_just_an_error() {
-        let c = Worker::start("1".into(), Box::new(|| Err(io::Error::new(io::ErrorKind::NotFound, "no"))), Timing { retry: Duration::from_millis(10), min_gap: Duration::from_millis(10) });
+        let c = Worker::start(
+            "1".into(),
+            Box::new(|| Err(io::Error::new(io::ErrorKind::NotFound, "no"))),
+            Timing {
+                retry: Duration::from_millis(10),
+                min_gap: Duration::from_millis(10),
+            },
+        );
         c.set(Some(act("Title A")));
         std::thread::sleep(Duration::from_millis(50));
         c.stop(Duration::from_secs(1));

@@ -35,7 +35,9 @@ pub fn follow(theme: Theme) {
     unsafe {
         let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
         let appearance: Option<Retained<AnyObject>> = match appearance_name(theme) {
-            Some(name) => msg_send![class!(NSAppearance), appearanceNamed: &*NSString::from_str(name)],
+            Some(name) => {
+                msg_send![class!(NSAppearance), appearanceNamed: &*NSString::from_str(name)]
+            }
             None => None,
         };
         let _: () = msg_send![&*app, setAppearance: appearance.as_deref()];
@@ -78,13 +80,17 @@ fn system_light() -> Option<bool> {
     use objc2_foundation::{NSArray, NSString};
 
     MainThreadMarker::new()?;
-    let (aqua, dark) = (NSString::from_str("NSAppearanceNameAqua"), NSString::from_str("NSAppearanceNameDarkAqua"));
+    let (aqua, dark) = (
+        NSString::from_str("NSAppearanceNameAqua"),
+        NSString::from_str("NSAppearanceNameDarkAqua"),
+    );
     let names = NSArray::from_slice(&[&*aqua, &*dark]);
     // SAFETY: main thread (checked); NSApplication exists once a window does.
     unsafe {
         let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
         let eff: Option<Retained<AnyObject>> = msg_send![&*app, effectiveAppearance];
-        let best: Option<Retained<NSString>> = msg_send![&*eff?, bestMatchFromAppearancesWithNames: &*names];
+        let best: Option<Retained<NSString>> =
+            msg_send![&*eff?, bestMatchFromAppearancesWithNames: &*names];
         Some(best?.to_string() == aqua.to_string())
     }
 }
@@ -125,7 +131,8 @@ pub fn pick_folder(prompt: &str, done: impl Fn(Option<String>) + 'static) -> Res
         let window: Option<Retained<AnyObject>> = msg_send![&*app, mainWindow];
         match window {
             Some(w) => {
-                let _: () = msg_send![&*panel, beginSheetModalForWindow: &*w, completionHandler: &*handler];
+                let _: () =
+                    msg_send![&*panel, beginSheetModalForWindow: &*w, completionHandler: &*handler];
             }
             None => {
                 let _: () = msg_send![&*app, activateIgnoringOtherApps: Bool::YES];
@@ -140,7 +147,11 @@ pub fn pick_folder(prompt: &str, done: impl Fn(Option<String>) + 'static) -> Res
 /// is an `NSSavePanel` (it asks before replacing a file), else an `NSOpenPanel` for one file.
 /// `done` runs on the UI thread with the path, or None when cancelled.
 #[cfg(target_os = "macos")]
-pub fn pick_file(prompt: &str, save: Option<&str>, done: impl Fn(Option<String>) + 'static) -> Result<(), String> {
+pub fn pick_file(
+    prompt: &str,
+    save: Option<&str>,
+    done: impl Fn(Option<String>) + 'static,
+) -> Result<(), String> {
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, Bool};
@@ -182,7 +193,8 @@ pub fn pick_file(prompt: &str, save: Option<&str>, done: impl Fn(Option<String>)
         let window: Option<Retained<AnyObject>> = msg_send![&*app, mainWindow];
         match window {
             Some(w) => {
-                let _: () = msg_send![&*panel, beginSheetModalForWindow: &*w, completionHandler: &*handler];
+                let _: () =
+                    msg_send![&*panel, beginSheetModalForWindow: &*w, completionHandler: &*handler];
             }
             None => {
                 let _: () = msg_send![&*app, activateIgnoringOtherApps: Bool::YES];
@@ -200,7 +212,10 @@ mod tests {
     #[test]
     fn a_forced_theme_forces_the_appearance_and_system_follows_macos() {
         assert_eq!(appearance_name(Theme::Light), Some("NSAppearanceNameAqua"));
-        assert_eq!(appearance_name(Theme::Dark), Some("NSAppearanceNameDarkAqua"));
+        assert_eq!(
+            appearance_name(Theme::Dark),
+            Some("NSAppearanceNameDarkAqua")
+        );
         assert_eq!(appearance_name(Theme::System), None, "nil: follow macOS");
         // The palette agrees with the forced appearance whatever macOS says.
         for dark_mac in [true, false] {
@@ -219,7 +234,8 @@ mod tests {
         use objc2_foundation::NSString;
         for t in [Theme::Light, Theme::Dark] {
             let name = NSString::from_str(appearance_name(t).unwrap());
-            let a: Option<Retained<AnyObject>> = unsafe { msg_send![class!(NSAppearance), appearanceNamed: &*name] };
+            let a: Option<Retained<AnyObject>> =
+                unsafe { msg_send![class!(NSAppearance), appearanceNamed: &*name] };
             let a = a.expect("AppKit knows the name");
             let back: Retained<NSString> = unsafe { msg_send![&*a, name] };
             assert_eq!(back.to_string(), name.to_string());

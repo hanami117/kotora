@@ -66,9 +66,15 @@ pub enum ReadingMsg {
     /// The comics the readers have open now (sent when it changes, before any `Seen`).
     Open(Vec<std::path::PathBuf>),
     /// Where to continue a manga (`None`: nothing to continue).
-    Resume { media_id: u32, at: Option<kotora_core::manga::resume::Resume> },
+    Resume {
+        media_id: u32,
+        at: Option<kotora_core::manga::resume::Resume>,
+    },
     /// The libraries watched, and those that couldn't be read.
-    Libs { watched: Vec<String>, errors: Vec<LibState> },
+    Libs {
+        watched: Vec<String>,
+        errors: Vec<LibState>,
+    },
 }
 
 /// The manga's state at the offer, as with anime ([`crate::now::Mark`]).
@@ -119,7 +125,18 @@ pub struct Reading {
 
 impl Reading {
     fn from_seen(s: Seen) -> Reading {
-        Reading { read: s.read, found: s.found, candidates: s.candidates, cover_url: s.cover_url, dismissed: false, acted: false, marked: None, picking: false, mark: None, open: false }
+        Reading {
+            read: s.read,
+            found: s.found,
+            candidates: s.candidates,
+            cover_url: s.cover_url,
+            dismissed: false,
+            acted: false,
+            marked: None,
+            picking: false,
+            mark: None,
+            open: false,
+        }
     }
 
     pub fn media_id(&self) -> Option<u32> {
@@ -227,7 +244,9 @@ pub(crate) fn log(msg: impl std::fmt::Display) {
 
 fn debug_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("KOTORA_DEBUG_READING").is_some_and(|v| !v.is_empty() && v != "0"))
+    *ON.get_or_init(|| {
+        std::env::var_os("KOTORA_DEBUG_READING").is_some_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 fn debug(msg: impl std::fmt::Display) {
@@ -238,12 +257,21 @@ fn debug(msg: impl std::fmt::Display) {
 
 /// A path's file name, for the log.
 fn name_of(p: &std::path::Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn found_text(f: &Found) -> String {
     match f {
-        Found::List { media_id, sure, why } => format!("list entry {media_id} ({}: {why})", if *sure { "sure" } else { "unsure" }),
+        Found::List {
+            media_id,
+            sure,
+            why,
+        } => format!(
+            "list entry {media_id} ({}: {why})",
+            if *sure { "sure" } else { "unsure" }
+        ),
         Found::NotOnList { media_id, title } => format!("not on the list: {title} ({media_id})"),
         Found::Ignored => "ignored (not a manga)".into(),
         Found::Nothing => "no match".into(),
@@ -255,7 +283,11 @@ fn found_text(f: &Found) -> String {
 /// At start and after any change that matters (Manga on/off, the switch, the libraries, sign
 /// in/out): starts or stops the thread. Never headless.
 pub fn sync(s: &mut State) {
-    let want = (s.reading.on || (s.reading.open_files && OPEN_FILES_HERE)) && s.manga.enabled && s.has_list() && s.handle.is_some() && !rune::is_headless();
+    let want = (s.reading.on || (s.reading.open_files && OPEN_FILES_HERE))
+        && s.manga.enabled
+        && s.has_list()
+        && s.handle.is_some()
+        && !rune::is_headless();
     match (want, s.reading.running()) {
         (true, false) => start(s),
         (false, true) => stop(s),
@@ -302,7 +334,11 @@ fn stop(s: &mut State) {
     s.reading.open_now.clear();
     s.reading.resume.clear();
     s.reading.resume_asked.clear();
-    if s.reading.current.as_ref().is_some_and(|r| r.marked.is_none()) {
+    if s.reading
+        .current
+        .as_ref()
+        .is_some_and(|r| r.marked.is_none())
+    {
         s.withdraw_reading_note();
         s.reading.current = None;
     }
@@ -312,10 +348,24 @@ fn start(s: &mut State) {
     let Some(h) = s.handle.clone() else { return };
     let (tx, rx) = mpsc::channel();
     let r = &s.reading;
-    let cfg = Cfg { yacreader: r.on, find: r.find, added: r.added.clone(), open_files: r.open_files && OPEN_FILES_HERE, folders: r.folders.clone(), minutes: r.minutes };
+    let cfg = Cfg {
+        yacreader: r.on,
+        find: r.find,
+        added: r.added.clone(),
+        open_files: r.open_files && OPEN_FILES_HERE,
+        folders: r.folders.clone(),
+        minutes: r.minutes,
+    };
     s.reading.epoch += 1;
-    let h = Out { h, epoch: s.reading.epoch };
-    if std::thread::Builder::new().name("kotora-reading".into()).spawn(move || run(&h, &rx, &cfg)).is_ok() {
+    let h = Out {
+        h,
+        epoch: s.reading.epoch,
+    };
+    if std::thread::Builder::new()
+        .name("kotora-reading".into())
+        .spawn(move || run(&h, &rx, &cfg))
+        .is_ok()
+    {
         s.reading.tx = Some(tx);
     }
 }
@@ -328,13 +378,17 @@ struct Out {
 
 fn send(o: &Out, m: ReadingMsg) {
     let epoch = o.epoch;
-    o.h.update_if(move |s, _| s.reading.running() && s.reading.epoch == epoch && s.apply(Msg::Reading(m)));
+    o.h.update_if(move |s, _| {
+        s.reading.running() && s.reading.epoch == epoch && s.apply(Msg::Reading(m))
+    });
 }
 
 /// A path with its symlinks resolved (a library or comic folder behind a link: the log and
 /// `/proc` name the real place). Kept as given when it can't be resolved.
 fn real(p: &str) -> String {
-    std::fs::canonicalize(p).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| p.to_string())
+    std::fs::canonicalize(p)
+        .map(|r| r.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| p.to_string())
 }
 
 fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
@@ -345,11 +399,28 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             folders.push(f.clone());
         }
     }
-    let libs = if cfg.yacreader { core_reading::libraries(&cfg.added, cfg.find) } else { Vec::new() };
-    send(h, ReadingMsg::Libs { watched: libs.iter().map(|l| l.path.to_string_lossy().into_owned()).collect(), errors: Vec::new() });
+    let libs = if cfg.yacreader {
+        core_reading::libraries(&cfg.added, cfg.find)
+    } else {
+        Vec::new()
+    };
+    send(
+        h,
+        ReadingMsg::Libs {
+            watched: libs
+                .iter()
+                .map(|l| l.path.to_string_lossy().into_owned())
+                .collect(),
+            errors: Vec::new(),
+        },
+    );
     // The process table (macOS, Linux; `None` elsewhere): the YACReader viewer's command line
     // (it keeps no file open) and, with stage 2 on, open comic files.
-    let mut scanner = if cfg.open_files || cfg.yacreader { kotora_detect::comics::system() } else { None };
+    let mut scanner = if cfg.open_files || cfg.yacreader {
+        kotora_detect::comics::system()
+    } else {
+        None
+    };
     let mut tick: u32 = 0;
     // Nothing to watch until a setting changes (that starts a new thread).
     if libs.is_empty() && scanner.is_none() {
@@ -359,23 +430,50 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
     log(format_args!(
         "watching {} YACReader librar{}{}; open files {}",
         watch_len(&cfg.added, cfg.find, cfg.yacreader),
-        if watch_len(&cfg.added, cfg.find, cfg.yacreader) == 1 { "y" } else { "ies" },
-        if cfg.yacreader { "" } else { " (YACReader off)" },
+        if watch_len(&cfg.added, cfg.find, cfg.yacreader) == 1 {
+            "y"
+        } else {
+            "ies"
+        },
+        if cfg.yacreader {
+            ""
+        } else {
+            " (YACReader off)"
+        },
         if cfg.open_files { "on" } else { "off" }
     ));
     // The viewer's own files (a comic opened on its own, not from the library).
-    let viewer_dir = if cfg.yacreader { kotora_core::manga::viewer::find_dir() } else { None };
-    let mut viewer_log = viewer_dir.as_deref().map(kotora_core::manga::viewer::LogTail::new);
+    let viewer_dir = if cfg.yacreader {
+        kotora_core::manga::viewer::find_dir()
+    } else {
+        None
+    };
+    let mut viewer_log = viewer_dir
+        .as_deref()
+        .map(kotora_core::manga::viewer::LogTail::new);
     let mut viewer_file: Option<String> = None;
-    debug(format_args!("viewer log: {}", if viewer_dir.is_some() { "found" } else { "none" }));
+    debug(format_args!(
+        "viewer log: {}",
+        if viewer_dir.is_some() {
+            "found"
+        } else {
+            "none"
+        }
+    ));
     let mut viewer_since: Option<std::time::Instant> = None;
     // The bookmarks' time now: only a write after this counts.
-    let mut bookmarks_seen = viewer_dir.as_ref().and_then(|d| std::fs::metadata(d.join("bookmarks.yacr")).and_then(|m| m.modified()).ok());
+    let mut bookmarks_seen = viewer_dir.as_ref().and_then(|d| {
+        std::fs::metadata(d.join("bookmarks.yacr"))
+            .and_then(|m| m.modified())
+            .ok()
+    });
     let mut files_kept: Vec<kotora_core::manga::openfile::Open> = Vec::new();
     let mut open_sent: Vec<std::path::PathBuf> = Vec::new();
     // "Continue reading": the manga asked about, answered again after each change.
     let mut resume_ids: Vec<u32> = Vec::new();
-    let known = kotora_core::manga::yacreader::find_ini().and_then(|i| kotora_core::manga::yacreader::libraries(&i).ok()).unwrap_or_default();
+    let known = kotora_core::manga::yacreader::find_ini()
+        .and_then(|i| kotora_core::manga::yacreader::libraries(&i).ok())
+        .unwrap_or_default();
     let mut yac_cache: Option<(String, i64, String)> = None;
     let mut watch = Watch::new(libs, now_unix());
     let mut store: Option<Store> = None;
@@ -389,8 +487,7 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
         if let Some(r) = watch.poll(&mut errors).map(|mut r| {
             r.path = std::path::PathBuf::from(real(&r.path.to_string_lossy()));
             r
-        })
-            && last.as_ref() != Some(&r)
+        }) && last.as_ref() != Some(&r)
         {
             changed = true;
             let seen = recognise(&mut store, r.clone());
@@ -402,26 +499,40 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             // read every process's descriptors inside comic folders).
             // While a file is open, its closing is looked for at every wake.
             let files = cfg.open_files && (tick.is_multiple_of(3) || !files_kept.is_empty());
-            let opts = kotora_detect::comics::ScanOpts { folders: folders.clone(), files, yac_args: cfg.yacreader, reader_args: cfg.open_files };
+            let opts = kotora_detect::comics::ScanOpts {
+                folders: folders.clone(),
+                files,
+                yac_args: cfg.yacreader,
+                reader_args: cfg.open_files,
+            };
             tick = tick.wrapping_add(1);
             let found = sc.scan_with(&opts);
             let mut open: Vec<kotora_core::manga::openfile::Open> = Vec::new();
             // The same file by one name: links resolved (the library's own path, the log's, argv's).
-            let found: Vec<_> = found.into_iter().map(|mut o| {
-                if o.yac.is_none() {
-                    o.path = real(&o.path);
-                }
-                o
-            }).collect();
+            let found: Vec<_> = found
+                .into_iter()
+                .map(|mut o| {
+                    if o.yac.is_none() {
+                        o.path = real(&o.path);
+                    }
+                    o
+                })
+                .collect();
             for o in found {
                 match o.yac {
                     // The viewer: its comic from the library's database (read only).
                     Some(id) => {
                         if let Some(path) = yac_comic(&mut yac_cache, &o.path, id) {
-                            open.push(kotora_core::manga::openfile::Open { app: o.app, path: real(&path) });
+                            open.push(kotora_core::manga::openfile::Open {
+                                app: o.app,
+                                path: real(&path),
+                            });
                         }
                     }
-                    None => open.push(kotora_core::manga::openfile::Open { app: o.app, path: o.path }),
+                    None => open.push(kotora_core::manga::openfile::Open {
+                        app: o.app,
+                        path: o.path,
+                    }),
                 }
             }
             // A YACReader viewer runs: its log names the comic opened last. Newer than the viewer's
@@ -434,8 +545,13 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                 if let Some(t) = viewer_log.as_mut() {
                     t.poll();
                     let fresh = t.fresh_since(since).map(real);
-                    if let Some(p) = viewer_from_log(&mut open, fresh, t.last.as_deref().map(real), sc.bare_viewers > 0, |p| std::path::Path::new(p).is_file())
-                        && sc.bare_viewers > 0
+                    if let Some(p) = viewer_from_log(
+                        &mut open,
+                        fresh,
+                        t.last.as_deref().map(real),
+                        sc.bare_viewers > 0,
+                        |p| std::path::Path::new(p).is_file(),
+                    ) && sc.bare_viewers > 0
                     {
                         viewer_file = Some(p);
                     }
@@ -445,7 +561,9 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             if let (Some(dir), Some(p)) = (&viewer_dir, &viewer_file)
                 && sc.bare_viewers == 0
             {
-                let m = std::fs::metadata(dir.join("bookmarks.yacr")).and_then(|m| m.modified()).ok();
+                let m = std::fs::metadata(dir.join("bookmarks.yacr"))
+                    .and_then(|m| m.modified())
+                    .ok();
                 if m.is_some() && m != bookmarks_seen {
                     bookmarks_seen = m;
                     if let Some(r) = viewer_read(dir, p)
@@ -470,12 +588,19 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
                 }
             }
             // Open or closed, said first: a `Seen` that follows knows.
-            let mut paths: Vec<std::path::PathBuf> = open.iter().map(|o| std::path::PathBuf::from(&o.path)).collect();
+            let mut paths: Vec<std::path::PathBuf> = open
+                .iter()
+                .map(|o| std::path::PathBuf::from(&o.path))
+                .collect();
             paths.sort();
             if paths != open_sent {
                 changed = true;
                 for p in paths.iter().filter(|p| !open_sent.contains(p)) {
-                    let app = open.iter().find(|o| std::path::Path::new(&o.path) == p.as_path()).map(|o| o.app.as_str()).unwrap_or("");
+                    let app = open
+                        .iter()
+                        .find(|o| std::path::Path::new(&o.path) == p.as_path())
+                        .map(|o| o.app.as_str())
+                        .unwrap_or("");
                     log(format_args!("open in {app}: {}", name_of(p)));
                 }
                 for p in open_sent.iter().filter(|p| !paths.contains(p)) {
@@ -493,36 +618,75 @@ fn run(h: &Out, rx: &Receiver<In>, cfg: &Cfg) {
             }
         }
         if changed {
-            let libs = kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
+            let libs =
+                kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
             for id in &resume_ids {
-                send(h, ReadingMsg::Resume { media_id: *id, at: resume_for(&mut store, &libs, *id) });
+                send(
+                    h,
+                    ReadingMsg::Resume {
+                        media_id: *id,
+                        at: resume_for(&mut store, &libs, *id),
+                    },
+                );
             }
         }
         if errors != last_errors {
             last_errors = errors.clone();
-            send(h, ReadingMsg::Libs { watched: watch.libraries().map(|l| l.path.to_string_lossy().into_owned()).collect(), errors });
+            send(
+                h,
+                ReadingMsg::Libs {
+                    watched: watch
+                        .libraries()
+                        .map(|l| l.path.to_string_lossy().into_owned())
+                        .collect(),
+                    errors,
+                },
+            );
         }
         match rx.recv_timeout(POLL) {
             Ok(In::Correct { key, media_id }) => {
                 if let Some(st) = open(&mut store) {
                     let (id, source) = media_id.map_or((0, "ignore"), |id| (id, "user"));
-                    let _ = st.set_recognition_of(crate::account::name(), Kind::Manga, &key, id, source, "", now_unix());
+                    let _ = st.set_recognition_of(
+                        crate::account::name(),
+                        Kind::Manga,
+                        &key,
+                        id,
+                        source,
+                        "",
+                        now_unix(),
+                    );
                 }
                 if let Some(r) = last.as_ref().filter(|r| r.key() == key) {
-                    send(h, ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))));
+                    send(
+                        h,
+                        ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))),
+                    );
                 }
             }
             Ok(In::Resume(id)) => {
                 if !resume_ids.contains(&id) {
                     resume_ids.push(id);
                 }
-                let libs = kotora_core::manga::resume::with_ids(watch.libraries().cloned().collect(), &known);
-                send(h, ReadingMsg::Resume { media_id: id, at: resume_for(&mut store, &libs, id) });
+                let libs = kotora_core::manga::resume::with_ids(
+                    watch.libraries().cloned().collect(),
+                    &known,
+                );
+                send(
+                    h,
+                    ReadingMsg::Resume {
+                        media_id: id,
+                        at: resume_for(&mut store, &libs, id),
+                    },
+                );
             }
             Ok(In::Answered) => tracker.release(),
             Ok(In::ListChanged) => {
                 if let Some(r) = &last {
-                    send(h, ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))));
+                    send(
+                        h,
+                        ReadingMsg::Seen(Box::new(recognise(&mut store, r.clone()))),
+                    );
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -537,7 +701,13 @@ fn viewer_read(dir: &std::path::Path, path: &str) -> Option<Read> {
     use kotora_core::manga::viewer;
     let p = std::path::Path::new(path);
     let bm = *viewer::read_bookmarks(dir).get(&viewer::bookmark_key(p)?)?;
-    let mut r = kotora_core::manga::openfile::read_of(&kotora_core::manga::openfile::Open { app: "YACReader".into(), path: path.into() }, now_unix());
+    let mut r = kotora_core::manga::openfile::read_of(
+        &kotora_core::manga::openfile::Open {
+            app: "YACReader".into(),
+            path: path.into(),
+        },
+        now_unix(),
+    );
     r.page = bm.last_page + 1;
     r.pages = viewer::zip_pages(p).unwrap_or(0);
     r.finished = kotora_core::manga::chapter_read(false, r.page, r.pages);
@@ -549,23 +719,45 @@ fn viewer_read(dir: &std::path::Path, path: &str) -> Option<Read> {
 /// comic its command line names (the next volume opened inside it keeps the old --comicId); a
 /// viewer with no comic in its command line (opened from the Finder) takes the log's last line.
 /// Returns the path used.
-fn viewer_from_log(open: &mut Vec<kotora_core::manga::openfile::Open>, fresh: Option<String>, last: Option<String>, bare: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
-    let p = fresh.or(if bare { last } else { None }).filter(|p| exists(p))?;
+fn viewer_from_log(
+    open: &mut Vec<kotora_core::manga::openfile::Open>,
+    fresh: Option<String>,
+    last: Option<String>,
+    bare: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let p = fresh
+        .or(if bare { last } else { None })
+        .filter(|p| exists(p))?;
     if !open.iter().any(|o| o.path == p) {
-        debug(format_args!("viewer log: {}", name_of(std::path::Path::new(&p))));
+        debug(format_args!(
+            "viewer log: {}",
+            name_of(std::path::Path::new(&p))
+        ));
         open.retain(|o| o.app != "YACReader");
-        open.push(kotora_core::manga::openfile::Open { app: "YACReader".into(), path: p.clone() });
+        open.push(kotora_core::manga::openfile::Open {
+            app: "YACReader".into(),
+            path: p.clone(),
+        });
     }
     Some(p)
 }
 
 /// How many libraries the watch will have (for the start line).
 fn watch_len(added: &[String], find: bool, on: bool) -> usize {
-    if on { core_reading::libraries(added, find).len() } else { 0 }
+    if on {
+        core_reading::libraries(added, find).len()
+    } else {
+        0
+    }
 }
 
 /// Where to continue manga `id` of the list (its entry and the user's picks from the store).
-fn resume_for(store: &mut Option<Store>, libs: &[kotora_core::manga::yacreader::Library], id: u32) -> Option<kotora_core::manga::resume::Resume> {
+fn resume_for(
+    store: &mut Option<Store>,
+    libs: &[kotora_core::manga::yacreader::Library],
+    id: u32,
+) -> Option<kotora_core::manga::resume::Resume> {
     let st = open(store)?;
     let svc = crate::account::name();
     let item = st.load_item(Scope::new(svc, Kind::Manga), id).ok()??;
@@ -578,7 +770,11 @@ fn resume_for(store: &mut Option<Store>, libs: &[kotora_core::manga::yacreader::
 /// (a library YACReader's settings don't list) the file alone.
 pub fn launch_args(r: &kotora_core::manga::resume::Resume) -> Vec<String> {
     match r.library_id {
-        Some(lib) => vec![r.library.to_string_lossy().into_owned(), format!("--comicId={}", r.comic_id), format!("--libraryId={lib}")],
+        Some(lib) => vec![
+            r.library.to_string_lossy().into_owned(),
+            format!("--comicId={}", r.comic_id),
+            format!("--libraryId={lib}"),
+        ],
         None => vec![r.path.to_string_lossy().into_owned()],
     }
 }
@@ -589,13 +785,30 @@ pub fn launch_args(r: &kotora_core::manga::resume::Resume) -> Vec<String> {
 fn launch(r: &kotora_core::manga::resume::Resume) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let file = r.path.to_string_lossy().into_owned();
-    let spawn = |prog: &str, args: &[String]| Command::new(prog).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ());
+    let spawn = |prog: &str, args: &[String]| {
+        Command::new(prog)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+    };
     #[cfg(target_os = "macos")]
     {
         let home = kotora_core::paths::home_dir().unwrap_or_default();
-        let app = [std::path::PathBuf::from("/Applications/YACReader.app"), home.join("Applications/YACReader.app")].into_iter().find(|p| p.is_dir());
+        let app = [
+            std::path::PathBuf::from("/Applications/YACReader.app"),
+            home.join("Applications/YACReader.app"),
+        ]
+        .into_iter()
+        .find(|p| p.is_dir());
         if let Some(app) = app {
-            let mut a = vec!["-n".to_string(), app.to_string_lossy().into_owned(), "--args".into()];
+            let mut a = vec![
+                "-n".to_string(),
+                app.to_string_lossy().into_owned(),
+                "--args".into(),
+            ];
             a.extend(launch_args(r));
             return spawn("open", &a).map_err(|e| format!("Can't start YACReader: {e}"));
         }
@@ -606,7 +819,8 @@ fn launch(r: &kotora_core::manga::resume::Resume) -> Result<(), String> {
         if spawn("YACReader", &launch_args(r)).is_ok() {
             return Ok(());
         }
-        spawn("xdg-open", &[file]).map_err(|e| format!("Can't open the comic (no YACReader, no xdg-open): {e}"))
+        spawn("xdg-open", &[file])
+            .map_err(|e| format!("Can't open the comic (no YACReader, no xdg-open): {e}"))
     }
     #[cfg(windows)]
     {
@@ -614,7 +828,17 @@ fn launch(r: &kotora_core::manga::resume::Resume) -> Result<(), String> {
         let exe = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
             .iter()
             .filter_map(std::env::var_os)
-            .flat_map(|d| [std::path::PathBuf::from(&d).join("YACReader").join("YACReader.exe"), std::path::PathBuf::from(&d).join("Programs").join("YACReader").join("YACReader.exe")])
+            .flat_map(|d| {
+                [
+                    std::path::PathBuf::from(&d)
+                        .join("YACReader")
+                        .join("YACReader.exe"),
+                    std::path::PathBuf::from(&d)
+                        .join("Programs")
+                        .join("YACReader")
+                        .join("YACReader.exe"),
+                ]
+            })
             .find(|p| p.is_file());
         if let Some(exe) = exe
             && spawn(&exe.to_string_lossy(), &launch_args(r)).is_ok()
@@ -634,7 +858,9 @@ fn yac_comic(cache: &mut Option<(String, i64, String)>, library: &str, id: i64) 
     {
         return Some(p.clone());
     }
-    let path = core_reading::viewer_comic(library, id)?.to_string_lossy().into_owned();
+    let path = core_reading::viewer_comic(library, id)?
+        .to_string_lossy()
+        .into_owned();
     *cache = Some((library.to_string(), id, path.clone()));
     Some(path)
 }
@@ -660,7 +886,10 @@ pub(crate) struct LogKey {
 /// Whether `new` says something the last line didn't.
 pub(crate) fn log_due(prev: Option<&LogKey>, new: &LogKey) -> bool {
     let Some(p) = prev else { return true };
-    p.path != new.path || p.found != new.found || p.finished != new.finished || matches!((p.page, new.page), (Some(a), Some(b)) if a != b)
+    p.path != new.path
+        || p.found != new.found
+        || p.finished != new.finished
+        || matches!((p.page, new.page), (Some(a), Some(b)) if a != b)
 }
 
 thread_local! {
@@ -670,44 +899,102 @@ thread_local! {
 fn recognise(store: &mut Option<Store>, read: Read) -> Seen {
     let seen = recognise_quiet(store, read);
     let r = &seen.read;
-    let key = LogKey { path: r.path.clone(), found: found_text(&seen.found), finished: r.finished, page: (r.pages > 0 && !r.weak).then_some((r.page, r.pages)) };
+    let key = LogKey {
+        path: r.path.clone(),
+        found: found_text(&seen.found),
+        finished: r.finished,
+        page: (r.pages > 0 && !r.weak).then_some((r.page, r.pages)),
+    };
     let due = LAST_LOG.with(|l| {
         let mut l = l.borrow_mut();
         let due = log_due(l.as_ref(), &key);
         // Keep the page once known, so a later line without one doesn't hide a real change.
-        let page = key.page.or(l.as_ref().filter(|p| p.path == key.path).and_then(|p| p.page));
-        *l = Some(LogKey { page, ..key.clone() });
+        let page = key.page.or(l
+            .as_ref()
+            .filter(|p| p.path == key.path)
+            .and_then(|p| p.page));
+        *l = Some(LogKey {
+            page,
+            ..key.clone()
+        });
         due
     });
     if !due {
         return seen;
     }
-    let state = if r.finished { format!(", read to the end{}", r.why.as_ref().map(|w| format!(" ({w})")).unwrap_or_default()) } else if r.pages > 0 && !r.weak { format!(", page {} of {}", r.page, r.pages) } else { String::new() };
-    let renum = r.renumbered.as_ref().map(|n| format!(" [{n}]")).unwrap_or_default();
-    log(format_args!("{} in {}: \"{}\" {}{renum}{state} → {}", name_of(&r.path), r.source, r.series, r.label(), found_text(&seen.found)));
+    let state = if r.finished {
+        format!(
+            ", read to the end{}",
+            r.why
+                .as_ref()
+                .map(|w| format!(" ({w})"))
+                .unwrap_or_default()
+        )
+    } else if r.pages > 0 && !r.weak {
+        format!(", page {} of {}", r.page, r.pages)
+    } else {
+        String::new()
+    };
+    let renum = r
+        .renumbered
+        .as_ref()
+        .map(|n| format!(" [{n}]"))
+        .unwrap_or_default();
+    log(format_args!(
+        "{} in {}: \"{}\" {}{renum}{state} → {}",
+        name_of(&r.path),
+        r.source,
+        r.series,
+        r.label(),
+        found_text(&seen.found)
+    ));
     seen
 }
 
 fn recognise_quiet(store: &mut Option<Store>, read: Read) -> Seen {
-    let nothing = |read: Read| Seen { read, found: Found::Nothing, candidates: Vec::new(), cover_url: None };
+    let nothing = |read: Read| Seen {
+        read,
+        found: Found::Nothing,
+        candidates: Vec::new(),
+        cover_url: None,
+    };
     if read.series.is_empty() {
         return nothing(read);
     }
-    let Some(st) = open(store) else { return nothing(read) };
+    let Some(st) = open(store) else {
+        return nothing(read);
+    };
     let svc = crate::account::name();
-    let items = st.load_list(Scope::new(svc, Kind::Manga)).unwrap_or_default();
+    let items = st
+        .load_list(Scope::new(svc, Kind::Manga))
+        .unwrap_or_default();
     let key = read.key();
     let cached = st.recognition_of(svc, Kind::Manga, &key).ok().flatten();
-    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    let candidates = core_reading::candidates(&read.series, &items)
+        .into_iter()
+        .take(8)
+        .map(|c| (c.media_id, c.title))
+        .collect();
     let mut cover_url = None;
     let found = match core_reading::on_list(&read.series, &items, &cached) {
         Some(f) => f,
         None => match cached.filter(|(_, src, _)| src == "search") {
             Some((0, _, _)) => Found::Nothing,
-            Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List { media_id: id, sure: false, why: format!("found by a {} search", crate::account::active().title()) },
+            Some((id, _, _)) if items.iter().any(|it| it.media.id == id) => Found::List {
+                media_id: id,
+                sure: false,
+                why: format!("found by a {} search", crate::account::active().title()),
+            },
             // An answer cached before today's rules ("Dragon Ball Z: Fukkatsu no F" for "Dragon
             // Ball Z") is searched again.
-            Some((id, _, title)) if !title.is_empty() && core_reading::title_fits(&read.series, &title) => Found::NotOnList { media_id: id, title },
+            Some((id, _, title))
+                if !title.is_empty() && core_reading::title_fits(&read.series, &title) =>
+            {
+                Found::NotOnList {
+                    media_id: id,
+                    title,
+                }
+            }
             _ => {
                 let (f, url) = search(st, &read.series, &items, &key);
                 cover_url = url;
@@ -718,7 +1005,10 @@ fn recognise_quiet(store: &mut Option<Store>, read: Read) -> Seen {
     // A known release that numbers on its own: the entry's numbers ("DBZ v11 = Dragon Ball vol 27").
     let mut read = read;
     let main = match &found {
-        Found::List { media_id, .. } => items.iter().find(|it| it.media.id == *media_id).map(|it| it.media.title.clone()),
+        Found::List { media_id, .. } => items
+            .iter()
+            .find(|it| it.media.id == *media_id)
+            .map(|it| it.media.title.clone()),
         Found::NotOnList { title, .. } => Some(title.clone()),
         _ => None,
     };
@@ -731,7 +1021,12 @@ fn recognise_quiet(store: &mut Option<Store>, read: Read) -> Seen {
     {
         cover_url = manga_cover(st, *media_id);
     }
-    Seen { read, found, candidates, cover_url }
+    Seen {
+        read,
+        found,
+        candidates,
+        cover_url,
+    }
 }
 
 /// A manga's cover from its saved details page, or one details fetch (signed in, online), saved
@@ -750,21 +1045,42 @@ fn manga_cover(st: &Store, id: u32) -> Option<String> {
 }
 
 /// The one manga search for a series off the list (signed in, online), cached 30 days.
-fn search(st: &Store, series: &str, items: &[kotora_core::ListItem], key: &str) -> (Found, Option<String>) {
+fn search(
+    st: &Store,
+    series: &str,
+    items: &[kotora_core::ListItem],
+    key: &str,
+) -> (Found, Option<String>) {
     if kotora_core::paths::offline_forced() {
         return (Found::Nothing, None);
     }
-    let Some(mut svc) = crate::account::open() else { return (Found::Nothing, None) };
-    let Ok(hits) = svc.browse_manga(series, 10) else { return (Found::Nothing, None) };
+    let Some(mut svc) = crate::account::open() else {
+        return (Found::Nothing, None);
+    };
+    let Ok(hits) = svc.browse_manga(series, 10) else {
+        return (Found::Nothing, None);
+    };
     let found = core_reading::from_search(series, &hits, items, crate::account::active().title());
     let (id, title, url) = match &found {
         Found::List { media_id, .. } | Found::NotOnList { media_id, .. } => {
             let h = hits.iter().find(|h| h.id == *media_id);
-            (*media_id, h.map(|h| h.title.clone()).unwrap_or_default(), h.and_then(|h| h.cover_url.clone()))
+            (
+                *media_id,
+                h.map(|h| h.title.clone()).unwrap_or_default(),
+                h.and_then(|h| h.cover_url.clone()),
+            )
         }
         _ => (0, String::new(), None),
     };
-    let _ = st.set_recognition_of(crate::account::name(), Kind::Manga, key, id, "search", &title, now_unix());
+    let _ = st.set_recognition_of(
+        crate::account::name(),
+        Kind::Manga,
+        key,
+        id,
+        "search",
+        &title,
+        now_unix(),
+    );
     (found, url)
 }
 
@@ -803,22 +1119,31 @@ impl State {
 
     /// "Continue reading": reopens the comic in YACReader at the saved page.
     pub fn continue_reading(&mut self, media_id: u32) {
-        let Some(r) = self.resume_of(media_id).cloned() else { return };
+        let Some(r) = self.resume_of(media_id).cloned() else {
+            return;
+        };
         self.ctx = None;
         if self.handle.is_none() {
             return;
         }
         let h = self.handle.clone();
-        let _ = std::thread::Builder::new().name("kotora-continue".into()).spawn(move || {
-            if let Err(e) = launch(&r)
-                && let Some(h) = h
-            {
-                h.update_if(move |s, _| {
-                    s.toast = Some(crate::library::Toast { text: e, warn: true, until: std::time::Instant::now() + Duration::from_secs(6), undo: None });
-                    true
-                });
-            }
-        });
+        let _ = std::thread::Builder::new()
+            .name("kotora-continue".into())
+            .spawn(move || {
+                if let Err(e) = launch(&r)
+                    && let Some(h) = h
+                {
+                    h.update_if(move |s, _| {
+                        s.toast = Some(crate::library::Toast {
+                            text: e,
+                            warn: true,
+                            until: std::time::Instant::now() + Duration::from_secs(6),
+                            undo: None,
+                        });
+                        true
+                    });
+                }
+            });
     }
 
     /// The comic followed now: open in its reader. `None` when it was closed (it may still ask
@@ -829,14 +1154,21 @@ impl State {
 
     /// Whether a closed comic still has something to say: a question or an Undo.
     fn reading_asks(&self) -> bool {
-        self.reading.current.as_ref().is_some_and(|r| r.marked.is_some() || (r.read.finished && !r.dismissed && (self.reading_offer().is_some() || self.reread_offer().is_some())))
+        self.reading.current.as_ref().is_some_and(|r| {
+            r.marked.is_some()
+                || (r.read.finished
+                    && !r.dismissed
+                    && (self.reading_offer().is_some() || self.reread_offer().is_some()))
+        })
     }
 
     /// The comics open now. The followed one closed: it is no longer "Now Reading" at once, and
     /// it goes unless it asks (read to the end) or offers Undo.
     pub fn reading_open(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
         self.reading.open_now = paths;
-        let Some(r) = &mut self.reading.current else { return true };
+        let Some(r) = &mut self.reading.current else {
+            return true;
+        };
         let open = self.reading.open_now.contains(&r.read.path);
         if r.open == open {
             return true;
@@ -860,13 +1192,26 @@ impl State {
         }
         match &mut self.reading.current {
             Some(old) if old.read.path == new.read.path => {
-                let (dismissed, acted, marked, picking, mark) = (old.dismissed, old.acted, old.marked, old.picking, old.mark);
+                let (dismissed, acted, marked, picking, mark) =
+                    (old.dismissed, old.acted, old.marked, old.picking, old.mark);
                 // Read on to the end since: a new chance to ask.
                 let acted = acted && !(new.read.finished && !old.read.finished);
-                *old = Reading { dismissed, acted, marked, picking, mark, ..new };
+                *old = Reading {
+                    dismissed,
+                    acted,
+                    marked,
+                    picking,
+                    mark,
+                    ..new
+                };
             }
             _ => {
-                if self.reading.current.as_ref().is_some_and(|r| r.marked.is_none()) {
+                if self
+                    .reading
+                    .current
+                    .as_ref()
+                    .is_some_and(|r| r.marked.is_none())
+                {
                     self.withdraw_reading_note();
                 }
                 self.reading.current = Some(new);
@@ -888,7 +1233,16 @@ impl State {
         let id = r.media_id()?;
         let i = self.manga.entries.iter().position(|e| e.id == id)?;
         let e = &self.manga.entries[i];
-        Some((i, core_reading::offer(e.chapters, e.chapters_total, e.volumes, e.volumes_total, &r.read)?))
+        Some((
+            i,
+            core_reading::offer(
+                e.chapters,
+                e.chapters_total,
+                e.volumes,
+                e.volumes_total,
+                &r.read,
+            )?,
+        ))
     }
 
     /// "Reading it again?": a Completed manga (not being reread) is read, and what a reread
@@ -901,7 +1255,10 @@ impl State {
         if e.status != Status::Completed || e.rereading {
             return None;
         }
-        Some((i, core_reading::reread_offer(e.chapters_total, e.volumes_total, &r.read)?))
+        Some((
+            i,
+            core_reading::reread_offer(e.chapters_total, e.volumes_total, &r.read)?,
+        ))
     }
 
     /// Why it asks even with "Update automatically" on: it skips chapters (or volumes).
@@ -913,31 +1270,49 @@ impl State {
             (None, Some(v)) => ("volume", core_reading::skipped(e.volumes, v)?),
             _ => return None,
         };
-        Some(if a == b { format!("Skips {what} {a}") } else { format!("Skips {what}s {a}\u{2013}{b}") })
+        Some(if a == b {
+            format!("Skips {what} {a}")
+        } else {
+            format!("Skips {what}s {a}\u{2013}{b}")
+        })
     }
 
     /// The reading banner shows (the anime one wins when both would).
     pub fn reading_banner(&self) -> bool {
-        let Some(r) = &self.reading.current else { return false };
+        let Some(r) = &self.reading.current else {
+            return false;
+        };
         if r.dismissed || !self.has_list() || !self.manga.enabled {
             return false;
         }
-        r.marked.is_some() || (r.read.finished && (self.reading_offer().is_some() || self.reread_offer().is_some()))
+        r.marked.is_some()
+            || (r.read.finished
+                && (self.reading_offer().is_some() || self.reread_offer().is_some()))
     }
 
     fn reading_mark(&self) -> Option<Mark> {
         let id = self.reading.current.as_ref()?.media_id()?;
         let e = self.manga.entries.iter().find(|e| e.id == id)?;
-        Some(Mark { id, chapters: e.chapters, volumes: e.volumes, status: e.status, rereading: e.rereading })
+        Some(Mark {
+            id,
+            chapters: e.chapters,
+            volumes: e.volumes,
+            status: e.status,
+            rereading: e.rereading,
+        })
     }
 
     /// After the manga list changed: a changed entry asks again ("Not now" was about the old
     /// counts); a list that gained or lost entries is matched again.
     pub fn recheck_reading(&mut self) -> bool {
         let mark = self.reading_mark();
-        let Some(r) = &mut self.reading.current else { return false };
+        let Some(r) = &mut self.reading.current else {
+            return false;
+        };
         let old = std::mem::replace(&mut r.mark, mark);
-        let (Some(old), Some(mark)) = (old, mark) else { return false };
+        let (Some(old), Some(mark)) = (old, mark) else {
+            return false;
+        };
         if old == mark || old.id != mark.id || r.marked.is_some() {
             return false;
         }
@@ -959,7 +1334,9 @@ impl State {
 
     /// Read to the end and recognised: mark it (auto, sure, nothing skipped) or ask.
     fn act_reading(&mut self, may_record: bool) {
-        let Some(r) = &self.reading.current else { return };
+        let Some(r) = &self.reading.current else {
+            return;
+        };
         if !r.read.finished || r.acted || r.dismissed || !self.has_list() {
             return;
         }
@@ -970,8 +1347,15 @@ impl State {
                 if let Some(r) = &mut self.reading.current {
                     r.acted = true;
                 }
-                log(format_args!("asks: reread from {} of {title}", o.start_label()));
-                self.notify_reading(NoteKind::Reread, format!("Reading {title} again?"), format!("Start a reread at {}.", o.start_label()));
+                log(format_args!(
+                    "asks: reread from {} of {title}",
+                    o.start_label()
+                ));
+                self.notify_reading(
+                    NoteKind::Reread,
+                    format!("Reading {title} again?"),
+                    format!("Start a reread at {}.", o.start_label()),
+                );
             }
             return;
         };
@@ -982,14 +1366,30 @@ impl State {
         if let Some(r) = &mut self.reading.current {
             r.acted = true;
         }
-        log(format_args!("{}: {} of {title}", if auto { "marking" } else { "asks" }, o.label()));
+        log(format_args!(
+            "{}: {} of {title}",
+            if auto { "marking" } else { "asks" },
+            o.label()
+        ));
         if auto {
             if self.mark_reading(true).is_ok() {
-                self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title);
+                self.notify_reading(
+                    NoteKind::ReadRecorded,
+                    format!("Marked {} as read", o.label()),
+                    title,
+                );
             }
         } else {
-            let q = if self.reading.current.as_ref().is_some_and(Reading::sure) { "Mark" } else { "Not sure: mark" };
-            self.notify_reading(NoteKind::ReadOffer, format!("{q} {} of {title} as read?", o.label()), note.map(|n| format!("{n}.")).unwrap_or_default());
+            let q = if self.reading.current.as_ref().is_some_and(Reading::sure) {
+                "Mark"
+            } else {
+                "Not sure: mark"
+            };
+            self.notify_reading(
+                NoteKind::ReadOffer,
+                format!("{q} {} of {title} as read?", o.label()),
+                note.map(|n| format!("{n}.")).unwrap_or_default(),
+            );
         }
     }
 
@@ -998,24 +1398,51 @@ impl State {
         if self.reading_offer().is_none() && !auto && self.reread_offer().is_some() {
             return self.start_reread_reading();
         }
-        let (i, o) = self.reading_offer().ok_or("Nothing to mark: no recognised new chapter was read.")?;
+        let (i, o) = self
+            .reading_offer()
+            .ok_or("Nothing to mark: no recognised new chapter was read.")?;
         let e = &self.manga.entries[i];
-        let (id, title, old_chapters, old_volumes, old_status) = (e.id, e.title.clone(), e.chapters, e.volumes, e.status);
+        let (id, title, old_chapters, old_volumes, old_status) =
+            (e.id, e.title.clone(), e.chapters, e.volumes, e.status);
         let (old_rereading, old_times) = (e.rereading, e.times_reread);
         let last = o.chapter.is_some_and(|c| e.chapters_total == Some(c));
         let status = (old_status == Status::PlanToWatch && !last).then_some(Status::Watching);
         if let Some(r) = &mut self.reading.current {
             r.mark = None;
         }
-        let r = self.manga_edit(id, Change { progress: o.chapter, volumes: o.volume, status, ..Default::default() });
+        let r = self.manga_edit(
+            id,
+            Change {
+                progress: o.chapter,
+                volumes: o.volume,
+                status,
+                ..Default::default()
+            },
+        );
         let mark = self.reading_mark();
         if let Some(r) = &mut self.reading.current {
             r.mark = mark;
         }
         r?;
-        let completed = old_status != Status::Completed && self.manga.entries.iter().any(|e| e.id == id && e.status == Status::Completed);
+        let completed = old_status != Status::Completed
+            && self
+                .manga
+                .entries
+                .iter()
+                .any(|e| e.id == id && e.status == Status::Completed);
         if let Some(r) = &mut self.reading.current {
-            r.marked = Some(Marked { id, offer: o, old_chapters, old_volumes, old_status, completed, auto, old_rereading, old_times, reread: false });
+            r.marked = Some(Marked {
+                id,
+                offer: o,
+                old_chapters,
+                old_volumes,
+                old_status,
+                completed,
+                auto,
+                old_rereading,
+                old_times,
+                reread: false,
+            });
             r.acted = true;
             r.picking = false;
         }
@@ -1028,13 +1455,27 @@ impl State {
     /// the file's chapter (and volume), as one queued change; the last chapter ends it again,
     /// counted. Undo puts it back.
     pub fn start_reread_reading(&mut self) -> Result<(String, Offer), String> {
-        let (i, o) = self.reread_offer().ok_or("Nothing to reread: no completed manga was read.")?;
+        let (i, o) = self
+            .reread_offer()
+            .ok_or("Nothing to reread: no completed manga was read.")?;
         let e = &self.manga.entries[i];
-        let (id, title, old_chapters, old_volumes, old_status, old_times) = (e.id, e.title.clone(), e.chapters, e.volumes, e.status, e.times_reread);
+        let (id, title, old_chapters, old_volumes, old_status, old_times) = (
+            e.id,
+            e.title.clone(),
+            e.chapters,
+            e.volumes,
+            e.status,
+            e.times_reread,
+        );
         let start = Change::start_rewatch(&e.values()).ok_or("That manga is not completed.")?;
         // One edit: the reread, and where it is (the counts restart: what the file names, else 0).
         let cur = start.apply(e.values());
-        let at = Change { progress: Some(o.chapter.unwrap_or(0)), volumes: Some(o.volume.unwrap_or(0)), ..Default::default() }.completes(&cur, e.chapters_total);
+        let at = Change {
+            progress: Some(o.chapter.unwrap_or(0)),
+            volumes: Some(o.volume.unwrap_or(0)),
+            ..Default::default()
+        }
+        .completes(&cur, e.chapters_total);
         if let Some(r) = &mut self.reading.current {
             r.mark = None;
         }
@@ -1045,7 +1486,18 @@ impl State {
         }
         r?;
         if let Some(r) = &mut self.reading.current {
-            r.marked = Some(Marked { id, offer: o, old_chapters, old_volumes, old_status, completed: false, auto: false, old_rereading: false, old_times, reread: true });
+            r.marked = Some(Marked {
+                id,
+                offer: o,
+                old_chapters,
+                old_volumes,
+                old_status,
+                completed: false,
+                auto: false,
+                old_rereading: false,
+                old_times,
+                reread: true,
+            });
             r.acted = true;
             r.picking = false;
         }
@@ -1063,11 +1515,20 @@ impl State {
 
     /// Undo: the entry goes back (the queue drops the change if it hasn't left).
     pub fn undo_reading(&mut self) {
-        let Some(m) = self.reading.current.as_ref().and_then(|r| r.marked) else { return };
+        let Some(m) = self.reading.current.as_ref().and_then(|r| r.marked) else {
+            return;
+        };
         if let Some(r) = &mut self.reading.current {
             r.mark = None;
         }
-        let back = Change { progress: Some(m.old_chapters), volumes: Some(m.old_volumes), status: Some(m.old_status), rewatching: Some(m.old_rereading), times_rewatched: Some(m.old_times), ..Default::default() };
+        let back = Change {
+            progress: Some(m.old_chapters),
+            volumes: Some(m.old_volumes),
+            status: Some(m.old_status),
+            rewatching: Some(m.old_rereading),
+            times_rewatched: Some(m.old_times),
+            ..Default::default()
+        };
         let _ = self.manga_edit(m.id, back);
         let mark = self.reading_mark();
         self.withdraw_reading_note();
@@ -1113,25 +1574,39 @@ impl State {
 
     /// The user's pick: remembered for this series, and the match is sure.
     pub fn pick_manga(&mut self, media_id: u32) {
-        let Some(r) = &mut self.reading.current else { return };
-        r.found = Found::List { media_id, sure: true, why: "you picked it".into() };
+        let Some(r) = &mut self.reading.current else {
+            return;
+        };
+        r.found = Found::List {
+            media_id,
+            sure: true,
+            why: "you picked it".into(),
+        };
         r.picking = false;
         r.dismissed = false;
         r.acted = false;
         let key = r.read.key();
-        self.reading.send(In::Correct { key, media_id: Some(media_id) });
+        self.reading.send(In::Correct {
+            key,
+            media_id: Some(media_id),
+        });
         self.recheck_reading();
         self.act_reading(true);
     }
 
     /// "Not a manga": this series is ignored from now on.
     pub fn ignore_reading(&mut self) {
-        let Some(r) = &mut self.reading.current else { return };
+        let Some(r) = &mut self.reading.current else {
+            return;
+        };
         r.found = Found::Ignored;
         r.picking = false;
         r.dismissed = true;
         let key = r.read.key();
-        self.reading.send(In::Correct { key, media_id: None });
+        self.reading.send(In::Correct {
+            key,
+            media_id: None,
+        });
         self.reading.send(In::Answered);
         self.withdraw_reading_note();
     }
@@ -1139,41 +1614,89 @@ impl State {
     /// "Add as Reading": a series found by the search, not on the list. The offer follows once
     /// the entry is there.
     pub fn add_reading(&mut self) {
-        let Some(r) = &self.reading.current else { return };
-        let Found::NotOnList { media_id, title } = &r.found else { return };
-        let media = kotora_core::Media { id: *media_id, kind: Kind::Manga, title: title.clone(), cover_url: r.cover_url.clone(), ..Default::default() };
+        let Some(r) = &self.reading.current else {
+            return;
+        };
+        let Found::NotOnList { media_id, title } = &r.found else {
+            return;
+        };
+        let media = kotora_core::Media {
+            id: *media_id,
+            kind: Kind::Manga,
+            title: title.clone(),
+            cover_url: r.cover_url.clone(),
+            ..Default::default()
+        };
         let id = *media_id;
         match self.manga_add(media, Status::Watching) {
             Ok(_) => {
                 if let Some(r) = &mut self.reading.current {
-                    r.found = Found::List { media_id: id, sure: true, why: "you added it".into() };
+                    r.found = Found::List {
+                        media_id: id,
+                        sure: true,
+                        why: "you added it".into(),
+                    };
                     r.dismissed = false;
                     r.acted = false;
                 }
                 self.recheck_reading();
                 self.act_reading(false);
             }
-            Err(e) => self.toast = Some(crate::library::Toast { text: e, warn: true, until: std::time::Instant::now() + Duration::from_secs(6), undo: None }),
+            Err(e) => {
+                self.toast = Some(crate::library::Toast {
+                    text: e,
+                    warn: true,
+                    until: std::time::Instant::now() + Duration::from_secs(6),
+                    undo: None,
+                })
+            }
         }
     }
 
     /// The title shown for the comic: the entry's, the search hit's, else the series.
     pub fn reading_title(&self, r: &Reading) -> String {
         match &r.found {
-            Found::List { media_id, .. } => self.manga.entries.iter().find(|e| e.id == *media_id).map(|e| e.title.clone()),
+            Found::List { media_id, .. } => self
+                .manga
+                .entries
+                .iter()
+                .find(|e| e.id == *media_id)
+                .map(|e| e.title.clone()),
             Found::NotOnList { title, .. } => Some(title.clone()),
             _ => None,
         }
-        .unwrap_or_else(|| if r.read.series.is_empty() { r.read.file_name.clone() } else { r.read.series.clone() })
+        .unwrap_or_else(|| {
+            if r.read.series.is_empty() {
+                r.read.file_name.clone()
+            } else {
+                r.read.series.clone()
+            }
+        })
     }
 
     fn reading_match_text(&self, r: &Reading) -> String {
         match &r.found {
-            Found::List { media_id, sure, why } => {
-                let st = self.manga.entries.iter().find(|e| e.id == *media_id).map(|e| e.status.label_in(Kind::Manga)).unwrap_or("");
-                format!("In your list ({st}), {}: {why}", if *sure { "sure" } else { "not sure" })
+            Found::List {
+                media_id,
+                sure,
+                why,
+            } => {
+                let st = self
+                    .manga
+                    .entries
+                    .iter()
+                    .find(|e| e.id == *media_id)
+                    .map(|e| e.status.label_in(Kind::Manga))
+                    .unwrap_or("");
+                format!(
+                    "In your list ({st}), {}: {why}",
+                    if *sure { "sure" } else { "not sure" }
+                )
             }
-            Found::NotOnList { title, .. } => format!("Not on your list: {} knows it as {title}", self.service.title()),
+            Found::NotOnList { title, .. } => format!(
+                "Not on your list: {} knows it as {title}",
+                self.service.title()
+            ),
             Found::Ignored => "Not a manga (you said so)".into(),
             Found::Nothing if r.read.series.is_empty() => "No series in the file name".into(),
             Found::Nothing => "Not found on your list".into(),
@@ -1193,7 +1716,10 @@ impl State {
             pages: pos(r.read.pages),
             finished: r.read.finished,
             matched: self.reading_match_text(r),
-            offer: self.reading_offer().or_else(|| self.reread_offer()).map(|(_, o)| o.label()),
+            offer: self
+                .reading_offer()
+                .or_else(|| self.reread_offer())
+                .map(|(_, o)| o.label()),
             reread: self.reading_offer().is_none() && self.reread_offer().is_some(),
             note: self.reading_note(),
             recorded: r.marked.map(|m| m.offer.label()),
@@ -1208,7 +1734,12 @@ impl State {
     pub fn reading_note_id(&self) -> Option<String> {
         let r = self.reading.current.as_ref()?;
         let id = r.media_id()?;
-        let what = r.read.chapter.map(|c| format!("ch{c}")).or(r.read.volume.map(|v| format!("v{v}"))).unwrap_or_default();
+        let what = r
+            .read
+            .chapter
+            .map(|c| format!("ch{c}"))
+            .or(r.read.volume.map(|v| format!("v{v}")))
+            .unwrap_or_default();
         Some(format!("kotora-manga-{id}-{what}"))
     }
 
@@ -1225,10 +1756,18 @@ impl State {
             return;
         };
         let tail = match kind {
-            NoteKind::ReadOffer | NoteKind::Reread => Some("Open Kotora, or run kot confirm.".to_string()),
+            NoteKind::ReadOffer | NoteKind::Reread => {
+                Some("Open Kotora, or run kot confirm.".to_string())
+            }
             _ => Some("Undo is in Kotora's banner.".to_string()),
         };
-        self.notes.show(Note { id, kind, summary, body, tail });
+        self.notes.show(Note {
+            id,
+            kind,
+            summary,
+            body,
+            tail,
+        });
     }
 
     pub(crate) fn withdraw_reading_note(&mut self) {
@@ -1242,14 +1781,33 @@ impl State {
         if self.reading_note_id().as_deref() != Some(id) {
             return None;
         }
-        let marked = self.reading.current.as_ref().is_some_and(|r| r.marked.is_some());
+        let marked = self
+            .reading
+            .current
+            .as_ref()
+            .is_some_and(|r| r.marked.is_some());
         let asks = !marked && (self.reading_offer().is_some() || self.reread_offer().is_some());
         match act {
             Act::Update if asks => match self.mark_reading(false) {
-                Ok((title, o)) if self.reading.current.as_ref().and_then(|r| r.marked).is_some_and(|m| m.reread) => {
-                    self.notify_reading(NoteKind::ReadRecorded, format!("Started rereading from {}", o.start_label()), title);
+                Ok((title, o))
+                    if self
+                        .reading
+                        .current
+                        .as_ref()
+                        .and_then(|r| r.marked)
+                        .is_some_and(|m| m.reread) =>
+                {
+                    self.notify_reading(
+                        NoteKind::ReadRecorded,
+                        format!("Started rereading from {}", o.start_label()),
+                        title,
+                    );
                 }
-                Ok((title, o)) => self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title),
+                Ok((title, o)) => self.notify_reading(
+                    NoteKind::ReadRecorded,
+                    format!("Marked {} as read", o.label()),
+                    title,
+                ),
                 Err(_) => self.open_reading(),
             },
             Act::NotNow if asks => {
@@ -1293,7 +1851,11 @@ impl State {
     /// Settings: the minutes open that count a comic as read (1 to 60).
     pub fn step_open_minutes(&mut self, up: bool) {
         let m = self.reading.minutes;
-        let m = if up { (m + if m >= 10 { 5 } else { 1 }).min(60) } else { m.saturating_sub(if m > 10 { 5 } else { 1 }).max(1) };
+        let m = if up {
+            (m + if m >= 10 { 5 } else { 1 }).min(60)
+        } else {
+            m.saturating_sub(if m > 10 { 5 } else { 1 }).max(1)
+        };
         if m == self.reading.minutes {
             return;
         }
@@ -1390,9 +1952,37 @@ pub fn folders_block(s: &State) -> El {
                 .gap(12.0)
                 .py(6.0)
                 .center_y()
-                .child(el().size(7.0, 7.0).radius(3.5).fill(if there { PAL.ok() } else { PAL.warn() }))
-                .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(path.clone()).font(theme::BODY_MED).color(PAL.text).truncate()).child(text(if there { "Any app\u{2019}s comic files in here count" } else { "Not there (drive not connected?)" }).font(theme::LABEL).color(PAL.dim)))
-                .child(ghost(&format!("set/comic-folder/remove/{path}"), "Remove", move |s| remove_comic_folder(s, &p))),
+                .child(el().size(7.0, 7.0).radius(3.5).fill(if there {
+                    PAL.ok()
+                } else {
+                    PAL.warn()
+                }))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(2.0)
+                        .child(
+                            text(path.clone())
+                                .font(theme::BODY_MED)
+                                .color(PAL.text)
+                                .truncate(),
+                        )
+                        .child(
+                            text(if there {
+                                "Any app\u{2019}s comic files in here count"
+                            } else {
+                                "Not there (drive not connected?)"
+                            })
+                            .font(theme::LABEL)
+                            .color(PAL.dim),
+                        ),
+                )
+                .child(ghost(
+                    &format!("set/comic-folder/remove/{path}"),
+                    "Remove",
+                    move |s| remove_comic_folder(s, &p),
+                )),
         );
     }
     let input = row()
@@ -1405,7 +1995,14 @@ pub fn folders_block(s: &State) -> El {
         .center_y()
         .radius(theme::R_SM)
         .fill(PAL.field)
-        .border(1.0, if r.folder_error.is_some() { PAL.warn() } else { PAL.border_strong })
+        .border(
+            1.0,
+            if r.folder_error.is_some() {
+                PAL.warn()
+            } else {
+                PAL.border_strong
+            },
+        )
         .child(
             text_input(&r.folder_draft, TextStyle::new(12.0, 400.0).mono())
                 .key("set/comic-folder/input")
@@ -1428,11 +2025,28 @@ pub fn folders_block(s: &State) -> El {
             .mt(6.0)
             .center_y()
             .child(input)
-            .child(button("set/comic-folder/add", "Add", false, Some(add_typed_folder)))
-            .child(button("set/comic-folder/choose", "Choose\u{2026}", false, Some(choose_comic_folder))),
+            .child(button(
+                "set/comic-folder/add",
+                "Add",
+                false,
+                Some(add_typed_folder),
+            ))
+            .child(button(
+                "set/comic-folder/choose",
+                "Choose\u{2026}",
+                false,
+                Some(choose_comic_folder),
+            )),
     );
     if let Some(e) = &r.folder_error {
-        c = c.child(text(e.clone()).key("set/comic-folder/error").font(theme::LABEL).color(PAL.warn()).wrap().mt(6.0));
+        c = c.child(
+            text(e.clone())
+                .key("set/comic-folder/error")
+                .font(theme::LABEL)
+                .color(PAL.warn())
+                .wrap()
+                .mt(6.0),
+        );
     }
     c
 }
@@ -1447,11 +2061,18 @@ pub fn add_library(s: &mut State, raw: &str) -> Result<(), String> {
     }
     let lib = core_reading::library_at(&path);
     let shown = lib.path.to_string_lossy().into_owned();
-    if s.reading.added.iter().chain(&s.reading.watched).any(|p| *p == shown) {
+    if s.reading
+        .added
+        .iter()
+        .chain(&s.reading.watched)
+        .any(|p| *p == shown)
+    {
         return Err("That library is already watched.".into());
     }
     if !lib.db_path().is_file() {
-        return Err(format!("No YACReader library at {shown} (it has no .yacreaderlibrary folder)."));
+        return Err(format!(
+            "No YACReader library at {shown} (it has no .yacreaderlibrary folder)."
+        ));
     }
     s.reading.added.push(shown);
     s.reading.draft.clear();
@@ -1510,17 +2131,42 @@ pub fn libraries_block(s: &State) -> El {
         }
     }
     if shown.is_empty() {
-        let why = if !r.on || !s.manga.enabled { "Libraries listed in YACReader\u{2019}s settings are found by themselves once this is on." } else { "No YACReader library found. Add your library\u{2019}s folder (the one with .yacreaderlibrary in it)." };
+        let why = if !r.on || !s.manga.enabled {
+            "Libraries listed in YACReader\u{2019}s settings are found by themselves once this is on."
+        } else {
+            "No YACReader library found. Add your library\u{2019}s folder (the one with .yacreaderlibrary in it)."
+        };
         c = c.child(text(why).font(theme::LABEL).color(PAL.faint).wrap().py(4.0));
     }
     for (path, added) in shown {
-        let err = r.errors.iter().find(|e| e.path.to_string_lossy() == path).and_then(|e| e.error.clone());
-        let there = std::path::Path::new(&path).join(".yacreaderlibrary").join("library.ydb").is_file();
+        let err = r
+            .errors
+            .iter()
+            .find(|e| e.path.to_string_lossy() == path)
+            .and_then(|e| e.error.clone());
+        let there = std::path::Path::new(&path)
+            .join(".yacreaderlibrary")
+            .join("library.ydb")
+            .is_file();
         let (dot, state) = match (&err, there) {
             (Some(e), _) => (PAL.warn(), format!("Can\u{2019}t read it now: {e}")),
             (None, false) => (PAL.warn(), "Not there (drive not connected?)".to_string()),
-            (None, true) if r.running() => (PAL.ok(), if added { "Watched".to_string() } else { "Watched \u{b7} found in YACReader\u{2019}s settings".to_string() }),
-            (None, true) => (PAL.faint, if added { "Added".to_string() } else { "Found in YACReader\u{2019}s settings".to_string() }),
+            (None, true) if r.running() => (
+                PAL.ok(),
+                if added {
+                    "Watched".to_string()
+                } else {
+                    "Watched \u{b7} found in YACReader\u{2019}s settings".to_string()
+                },
+            ),
+            (None, true) => (
+                PAL.faint,
+                if added {
+                    "Added".to_string()
+                } else {
+                    "Found in YACReader\u{2019}s settings".to_string()
+                },
+            ),
         };
         let mut line = row()
             .key(format!("set/reading/{path}"))
@@ -1528,10 +2174,26 @@ pub fn libraries_block(s: &State) -> El {
             .py(6.0)
             .center_y()
             .child(el().size(7.0, 7.0).radius(3.5).fill(dot))
-            .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(path.clone()).font(theme::BODY_MED).color(PAL.text).truncate()).child(text(state).font(theme::LABEL).color(PAL.dim).truncate()));
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(
+                        text(path.clone())
+                            .font(theme::BODY_MED)
+                            .color(PAL.text)
+                            .truncate(),
+                    )
+                    .child(text(state).font(theme::LABEL).color(PAL.dim).truncate()),
+            );
         if added {
             let p = path.clone();
-            line = line.child(ghost(&format!("set/reading/remove/{path}"), "Remove", move |s| remove_library(s, &p)));
+            line = line.child(ghost(
+                &format!("set/reading/remove/{path}"),
+                "Remove",
+                move |s| remove_library(s, &p),
+            ));
         }
         c = c.child(line);
     }
@@ -1545,7 +2207,14 @@ pub fn libraries_block(s: &State) -> El {
         .center_y()
         .radius(theme::R_SM)
         .fill(PAL.field)
-        .border(1.0, if r.error.is_some() { PAL.warn() } else { PAL.border_strong })
+        .border(
+            1.0,
+            if r.error.is_some() {
+                PAL.warn()
+            } else {
+                PAL.border_strong
+            },
+        )
         .child(
             text_input(&r.draft, TextStyle::new(12.0, 400.0).mono())
                 .key("set/reading/input")
@@ -1553,7 +2222,17 @@ pub fn libraries_block(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&r.draft, if cfg!(windows) { "D:\\Comics" } else { "~/Comics" }), PAL.faint)
+                .placeholder(
+                    field_hint(
+                        &r.draft,
+                        if cfg!(windows) {
+                            "D:\\Comics"
+                        } else {
+                            "~/Comics"
+                        },
+                    ),
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.reading.draft)
                 .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.reading.error = None)
@@ -1569,10 +2248,22 @@ pub fn libraries_block(s: &State) -> El {
             .center_y()
             .child(input)
             .child(button("set/reading/add", "Add", false, Some(add_typed)))
-            .child(button("set/reading/choose", "Choose\u{2026}", false, Some(choose))),
+            .child(button(
+                "set/reading/choose",
+                "Choose\u{2026}",
+                false,
+                Some(choose),
+            )),
     );
     if let Some(e) = &r.error {
-        c = c.child(text(e.clone()).key("set/reading/error").font(theme::LABEL).color(PAL.warn()).wrap().mt(6.0));
+        c = c.child(
+            text(e.clone())
+                .key("set/reading/error")
+                .font(theme::LABEL)
+                .color(PAL.warn())
+                .wrap()
+                .mt(6.0),
+        );
     }
     c
 }
@@ -1580,9 +2271,21 @@ pub fn libraries_block(s: &State) -> El {
 /// The cover id and address of the comic's manga (a tile id from the title when unknown).
 fn cover_of<'a>(s: &'a State, r: &'a Reading, title: &str) -> (u32, Option<&'a str>) {
     match &r.found {
-        Found::List { media_id, .. } => (crate::manga::cover_id(*media_id), s.manga.entries.iter().find(|e| e.id == *media_id).and_then(|e| e.cover_url.as_deref())),
-        Found::NotOnList { media_id, .. } => (crate::manga::cover_id(*media_id), r.cover_url.as_deref()),
-        _ => (title.bytes().map(u32::from).sum::<u32>() | crate::manga::COVER_BIT, None),
+        Found::List { media_id, .. } => (
+            crate::manga::cover_id(*media_id),
+            s.manga
+                .entries
+                .iter()
+                .find(|e| e.id == *media_id)
+                .and_then(|e| e.cover_url.as_deref()),
+        ),
+        Found::NotOnList { media_id, .. } => {
+            (crate::manga::cover_id(*media_id), r.cover_url.as_deref())
+        }
+        _ => (
+            title.bytes().map(u32::from).sum::<u32>() | crate::manga::COVER_BIT,
+            None,
+        ),
     }
 }
 
@@ -1607,7 +2310,11 @@ pub fn empty(s: &State) -> El {
         .radius(theme::R_LG)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(text("Nothing is being read").font(theme::SECTION).color(PAL.text));
+        .child(
+            text("Nothing is being read")
+                .font(theme::SECTION)
+                .color(PAL.text),
+        );
     for h in how {
         c = c.child(text(h).font(theme::LABEL).color(PAL.dim).wrap());
     }
@@ -1615,8 +2322,22 @@ pub fn empty(s: &State) -> El {
     if let Some(id) = s.reading.last_media
         && let Some(line) = resume_line(s, id)
     {
-        let title = s.manga.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
-        c = c.child(text(title).key("rd-empty/last").font(theme::BODY_MED).color(PAL.text).pt(8.0)).child(line);
+        let title = s
+            .manga
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.title.clone())
+            .unwrap_or_default();
+        c = c
+            .child(
+                text(title)
+                    .key("rd-empty/last")
+                    .font(theme::BODY_MED)
+                    .color(PAL.text)
+                    .pt(8.0),
+            )
+            .child(line);
     }
     c
 }
@@ -1624,14 +2345,35 @@ pub fn empty(s: &State) -> El {
 /// "Continue reading" for `media_id`: where the user stopped and the button (none when unknown).
 pub fn resume_line(s: &State, media_id: u32) -> Option<El> {
     let r = s.resume_of(media_id)?;
-    let what = if r.next { format!("Next: {}", r.label()) } else { format!("Stopped at {}", r.label()) };
+    let what = if r.next {
+        format!("Next: {}", r.label())
+    } else {
+        format!("Stopped at {}", r.label())
+    };
     Some(
         col()
             .key("rd-resume")
             .gap(6.0)
             .pt(10.0)
-            .child(text(what).key("rd-resume/where").font(theme::LABEL).color(PAL.dim).wrap())
-            .child(row().child(action("rd-resume/go".into(), "Continue reading", false, move |s, _| s.continue_reading(media_id)).h(30.0).px(12.0))),
+            .child(
+                text(what)
+                    .key("rd-resume/where")
+                    .font(theme::LABEL)
+                    .color(PAL.dim)
+                    .wrap(),
+            )
+            .child(
+                row().child(
+                    action(
+                        "rd-resume/go".into(),
+                        "Continue reading",
+                        false,
+                        move |s, _| s.continue_reading(media_id),
+                    )
+                    .h(30.0)
+                    .px(12.0),
+                ),
+            ),
     )
 }
 
@@ -1642,9 +2384,17 @@ pub fn mini(s: &State, r: &Reading, tall: bool) -> El {
     let (id, url) = cover_of(s, r, &title);
     let what = r.read.label();
     let tail = if r.marked.is_some() {
-        if r.marked.is_some_and(|m| m.reread) { "Rereading".to_string() } else { "Marked as read".to_string() }
+        if r.marked.is_some_and(|m| m.reread) {
+            "Rereading".to_string()
+        } else {
+            "Marked as read".to_string()
+        }
     } else if r.read.finished {
-        if r.read.weak { "Counted as read".into() } else { "Read to the end".into() }
+        if r.read.weak {
+            "Counted as read".into()
+        } else {
+            "Read to the end".into()
+        }
     } else if r.read.pages > 0 && !r.read.weak {
         format!("Page {} of {}", r.read.page.max(1), r.read.pages)
     } else {
@@ -1672,17 +2422,51 @@ pub fn mini(s: &State, r: &Reading, tall: bool) -> El {
                 .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
                 .padding(if tall { 10.0 } else { 8.0 })
                 .gap(10.0)
-                .child(if tall { look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM) } else { look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS) }.shadow(4.0, 10.0, rune::Color::BLACK.alpha(0.35)))
+                .child(
+                    if tall {
+                        look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM)
+                    } else {
+                        look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS)
+                    }
+                    .shadow(4.0, 10.0, rune::Color::BLACK.alpha(0.35)),
+                )
                 .child(
                     col()
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(3.0)
-                        .child(row().gap(6.0).center_y().child(look::live_dot(!r.read.finished && r.marked.is_none(), 6.0)).child(text(r.read.source.to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()))
-                        .child(text(title).font(TextStyle::new(13.0, 600.0)).color(PAL.text).wrap().max_lines(if tall { 2 } else { 1 }))
-                        .child(if tall { text(what).font(theme::SMALL).color(PAL.dim).truncate() } else { el() })
+                        .child(
+                            row()
+                                .gap(6.0)
+                                .center_y()
+                                .child(look::live_dot(!r.read.finished && r.marked.is_none(), 6.0))
+                                .child(
+                                    text(r.read.source.to_uppercase())
+                                        .font(theme::CAPTION)
+                                        .color(PAL.dim)
+                                        .truncate(),
+                                ),
+                        )
+                        .child(
+                            text(title)
+                                .font(TextStyle::new(13.0, 600.0))
+                                .color(PAL.text)
+                                .wrap()
+                                .max_lines(if tall { 2 } else { 1 }),
+                        )
+                        .child(if tall {
+                            text(what).font(theme::SMALL).color(PAL.dim).truncate()
+                        } else {
+                            el()
+                        })
                         .child(rune::spacer())
-                        .child(text(tail).key("rd-mini/state").font(theme::SMALL).color(PAL.dim).truncate()),
+                        .child(
+                            text(tail)
+                                .key("rd-mini/state")
+                                .font(theme::SMALL)
+                                .color(PAL.dim)
+                                .truncate(),
+                        ),
                 ),
         )
 }
@@ -1693,14 +2477,22 @@ fn reading_cover(s: &State, r: &Reading, w: f32, h: f32, size: f32) -> El {
     let rad = if w > 60.0 { theme::R_LG } else { theme::R_XS };
     let tile = cover(id, &title, w, h, size).radius(rad);
     match s.covers.get(id, url, w, h) {
-        Some(img) => tile.child(el().key("rd-cover-img").absolute(0.0, 0.0).size(w, h).radius(rad).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().key("rd-cover-img")
+                .absolute(0.0, 0.0)
+                .size(w, h)
+                .radius(rad)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
 
 /// The banner on top of every page: "Read Ch 362 of X in YACReader · Mark as read?".
 pub fn banner(s: &State) -> El {
-    let Some(r) = &s.reading.current else { return el() };
+    let Some(r) = &s.reading.current else {
+        return el();
+    };
     let title = s.reading_title(r);
     let line = |lead: &str, bold: String, tail: String| {
         row()
@@ -1708,7 +2500,13 @@ pub fn banner(s: &State) -> El {
             .min_w(0.0)
             .clip_fade(0.0, 0.0, 16.0, 0.0)
             .child(text(lead.to_string()).font(theme::BODY).color(PAL.text))
-            .child(text(bold).font(TextStyle::new(13.0, 600.0)).color(PAL.text).truncate().min_w(0.0))
+            .child(
+                text(bold)
+                    .font(TextStyle::new(13.0, 600.0))
+                    .color(PAL.text)
+                    .truncate()
+                    .min_w(0.0),
+            )
             .child(text(tail).font(theme::BODY).color(PAL.text))
     };
     let b = row()
@@ -1720,12 +2518,20 @@ pub fn banner(s: &State) -> El {
         .gap(14.0)
         .center_y()
         .radius(theme::R_LG)
-        .linear_gradient(std::f32::consts::PI / 2.0, [(0.0, mix(PAL.bg, PAL.accent, 0.18)), (0.6, mix(PAL.bg, PAL.accent, 0.06)), (1.0, mix(PAL.bg, PAL.accent, 0.03))])
+        .linear_gradient(
+            std::f32::consts::PI / 2.0,
+            [
+                (0.0, mix(PAL.bg, PAL.accent, 0.18)),
+                (0.6, mix(PAL.bg, PAL.accent, 0.06)),
+                (1.0, mix(PAL.bg, PAL.accent, 0.03)),
+            ],
+        )
         .border(1.0, PAL.accent.alpha(0.35))
         .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
         .child(reading_cover(s, r, 36.0, 52.0, 12.0));
     if let Some(m) = r.marked {
-        let finished = m.old_rereading && s.manga.entries.iter().any(|e| e.id == m.id && !e.rereading);
+        let finished =
+            m.old_rereading && s.manga.entries.iter().any(|e| e.id == m.id && !e.rereading);
         let how = match (m.auto, m.completed) {
             _ if m.reread => "Reread started",
             (true, _) if finished => "Marked automatically \u{b7} Reread finished",
@@ -1735,11 +2541,42 @@ pub fn banner(s: &State) -> El {
             (true, false) => "Marked automatically",
             (false, false) => "Marked",
         };
-        let (lead, what) = if m.reread { ("Rereading ", format!(" from {}", m.offer.start_label())) } else { ("Read ", format!(" {}", m.offer.label())) };
-        let waiting = s.manga.entries.iter().find(|e| e.id == m.id).and_then(|e| e.waiting).unwrap_or(if s.service == kotora_core::service::ServiceId::AniList { "Sent to AniList" } else { "Sent to MyAnimeList" });
+        let (lead, what) = if m.reread {
+            ("Rereading ", format!(" from {}", m.offer.start_label()))
+        } else {
+            ("Read ", format!(" {}", m.offer.label()))
+        };
+        let waiting = s
+            .manga
+            .entries
+            .iter()
+            .find(|e| e.id == m.id)
+            .and_then(|e| e.waiting)
+            .unwrap_or(if s.service == kotora_core::service::ServiceId::AniList {
+                "Sent to AniList"
+            } else {
+                "Sent to MyAnimeList"
+            });
         return b
-            .child(col().grow(1.0).min_w(0.0).gap(3.0).child(line(lead, title, what)).child(text(format!("{how} \u{b7} {waiting}")).key("rd-banner/how").font(theme::LABEL).color(PAL.dim)))
-            .child(button("rd-banner/undo", "Undo", false, Some(State::undo_reading)))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(line(lead, title, what))
+                    .child(
+                        text(format!("{how} \u{b7} {waiting}"))
+                            .key("rd-banner/how")
+                            .font(theme::LABEL)
+                            .color(PAL.dim),
+                    ),
+            )
+            .child(button(
+                "rd-banner/undo",
+                "Undo",
+                false,
+                Some(State::undo_reading),
+            ))
             .child(ghost("rd-banner/close", "Close", |s| {
                 s.dismiss_reading();
             }));
@@ -1756,17 +2593,49 @@ pub fn banner(s: &State) -> El {
         let small = format!("{} \u{b7} {times}", how(&r.read));
         return b
             .key("rd-banner")
-            .child(col().grow(1.0).min_w(0.0).gap(3.0).child(line("Read ", title, format!(" {}", r.read.label()))).child(text(small).font(theme::LABEL).color(PAL.dim).truncate()))
-            .child(text("Reading it again?").key("rd-banner/reread-ask").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
-            .child(action("rd-banner/reread".into(), &format!("Start reread at {}", o.start_label()), true, |s, _| {
-                let _ = s.confirm_reading();
-            }).h(32.0).px(12.0))
-            .child(button("rd-banner/not-now", "Not now", false, Some(|s: &mut State| {
-                s.dismiss_reading();
-            })))
-            .child(ghost("rd-banner/wrong", "Wrong manga\u{2026}", State::wrong_manga));
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(3.0)
+                    .child(line("Read ", title, format!(" {}", r.read.label())))
+                    .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
+            )
+            .child(
+                text("Reading it again?")
+                    .key("rd-banner/reread-ask")
+                    .font(TextStyle::new(14.0, 600.0))
+                    .color(PAL.cream),
+            )
+            .child(
+                action(
+                    "rd-banner/reread".into(),
+                    &format!("Start reread at {}", o.start_label()),
+                    true,
+                    |s, _| {
+                        let _ = s.confirm_reading();
+                    },
+                )
+                .h(32.0)
+                .px(12.0),
+            )
+            .child(button(
+                "rd-banner/not-now",
+                "Not now",
+                false,
+                Some(|s: &mut State| {
+                    s.dismiss_reading();
+                }),
+            ))
+            .child(ghost(
+                "rd-banner/wrong",
+                "Wrong manga\u{2026}",
+                State::wrong_manga,
+            ));
     }
-    let Some((i, o)) = s.reading_offer() else { return el() };
+    let Some((i, o)) = s.reading_offer() else {
+        return el();
+    };
     let e = &s.manga.entries[i];
     // "Ch 120 of 200" when the count is known, else "Ch 120".
     let of = |n: Option<u32>| n.map(|n| format!(" of {n}")).unwrap_or_default();
@@ -1782,19 +2651,59 @@ pub fn banner(s: &State) -> El {
         (true, false) => " \u{b7} Matched in your list".to_string(),
         (false, _) => " \u{b7} Not sure it\u{2019}s this one".to_string(),
     };
-    let mut small = row().min_w(0.0).gap(6.0).child(text(format!("{}{matched}", how(&r.read))).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0));
+    let mut small = row().min_w(0.0).gap(6.0).child(
+        text(format!("{}{matched}", how(&r.read)))
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .truncate()
+            .min_w(0.0),
+    );
     if let Some(n) = note {
-        small = small.child(text("\u{b7}").font(theme::LABEL).color(PAL.dim)).child(text(n).key("rd-banner/note").font(theme::LABEL).color(PAL.warn()).truncate().min_w(0.0));
+        small = small
+            .child(text("\u{b7}").font(theme::LABEL).color(PAL.dim))
+            .child(
+                text(n)
+                    .key("rd-banner/note")
+                    .font(theme::LABEL)
+                    .color(PAL.warn())
+                    .truncate()
+                    .min_w(0.0),
+            );
     }
-    b.child(col().grow(1.0).min_w(0.0).gap(3.0).child(line("Read ", title, format!(" {}", r.read.label()))).child(small))
-        .child(text(format!("Mark {total} as read?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
-        .child(button("rd-banner/mark", "Mark read", true, Some(|s: &mut State| {
+    b.child(
+        col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(3.0)
+            .child(line("Read ", title, format!(" {}", r.read.label())))
+            .child(small),
+    )
+    .child(
+        text(format!("Mark {total} as read?"))
+            .font(TextStyle::new(14.0, 600.0).features("'tnum' 1"))
+            .color(PAL.cream),
+    )
+    .child(button(
+        "rd-banner/mark",
+        "Mark read",
+        true,
+        Some(|s: &mut State| {
             let _ = s.confirm_reading();
-        })))
-        .child(button("rd-banner/not-now", "Not now", false, Some(|s: &mut State| {
+        }),
+    ))
+    .child(button(
+        "rd-banner/not-now",
+        "Not now",
+        false,
+        Some(|s: &mut State| {
             s.dismiss_reading();
-        })))
-        .child(ghost("rd-banner/wrong", "Wrong manga\u{2026}", State::wrong_manga))
+        }),
+    ))
+    .child(ghost(
+        "rd-banner/wrong",
+        "Wrong manga\u{2026}",
+        State::wrong_manga,
+    ))
 }
 
 /// Now Playing's reading card: the comic, the page, the match, and what to do.
@@ -1809,40 +2718,132 @@ pub fn card_for(s: &State, r: &Reading) -> El {
     } else {
         "Opened".to_string()
     };
-    let frac = if r.read.finished { 1.0 } else if r.read.pages > 0 { (r.read.page as f32 / r.read.pages as f32).clamp(0.0, 1.0) } else { 0.0 };
-    let bar = row().h(4.0).radius(2.0).clip_rounded(2.0).fill(PAL.border).child(el().grow(frac).h_full().radius(2.0).fill(PAL.accent)).child(el().grow(1.0 - frac));
+    let frac = if r.read.finished {
+        1.0
+    } else if r.read.pages > 0 {
+        (r.read.page as f32 / r.read.pages as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let bar = row()
+        .h(4.0)
+        .radius(2.0)
+        .clip_rounded(2.0)
+        .fill(PAL.border)
+        .child(el().grow(frac).h_full().radius(2.0).fill(PAL.accent))
+        .child(el().grow(1.0 - frac));
     let mut info = col()
         .grow(1.0)
         .min_w(0.0)
         .gap(4.0)
-        .child(text(format!("{} IN {}", if !r.open { "CLOSED" } else if r.read.weak { "OPEN" } else { "READING" }, r.read.source.to_uppercase())).key("rd/state").font(theme::LABEL).color(if r.open { PAL.accent } else { PAL.dim }))
+        .child(
+            text(format!(
+                "{} IN {}",
+                if !r.open {
+                    "CLOSED"
+                } else if r.read.weak {
+                    "OPEN"
+                } else {
+                    "READING"
+                },
+                r.read.source.to_uppercase()
+            ))
+            .key("rd/state")
+            .font(theme::LABEL)
+            .color(if r.open { PAL.accent } else { PAL.dim }),
+        )
         .child(text(title).font(theme::SECTION).color(PAL.text).truncate())
         .child(text(r.read.label()).font(theme::BODY_MED).color(PAL.text))
-        .child(text(r.read.file_name.clone()).font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate())
-        .child(row().gap(10.0).mt(4.0).center_y().child(bar.grow(1.0)).child(text(progress).key("rd/progress").font(theme::LABEL).color(PAL.dim)))
-        .child(text(s.reading_match_text(r)).key("rd/match").font(theme::LABEL).color(if r.sure() { PAL.dim } else { PAL.warn() }).wrap().mt(4.0));
+        .child(
+            text(r.read.file_name.clone())
+                .font(TextStyle::new(12.0, 400.0).mono())
+                .color(PAL.dim)
+                .truncate(),
+        )
+        .child(
+            row()
+                .gap(10.0)
+                .mt(4.0)
+                .center_y()
+                .child(bar.grow(1.0))
+                .child(
+                    text(progress)
+                        .key("rd/progress")
+                        .font(theme::LABEL)
+                        .color(PAL.dim),
+                ),
+        )
+        .child(
+            text(s.reading_match_text(r))
+                .key("rd/match")
+                .font(theme::LABEL)
+                .color(if r.sure() { PAL.dim } else { PAL.warn() })
+                .wrap()
+                .mt(4.0),
+        );
     // A release numbered on its own: what the file's numbers are on the list.
     if let Some(n) = &r.read.renumbered {
-        info = info.child(text(n.clone()).key("rd/renumbered").font(theme::LABEL).color(PAL.dim).wrap());
+        info = info.child(
+            text(n.clone())
+                .key("rd/renumbered")
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap(),
+        );
     }
     // Unsure ("Dragon Ball Z" is another title of Dragon Ball): ask, one press answers.
-    if let (Found::List { media_id, sure: false, .. }, None) = (&r.found, r.marked) {
+    if let (
+        Found::List {
+            media_id,
+            sure: false,
+            ..
+        },
+        None,
+    ) = (&r.found, r.marked)
+    {
         let id = *media_id;
-        let title = s.manga.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
+        let title = s
+            .manga
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.title.clone())
+            .unwrap_or_default();
         info = info.child(
             row()
                 .key("rd/ask")
                 .gap(10.0)
                 .mt(6.0)
                 .center_y()
-                .child(text(format!("Is this {title}?")).font(theme::BODY_MED).color(PAL.text))
-                .child(action("rd/yes".into(), "Yes, that one", false, move |s, _| s.pick_manga(id)).h(28.0).px(10.0)),
+                .child(
+                    text(format!("Is this {title}?"))
+                        .font(theme::BODY_MED)
+                        .color(PAL.text),
+                )
+                .child(
+                    action("rd/yes".into(), "Yes, that one", false, move |s, _| {
+                        s.pick_manga(id)
+                    })
+                    .h(28.0)
+                    .px(10.0),
+                ),
         );
     }
     let mut acts = row().gap(8.0).mt(8.0);
     if let Some(m) = r.marked {
-        let said = if m.reread { format!("Rereading from {}.", m.offer.start_label()) } else { format!("Marked {} as read.", m.offer.label()) };
-        acts = acts.child(text(said).key("rd/marked").font(theme::LABEL).color(PAL.ok())).child(button("rd/undo", "Undo", false, Some(State::undo_reading)));
+        let said = if m.reread {
+            format!("Rereading from {}.", m.offer.start_label())
+        } else {
+            format!("Marked {} as read.", m.offer.label())
+        };
+        acts = acts
+            .child(
+                text(said)
+                    .key("rd/marked")
+                    .font(theme::LABEL)
+                    .color(PAL.ok()),
+            )
+            .child(button("rd/undo", "Undo", false, Some(State::undo_reading)));
     } else if let Some((_, o)) = s.reading_offer() {
         let label = format!("Mark {} as read", o.label());
         acts = acts.child(action("rd/mark".into(), &label, r.read.finished, |s, _| {
@@ -1850,27 +2851,62 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         }));
         if !r.read.finished {
             let when = if r.read.weak && r.read.source == "YACReader" {
-                format!("YACReader saves the page when you close the comic: Kotora asks then if it was read to the end, or when the next chapter opens, or after {} minutes open.", s.reading.minutes)
+                format!(
+                    "YACReader saves the page when you close the comic: Kotora asks then if it was read to the end, or when the next chapter opens, or after {} minutes open.",
+                    s.reading.minutes
+                )
             } else if r.read.weak {
-                format!("Kotora sees the file is open, not the page: it asks when the next chapter opens, or after {} minutes open.", s.reading.minutes)
+                format!(
+                    "Kotora sees the file is open, not the page: it asks when the next chapter opens, or after {} minutes open.",
+                    s.reading.minutes
+                )
             } else {
-                "Kotora asks once the last page is reached (or YACReader marks it read).".to_string()
+                "Kotora asks once the last page is reached (or YACReader marks it read)."
+                    .to_string()
             };
             info = info.child(text(when).font(theme::LABEL).color(PAL.faint).wrap());
         } else if r.read.weak {
-            info = info.child(text(how(&r.read)).key("rd/why").font(theme::LABEL).color(PAL.faint).wrap());
+            info = info.child(
+                text(how(&r.read))
+                    .key("rd/why")
+                    .font(theme::LABEL)
+                    .color(PAL.faint)
+                    .wrap(),
+            );
         }
     } else if let Some((_, o)) = s.reread_offer() {
         let label = format!("Start reread at {}", o.start_label());
-        acts = acts.child(action("rd/reread".into(), &label, r.read.finished, |s, _| {
-            let _ = s.confirm_reading();
-        }));
-        info = info.child(text(if r.read.finished { "Completed: Reading it again? Kotora asks before it starts a reread." } else { "Completed: once this is read to the end, Kotora asks if you are reading it again." }).key("rd/reread-note").font(theme::LABEL).color(PAL.faint).wrap());
+        acts = acts.child(action(
+            "rd/reread".into(),
+            &label,
+            r.read.finished,
+            |s, _| {
+                let _ = s.confirm_reading();
+            },
+        ));
+        info = info.child(
+            text(if r.read.finished {
+                "Completed: Reading it again? Kotora asks before it starts a reread."
+            } else {
+                "Completed: once this is read to the end, Kotora asks if you are reading it again."
+            })
+            .key("rd/reread-note")
+            .font(theme::LABEL)
+            .color(PAL.faint)
+            .wrap(),
+        );
     } else if matches!(r.found, Found::List { .. }) {
-        info = info.child(text("Nothing to mark: your list is at or past this already.").font(theme::LABEL).color(PAL.faint).wrap());
+        info = info.child(
+            text("Nothing to mark: your list is at or past this already.")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .wrap(),
+        );
     }
     if let Found::NotOnList { .. } = r.found {
-        acts = acts.child(action("rd/add".into(), "Add as Reading", true, |s, _| s.add_reading()));
+        acts = acts.child(action("rd/add".into(), "Add as Reading", true, |s, _| {
+            s.add_reading()
+        }));
     }
     if !matches!(r.found, Found::Ignored) && r.marked.is_none() {
         acts = acts.child(ghost("rd/wrong", "Wrong manga\u{2026}", State::wrong_manga).h(26.0));
@@ -1889,7 +2925,13 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         .radius(theme::R_LG)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(row().gap(16.0).items_start().child(reading_cover(s, r, 84.0, 120.0, 22.0)).child(info));
+        .child(
+            row()
+                .gap(16.0)
+                .items_start()
+                .child(reading_cover(s, r, 84.0, 120.0, 22.0))
+                .child(info),
+        );
     if r.picking {
         c = c.child(picker(r));
     }
@@ -1905,7 +2947,12 @@ fn picker(r: &Reading) -> El {
         .child(text("Which manga is it?").font(theme::BODY_MED).color(PAL.text))
         .child(text("The closest titles on your manga list. Kotora remembers your pick for this series.").font(theme::LABEL).color(PAL.dim).wrap().pb(6.0));
     if r.candidates.is_empty() {
-        c = c.child(text("Nothing on your manga list comes close.").font(theme::LABEL).color(PAL.faint).py(4.0));
+        c = c.child(
+            text("Nothing on your manga list comes close.")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .py(4.0),
+        );
     }
     for (id, title) in &r.candidates {
         let id = *id;
@@ -1924,20 +2971,38 @@ fn picker(r: &Reading) -> El {
                 .press(PAL.press())
                 .on_press(move |s: &mut State| s.pick_manga(id))
                 .child(cover(crate::manga::cover_id(id), title, 22.0, 31.0, 8.0))
-                .child(text(title.clone()).font(theme::BODY).color(PAL.text).truncate().grow(1.0).min_w(0.0)),
+                .child(
+                    text(title.clone())
+                        .font(theme::BODY)
+                        .color(PAL.text)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
         );
     }
     c.child(
         row()
             .gap(8.0)
             .mt(10.0)
-            .child(button("rd-pick/none", "Not a manga", false, Some(State::ignore_reading)).h(26.0).px(10.0))
-            .child(ghost("rd-pick/cancel", "Cancel", |s| {
-                if let Some(r) = &mut s.reading.current {
-                    r.picking = false;
-                }
-            })
-            .h(26.0)),
+            .child(
+                button(
+                    "rd-pick/none",
+                    "Not a manga",
+                    false,
+                    Some(State::ignore_reading),
+                )
+                .h(26.0)
+                .px(10.0),
+            )
+            .child(
+                ghost("rd-pick/cancel", "Cancel", |s| {
+                    if let Some(r) = &mut s.reading.current {
+                        r.picking = false;
+                    }
+                })
+                .h(26.0),
+            ),
     )
 }
 
@@ -1959,12 +3024,21 @@ pub fn fake(s: &mut State, file: &str, page: i64) {
     let read = Read::from_opened(&o);
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
-    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    let candidates = core_reading::candidates(&read.series, &items)
+        .into_iter()
+        .take(8)
+        .map(|c| (c.media_id, c.title))
+        .collect();
     // Open in its reader (the scenes' comics are being read).
     if !s.reading.open_now.contains(&read.path) {
         s.reading.open_now.push(read.path.clone());
     }
-    s.reading_seen(Seen { read, found, candidates, cover_url: None });
+    s.reading_seen(Seen {
+        read,
+        found,
+        candidates,
+        cover_url: None,
+    });
 }
 
 /// A made-up comic YACReader wrote on close (`file` at `page` of 40), not open any more.
@@ -1984,7 +3058,12 @@ pub fn fake_closed(s: &mut State, file: &str, page: i64) {
     let read = Read::from_opened(&o);
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
-    s.reading_seen(Seen { read, found, candidates: Vec::new(), cover_url: None });
+    s.reading_seen(Seen {
+        read,
+        found,
+        candidates: Vec::new(),
+        cover_url: None,
+    });
 }
 
 /// A made-up "Continue reading" answer for manga `id` (`page` of 190 in volume 11).
@@ -2000,7 +3079,10 @@ pub fn fake_resume(s: &mut State, id: u32, page: i64, next: bool) {
         pages: 190,
         next,
     };
-    s.apply_reading(ReadingMsg::Resume { media_id: id, at: Some(r) });
+    s.apply_reading(ReadingMsg::Resume {
+        media_id: id,
+        at: Some(r),
+    });
 }
 
 /// Dragon Ball on the made-up list ("Dragon Ball Z" among its titles, volume 26 of 42), and
@@ -2019,37 +3101,73 @@ pub fn fake_dbz(s: &mut State) {
         cover_url: Some("https://cdn.example.invalid/m42.jpg".into()),
         ..Default::default()
     };
-    items.push(kotora_core::ListItem { media, status: Status::Watching, progress: 300, score: None, rewatching: false, times_rewatched: 0, volumes: 26, updated_at: crate::model::FAKE_NOW - 60 });
+    items.push(kotora_core::ListItem {
+        media,
+        status: Status::Watching,
+        progress: 300,
+        score: None,
+        rewatching: false,
+        times_rewatched: 0,
+        volumes: 26,
+        updated_at: crate::model::FAKE_NOW - 60,
+    });
     s.set_manga_items(&items);
     let path = "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz";
-    let mut read = kotora_core::manga::openfile::read_of(&kotora_core::manga::openfile::Open { app: "YACReader".into(), path: path.into() }, 0);
+    let mut read = kotora_core::manga::openfile::read_of(
+        &kotora_core::manga::openfile::Open {
+            app: "YACReader".into(),
+            path: path.into(),
+        },
+        0,
+    );
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
     if let Found::List { media_id, .. } = &found
         && let Some(it) = items.iter().find(|it| it.media.id == *media_id)
     {
         core_reading::renumber(&mut read, &it.media.title);
     }
-    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    let candidates = core_reading::candidates(&read.series, &items)
+        .into_iter()
+        .take(8)
+        .map(|c| (c.media_id, c.title))
+        .collect();
     if !s.reading.open_now.contains(&read.path) {
         s.reading.open_now.push(read.path.clone());
     }
-    s.reading_seen(Seen { read, found, candidates, cover_url: None });
+    s.reading_seen(Seen {
+        read,
+        found,
+        candidates,
+        cover_url: None,
+    });
 }
 
 /// A made-up comic open in `app` (stage 2), counted as read when `why` is given.
 pub fn fake_open(s: &mut State, app: &str, path: &str, why: Option<&str>) {
-    let open = kotora_core::manga::openfile::Open { app: app.into(), path: path.into() };
+    let open = kotora_core::manga::openfile::Open {
+        app: app.into(),
+        path: path.into(),
+    };
     let mut read = kotora_core::manga::openfile::read_of(&open, 0);
     read.finished = why.is_some();
     read.why = why.map(String::from);
     let items: Vec<kotora_core::ListItem> = crate::manga::fake_items();
     let found = core_reading::on_list(&read.series, &items, &None).unwrap_or(Found::Nothing);
-    let candidates = core_reading::candidates(&read.series, &items).into_iter().take(8).map(|c| (c.media_id, c.title)).collect();
+    let candidates = core_reading::candidates(&read.series, &items)
+        .into_iter()
+        .take(8)
+        .map(|c| (c.media_id, c.title))
+        .collect();
     // Open in its reader (the scenes' comics are being read).
     if !s.reading.open_now.contains(&read.path) {
         s.reading.open_now.push(read.path.clone());
     }
-    s.reading_seen(Seen { read, found, candidates, cover_url: None });
+    s.reading_seen(Seen {
+        read,
+        found,
+        candidates,
+        cover_url: None,
+    });
 }
 
 #[cfg(test)]

@@ -47,10 +47,21 @@ impl Transport for UreqTransport {
         let auth = req.bearer.as_ref().map(|b| format!("Bearer {b}"));
         let mut resp = match req.method {
             "POST" | "PATCH" => {
-                let r = if req.method == "POST" { self.agent.post(&req.url) } else { self.agent.patch(&req.url) };
+                let r = if req.method == "POST" {
+                    self.agent.post(&req.url)
+                } else {
+                    self.agent.patch(&req.url)
+                };
                 let (r, body) = match &req.json {
-                    Some(j) => (r.header("Content-Type", "application/json").header("Accept", "application/json"), j.clone()),
-                    None => (r.header("Content-Type", "application/x-www-form-urlencoded"), req.form.clone().unwrap_or_default()),
+                    Some(j) => (
+                        r.header("Content-Type", "application/json")
+                            .header("Accept", "application/json"),
+                        j.clone(),
+                    ),
+                    None => (
+                        r.header("Content-Type", "application/x-www-form-urlencoded"),
+                        req.form.clone().unwrap_or_default(),
+                    ),
                 };
                 let mut r = r;
                 if let Some(a) = &auth {
@@ -75,8 +86,19 @@ impl Transport for UreqTransport {
         }
         .map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
-        let retry_after = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
-        let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
-        Ok(Response { status, retry_after, body })
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok());
+        let body = resp
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| e.to_string())?;
+        Ok(Response {
+            status,
+            retry_after,
+            body,
+        })
     }
 }

@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 pub const BUNDLED: &str = include_str!("../../data/anime-relations.txt");
 
 /// Where the app downloads a newer copy from (GitHub, no account, no cookies).
-pub const URL: &str = "https://raw.githubusercontent.com/erengy/anime-relations/master/anime-relations.txt";
+pub const URL: &str =
+    "https://raw.githubusercontent.com/erengy/anime-relations/master/anime-relations.txt";
 
 /// How often the download is tried at most.
 pub const REFRESH_SECS: u64 = 7 * 24 * 3600;
@@ -73,7 +74,11 @@ impl Rule {
             return None;
         }
         // A range to one episode (`1-4 -> 1`): all of them are that episode.
-        let out = if self.to_eps.single() && !self.from_eps.single() { self.to_eps.first } else { self.to_eps.first + (ep - self.from_eps.first) };
+        let out = if self.to_eps.single() && !self.from_eps.single() {
+            self.to_eps.first
+        } else {
+            self.to_eps.first + (ep - self.from_eps.first)
+        };
         self.to_eps.contains(out).then_some(out)
     }
 }
@@ -121,7 +126,11 @@ fn parse_ids(s: &str, source: Option<&Ids>) -> Result<Ids, ()> {
     }
     let parts: Vec<&str> = s.split('|').collect();
     let [m, k, a] = parts[..] else { return Err(()) };
-    Ok(Ids { mal: parse_id(m, source.and_then(|i| i.mal))?, kitsu: parse_id(k, source.and_then(|i| i.kitsu))?, anilist: parse_id(a, source.and_then(|i| i.anilist))? })
+    Ok(Ids {
+        mal: parse_id(m, source.and_then(|i| i.mal))?,
+        kitsu: parse_id(k, source.and_then(|i| i.kitsu))?,
+        anilist: parse_id(a, source.and_then(|i| i.anilist))?,
+    })
 }
 
 fn parse_range(s: &str) -> Result<Range, ()> {
@@ -129,15 +138,24 @@ fn parse_range(s: &str) -> Result<Range, ()> {
     match s.split_once('-').map(|(a, b)| (a, b.trim())) {
         None => {
             let n = num(s)?;
-            Ok(Range { first: n, last: Some(n) })
+            Ok(Range {
+                first: n,
+                last: Some(n),
+            })
         }
-        Some((a, "?")) => Ok(Range { first: num(a)?, last: None }),
+        Some((a, "?")) => Ok(Range {
+            first: num(a)?,
+            last: None,
+        }),
         Some((a, b)) => {
             let (first, last) = (num(a)?, num(b)?);
             if last < first {
                 return Err(());
             }
-            Ok(Range { first, last: Some(last) })
+            Ok(Range {
+                first,
+                last: Some(last),
+            })
         }
     }
 }
@@ -157,9 +175,23 @@ fn parse_rule(line: &str) -> Result<Vec<Rule>, ()> {
     };
     let (from, from_eps) = parse_side(lhs, None)?;
     let (to, to_eps) = parse_side(rhs, Some(&from))?;
-    let mut out = vec![Rule { from, from_eps, to, to_eps, from_title: None, to_title: None }];
+    let mut out = vec![Rule {
+        from,
+        from_eps,
+        to,
+        to_eps,
+        from_title: None,
+        to_title: None,
+    }];
     if both && to != from {
-        out.push(Rule { from: to, from_eps, to, to_eps, from_title: None, to_title: None });
+        out.push(Rule {
+            from: to,
+            from_eps,
+            to,
+            to_eps,
+            from_title: None,
+            to_title: None,
+        });
     }
     Ok(out)
 }
@@ -243,7 +275,10 @@ impl Relations {
             return Err("anime-relations: no ::rules section".into());
         }
         if r.version.split('.').next() != Some("1") {
-            return Err(format!("anime-relations: version {:?} is not one Kotora reads", r.version));
+            return Err(format!(
+                "anime-relations: version {:?} is not one Kotora reads",
+                r.version
+            ));
         }
         for (i, rule) in r.rules.iter().enumerate() {
             if let (Some(_), Some(id)) = (rule.to.mal, rule.from.mal) {
@@ -263,12 +298,21 @@ impl Relations {
 
     /// Where episode `ep` of MyAnimeList anime `id` goes, if a rule moves it.
     pub fn mal(&self, id: u32, ep: u32) -> Option<Redirect> {
-        self.by_mal.get(&id)?.iter().map(|&i| &self.rules[i]).find_map(|rule| {
-            let episode = rule.map(ep)?;
-            let to = rule.to.mal?;
-            // A rule that maps an episode to itself changes nothing.
-            (to != id || episode != ep).then(|| Redirect { to, episode, to_title: rule.to_title.clone(), from_title: rule.from_title.clone() })
-        })
+        self.by_mal
+            .get(&id)?
+            .iter()
+            .map(|&i| &self.rules[i])
+            .find_map(|rule| {
+                let episode = rule.map(ep)?;
+                let to = rule.to.mal?;
+                // A rule that maps an episode to itself changes nothing.
+                (to != id || episode != ep).then(|| Redirect {
+                    to,
+                    episode,
+                    to_title: rule.to_title.clone(),
+                    from_title: rule.from_title.clone(),
+                })
+            })
     }
 
     /// Where episode `ep` of anime `id` goes, in the ids of the active service (MyAnimeList's,
@@ -277,11 +321,20 @@ impl Relations {
         if !self.anilist {
             return self.mal(id, ep);
         }
-        self.by_anilist.get(&id)?.iter().map(|&i| &self.rules[i]).find_map(|rule| {
-            let episode = rule.map(ep)?;
-            let to = rule.to.anilist?;
-            (to != id || episode != ep).then(|| Redirect { to, episode, to_title: rule.to_title.clone(), from_title: rule.from_title.clone() })
-        })
+        self.by_anilist
+            .get(&id)?
+            .iter()
+            .map(|&i| &self.rules[i])
+            .find_map(|rule| {
+                let episode = rule.map(ep)?;
+                let to = rule.to.anilist?;
+                (to != id || episode != ep).then(|| Redirect {
+                    to,
+                    episode,
+                    to_title: rule.to_title.clone(),
+                    from_title: rule.from_title.clone(),
+                })
+            })
     }
 
     /// Rules usable with MyAnimeList ids.
@@ -305,19 +358,32 @@ fn state_file(cache_dir: &Path) -> PathBuf {
 fn read_state(cache_dir: &Path) -> (u64, Option<String>) {
     let text = std::fs::read_to_string(state_file(cache_dir)).unwrap_or_default();
     let mut lines = text.lines();
-    let at = lines.next().and_then(|l| l.trim().parse().ok()).unwrap_or(0);
-    let etag = lines.next().map(str::trim).filter(|e| !e.is_empty()).map(str::to_string);
+    let at = lines
+        .next()
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(0);
+    let etag = lines
+        .next()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(str::to_string);
     (at, etag)
 }
 
 fn write_state(cache_dir: &Path, now: u64, etag: Option<&str>) -> std::io::Result<()> {
-    std::fs::write(state_file(cache_dir), format!("{now}\n{}\n", etag.unwrap_or("")))
+    std::fs::write(
+        state_file(cache_dir),
+        format!("{now}\n{}\n", etag.unwrap_or("")),
+    )
 }
 
 /// The newer of the downloaded copy (if it reads) and the built-in one.
 pub fn load(cache_dir: &Path) -> Relations {
     let bundled = Relations::bundled();
-    match std::fs::read_to_string(cache_file(cache_dir)).ok().and_then(|t| Relations::parse(&t).ok()) {
+    match std::fs::read_to_string(cache_file(cache_dir))
+        .ok()
+        .and_then(|t| Relations::parse(&t).ok())
+    {
         Some(c) if c.last_modified > bundled.last_modified && c.mal_rules() > 0 => c,
         _ => bundled,
     }
@@ -341,7 +407,11 @@ pub enum Fetched {
 /// app passes [`fetch_github`]). A file that does not read, or has fewer rules than the
 /// built-in copy's half, is refused and the last good copy stays. `Ok(Some)`: a newer copy was
 /// saved.
-pub fn refresh(cache_dir: &Path, now: u64, fetch: impl FnOnce(Option<&str>) -> Result<Fetched, String>) -> Result<Option<Relations>, String> {
+pub fn refresh(
+    cache_dir: &Path,
+    now: u64,
+    fetch: impl FnOnce(Option<&str>) -> Result<Fetched, String>,
+) -> Result<Option<Relations>, String> {
     if !due(cache_dir, now) {
         return Ok(None);
     }
@@ -351,7 +421,11 @@ pub fn refresh(cache_dir: &Path, now: u64, fetch: impl FnOnce(Option<&str>) -> R
     let etag = etag.filter(|_| cache_file(cache_dir).exists());
     let answer = fetch(etag.as_deref());
     // Tried: wait a week, or a day after no answer at all (offline for a moment).
-    let at = if answer.is_err() { now.saturating_sub(REFRESH_SECS - RETRY_SECS) } else { now };
+    let at = if answer.is_err() {
+        now.saturating_sub(REFRESH_SECS - RETRY_SECS)
+    } else {
+        now
+    };
     let _ = write_state(cache_dir, at, etag.as_deref());
     let (body, new_etag) = match answer? {
         Fetched::Same => return Ok(None),
@@ -359,10 +433,15 @@ pub fn refresh(cache_dir: &Path, now: u64, fetch: impl FnOnce(Option<&str>) -> R
     };
     let rel = Relations::parse(&body)?;
     if rel.mal_rules() < Relations::bundled().mal_rules() / 2 {
-        return Err(format!("anime-relations: only {} rules, kept the last good copy", rel.mal_rules()));
+        return Err(format!(
+            "anime-relations: only {} rules, kept the last good copy",
+            rel.mal_rules()
+        ));
     }
     let tmp = cache_dir.join("anime-relations.txt.tmp");
-    std::fs::write(&tmp, &body).and_then(|_| std::fs::rename(&tmp, cache_file(cache_dir))).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, &body)
+        .and_then(|_| std::fs::rename(&tmp, cache_file(cache_dir)))
+        .map_err(|e| e.to_string())?;
     let _ = write_state(cache_dir, now, new_etag.as_deref());
     Ok(Some(rel))
 }
@@ -384,8 +463,17 @@ pub fn fetch_github(etag: Option<&str>) -> Result<Fetched, String> {
     match resp.status().as_u16() {
         304 => Ok(Fetched::Same),
         200 => {
-            let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
-            let body = resp.body_mut().with_config().limit(2 * 1024 * 1024).read_to_string().map_err(|e| e.to_string())?;
+            let etag = resp
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            let body = resp
+                .body_mut()
+                .with_config()
+                .limit(2 * 1024 * 1024)
+                .read_to_string()
+                .map_err(|e| e.to_string())?;
             Ok(Fetched::New { body, etag })
         }
         s => Err(format!("anime-relations: HTTP {s}")),

@@ -46,7 +46,11 @@ fn unavailable_for(bundle: &str) -> Option<&'static str> {
 
 /// What the login item's status number means for the switch.
 fn from_status(st: isize) -> Login {
-    Login { on: matches!(st, ENABLED | REQUIRES_APPROVAL), needs_approval: st == REQUIRES_APPROVAL, ..Login::default() }
+    Login {
+        on: matches!(st, ENABLED | REQUIRES_APPROVAL),
+        needs_approval: st == REQUIRES_APPROVAL,
+        ..Login::default()
+    }
 }
 
 /// A second copy for tests never touches the real login item.
@@ -55,7 +59,9 @@ fn test_instance() -> bool {
 }
 
 fn bundle_path() -> String {
-    objc2_foundation::NSBundle::mainBundle().bundlePath().to_string()
+    objc2_foundation::NSBundle::mainBundle()
+        .bundlePath()
+        .to_string()
 }
 
 fn unavailable_now() -> Option<&'static str> {
@@ -81,7 +87,9 @@ pub fn read() -> Login {
     if let Some(why) = unavailable_now() {
         return Login::unavailable(why);
     }
-    let Some(svc) = service() else { return Login::unavailable("Needs macOS 13 or later.") };
+    let Some(svc) = service() else {
+        return Login::unavailable("Needs macOS 13 or later.");
+    };
     from_status(status(&svc))
 }
 
@@ -196,10 +204,12 @@ pub fn watch_launch(f: impl FnOnce(bool) + 'static) {
     // SAFETY: NSNotificationCenter's block observer; the centre keeps the block, and the token is
     // kept for the process's life (the notification comes once).
     unsafe {
-        let center: Retained<AnyObject> = msg_send![AnyClass::get(c"NSNotificationCenter").expect("Foundation"), defaultCenter];
+        let center: Retained<AnyObject> = msg_send![
+            AnyClass::get(c"NSNotificationCenter").expect("Foundation"),
+            defaultCenter
+        ];
         let nil: *mut AnyObject = std::ptr::null_mut();
-        let token: Option<Retained<AnyObject>> =
-            msg_send![&*center, addObserverForName: &*name, object: nil, queue: nil, usingBlock: &*block];
+        let token: Option<Retained<AnyObject>> = msg_send![&*center, addObserverForName: &*name, object: nil, queue: nil, usingBlock: &*block];
         std::mem::forget(token);
     }
 }
@@ -209,7 +219,9 @@ fn launched_at_login() -> bool {
     // SAFETY: plain getters on NSAppleEventManager / NSAppleEventDescriptor; every object is
     // checked for nil before use.
     unsafe {
-        let Some(cls) = AnyClass::get(c"NSAppleEventManager") else { return false };
+        let Some(cls) = AnyClass::get(c"NSAppleEventManager") else {
+            return false;
+        };
         let manager: *mut AnyObject = msg_send![cls, sharedAppleEventManager];
         if manager.is_null() {
             return false;
@@ -238,18 +250,46 @@ mod tests {
     #[test]
     fn only_an_installed_app_bundle_can_start_at_login() {
         assert_eq!(unavailable_for("/Applications/Kotora.app"), None);
-        assert_eq!(unavailable_for("/Users/u/work/kotora/target/macos/Kotora.app"), None);
-        assert!(unavailable_for("/Users/u/work/kotora/target/debug").is_some(), "cargo run");
-        assert!(unavailable_for("/Volumes/Kotora/Kotora.app").is_some(), "the disk image");
-        assert!(unavailable_for("/private/var/folders/x/T/AppTranslocation/ABC/d/Kotora.app").is_some());
+        assert_eq!(
+            unavailable_for("/Users/u/work/kotora/target/macos/Kotora.app"),
+            None
+        );
+        assert!(
+            unavailable_for("/Users/u/work/kotora/target/debug").is_some(),
+            "cargo run"
+        );
+        assert!(
+            unavailable_for("/Volumes/Kotora/Kotora.app").is_some(),
+            "the disk image"
+        );
+        assert!(
+            unavailable_for("/private/var/folders/x/T/AppTranslocation/ABC/d/Kotora.app").is_some()
+        );
     }
 
     #[test]
     fn status_numbers_map_to_the_switch() {
-        assert_eq!(from_status(ENABLED), Login { on: true, ..Login::default() });
-        assert_eq!(from_status(REQUIRES_APPROVAL), Login { on: true, needs_approval: true, ..Login::default() });
+        assert_eq!(
+            from_status(ENABLED),
+            Login {
+                on: true,
+                ..Login::default()
+            }
+        );
+        assert_eq!(
+            from_status(REQUIRES_APPROVAL),
+            Login {
+                on: true,
+                needs_approval: true,
+                ..Login::default()
+            }
+        );
         assert_eq!(from_status(NOT_REGISTERED), Login::default());
-        assert_eq!(from_status(3), Login::default(), "not found: never registered");
+        assert_eq!(
+            from_status(3),
+            Login::default(),
+            "not found: never registered"
+        );
     }
 
     #[test]

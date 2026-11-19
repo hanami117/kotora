@@ -19,7 +19,13 @@ pub fn poster(s: &State, id: u32, title: &str, url: Option<&str>, w: f32, h: f32
     let size = (w * 0.22).clamp(9.0, 40.0);
     let tile = cover(id, title, w, h, size).radius(r);
     match s.covers.get(id, url, w, h) {
-        Some(img) => tile.child(el().key("poster-img").absolute(0.0, 0.0).size(w, h).radius(r).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().key("poster-img")
+                .absolute(0.0, 0.0)
+                .size(w, h)
+                .radius(r)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
@@ -37,13 +43,19 @@ pub struct Scrim {
 
 impl Scrim {
     pub const fn even(a: f32) -> Scrim {
-        Scrim { top: a, mid: a, bottom: a }
+        Scrim {
+            top: a,
+            mid: a,
+            bottom: a,
+        }
     }
 }
 
 /// The blurred cover of `id`, filling its parent (pinned to every edge), under the scrim.
 pub fn backdrop(s: &State, id: u32, url: Option<&str>, scrim: Scrim) -> El {
-    let base = el().key("backdrop").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
+    let base = el()
+        .key("backdrop")
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
     let base = match s.covers.blurred(id, url) {
         Some(img) => base.pixels_fit(img.pixels(), SurfaceFit::Fill),
         None => {
@@ -54,7 +66,14 @@ pub fn backdrop(s: &State, id: u32, url: Option<&str>, scrim: Scrim) -> El {
     let bg = PAL.bg;
     base.child(
         el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .linear_gradient(PI, [(0.0, bg.alpha(scrim.top)), (0.55, bg.alpha(scrim.mid)), (1.0, bg.alpha(scrim.bottom))]),
+            .linear_gradient(
+                PI,
+                [
+                    (0.0, bg.alpha(scrim.top)),
+                    (0.55, bg.alpha(scrim.mid)),
+                    (1.0, bg.alpha(scrim.bottom)),
+                ],
+            ),
     )
 }
 
@@ -75,18 +94,30 @@ pub fn bar(frac: f32, c: Color, h: f32, track: Color) -> El {
 pub fn live_dot(playing: bool, size: f32) -> El {
     let c = if playing { PAL.ok() } else { PAL.faint };
     let d = el().size(size, size).radius(size / 2.0).fill(c);
-    if playing { d.outline(size * 0.35, 0.0, c.alpha(0.25)) } else { d }
+    if playing {
+        d.outline(size * 0.35, 0.0, c.alpha(0.25))
+    } else {
+        d
+    }
 }
 
 /// The scrims each theme uses on a card-sized backdrop (sidebar card, Home's wide cards): mostly
 /// page colour, the cover a tint.
 pub fn card_scrim() -> Scrim {
-    if PAL.light { Scrim::even(0.66) } else { Scrim::even(0.62) }
+    if PAL.light {
+        Scrim::even(0.66)
+    } else {
+        Scrim::even(0.62)
+    }
 }
 
 /// A border that reads on a backdrop in both themes.
 pub fn glass_border() -> Color {
-    if PAL.light { Color::BLACK.alpha(0.08) } else { Color::WHITE.alpha(0.08) }
+    if PAL.light {
+        Color::BLACK.alpha(0.08)
+    } else {
+        Color::WHITE.alpha(0.08)
+    }
 }
 
 /// Large type for heroes and banners.

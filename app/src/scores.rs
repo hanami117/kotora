@@ -27,7 +27,11 @@ fn face(s: Smiley) -> (&'static rune::Icon, Color) {
 fn stars(filled: u8, size: f32) -> El {
     let mut r = row().gap(1.0).center_y();
     for i in 1..=5u8 {
-        r = r.child(icon(&icons::STAR, size).color(if i <= filled { PAL.st_onhold } else { PAL.border_strong }));
+        r = r.child(icon(&icons::STAR, size).color(if i <= filled {
+            PAL.st_onhold
+        } else {
+            PAL.border_strong
+        }));
     }
     r
 }
@@ -48,7 +52,11 @@ pub fn mark(fmt: ScoreFormat, score: Score, font: TextStyle, color: Color) -> El
 pub fn poster_mark(fmt: ScoreFormat, score: Score) -> El {
     match fmt {
         ScoreFormat::Point5 | ScoreFormat::Point3 => mark(fmt, score, theme::NUM_MED, PAL.dim),
-        _ => row().gap(3.0).center_y().child(icon(&icons::STAR, 12.0).color(PAL.st_onhold)).child(text(fmt.show(score)).font(theme::NUM_MED).color(PAL.dim)),
+        _ => row()
+            .gap(3.0)
+            .center_y()
+            .child(icon(&icons::STAR, 12.0).color(PAL.st_onhold))
+            .child(text(fmt.show(score)).font(theme::NUM_MED).color(PAL.dim)),
     }
 }
 
@@ -65,7 +73,11 @@ fn lit(fmt: ScoreFormat, cur: Option<Score>, choice: Score) -> bool {
 fn fine_button(key: &str, label: &str, delta: i32) -> El {
     el().key(key.to_string())
         .role("button")
-        .label(if delta < 0 { "Lower score" } else { "Higher score" })
+        .label(if delta < 0 {
+            "Lower score"
+        } else {
+            "Higher score"
+        })
         .focusable(true)
         .size(28.0, 28.0)
         .center()
@@ -75,30 +87,62 @@ fn fine_button(key: &str, label: &str, delta: i32) -> El {
             tx.instant();
             s.editor_score_step(delta);
         })
-        .child(text(label.to_string()).font(TextStyle::new(15.0, 500.0)).color(PAL.dim))
+        .child(
+            text(label.to_string())
+                .font(TextStyle::new(15.0, 500.0))
+                .color(PAL.dim),
+        )
 }
 
 /// The editor's score field: "No score", then the format's choices (cells `ed/score/1` to
 /// `ed/score/N`, low to high), and for the 100-point and decimal formats a fine − value +.
 pub fn picker(fmt: ScoreFormat, cur: Option<Score>) -> El {
-    let mut cells = row().flex_wrap().gap(4.0).child(cell("ed/score/none".into(), "No score".into(), cur.is_none(), |s| s.editor_score(None)).child(text("\u{2013}").font(theme::LABEL).color(PAL.dim)));
+    let mut cells = row().flex_wrap().gap(4.0).child(
+        cell(
+            "ed/score/none".into(),
+            "No score".into(),
+            cur.is_none(),
+            |s| s.editor_score(None),
+        )
+        .child(text("\u{2013}").font(theme::LABEL).color(PAL.dim)),
+    );
     let shown = cur.map(|c| fmt.value(c));
     for (i, choice) in fmt.choices().into_iter().enumerate() {
         let n = i + 1;
         let on = lit(fmt, cur, choice);
-        let c = cell(format!("ed/score/{n}"), format!("Score {}", fmt.words(choice)), on, move |s| s.editor_score(Some(choice))).px(0.0);
+        let c = cell(
+            format!("ed/score/{n}"),
+            format!("Score {}", fmt.words(choice)),
+            on,
+            move |s| s.editor_score(Some(choice)),
+        )
+        .px(0.0);
         let c = match fmt {
             // A star lights up to the score, like a rating.
             ScoreFormat::Point5 => {
                 let filled = shown.is_some_and(|v| v as usize >= n);
-                c.child(icon(&icons::STAR, 14.0).color(if filled { PAL.st_onhold } else { PAL.faint }))
+                c.child(icon(&icons::STAR, 14.0).color(if filled {
+                    PAL.st_onhold
+                } else {
+                    PAL.faint
+                }))
             }
             ScoreFormat::Point3 => {
                 let (i, tint) = face(fmt.smiley(choice).unwrap_or(Smiley::Neutral));
                 c.child(icon(i, 16.0).color(if on { tint } else { PAL.faint }))
             }
-            ScoreFormat::Point10Decimal => c.child(text(n.to_string()).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim })),
-            _ => c.child(text(fmt.show(choice)).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim })),
+            ScoreFormat::Point10Decimal => {
+                c.child(text(n.to_string()).font(theme::LABEL_NUM).color(if on {
+                    PAL.accent_hi
+                } else {
+                    PAL.dim
+                }))
+            }
+            _ => c.child(text(fmt.show(choice)).font(theme::LABEL_NUM).color(if on {
+                PAL.accent_hi
+            } else {
+                PAL.dim
+            })),
         };
         cells = cells.child(c);
     }
@@ -113,7 +157,12 @@ pub fn picker(fmt: ScoreFormat, cur: Option<Score>) -> El {
                 .fill(PAL.field)
                 .border(1.0, PAL.border)
                 .child(fine_button("ed/score/minus", "\u{2212}", -1))
-                .child(row().min_w(36.0).center().child(text(value).font(theme::NUM_MED).color(PAL.text)))
+                .child(
+                    row()
+                        .min_w(36.0)
+                        .center()
+                        .child(text(value).font(theme::NUM_MED).color(PAL.text)),
+                )
                 .child(fine_button("ed/score/plus", "+", 1)),
         );
     }
@@ -122,7 +171,11 @@ pub fn picker(fmt: ScoreFormat, cur: Option<Score>) -> El {
 
 /// The ▸ Score menu's items: (key part, label, score) low to high, after "No score".
 pub fn menu_choices(fmt: ScoreFormat) -> Vec<(usize, String, Score)> {
-    fmt.choices().into_iter().enumerate().map(|(i, c)| (i + 1, fmt.words(c), c)).collect()
+    fmt.choices()
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| (i + 1, fmt.words(c), c))
+        .collect()
 }
 
 /// Whether a menu choice gets the check mark.

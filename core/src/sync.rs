@@ -13,7 +13,10 @@ pub enum MangaSync {
     /// Manga mode is off: nothing was asked.
     Off,
     /// The saved manga list, with the waiting changes laid over it.
-    Synced { items: Vec<ListItem>, synced_at: i64 },
+    Synced {
+        items: Vec<ListItem>,
+        synced_at: i64,
+    },
     /// The service failed; the saved manga list is kept as it was.
     Failed(ServiceError),
     /// The store failed (the list could not be saved or read).
@@ -40,7 +43,10 @@ pub fn sync_manga(service: &mut dyn ListService, store: &mut Store, now: i64) ->
     // Manga changed on the service's website since the last sync go to the mirror, if it is on.
     let _ = crate::mirror::after_main_sync(store, scope, &old, now);
     match store.load_list(scope) {
-        Ok(items) => MangaSync::Synced { items, synced_at: now },
+        Ok(items) => MangaSync::Synced {
+            items,
+            synced_at: now,
+        },
         Err(e) => MangaSync::NotSaved(format!("can't read the saved manga list: {e}")),
     }
 }
@@ -52,12 +58,22 @@ pub const COMPLETE_MAX: usize = 5;
 /// (episodes, format, cover, titles): from the saved details when there are any, else one
 /// details request each, at most [`COMPLETE_MAX`]. `only`: just these ids (an add just made).
 /// Returns the ids filled in. A failed request leaves the row for the next try.
-pub fn complete_media(service: &mut dyn ListService, store: &Store, only: Option<&[u32]>, now: i64) -> Vec<u32> {
+pub fn complete_media(
+    service: &mut dyn ListService,
+    store: &Store,
+    only: Option<&[u32]>,
+    now: i64,
+) -> Vec<u32> {
     let name = service.name();
-    let Ok(bare) = store.bare_media(name) else { return Vec::new() };
+    let Ok(bare) = store.bare_media(name) else {
+        return Vec::new();
+    };
     let mut done = Vec::new();
     let mut asked = 0;
-    for id in bare.into_iter().filter(|id| only.is_none_or(|o| o.contains(id))) {
+    for id in bare
+        .into_iter()
+        .filter(|id| only.is_none_or(|o| o.contains(id)))
+    {
         let details = match store.details(name, id) {
             // Saved details without a type either: the service has no more to give.
             Ok(Some((d, _))) if d.format.is_empty() => continue,
@@ -74,7 +90,10 @@ pub fn complete_media(service: &mut dyn ListService, store: &Store, only: Option
                 }
             }
         };
-        if store.refresh_media(name, &details.media(), now).unwrap_or(false) {
+        if store
+            .refresh_media(name, &details.media(), now)
+            .unwrap_or(false)
+        {
             done.push(id);
         }
     }
@@ -118,7 +137,13 @@ mod tests {
                 return Err(ServiceError::Offline("no network".into()));
             }
             Ok(vec![ListItem {
-                media: Media { kind: Kind::Manga, id: 2001, title: "Paper Lanterns".into(), volumes: Some(14), ..Default::default() },
+                media: Media {
+                    kind: Kind::Manga,
+                    id: 2001,
+                    title: "Paper Lanterns".into(),
+                    volumes: Some(14),
+                    ..Default::default()
+                },
                 status: Status::Watching,
                 progress: 21,
                 score: None,
@@ -144,13 +169,29 @@ mod tests {
         let mut s = Store::open_memory().unwrap();
         s.set_manga_enabled(true).unwrap();
         let mut svc = Svc::default();
-        let MangaSync::Synced { items, synced_at } = sync_manga(&mut svc, &mut s, 100) else { panic!("not synced") };
-        assert_eq!((items.len(), items[0].volumes, items[0].media.kind, synced_at), (1, 3, Kind::Manga, 100));
+        let MangaSync::Synced { items, synced_at } = sync_manga(&mut svc, &mut s, 100) else {
+            panic!("not synced")
+        };
+        assert_eq!(
+            (
+                items.len(),
+                items[0].volumes,
+                items[0].media.kind,
+                synced_at
+            ),
+            (1, 3, Kind::Manga, 100)
+        );
         assert_eq!(svc.manga_calls, 1);
-        assert!(s.load_list("mal").unwrap().is_empty(), "the anime list is not touched");
+        assert!(
+            s.load_list("mal").unwrap().is_empty(),
+            "the anime list is not touched"
+        );
         // Offline: the saved manga list stays.
         svc.fail = true;
-        assert!(matches!(sync_manga(&mut svc, &mut s, 200), MangaSync::Failed(ServiceError::Offline(_))));
+        assert!(matches!(
+            sync_manga(&mut svc, &mut s, 200),
+            MangaSync::Failed(ServiceError::Offline(_))
+        ));
         assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1);
         assert_eq!(s.synced_at(("mal", Kind::Manga)).unwrap(), Some(100));
     }
@@ -159,10 +200,22 @@ mod tests {
     /// manga list's sync time), sorted: what turning manga on must leave as it was.
     fn all_but_manga(path: &std::path::Path) -> Vec<String> {
         let c = rusqlite::Connection::open(path).unwrap();
-        let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let tables: Vec<String> = c
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
         let mut rows = Vec::new();
         for t in tables {
-            let has_kind = c.prepare(&format!("SELECT 1 FROM pragma_table_info('{t}') WHERE name = 'kind'")).unwrap().exists([]).unwrap();
+            let has_kind = c
+                .prepare(&format!(
+                    "SELECT 1 FROM pragma_table_info('{t}') WHERE name = 'kind'"
+                ))
+                .unwrap()
+                .exists([])
+                .unwrap();
             let filter = match t.as_str() {
                 "kv" => " WHERE key NOT IN ('manga:enabled', 'mal:manga:synced_at')",
                 _ if has_kind => " WHERE kind != 'manga'",
@@ -170,7 +223,14 @@ mod tests {
             };
             let mut st = c.prepare(&format!("SELECT * FROM {t}{filter}")).unwrap();
             let n = st.column_count();
-            let got = st.query_map([], |r| Ok((0..n).map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap())).collect::<Vec<_>>().join("|"))).unwrap();
+            let got = st
+                .query_map([], |r| {
+                    Ok((0..n)
+                        .map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap()))
+                        .collect::<Vec<_>>()
+                        .join("|"))
+                })
+                .unwrap();
             rows.extend(got.map(|r| format!("{t}: {}", r.unwrap())));
         }
         rows.sort();
@@ -194,39 +254,113 @@ mod tests {
             let mut s = Store::open(&path).unwrap();
             assert_eq!(s.schema_version().unwrap(), 12, "0.2.1's schema");
             let mut list = Vec::new();
-            for (id, title, st, p, sc) in [(2001, "Lanterns of Kirigaoka", Status::Watching, 5, ten(8)), (7, "Neon Harbour", Status::Completed, 12, Score::from_points(73)), (9, "Iron Garden", Status::Watching, 1, None)] {
+            for (id, title, st, p, sc) in [
+                (2001, "Lanterns of Kirigaoka", Status::Watching, 5, ten(8)),
+                (
+                    7,
+                    "Neon Harbour",
+                    Status::Completed,
+                    12,
+                    Score::from_points(73),
+                ),
+                (9, "Iron Garden", Status::Watching, 1, None),
+            ] {
                 let mut it = crate::store::tests::item(id, title, st, p, 10);
                 it.score = sc;
                 list.push(it);
             }
             s.replace_list("mal", &list, 10).unwrap();
             // The mirror's AniList copy of the same anime (AniList ids, their MyAnimeList ids kept).
-            let al: Vec<_> = list.iter().map(|it| ListItem { media: Media { id: it.media.id + 50_000, id_mal: Some(it.media.id), ..it.media.clone() }, ..it.clone() }).collect();
+            let al: Vec<_> = list
+                .iter()
+                .map(|it| ListItem {
+                    media: Media {
+                        id: it.media.id + 50_000,
+                        id_mal: Some(it.media.id),
+                        ..it.media.clone()
+                    },
+                    ..it.clone()
+                })
+                .collect();
             s.replace_list("anilist", &al, 10).unwrap();
-            s.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-            s.enqueue("mal", 2001, Change { score: Some(ten(9)), ..Change::default() }, 30).unwrap();
+            s.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+                .unwrap();
+            s.enqueue(
+                "mal",
+                2001,
+                Change {
+                    score: Some(ten(9)),
+                    ..Change::default()
+                },
+                30,
+            )
+            .unwrap();
             s.remove_from_list("mal", 9, 31).unwrap();
-            assert_eq!((s.open_count("mal").unwrap(), s.open_count("anilist").unwrap()), (2, 2), "the queue and the mirror's copies");
+            assert_eq!(
+                (
+                    s.open_count("mal").unwrap(),
+                    s.open_count("anilist").unwrap()
+                ),
+                (2, 2),
+                "the queue and the mirror's copies"
+            );
         }
         let before = all_but_manga(&path);
-        assert!(before.iter().any(|r| r.starts_with("kv: Text(\"mirror:link\")")), "the mirror is on");
+        assert!(
+            before
+                .iter()
+                .any(|r| r.starts_with("kv: Text(\"mirror:link\")")),
+            "the mirror is on"
+        );
         {
             let mut s = Store::open(&path).unwrap();
             assert_eq!(s.schema_version().unwrap(), 12);
             assert!(!s.manga_enabled().unwrap(), "0.2.1 leaves Manga off");
             s.set_manga_enabled(true).unwrap();
-            let MangaSync::Synced { items, .. } = sync_manga(&mut Svc::default(), &mut s, 100) else { panic!("not synced") };
-            assert_eq!((items[0].media.id, items[0].media.kind, items[0].progress, items[0].volumes), (2001, Kind::Manga, 21, 3));
+            let MangaSync::Synced { items, .. } = sync_manga(&mut Svc::default(), &mut s, 100)
+            else {
+                panic!("not synced")
+            };
+            assert_eq!(
+                (
+                    items[0].media.id,
+                    items[0].media.kind,
+                    items[0].progress,
+                    items[0].volumes
+                ),
+                (2001, Kind::Manga, 21, 3)
+            );
             let anime = s.load_list("mal").unwrap();
             let lanterns = anime.iter().find(|i| i.media.id == 2001).unwrap();
-            assert_eq!((lanterns.media.kind, lanterns.media.title.as_str(), lanterns.score), (Kind::Anime, "Lanterns of Kirigaoka", ten(9)), "the waiting change laid over");
-            assert_eq!(anime.iter().find(|i| i.media.id == 7).unwrap().score, Score::from_points(73));
+            assert_eq!(
+                (
+                    lanterns.media.kind,
+                    lanterns.media.title.as_str(),
+                    lanterns.score
+                ),
+                (Kind::Anime, "Lanterns of Kirigaoka", ten(9)),
+                "the waiting change laid over"
+            );
+            assert_eq!(
+                anime.iter().find(|i| i.media.id == 7).unwrap().score,
+                Score::from_points(73)
+            );
             s.set_manga_enabled(false).unwrap();
-            assert_eq!(s.load_list(("mal", Kind::Manga)).unwrap().len(), 1, "off keeps the saved manga");
+            assert_eq!(
+                s.load_list(("mal", Kind::Manga)).unwrap().len(),
+                1,
+                "off keeps the saved manga"
+            );
         }
         assert_eq!(all_but_manga(&path), before, "nothing else changed");
-        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        assert!(!names.iter().any(|n| n.ends_with(".bak")), "no migration, no copy: {names:?}");
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.ends_with(".bak")),
+            "no migration, no copy: {names:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -279,28 +413,80 @@ mod tests {
     #[test]
     fn an_add_with_only_a_title_is_filled_in() {
         let mut s = Store::open_memory().unwrap();
-        let full = Media { id: 2, title: "Full".into(), episodes: Some(12), format: "tv".into(), cover_url: Some("https://img.example/2.jpg".into()), ..Default::default() };
-        s.add_to_list("anilist", &full, Status::Watching, None, 10).unwrap();
+        let full = Media {
+            id: 2,
+            title: "Full".into(),
+            episodes: Some(12),
+            format: "tv".into(),
+            cover_url: Some("https://img.example/2.jpg".into()),
+            ..Default::default()
+        };
+        s.add_to_list("anilist", &full, Status::Watching, None, 10)
+            .unwrap();
         // As Now Playing adds it: the title, and the cover recognition saw.
-        let bare = Media { id: 21355, title: "Re:Zero".into(), cover_url: Some("https://img.example/seen.jpg".into()), ..Default::default() };
-        s.add_to_list("anilist", &bare, Status::Watching, Some(3), 10).unwrap();
+        let bare = Media {
+            id: 21355,
+            title: "Re:Zero".into(),
+            cover_url: Some("https://img.example/seen.jpg".into()),
+            ..Default::default()
+        };
+        s.add_to_list("anilist", &bare, Status::Watching, Some(3), 10)
+            .unwrap();
         assert_eq!(s.bare_media("anilist").unwrap(), [21355]);
-        let mut svc = Info { fail: true, ..Default::default() };
-        assert!(complete_media(&mut svc, &s, None, 20).is_empty(), "offline: left for the next try");
+        let mut svc = Info {
+            fail: true,
+            ..Default::default()
+        };
+        assert!(
+            complete_media(&mut svc, &s, None, 20).is_empty(),
+            "offline: left for the next try"
+        );
         assert_eq!(s.bare_media("anilist").unwrap(), [21355]);
         svc.fail = false;
         assert_eq!(complete_media(&mut svc, &s, Some(&[21355]), 30), [21355]);
         assert_eq!(svc.asked, [21355, 21355], "only the bare one is asked for");
         let it = s.load_item("anilist", 21355).unwrap().unwrap();
-        assert_eq!((it.media.episodes, it.media.format.as_str(), it.media.cover_url.as_deref(), it.progress), (Some(25), "TV", Some("https://img.example/21355.jpg"), 3));
+        assert_eq!(
+            (
+                it.media.episodes,
+                it.media.format.as_str(),
+                it.media.cover_url.as_deref(),
+                it.progress
+            ),
+            (Some(25), "TV", Some("https://img.example/21355.jpg"), 3)
+        );
         assert!(s.bare_media("anilist").unwrap().is_empty());
-        assert_eq!(s.load_item("anilist", 2).unwrap().unwrap().media.title, "Full", "the full row is untouched");
+        assert_eq!(
+            s.load_item("anilist", 2).unwrap().unwrap().media.title,
+            "Full",
+            "the full row is untouched"
+        );
         // Nothing bare: no request.
         assert!(complete_media(&mut svc, &s, None, 40).is_empty());
         assert_eq!(svc.asked.len(), 2);
         // A show the service has no type for: asked once, then its saved details say so.
-        s.add_to_list("anilist", &Media { id: 9, title: "TBA".into(), ..Default::default() }, Status::PlanToWatch, None, 50).unwrap();
-        s.save_details("anilist", &crate::service::Details { id: 9, title: "TBA".into(), ..Default::default() }, 50).unwrap();
+        s.add_to_list(
+            "anilist",
+            &Media {
+                id: 9,
+                title: "TBA".into(),
+                ..Default::default()
+            },
+            Status::PlanToWatch,
+            None,
+            50,
+        )
+        .unwrap();
+        s.save_details(
+            "anilist",
+            &crate::service::Details {
+                id: 9,
+                title: "TBA".into(),
+                ..Default::default()
+            },
+            50,
+        )
+        .unwrap();
         assert!(complete_media(&mut svc, &s, None, 60).is_empty());
         assert_eq!(svc.asked.len(), 2, "no request for it");
     }
@@ -310,16 +496,41 @@ mod tests {
     fn saved_details_first_and_few_requests_at_once() {
         let mut s = Store::open_memory().unwrap();
         for id in 1..=8 {
-            s.add_to_list("anilist", &Media { id, title: format!("T{id}"), ..Default::default() }, Status::Watching, None, 1).unwrap();
+            s.add_to_list(
+                "anilist",
+                &Media {
+                    id,
+                    title: format!("T{id}"),
+                    ..Default::default()
+                },
+                Status::Watching,
+                None,
+                1,
+            )
+            .unwrap();
         }
-        let saved = crate::service::Details { id: 1, title: "T1".into(), format: "Movie".into(), episodes: Some(1), cover_url: Some("https://img.example/1.jpg".into()), ..Default::default() };
+        let saved = crate::service::Details {
+            id: 1,
+            title: "T1".into(),
+            format: "Movie".into(),
+            episodes: Some(1),
+            cover_url: Some("https://img.example/1.jpg".into()),
+            ..Default::default()
+        };
         s.save_details("anilist", &saved, 1).unwrap();
         let mut svc = Info::default();
         let done = complete_media(&mut svc, &s, None, 2);
         assert_eq!(done.len(), 1 + COMPLETE_MAX);
         assert!(!svc.asked.contains(&1), "the saved details were used");
         assert_eq!(svc.asked.len(), COMPLETE_MAX);
-        assert_eq!(s.load_item("anilist", 1).unwrap().unwrap().media.format, "Movie");
-        assert_eq!(s.bare_media("anilist").unwrap().len(), 8 - 1 - COMPLETE_MAX, "the rest wait for the next call");
+        assert_eq!(
+            s.load_item("anilist", 1).unwrap().unwrap().media.format,
+            "Movie"
+        );
+        assert_eq!(
+            s.bare_media("anilist").unwrap().len(),
+            8 - 1 - COMPLETE_MAX,
+            "the rest wait for the next call"
+        );
     }
 }

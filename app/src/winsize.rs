@@ -16,13 +16,24 @@ const MARGIN_W: f32 = 24.0;
 /// `min` (the window's own minimum, which wins on a tiny screen). With no screen known, `want`.
 pub fn fit(want: (f32, f32), visible: Option<(f32, f32)>, min: (f32, f32)) -> (f32, f32) {
     let Some((vw, vh)) = visible else { return want };
-    ((want.0.min(vw - MARGIN_W)).max(min.0), (want.1.min(vh - MARGIN_H)).max(min.1))
+    (
+        (want.0.min(vw - MARGIN_W)).max(min.0),
+        (want.1.min(vh - MARGIN_H)).max(min.1),
+    )
 }
 
 /// The size to open at: the default fitted to the main screen's usable area (macOS and
 /// Windows; on Linux the compositor places and limits it).
 pub fn initial(min: (f32, f32)) -> (f32, f32) {
-    fit(DEFAULT, if rune::is_headless() { None } else { visible_screen() }, min)
+    fit(
+        DEFAULT,
+        if rune::is_headless() {
+            None
+        } else {
+            visible_screen()
+        },
+        min,
+    )
 }
 
 /// The main screen's visible frame in points: its size less the menu bar and the Dock.
@@ -103,7 +114,10 @@ mod mac_tests {
     fn the_main_screens_usable_area_is_sane_or_unknown() {
         // No window is made: this only asks AppKit for the screen's frame (none in a headless CI).
         if let Some((w, h)) = super::visible_screen() {
-            assert!((200.0..20000.0).contains(&w) && (200.0..20000.0).contains(&h), "{w}x{h}");
+            assert!(
+                (200.0..20000.0).contains(&w) && (200.0..20000.0).contains(&h),
+                "{w}x{h}"
+            );
             eprintln!("visible screen {w}x{h}");
         }
     }

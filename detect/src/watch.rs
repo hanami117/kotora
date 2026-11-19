@@ -75,11 +75,19 @@ struct Slot {
 impl Slot {
     fn position_at(&self, t: f64) -> Option<f64> {
         let pos = self.p.position?;
-        Some(if self.p.state == PlayState::Playing { pos + (t - self.p.at).max(0.0) * self.p.rate } else { pos })
+        Some(if self.p.state == PlayState::Playing {
+            pos + (t - self.p.at).max(0.0) * self.p.rate
+        } else {
+            pos
+        })
     }
 
     fn played_at(&self, t: f64) -> f64 {
-        if self.p.state == PlayState::Playing { self.played + (t - self.counted_to).max(0.0) } else { self.played }
+        if self.p.state == PlayState::Playing {
+            self.played + (t - self.counted_to).max(0.0)
+        } else {
+            self.played
+        }
     }
 
     /// No position: the time the file stays open stands for the time played.
@@ -100,13 +108,19 @@ impl Slot {
             return self.played_at(t) >= self.open_needed(share, open_secs);
         }
         match (self.position_at(t), self.p.duration) {
-            (Some(pos), Some(d)) if d > 0.0 => pos >= share * d && self.played_at(t) >= min_played(d),
+            (Some(pos), Some(d)) if d > 0.0 => {
+                pos >= share * d && self.played_at(t) >= min_played(d)
+            }
             _ => false,
         }
     }
 
     fn track(&self, t: f64) -> Track {
-        Track { playing: self.p.clone(), played: self.played_at(t), reached: self.reached }
+        Track {
+            playing: self.p.clone(),
+            played: self.played_at(t),
+            reached: self.reached,
+        }
     }
 }
 
@@ -124,7 +138,14 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(threshold: f64) -> Watch {
-        Watch { threshold, open_secs: f64::from(OPEN_MINUTES) * 60.0, off: HashSet::new(), slots: HashMap::new(), current: None, sources: Vec::new() }
+        Watch {
+            threshold,
+            open_secs: f64::from(OPEN_MINUTES) * 60.0,
+            off: HashSet::new(),
+            slots: HashMap::new(),
+            current: None,
+            sources: Vec::new(),
+        }
     }
 
     /// A source's new snapshot of one player.
@@ -152,8 +173,22 @@ impl Watch {
                 if let Some(slot) = old {
                     stop_rule(slot, now, open_secs, &mut out);
                 }
-                let started = if p.state == PlayState::Playing { now } else { f64::MIN };
-                self.slots.insert(key.clone(), Slot { p, played: 0.0, counted_to: now, reached: false, started, hidden: false });
+                let started = if p.state == PlayState::Playing {
+                    now
+                } else {
+                    f64::MIN
+                };
+                self.slots.insert(
+                    key.clone(),
+                    Slot {
+                        p,
+                        played: 0.0,
+                        counted_to: now,
+                        reached: false,
+                        started,
+                        hidden: false,
+                    },
+                );
             }
         }
         self.hide_shadowed();
@@ -181,7 +216,12 @@ impl Watch {
 
     /// Forgets the players whose switch went off (Settings).
     pub fn drop_off(&mut self, now: f64) -> Vec<Report> {
-        let keys: Vec<String> = self.slots.values().filter(|s| self.off.contains(&s.p.switch)).map(|s| s.p.key.clone()).collect();
+        let keys: Vec<String> = self
+            .slots
+            .values()
+            .filter(|s| self.off.contains(&s.p.switch))
+            .map(|s| s.p.key.clone())
+            .collect();
         let mut out = Vec::new();
         for k in keys {
             self.slots.remove(&k);
@@ -196,7 +236,11 @@ impl Watch {
         let (threshold, open_secs) = (self.threshold, self.open_secs);
         let mut touched = None;
         for slot in self.slots.values_mut() {
-            if !slot.reached && !slot.hidden && slot.p.state == PlayState::Playing && slot.passes(now, threshold, open_secs) {
+            if !slot.reached
+                && !slot.hidden
+                && slot.p.state == PlayState::Playing
+                && slot.passes(now, threshold, open_secs)
+            {
                 slot.reached = true;
                 out.push(reached(slot));
                 touched = Some(slot.p.key.clone());
@@ -212,10 +256,15 @@ impl Watch {
     pub fn next_wake(&self, now: f64) -> Option<f64> {
         self.slots
             .values()
-            .filter(|s| !s.reached && !s.hidden && s.p.state == PlayState::Playing && s.p.rate > 0.0)
+            .filter(|s| {
+                !s.reached && !s.hidden && s.p.state == PlayState::Playing && s.p.rate > 0.0
+            })
             .filter_map(|s| {
                 if s.by_open_time() {
-                    return Some((s.open_needed(self.threshold, self.open_secs) - s.played_at(now)).max(0.05));
+                    return Some(
+                        (s.open_needed(self.threshold, self.open_secs) - s.played_at(now))
+                            .max(0.05),
+                    );
                 }
                 let d = s.p.duration.filter(|d| *d > 0.0)?;
                 let pos = s.position_at(now)?;
@@ -228,7 +277,11 @@ impl Watch {
 
     /// A source's state changed. Returns the whole list when it differs.
     pub fn status(&mut self, st: SourceStatus) -> Option<Report> {
-        match self.sources.iter_mut().find(|s| s.switch == st.switch && s.via == st.via) {
+        match self
+            .sources
+            .iter_mut()
+            .find(|s| s.switch == st.switch && s.via == st.via)
+        {
             Some(old) if *old == st => return None,
             Some(old) => *old = st,
             None => self.sources.push(st),
@@ -242,7 +295,9 @@ impl Watch {
 
     /// The source state for one switch and way, if reported.
     pub fn source(&self, switch: Switch, via: Via) -> Option<&SourceStatus> {
-        self.sources.iter().find(|s| s.switch == switch && s.via == via)
+        self.sources
+            .iter()
+            .find(|s| s.switch == switch && s.via == via)
     }
 
     pub fn current(&self, now: f64) -> Option<Track> {
@@ -253,12 +308,28 @@ impl Watch {
     /// followed so far, while it is still there; else any. Reports `Now` when it, or what it
     /// shows, changed.
     fn follow(&mut self, now: f64, out: &mut Vec<Report>, touched: Option<&str>) {
-        let playing = self.slots.values().filter(|s| !s.hidden && s.p.state == PlayState::Playing && s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started));
+        let playing = self
+            .slots
+            .values()
+            .filter(|s| !s.hidden && s.p.state == PlayState::Playing && s.p.file().is_some())
+            .max_by(|a, b| a.started.total_cmp(&b.started));
         let pick = match playing {
             Some(s) => Some(s.p.key.clone()),
             None => match &self.current {
-                Some(k) if self.slots.get(k).is_some_and(|s| !s.hidden && s.p.file().is_some()) => Some(k.clone()),
-                _ => self.slots.values().filter(|s| !s.hidden && s.p.file().is_some()).max_by(|a, b| a.started.total_cmp(&b.started)).map(|s| s.p.key.clone()),
+                Some(k)
+                    if self
+                        .slots
+                        .get(k)
+                        .is_some_and(|s| !s.hidden && s.p.file().is_some()) =>
+                {
+                    Some(k.clone())
+                }
+                _ => self
+                    .slots
+                    .values()
+                    .filter(|s| !s.hidden && s.p.file().is_some())
+                    .max_by(|a, b| a.started.total_cmp(&b.started))
+                    .map(|s| s.p.key.clone()),
             },
         };
         if pick != self.current || (pick.is_some() && pick.as_deref() == touched) {
@@ -272,12 +343,20 @@ impl Watch {
     /// Hides the process slots whose file another kind of source shows. Once hidden, a slot
     /// stays hidden for that file (so the IPC source going first can't make it count later).
     fn hide_shadowed(&mut self) {
-        let names: HashSet<String> = self.slots.values().filter(|s| s.p.via != Via::Process).filter_map(|s| s.p.file().map(|f| file_name(f).to_string())).collect();
+        let names: HashSet<String> = self
+            .slots
+            .values()
+            .filter(|s| s.p.via != Via::Process)
+            .filter_map(|s| s.p.file().map(|f| file_name(f).to_string()))
+            .collect();
         if names.is_empty() {
             return;
         }
         for s in self.slots.values_mut() {
-            if s.p.via == Via::Process && !s.hidden && s.p.file().is_some_and(|f| names.contains(file_name(f))) {
+            if s.p.via == Via::Process
+                && !s.hidden
+                && s.p.file().is_some_and(|f| names.contains(file_name(f)))
+            {
                 s.hidden = true;
             }
         }
@@ -289,12 +368,19 @@ fn file_name(f: &str) -> &str {
 }
 
 fn reached(slot: &Slot) -> Report {
-    Report::Reached { key: slot.p.key.clone(), file: slot.p.file().unwrap_or_default().to_string() }
+    Report::Reached {
+        key: slot.p.key.clone(),
+        file: slot.p.file().unwrap_or_default().to_string(),
+    }
 }
 
 /// A stop or a new file: half watched (and really played) still counts.
 fn stop_rule(slot: &mut Slot, now: f64, open_secs: f64, out: &mut Vec<Report>) {
-    if !slot.reached && !slot.hidden && slot.p.file().is_some() && slot.passes(now, STOP_SHARE, open_secs) {
+    if !slot.reached
+        && !slot.hidden
+        && slot.p.file().is_some()
+        && slot.passes(now, STOP_SHARE, open_secs)
+    {
         slot.reached = true;
         out.push(reached(slot));
     }
@@ -333,7 +419,10 @@ mod tests {
     fn a_played_episode_crosses_at_the_threshold_by_the_clock() {
         let mut w = Watch::new(0.8);
         // 24 min episode, starts at 0.
-        let r = w.update(snap("a", "/v/ep6.mkv", 0.0, 1440.0, PlayState::Playing, 0.0), 0.0);
+        let r = w.update(
+            snap("a", "/v/ep6.mkv", 0.0, 1440.0, PlayState::Playing, 0.0),
+            0.0,
+        );
         assert!(matches!(r.as_slice(), [Report::Now(Some(t))] if !t.reached));
         // The hub wakes when 80 % is due: 1152 s.
         let wake = w.next_wake(0.0).unwrap();
@@ -351,10 +440,16 @@ mod tests {
     fn a_pause_holds_the_clock() {
         let mut w = Watch::new(0.8);
         w.update(snap("a", "f", 0.0, 1000.0, PlayState::Playing, 0.0), 0.0);
-        w.update(snap("a", "f", 300.0, 1000.0, PlayState::Paused, 300.0), 300.0);
+        w.update(
+            snap("a", "f", 300.0, 1000.0, PlayState::Paused, 300.0),
+            300.0,
+        );
         assert_eq!(w.next_wake(300.0), None, "nothing is due while paused");
         assert!(w.tick(5000.0).is_empty());
-        w.update(snap("a", "f", 300.0, 1000.0, PlayState::Playing, 5000.0), 5000.0);
+        w.update(
+            snap("a", "f", 300.0, 1000.0, PlayState::Playing, 5000.0),
+            5000.0,
+        );
         assert!((w.next_wake(5000.0).unwrap() - 500.0).abs() < 0.01);
     }
 
@@ -363,7 +458,10 @@ mod tests {
         let mut w = Watch::new(0.8);
         w.update(snap("a", "f", 0.0, 1440.0, PlayState::Playing, 0.0), 0.0);
         // Seek to 90 % after 10 s: the position passes, the play time doesn't (120 s needed).
-        let r = w.update(snap("a", "f", 1300.0, 1440.0, PlayState::Playing, 10.0), 10.0);
+        let r = w.update(
+            snap("a", "f", 1300.0, 1440.0, PlayState::Playing, 10.0),
+            10.0,
+        );
         assert!(reached_files(&r).is_empty());
         assert!((w.next_wake(10.0).unwrap() - 110.0).abs() < 0.01);
         assert_eq!(reached_files(&w.tick(120.0)), ["f"]);
@@ -376,16 +474,24 @@ mod tests {
         assert_eq!(reached_files(&w.gone("a", 600.0)), ["half"]);
         assert!(matches!(w.gone("a", 600.0).as_slice(), []));
 
-        w.update(snap("a", "early", 0.0, 1000.0, PlayState::Playing, 0.0), 0.0);
+        w.update(
+            snap("a", "early", 0.0, 1000.0, PlayState::Playing, 0.0),
+            0.0,
+        );
         let r = w.gone("a", 400.0);
         assert!(reached_files(&r).is_empty());
         assert!(matches!(r.as_slice(), [Report::Now(None)]));
 
         // A new file in the same player after half of the old one.
         w.update(snap("a", "one", 0.0, 1000.0, PlayState::Playing, 0.0), 0.0);
-        let r = w.update(snap("a", "two", 0.0, 1000.0, PlayState::Playing, 700.0), 700.0);
+        let r = w.update(
+            snap("a", "two", 0.0, 1000.0, PlayState::Playing, 700.0),
+            700.0,
+        );
         assert_eq!(reached_files(&r), ["one"]);
-        assert!(matches!(r.last(), Some(Report::Now(Some(t))) if t.playing.path.as_deref() == Some("two")));
+        assert!(
+            matches!(r.last(), Some(Report::Now(Some(t))) if t.playing.path.as_deref() == Some("two"))
+        );
     }
 
     #[test]
@@ -442,7 +548,9 @@ mod tests {
         assert!((w.next_wake(0.0).unwrap() - 900.0).abs() < 0.01);
         assert!(w.tick(899.0).is_empty());
         // The same file again (the source sends changes only, but it is harmless).
-        assert!(reached_files(&w.update(proc_snap(9, "/v/Show - 05.mkv", 500.0), 500.0)).is_empty());
+        assert!(
+            reached_files(&w.update(proc_snap(9, "/v/Show - 05.mkv", 500.0), 500.0)).is_empty()
+        );
         assert!((w.next_wake(500.0).unwrap() - 400.0).abs() < 0.01);
         assert_eq!(reached_files(&w.tick(900.0)), ["/v/Show - 05.mkv"]);
         assert_eq!(w.next_wake(900.0), None);
@@ -478,17 +586,43 @@ mod tests {
         w.update(proc_snap(9, "/media/anime/Show - 06.mkv", 0.0), 0.0);
         assert_eq!(w.current(0.0).unwrap().playing.key, "proc:9");
         // mpv's IPC shows the same file through a symlinked folder.
-        let r = w.update(snap("mpv:/run/mpv.sock", "/home/u/anime/Show - 06.mkv", 2.0, 1440.0, PlayState::Playing, 3.0), 3.0);
+        let r = w.update(
+            snap(
+                "mpv:/run/mpv.sock",
+                "/home/u/anime/Show - 06.mkv",
+                2.0,
+                1440.0,
+                PlayState::Playing,
+                3.0,
+            ),
+            3.0,
+        );
         assert!(matches!(r.as_slice(), [Report::Now(Some(t))] if t.playing.via == Via::MpvIpc));
         // Only the IPC crossing is due (1152 s of video, from 2 s), the process one is ignored.
         assert!((w.next_wake(3.0).unwrap() - 1150.0).abs() < 0.01);
         // A rescan of the process changes nothing.
-        assert!(w.update(proc_snap(9, "/media/anime/Show - 06.mkv", 8.0), 8.0).is_empty());
+        assert!(
+            w.update(proc_snap(9, "/media/anime/Show - 06.mkv", 8.0), 8.0)
+                .is_empty()
+        );
         // Paused at 40 % for a long time, then mpv quits: no report from either.
-        w.update(snap("mpv:/run/mpv.sock", "/home/u/anime/Show - 06.mkv", 576.0, 1440.0, PlayState::Paused, 600.0), 600.0);
+        w.update(
+            snap(
+                "mpv:/run/mpv.sock",
+                "/home/u/anime/Show - 06.mkv",
+                576.0,
+                1440.0,
+                PlayState::Paused,
+                600.0,
+            ),
+            600.0,
+        );
         assert!(w.tick(5000.0).is_empty());
         assert!(reached_files(&w.gone("mpv:/run/mpv.sock", 5000.0)).is_empty());
-        assert!(w.current(5000.0).is_none(), "the hidden process slot is not followed");
+        assert!(
+            w.current(5000.0).is_none(),
+            "the hidden process slot is not followed"
+        );
         assert!(reached_files(&w.gone("proc:9", 5005.0)).is_empty());
         // Another file in the same process is not hidden.
         w.update(proc_snap(9, "/media/anime/Show - 07.mkv", 5010.0), 5010.0);
@@ -498,10 +632,22 @@ mod tests {
     #[test]
     fn source_states_report_only_changes() {
         let mut w = Watch::new(0.8);
-        let st = SourceStatus { switch: Switch::Vlc, via: Via::Mpris, line: "not running".into(), led: crate::Led::Off };
+        let st = SourceStatus {
+            switch: Switch::Vlc,
+            via: Via::Mpris,
+            line: "not running".into(),
+            led: crate::Led::Off,
+        };
         assert!(w.status(st.clone()).is_some());
         assert!(w.status(st.clone()).is_none());
-        assert!(w.status(SourceStatus { line: "playing".into(), led: crate::Led::Playing, ..st }).is_some());
+        assert!(
+            w.status(SourceStatus {
+                line: "playing".into(),
+                led: crate::Led::Playing,
+                ..st
+            })
+            .is_some()
+        );
         assert_eq!(w.sources().len(), 1);
     }
 }

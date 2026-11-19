@@ -47,7 +47,10 @@ pub struct ClientIdForm {
 
 /// The saved ID's last four characters, for service `id`.
 pub fn saved_hint(id: ServiceId) -> Option<String> {
-    Config::load(&paths::config_file()).ok()?.client_id(id).map(config::client_id_hint)
+    Config::load(&paths::config_file())
+        .ok()?
+        .client_id(id)
+        .map(config::client_id_hint)
 }
 
 /// Checks a pasted ID the way `id`'s IDs look.
@@ -72,7 +75,9 @@ impl State {
         self.client_id.saving = true;
         std::thread::spawn(move || {
             let msg = match config::save_client_id_for(&paths::config_file(), service, &raw) {
-                Ok(id) => Msg::ClientIdSaved(Ok((config::client_id_hint(&id), online::initial_auth()))),
+                Ok(id) => {
+                    Msg::ClientIdSaved(Ok((config::client_id_hint(&id), online::initial_auth())))
+                }
                 Err(e) => Msg::ClientIdSaved(Err(format!("Can't save it: {e}"))),
             };
             h.update_if(move |s, _| s.apply(msg));
@@ -108,7 +113,10 @@ impl State {
         let service = self.service;
         self.client_id.saving = true;
         std::thread::spawn(move || {
-            let msg = Msg::ClientIdCleared(config::clear_client_id(&paths::config_file(), service).map_err(|e| format!("Can't save it: {e}")));
+            let msg = Msg::ClientIdCleared(
+                config::clear_client_id(&paths::config_file(), service)
+                    .map_err(|e| format!("Can't save it: {e}")),
+            );
             h.update_if(move |s, _| s.apply(msg));
         });
     }
@@ -145,7 +153,11 @@ impl State {
 /// The field with its Save button. `key` scopes the parts (Welcome and Settings both have one).
 pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
     let f = &s.client_id;
-    let border = if f.error.is_some() { PAL.status(kotora_core::Status::Dropped).alpha(0.7) } else { PAL.border_strong };
+    let border = if f.error.is_some() {
+        PAL.status(kotora_core::Status::Dropped).alpha(0.7)
+    } else {
+        PAL.border_strong
+    };
     let input = row()
         .key(format!("{key}/box"))
         .role("textbox")
@@ -174,17 +186,46 @@ pub(crate) fn id_field(s: &State, key: &str, wide: f32) -> El {
                     s.save_client_id();
                 }),
         );
-    let save = if f.saving { button(&format!("{key}/save"), "Saving\u{2026}", true, None) } else { button(&format!("{key}/save"), "Save", true, Some(State::save_client_id)) };
+    let save = if f.saving {
+        button(&format!("{key}/save"), "Saving\u{2026}", true, None)
+    } else {
+        button(
+            &format!("{key}/save"),
+            "Save",
+            true,
+            Some(State::save_client_id),
+        )
+    };
     // The box shrinks with its card (up to `wide`), so a narrow window never pushes Save out.
-    let mut c = col().w_full().min_w(0.0).gap(6.0).child(row().w_full().min_w(0.0).gap(8.0).center_y().child(input).child(save));
+    let mut c = col().w_full().min_w(0.0).gap(6.0).child(
+        row()
+            .w_full()
+            .min_w(0.0)
+            .gap(8.0)
+            .center_y()
+            .child(input)
+            .child(save),
+    );
     if let Some(e) = &f.error {
-        c = c.child(text(e.clone()).key(format!("{key}/error")).font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap().max_w(wide + 80.0).min_w(0.0));
+        c = c.child(
+            text(e.clone())
+                .key(format!("{key}/error"))
+                .font(theme::LABEL)
+                .color(PAL.status(kotora_core::Status::Dropped))
+                .wrap()
+                .max_w(wide + 80.0)
+                .min_w(0.0),
+        );
     }
     c
 }
 
 /// Copy: copies on press (`f`), then says "Copied" with a check.
-pub(crate) fn copy_button(key: &str, copied: bool, f: impl Fn(&mut State, &mut Tx) + 'static) -> El {
+pub(crate) fn copy_button(
+    key: &str,
+    copied: bool,
+    f: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
     row()
         .key(key.to_string())
         .role("button")
@@ -203,8 +244,18 @@ pub(crate) fn copy_button(key: &str, copied: bool, f: impl Fn(&mut State, &mut T
             tx.instant();
             f(s, tx);
         })
-        .child(icon(if copied { &icons::CHECK } else { &icons::COPY }, 14.0).color(if copied { PAL.ok() } else { PAL.dim }))
-        .child(text(if copied { "Copied" } else { "Copy" }).font(theme::LABEL_BTN).color(PAL.text))
+        .child(
+            icon(if copied { &icons::CHECK } else { &icons::COPY }, 14.0).color(if copied {
+                PAL.ok()
+            } else {
+                PAL.dim
+            }),
+        )
+        .child(
+            text(if copied { "Copied" } else { "Copy" })
+                .font(theme::LABEL_BTN)
+                .color(PAL.text),
+        )
 }
 
 /// Settings → Account: Kotora's own ID (nothing to set up), or the user's own, masked, with Change
@@ -215,29 +266,84 @@ pub fn settings_row(s: &State) -> El {
         .grow(1.0)
         .min_w(0.0)
         .gap(2.0)
-        .child(text(format!("{} Client ID", s.service.title())).font(theme::BODY_MED).color(PAL.text))
+        .child(
+            text(format!("{} Client ID", s.service.title()))
+                .font(theme::BODY_MED)
+                .color(PAL.text),
+        )
         .child(match &f.hint {
-            None if s.service.built_in_client_id().is_some() => text("Kotora\u{2019}s own: nothing to set up").key("set/cid-built-in").font(theme::LABEL).color(PAL.dim),
-            Some(h) => text(format!("{}{h}", "\u{2022}".repeat(12))).key("set/cid-masked").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim),
-            None => text("Not set: Sign in needs one").font(theme::LABEL).color(PAL.warn()),
+            None if s.service.built_in_client_id().is_some() => {
+                text("Kotora\u{2019}s own: nothing to set up")
+                    .key("set/cid-built-in")
+                    .font(theme::LABEL)
+                    .color(PAL.dim)
+            }
+            Some(h) => text(format!("{}{h}", "\u{2022}".repeat(12)))
+                .key("set/cid-masked")
+                .font(TextStyle::new(12.0, 400.0).mono())
+                .color(PAL.dim),
+            None => text("Not set: Sign in needs one")
+                .font(theme::LABEL)
+                .color(PAL.warn()),
         });
     if !f.editing {
-        let mut r = row().key("set/cid").gap(8.0).py(10.0).center_y().child(head).child(small_button("set/setup-again", "Set up again", false, Some(State::setup_again)));
+        let mut r = row()
+            .key("set/cid")
+            .gap(8.0)
+            .py(10.0)
+            .center_y()
+            .child(head)
+            .child(small_button(
+                "set/setup-again",
+                "Set up again",
+                false,
+                Some(State::setup_again),
+            ));
         if f.hint.is_some() {
             if s.service.built_in_client_id().is_some() {
-                let built_in = if f.saving { small_button("set/cid-built-in-use", "Saving\u{2026}", false, None) } else { small_button("set/cid-built-in-use", "Use Kotora\u{2019}s built-in ID", false, Some(State::use_built_in_client_id)) };
+                let built_in = if f.saving {
+                    small_button("set/cid-built-in-use", "Saving\u{2026}", false, None)
+                } else {
+                    small_button(
+                        "set/cid-built-in-use",
+                        "Use Kotora\u{2019}s built-in ID",
+                        false,
+                        Some(State::use_built_in_client_id),
+                    )
+                };
                 r = r.child(built_in);
             }
-            r = r.child(small_button("set/cid-change", "Change", false, Some(State::edit_client_id)));
+            r = r.child(small_button(
+                "set/cid-change",
+                "Change",
+                false,
+                Some(State::edit_client_id),
+            ));
         } else if s.service.built_in_client_id().is_some() {
             // Advanced: sign-in works without this. For someone with an app of their own.
-            r = r.child(small_button("set/cid-change", "Use my own client ID\u{2026}", false, Some(State::edit_client_id)));
+            r = r.child(small_button(
+                "set/cid-change",
+                "Use my own client ID\u{2026}",
+                false,
+                Some(State::edit_client_id),
+            ));
         } else {
-            r = r.child(small_button("set/cid-change", "Set", true, Some(State::edit_client_id)));
+            r = r.child(small_button(
+                "set/cid-change",
+                "Set",
+                true,
+                Some(State::edit_client_id),
+            ));
         }
         let mut c = col().gap(4.0).child(r);
         if let Some(e) = &f.error {
-            c = c.child(text(e.clone()).key("set/cid/error").font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap());
+            c = c.child(
+                text(e.clone())
+                    .key("set/cid/error")
+                    .font(theme::LABEL)
+                    .color(PAL.status(kotora_core::Status::Dropped))
+                    .wrap(),
+            );
         }
         return c.key("set/cid-wrap");
     }
@@ -245,13 +351,33 @@ pub fn settings_row(s: &State) -> El {
         .key("set/cid")
         .gap(8.0)
         .py(10.0)
-        .child(row().gap(12.0).center_y().child(head).child(spacer()).child(small_button("set/cid-cancel", "Cancel", false, Some(State::cancel_client_id))))
+        .child(
+            row()
+                .gap(12.0)
+                .center_y()
+                .child(head)
+                .child(spacer())
+                .child(small_button(
+                    "set/cid-cancel",
+                    "Cancel",
+                    false,
+                    Some(State::cancel_client_id),
+                )),
+        )
         .child(id_field(s, "set/cid", 300.0));
     let note = match (s.service, s.account.is_some()) {
-        (ServiceId::Mal, true) => "Advanced. A new ID needs a new sign-in: MyAnimeList asks again when the current one runs out.",
-        (ServiceId::Mal, false) => "Advanced. From myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback.",
-        (ServiceId::AniList, true) => "Advanced. Your sign-in keeps working; your own ID is used at the next sign-in.",
-        (ServiceId::AniList, false) => "Advanced. From anilist.co/settings/developer: a client with the redirect URL http://127.0.0.1:47321/callback.",
+        (ServiceId::Mal, true) => {
+            "Advanced. A new ID needs a new sign-in: MyAnimeList asks again when the current one runs out."
+        }
+        (ServiceId::Mal, false) => {
+            "Advanced. From myanimelist.net/apiconfig: app type \u{201c}other\u{201d}, redirect URL http://127.0.0.1:47321/callback."
+        }
+        (ServiceId::AniList, true) => {
+            "Advanced. Your sign-in keeps working; your own ID is used at the next sign-in."
+        }
+        (ServiceId::AniList, false) => {
+            "Advanced. From anilist.co/settings/developer: a client with the redirect URL http://127.0.0.1:47321/callback."
+        }
     };
     c = c.child(text(note).font(theme::LABEL).color(PAL.faint).wrap());
     c
@@ -260,7 +386,11 @@ pub fn settings_row(s: &State) -> El {
 /// AniList: the field for a token pasted from AniList's page, with its Use button.
 pub(crate) fn token_field(s: &State, key: &str) -> El {
     let f = &s.client_id;
-    let border = if f.token_error.is_some() { PAL.status(kotora_core::Status::Dropped).alpha(0.7) } else { PAL.border_strong };
+    let border = if f.token_error.is_some() {
+        PAL.status(kotora_core::Status::Dropped).alpha(0.7)
+    } else {
+        PAL.border_strong
+    };
     let input = row()
         .key(format!("{key}/box"))
         .role("textbox")
@@ -279,7 +409,10 @@ pub(crate) fn token_field(s: &State, key: &str) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(field_hint(&f.token, "Paste the token from AniList\u{2019}s page"), PAL.faint)
+                .placeholder(
+                    field_hint(&f.token, "Paste the token from AniList\u{2019}s page"),
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.client_id.token)
                 .on_input_key(crate::ui::field_page_key)
                 .on_input_change(|s: &mut State, _tx: &mut Tx| s.client_id.token_error = None)
@@ -288,13 +421,29 @@ pub(crate) fn token_field(s: &State, key: &str) -> El {
                     online::sign_in_with_token(s);
                 }),
         );
-    let mut c = col()
-        .w_full()
-        .min_w(0.0)
-        .gap(6.0)
-        .child(row().w_full().min_w(0.0).gap(8.0).center_y().child(input).child(button(&format!("{key}/use"), "Use token", false, Some(online::sign_in_with_token))));
+    let mut c = col().w_full().min_w(0.0).gap(6.0).child(
+        row()
+            .w_full()
+            .min_w(0.0)
+            .gap(8.0)
+            .center_y()
+            .child(input)
+            .child(button(
+                &format!("{key}/use"),
+                "Use token",
+                false,
+                Some(online::sign_in_with_token),
+            )),
+    );
     if let Some(e) = &f.token_error {
-        c = c.child(text(e.clone()).key(format!("{key}/error")).font(theme::LABEL).color(PAL.status(kotora_core::Status::Dropped)).wrap().min_w(0.0));
+        c = c.child(
+            text(e.clone())
+                .key(format!("{key}/error"))
+                .font(theme::LABEL)
+                .color(PAL.status(kotora_core::Status::Dropped))
+                .wrap()
+                .min_w(0.0),
+        );
     }
     c
 }
@@ -309,8 +458,15 @@ mod tests {
         s.auth = Auth::NoClientId;
         s.client_id.draft.replace_text("my secret");
         s.save_client_id();
-        assert!(s.client_id.error.as_deref().is_some_and(|e| e.contains("no spaces")));
-        s.client_id.draft.replace_text("0123456789abcdef0123456789abcdef");
+        assert!(
+            s.client_id
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("no spaces"))
+        );
+        s.client_id
+            .draft
+            .replace_text("0123456789abcdef0123456789abcdef");
         s.save_client_id();
         assert_eq!(s.client_id.error, None);
         // The writer answers (no handle in tests: the answer comes by hand).

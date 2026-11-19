@@ -13,7 +13,11 @@ pub struct Limiter {
 
 impl Limiter {
     pub fn new(per_minute: usize, min_gap: Duration) -> Self {
-        Limiter { per_minute: per_minute.max(1), min_gap, sent: VecDeque::new() }
+        Limiter {
+            per_minute: per_minute.max(1),
+            min_gap,
+            sent: VecDeque::new(),
+        }
     }
 
     /// MAL's budget.
@@ -80,7 +84,10 @@ mod tests {
             times.push(now);
         }
         for w in times.windows(21) {
-            assert!(w[20] - w[0] >= Duration::from_secs(60), "21 requests inside a minute");
+            assert!(
+                w[20] - w[0] >= Duration::from_secs(60),
+                "21 requests inside a minute"
+            );
         }
         for w in times.windows(2) {
             assert!(w[1] - w[0] >= Duration::from_secs(1));

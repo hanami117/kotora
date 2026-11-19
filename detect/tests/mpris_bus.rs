@@ -43,8 +43,17 @@ impl Player {
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
         let mut m = HashMap::new();
-        m.insert("xesam:url".into(), OwnedValue::try_from(Value::new("file:///v/Starfall%20Delivery%20Service%20S2%20-%2003.mkv")).unwrap());
-        m.insert("mpris:length".into(), OwnedValue::try_from(Value::new(1_400_000_000i64)).unwrap());
+        m.insert(
+            "xesam:url".into(),
+            OwnedValue::try_from(Value::new(
+                "file:///v/Starfall%20Delivery%20Service%20S2%20-%2003.mkv",
+            ))
+            .unwrap(),
+        );
+        m.insert(
+            "mpris:length".into(),
+            OwnedValue::try_from(Value::new(1_400_000_000i64)).unwrap(),
+        );
         m
     }
 }
@@ -70,7 +79,10 @@ fn a_fake_player_comes_and_goes() {
         .build()
         .unwrap();
     let p = loop {
-        match rx.recv_timeout(Duration::from_secs(10)).expect("an update from the fake player") {
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("an update from the fake player")
+        {
             Input::Update(p) => break p,
             _ => continue,
         }
@@ -78,11 +90,20 @@ fn a_fake_player_comes_and_goes() {
     assert_eq!(p.key, "mpris:org.mpris.MediaPlayer2.fakeplayer");
     assert_eq!(p.player, "Fake Player");
     assert_eq!(p.switch, Switch::OtherMpris);
-    assert_eq!(p.path.as_deref(), Some("/v/Starfall Delivery Service S2 - 03.mkv"));
-    assert_eq!((p.state, p.position, p.duration), (PlayState::Playing, Some(300.0), Some(1400.0)));
+    assert_eq!(
+        p.path.as_deref(),
+        Some("/v/Starfall Delivery Service S2 - 03.mkv")
+    );
+    assert_eq!(
+        (p.state, p.position, p.duration),
+        (PlayState::Playing, Some(300.0), Some(1400.0))
+    );
     drop(player);
     let gone = loop {
-        match rx.recv_timeout(Duration::from_secs(10)).expect("the player leaves") {
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the player leaves")
+        {
             Input::Gone(k) => break k,
             _ => continue,
         }

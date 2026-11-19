@@ -15,29 +15,29 @@ mod account;
 mod airing;
 mod airnotes;
 mod art;
-mod chrome;
 mod autostart;
+mod chrome;
 mod clientid;
 mod crashlog;
 mod ctl;
 mod ctxmenu;
-mod detect;
 mod details;
+mod detect;
 mod discord;
+mod feeds;
 mod grid;
 mod home;
 mod icons;
+#[cfg(target_os = "macos")]
+mod iina;
 mod intro;
 mod kanji;
 mod library;
-mod manga;
-mod mgrid;
-mod volfill;
 mod look;
-#[cfg(target_os = "macos")]
-mod iina;
+mod manga;
 #[cfg(target_os = "macos")]
 mod menu_bar;
+mod mgrid;
 mod mirror;
 mod model;
 mod notes;
@@ -55,15 +55,15 @@ mod scores;
 mod search;
 mod settings;
 mod setup;
+mod startup;
+mod stats;
 mod theme;
+mod torrents;
 mod transfer;
 mod tray;
 mod ui;
-mod startup;
-mod feeds;
-mod torrents;
-mod stats;
 mod update;
+mod volfill;
 #[cfg(windows)]
 mod win;
 mod winsetup;
@@ -160,13 +160,16 @@ fn paint_window_bg(handle: &rune::WindowHandle) {
     let bg = theme::PAL.bg;
     let [r, g, b] = [bg.r, bg.g, bg.b].map(|c| f64::from(rune::color::srgb_encode(c)));
     let _ = handle.with_raw_handle(|h| {
-        let RawWindowHandle::AppKit(h) = h.as_raw() else { return };
+        let RawWindowHandle::AppKit(h) = h.as_raw() else {
+            return;
+        };
         // SAFETY: on the UI (main) thread, with the view alive for the callback.
         unsafe {
             let view = h.ns_view.as_ptr().cast::<AnyObject>();
             let window: Option<Retained<AnyObject>> = msg_send![view, window];
             let Some(window) = window else { return };
-            let color: Retained<AnyObject> = msg_send![class!(NSColor), colorWithSRGBRed: r, green: g, blue: b, alpha: 1.0f64];
+            let color: Retained<AnyObject> =
+                msg_send![class!(NSColor), colorWithSRGBRed: r, green: g, blue: b, alpha: 1.0f64];
             let _: () = msg_send![&*window, setBackgroundColor: &*color];
         }
     });
@@ -181,10 +184,26 @@ fn log_first_frame() -> impl FnMut(&rune::FrameEncoded) + 'static {
             return;
         }
         done = true;
-        let Some(path) = std::env::var_os("KOTORA_FRAME_LOG").filter(|p| !p.is_empty()) else { return };
-        let ms = START.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "first frame {ms:.1} ms after start{}", if rune::is_headless() { " (headless)" } else { "" });
+        let Some(path) = std::env::var_os("KOTORA_FRAME_LOG").filter(|p| !p.is_empty()) else {
+            return;
+        };
+        let ms = START
+            .get()
+            .map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(
+                f,
+                "first frame {ms:.1} ms after start{}",
+                if rune::is_headless() {
+                    " (headless)"
+                } else {
+                    ""
+                }
+            );
         }
     }
 }
@@ -193,7 +212,10 @@ fn main() {
     START.get_or_init(Instant::now);
     #[cfg(windows)]
     win::attach_output();
-    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
         println!("kotora {}", kotora_ctl::version_line());
         return;
     }
@@ -206,7 +228,11 @@ fn main() {
     // The window opens at `winsize::DEFAULT` cut to the screen; headless keeps 1280×800 (every
     // snap and script is made for it, and `--size` overrides it).
     let min_size = (960.0, 600.0);
-    let size = if rune::is_headless() { (1280.0, 800.0) } else { winsize::initial(min_size) };
+    let size = if rune::is_headless() {
+        (1280.0, 800.0)
+    } else {
+        winsize::initial(min_size)
+    };
     let spec = AppSpec::<State> {
         scenes: scenes::SCENES,
         setup: Some(setup),
@@ -215,13 +241,19 @@ fn main() {
         min_size: Some(min_size),
         ..AppSpec::new("Kotora \u{5c0f}\u{864e}", size, State::fake, ui::view)
     };
-    let app = App::new(spec).tab_visits_controls(true).on_frame_encoded(log_first_frame());
+    let app = App::new(spec)
+        .tab_visits_controls(true)
+        .on_frame_encoded(log_first_frame());
     // macOS: the traffic lights pinned in a band at the sidebar's top (`theme::TRAFFIC_LIGHTS`),
     // clear of the logo, and the menu bar: Rune's standard Edit and Window menus plus Kotora's
     // own items (`menu_bar.rs`). Linux keeps the desktop's frame and is not touched.
     #[cfg(target_os = "macos")]
     let app = menu_bar::install(
-        app.chrome(rune::Chrome { traffic_lights: Some(theme::TRAFFIC_LIGHTS), ..rune::Chrome::DEFAULT }).standard_menus(),
+        app.chrome(rune::Chrome {
+            traffic_lights: Some(theme::TRAFFIC_LIGHTS),
+            ..rune::Chrome::DEFAULT
+        })
+        .standard_menus(),
     );
 
     // Headless (`--snap`, `--tree`, `--script`): no socket, no single-instance check, nothing
@@ -238,7 +270,10 @@ fn main() {
     // scratch KOTORA_CTL_SOCKET and XDG_* dirs, and KOTORA_OFFLINE=1).
     let test_instance = std::env::var_os("KOTORA_TEST_INSTANCE").is_some_and(|v| !v.is_empty());
     if !test_instance && ctl::other_copy_running(!hidden) {
-        eprintln!("kotora: already running{}", if hidden { "" } else { "; showed its window" });
+        eprintln!(
+            "kotora: already running{}",
+            if hidden { "" } else { "; showed its window" }
+        );
         return;
     }
     // macOS start at login in the background: a login item gets no `--hidden`, so with both
@@ -248,7 +283,10 @@ fn main() {
     #[cfg(target_os = "macos")]
     let login_check = !hidden
         && !test_instance
-        && kotora_core::config::Config::load(&kotora_core::paths::config_file()).unwrap_or_default().startup.background
+        && kotora_core::config::Config::load(&kotora_core::paths::config_file())
+            .unwrap_or_default()
+            .startup
+            .background
         && autostart::read().on;
     #[cfg(not(target_os = "macos"))]
     let login_check = false;
@@ -281,7 +319,14 @@ fn main() {
     if login_check {
         let h = handle.clone();
         autostart::watch_launch(move |at_login| {
-            eprintln!("kotora: {}", if at_login { "started at login, in the background" } else { "not a login start: opening the window" });
+            eprintln!(
+                "kotora: {}",
+                if at_login {
+                    "started at login, in the background"
+                } else {
+                    "not a login start: opening the window"
+                }
+            );
             h.update(move |s: &mut State, _| s.login_launch(at_login));
         });
     }
@@ -292,14 +337,20 @@ fn main() {
         s.client_id.hint = clientid::saved_hint(service);
         s.setup_service = s.auth == model::Auth::NoClientId && online::wants_service_choice();
         s.setup = s.setup_first();
-        s.covers.go_live(handle.clone(), !kotora_core::paths::offline_forced());
+        s.covers
+            .go_live(handle.clone(), !kotora_core::paths::offline_forced());
         // Desktop notifications, with buttons where the system has them (`notes/`).
         s.notes = notes::Notifier::start(handle.clone());
         s.handle = Some(handle);
         s.window = !windowless;
         // The startup intro: a cold start that opens a window (a macOS launch checked for a
         // login start keeps it until that is known: `State::login_launch`).
-        s.intro = intro::at_launch(intro::Launch { enabled: s.prefs.intro, hidden, test_instance, headless: false });
+        s.intro = intro::at_launch(intro::Launch {
+            enabled: s.prefs.intro,
+            hidden,
+            test_instance,
+            headless: false,
+        });
         // The tray or menu bar icon (UI thread: AppKit needs the main thread on macOS).
         s.start_tray();
         // The saved list first, then a sync when signed in (workers, off the UI thread).
@@ -318,14 +369,16 @@ fn main() {
         #[cfg(target_os = "macos")]
         if !test_instance && let Some(h) = &s.handle {
             let h = h.clone();
-            let _ = std::thread::Builder::new().name("kotora-login-migrate".into()).spawn(move || {
-                if let Some(login) = autostart::migrate_old_entry() {
-                    h.update_if(move |s: &mut State, _| {
-                        s.prefs.login = login;
-                        true
-                    });
-                }
-            });
+            let _ = std::thread::Builder::new()
+                .name("kotora-login-migrate".into())
+                .spawn(move || {
+                    if let Some(login) = autostart::migrate_old_entry() {
+                        h.update_if(move |s: &mut State, _| {
+                            s.prefs.login = login;
+                            true
+                        });
+                    }
+                });
         }
         // The daily update check (after the settings are read; `update.rs`).
         s.start_updates();

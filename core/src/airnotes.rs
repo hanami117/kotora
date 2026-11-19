@@ -56,14 +56,21 @@ pub struct Due {
 
 /// A Plan to watch show that started airing since it was last seen not aired yet.
 pub fn started(it: &ListItem, seen: Option<&str>) -> bool {
-    it.status == Status::PlanToWatch && it.media.air_status == "currently_airing" && seen == Some("not_yet_aired")
+    it.status == Status::PlanToWatch
+        && it.media.air_status == "currently_airing"
+        && seen == Some("not_yet_aired")
 }
 
 /// The episode of a Watching show that came out (by the estimate) in the last [`RECENT`]
 /// seconds, when it is past the progress. The timetable moves forward with the progress, as
 /// on the Airing page.
 pub fn new_episode(it: &ListItem, now: i64) -> Option<u32> {
-    if it.status != Status::Watching || !matches!(it.media.air_status.as_str(), "currently_airing" | "not_yet_aired") {
+    if it.status != Status::Watching
+        || !matches!(
+            it.media.air_status.as_str(),
+            "currently_airing" | "not_yet_aired"
+        )
+    {
         return None;
     }
     let tt = Timetable::of_media(&it.media)?.with_progress(it.progress, now);
@@ -78,8 +85,12 @@ pub fn new_episode(it: &ListItem, now: i64) -> Option<u32> {
 impl Store {
     /// The airing status last looked at, per anime.
     pub fn air_seen(&self, service: &str) -> Result<HashMap<u32, String>> {
-        let mut st = self.conn.prepare("SELECT media_id, air_status FROM air_seen WHERE service = ?1")?;
-        let rows = st.query_map([service], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, String>(1)?)))?;
+        let mut st = self
+            .conn
+            .prepare("SELECT media_id, air_status FROM air_seen WHERE service = ?1")?;
+        let rows = st.query_map([service], |r| {
+            Ok((r.get::<_, u32>(0)?, r.get::<_, String>(1)?))
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
@@ -88,15 +99,27 @@ impl Store {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM air_seen WHERE service = ?1", [service])?;
         for it in items {
-            tx.execute("INSERT INTO air_seen (service, media_id, air_status) VALUES (?1, ?2, ?3)", params![service, it.media.id, it.media.air_status])?;
+            tx.execute(
+                "INSERT INTO air_seen (service, media_id, air_status) VALUES (?1, ?2, ?3)",
+                params![service, it.media.id, it.media.air_status],
+            )?;
         }
         tx.commit()?;
         Ok(())
     }
 
     /// Marks `what` announced; false when it already was.
-    pub fn announce_once(&self, service: &str, media_id: u32, what: What, now: i64) -> Result<bool> {
-        let n = self.conn.execute("INSERT OR IGNORE INTO announced (service, media_id, what, at) VALUES (?1, ?2, ?3, ?4)", params![service, media_id, what.key(), now])?;
+    pub fn announce_once(
+        &self,
+        service: &str,
+        media_id: u32,
+        what: What,
+        now: i64,
+    ) -> Result<bool> {
+        let n = self.conn.execute(
+            "INSERT OR IGNORE INTO announced (service, media_id, what, at) VALUES (?1, ?2, ?3, ?4)",
+            params![service, media_id, what.key(), now],
+        )?;
         Ok(n == 1)
     }
 }
@@ -118,12 +141,18 @@ pub fn pass(store: &mut Store, service: &str, now: i64) -> Result<Vec<Due>> {
         }
         for w in what {
             if store.announce_once(service, id, w, now)? {
-                due.push(Due { media_id: id, what: w });
+                due.push(Due {
+                    media_id: id,
+                    what: w,
+                });
             }
         }
     }
     store.set_air_seen(service, &items)?;
-    store.conn.execute("DELETE FROM announced WHERE service = ?1 AND at < ?2", params![service, now - KEEP])?;
+    store.conn.execute(
+        "DELETE FROM announced WHERE service = ?1 AND at < ?2",
+        params![service, now - KEEP],
+    )?;
     Ok(due)
 }
 
@@ -147,7 +176,8 @@ mod tests {
 
     #[test]
     fn the_estimate_matches_the_airing_page() {
-        let tt = Timetable::of_media(&airing(1, Status::Watching, 0, "currently_airing").media).unwrap();
+        let tt =
+            Timetable::of_media(&airing(1, Status::Watching, 0, "currently_airing").media).unwrap();
         assert_eq!(tt.time_of(1), Some(EP1));
     }
 
@@ -159,7 +189,11 @@ mod tests {
         assert_eq!(new_episode(&it, ep6 - 60), None, "not yet");
         assert_eq!(new_episode(&it, ep6), Some(6));
         assert_eq!(new_episode(&it, ep6 + RECENT - 1), Some(6));
-        assert_eq!(new_episode(&it, ep6 + RECENT), None, "too long ago: no old news");
+        assert_eq!(
+            new_episode(&it, ep6 + RECENT),
+            None,
+            "too long ago: no old news"
+        );
         // A week behind: only the newest episode, when it comes out.
         assert_eq!(new_episode(&it, ep6 + crate::airing::WEEK + H), Some(7));
     }
@@ -167,24 +201,50 @@ mod tests {
     #[test]
     fn never_for_an_episode_already_watched() {
         let ep6 = EP1 + 5 * crate::airing::WEEK;
-        assert_eq!(new_episode(&airing(1, Status::Watching, 6, "currently_airing"), ep6 + H), None);
+        assert_eq!(
+            new_episode(&airing(1, Status::Watching, 6, "currently_airing"), ep6 + H),
+            None
+        );
         // Progress past the estimate: nothing until an episode past the progress is due.
         let ahead = airing(1, Status::Watching, 7, "currently_airing");
         assert_eq!(new_episode(&ahead, ep6 + H), None);
-        assert_eq!(new_episode(&ahead, ep6 + crate::airing::WEEK + H), None, "7 is watched");
-        assert_eq!(new_episode(&ahead, ep6 + 2 * crate::airing::WEEK + H), Some(8));
+        assert_eq!(
+            new_episode(&ahead, ep6 + crate::airing::WEEK + H),
+            None,
+            "7 is watched"
+        );
+        assert_eq!(
+            new_episode(&ahead, ep6 + 2 * crate::airing::WEEK + H),
+            Some(8)
+        );
     }
 
     #[test]
     fn only_watching_shows_that_air_get_episodes() {
         let ep6 = EP1 + 5 * crate::airing::WEEK + H;
-        for st in [Status::PlanToWatch, Status::Completed, Status::OnHold, Status::Dropped] {
-            assert_eq!(new_episode(&airing(1, st, 5, "currently_airing"), ep6), None, "{st:?}");
+        for st in [
+            Status::PlanToWatch,
+            Status::Completed,
+            Status::OnHold,
+            Status::Dropped,
+        ] {
+            assert_eq!(
+                new_episode(&airing(1, st, 5, "currently_airing"), ep6),
+                None,
+                "{st:?}"
+            );
         }
-        assert_eq!(new_episode(&airing(1, Status::Watching, 5, "finished_airing"), ep6), None);
+        assert_eq!(
+            new_episode(&airing(1, Status::Watching, 5, "finished_airing"), ep6),
+            None
+        );
         let mut no_slot = airing(1, Status::Watching, 5, "currently_airing");
         no_slot.media.broadcast = Broadcast::parse("saturday", None);
-        assert_eq!(new_episode(&no_slot, ep6), None, "no slot time, no estimate");
+        assert_eq!(
+            new_episode(&no_slot, ep6),
+            None,
+            "no slot time, no estimate"
+        );
         // Past the count: nothing.
         let mut short = airing(1, Status::Watching, 5, "currently_airing");
         short.media.episodes = Some(5);
@@ -197,8 +257,14 @@ mod tests {
         assert!(started(&ptw, Some("not_yet_aired")));
         assert!(!started(&ptw, None), "first look: nothing to compare");
         assert!(!started(&ptw, Some("currently_airing")));
-        assert!(!started(&airing(1, Status::Watching, 0, "currently_airing"), Some("not_yet_aired")));
-        assert!(!started(&airing(1, Status::PlanToWatch, 0, "not_yet_aired"), Some("not_yet_aired")));
+        assert!(!started(
+            &airing(1, Status::Watching, 0, "currently_airing"),
+            Some("not_yet_aired")
+        ));
+        assert!(!started(
+            &airing(1, Status::PlanToWatch, 0, "not_yet_aired"),
+            Some("not_yet_aired")
+        ));
     }
 
     #[test]
@@ -209,20 +275,62 @@ mod tests {
         let ep6 = EP1 + 5 * crate::airing::WEEK + H;
         {
             let mut s = Store::open(&path).unwrap();
-            s.replace_list("mal", &[airing(1, Status::PlanToWatch, 0, "not_yet_aired"), airing(2, Status::Watching, 5, "currently_airing")], 1).unwrap();
-            assert_eq!(pass(&mut s, "mal", ep6).unwrap(), [Due { media_id: 2, what: What::Episode(6) }]);
+            s.replace_list(
+                "mal",
+                &[
+                    airing(1, Status::PlanToWatch, 0, "not_yet_aired"),
+                    airing(2, Status::Watching, 5, "currently_airing"),
+                ],
+                1,
+            )
+            .unwrap();
+            assert_eq!(
+                pass(&mut s, "mal", ep6).unwrap(),
+                [Due {
+                    media_id: 2,
+                    what: What::Episode(6)
+                }]
+            );
             assert_eq!(pass(&mut s, "mal", ep6 + 60).unwrap(), [], "once");
             // The sync says it started airing: announced once.
-            s.replace_list("mal", &[airing(1, Status::PlanToWatch, 0, "currently_airing"), airing(2, Status::Watching, 5, "currently_airing")], 2).unwrap();
-            assert_eq!(pass(&mut s, "mal", ep6 + 120).unwrap(), [Due { media_id: 1, what: What::Started }]);
+            s.replace_list(
+                "mal",
+                &[
+                    airing(1, Status::PlanToWatch, 0, "currently_airing"),
+                    airing(2, Status::Watching, 5, "currently_airing"),
+                ],
+                2,
+            )
+            .unwrap();
+            assert_eq!(
+                pass(&mut s, "mal", ep6 + 120).unwrap(),
+                [Due {
+                    media_id: 1,
+                    what: What::Started
+                }]
+            );
             assert_eq!(pass(&mut s, "mal", ep6 + 180).unwrap(), []);
         }
         let mut s = Store::open(&path).unwrap();
-        assert_eq!(pass(&mut s, "mal", ep6 + 240).unwrap(), [], "not again after a restart");
+        assert_eq!(
+            pass(&mut s, "mal", ep6 + 240).unwrap(),
+            [],
+            "not again after a restart"
+        );
         // Back to not aired and airing again (MAL flips): still never again.
-        s.replace_list("mal", &[airing(1, Status::PlanToWatch, 0, "not_yet_aired")], 3).unwrap();
+        s.replace_list(
+            "mal",
+            &[airing(1, Status::PlanToWatch, 0, "not_yet_aired")],
+            3,
+        )
+        .unwrap();
         pass(&mut s, "mal", ep6 + 300).unwrap();
-        s.replace_list("mal", &[airing(1, Status::PlanToWatch, 0, "currently_airing")], 4).unwrap();
+        s.replace_list(
+            "mal",
+            &[airing(1, Status::PlanToWatch, 0, "currently_airing")],
+            4,
+        )
+        .unwrap();
         assert_eq!(pass(&mut s, "mal", ep6 + 360).unwrap(), []);
         // Sign out forgets it all.
         s.clear_service("mal").unwrap();
@@ -234,8 +342,16 @@ mod tests {
     #[test]
     fn the_first_look_announces_no_start() {
         let mut s = Store::open_memory().unwrap();
-        s.replace_list("mal", &[airing(1, Status::PlanToWatch, 0, "currently_airing")], 1).unwrap();
+        s.replace_list(
+            "mal",
+            &[airing(1, Status::PlanToWatch, 0, "currently_airing")],
+            1,
+        )
+        .unwrap();
         assert_eq!(pass(&mut s, "mal", EP1 + H).unwrap(), []);
-        assert_eq!(s.air_seen("mal").unwrap().get(&1).map(String::as_str), Some("currently_airing"));
+        assert_eq!(
+            s.air_seen("mal").unwrap().get(&1).map(String::as_str),
+            Some("currently_airing")
+        );
     }
 }

@@ -40,23 +40,36 @@ fn live(led: Led) -> bool {
 impl State {
     /// MPC-HC or MPC-BE is seen by its window only: its web interface doesn't answer.
     pub fn mpc_seen_by_window(&self) -> bool {
-        self.prefs.players.mpc && self.players.iter().any(|p| p.switch == Switch::Mpc && p.via == VIA_PROCESS && live(p.led)) && !self.mpc_web_live()
+        self.prefs.players.mpc
+            && self
+                .players
+                .iter()
+                .any(|p| p.switch == Switch::Mpc && p.via == VIA_PROCESS && live(p.led))
+            && !self.mpc_web_live()
     }
 
     fn mpc_web_live(&self) -> bool {
-        self.players.iter().any(|p| p.switch == Switch::Mpc && p.via == VIA_WEB && live(p.led))
+        self.players
+            .iter()
+            .any(|p| p.switch == Switch::Mpc && p.via == VIA_WEB && live(p.led))
     }
 
     /// Turn on MPC's web interface (on a short thread; nothing headless).
     pub fn enable_mpc_web(&mut self) {
         #[cfg(windows)]
-        if let (false, Some(h), false) = (self.winsetup.mpc_busy, self.handle.clone(), rune::is_headless()) {
+        if let (false, Some(h), false) = (
+            self.winsetup.mpc_busy,
+            self.handle.clone(),
+            rune::is_headless(),
+        ) {
             let detector = self.glue.as_ref().map(|g| g.detector());
             self.winsetup.mpc_busy = true;
-            let _ = std::thread::Builder::new().name("kotora-mpc-web".into()).spawn(move || {
-                let r = turn_on_mpc_web(detector.as_deref());
-                h.update_if(move |s, _| s.mpc_web_answer(r));
-            });
+            let _ = std::thread::Builder::new()
+                .name("kotora-mpc-web".into())
+                .spawn(move || {
+                    let r = turn_on_mpc_web(detector.as_deref());
+                    h.update_if(move |s, _| s.mpc_web_answer(r));
+                });
         }
     }
 
@@ -75,7 +88,12 @@ impl State {
         self.winsetup.vlc_draft = TextEdit::default();
         self.winsetup.vlc_saved = true;
         self.prefs.vlc_set_up = true;
-        crate::detect::save_setting(self, "vlc", "password", kotora_core::config::quote(&password));
+        crate::detect::save_setting(
+            self,
+            "vlc",
+            "password",
+            kotora_core::config::quote(&password),
+        );
     }
 }
 
@@ -85,18 +103,32 @@ impl State {
 fn turn_on_mpc_web(detector: Option<&kotora_detect::Detector>) -> Result<String, String> {
     use kotora_core::{config, paths};
     use kotora_detect::mpc::reg;
-    if let Some(p) = kotora_detect::winproc::players().iter().find(|p| p.family.is_mpc()) {
+    if let Some(p) = kotora_detect::winproc::players()
+        .iter()
+        .find(|p| p.family.is_mpc())
+    {
         return Err(close_first(p.kind.player));
     }
     let mut done: Vec<(&str, u16)> = Vec::new();
     for place in [reg::MPC_HC, reg::MPC_BE] {
         match reg::enable(&place) {
-            Ok(Some(web)) => done.push((place.player, web.port.unwrap_or(kotora_detect::mpc::PORT))),
+            Ok(Some(web)) => {
+                done.push((place.player, web.port.unwrap_or(kotora_detect::mpc::PORT)))
+            }
             Ok(None) => {}
-            Err(e) => return Err(format!("Can\u{2019}t change {}\u{2019}s settings: {e}. {BY_HAND}", place.player)),
+            Err(e) => {
+                return Err(format!(
+                    "Can\u{2019}t change {}\u{2019}s settings: {e}. {BY_HAND}",
+                    place.player
+                ));
+            }
         }
     }
-    let Some((_, port)) = done.first().copied() else { return Err(format!("No MPC-HC or MPC-BE settings were found in the registry (a portable copy keeps them in an .ini file). {BY_HAND}")) };
+    let Some((_, port)) = done.first().copied() else {
+        return Err(format!(
+            "No MPC-HC or MPC-BE settings were found in the registry (a portable copy keeps them in an .ini file). {BY_HAND}"
+        ));
+    };
     // The port the player listens on, when the user changed it there.
     let c = config::Config::load(&paths::config_file()).unwrap_or_default();
     if c.mpc.port != port
@@ -106,7 +138,10 @@ fn turn_on_mpc_web(detector: Option<&kotora_detect::Detector>) -> Result<String,
     {
         d.set(crate::detect::settings(&c));
     }
-    Ok(turned_on(&done.iter().map(|(p, _)| *p).collect::<Vec<_>>(), port))
+    Ok(turned_on(
+        &done.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+        port,
+    ))
 }
 
 /// How to turn the web interface on in the player itself.
@@ -115,12 +150,17 @@ const BY_HAND: &str = "In the player: View \u{2192} Options \u{2192} Player \u{2
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn close_first(player: &str) -> String {
-    format!("Close {player} first, then click Turn on again: it saves its settings when it closes, which would undo the change.")
+    format!(
+        "Close {player} first, then click Turn on again: it saves its settings when it closes, which would undo the change."
+    )
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn turned_on(players: &[&str], port: u16) -> String {
-    format!("The web interface of {} is on from its next start (port {port}, this computer only). Open a video and Kotora shows the position.", players.join(" and "))
+    format!(
+        "The web interface of {} is on from its next start (port {port}, this computer only). Open a video and Kotora shows the position.",
+        players.join(" and ")
+    )
 }
 
 /// Settings → Players, under MPC-HC / MPC-BE: what the web interface adds, with Turn on, and
@@ -156,7 +196,15 @@ pub fn mpc_hint(s: &State) -> Option<El> {
         .radius(theme::R_MD)
         .fill(tint.alpha(0.08))
         .border(1.0, tint.alpha(0.25))
-        .child(text(line).key("set/mpc-web/text").font(theme::LABEL).color(PAL.dim).wrap().grow(1.0).min_w(0.0));
+        .child(
+            text(line)
+                .key("set/mpc-web/text")
+                .font(theme::LABEL)
+                .color(PAL.dim)
+                .wrap()
+                .grow(1.0)
+                .min_w(0.0),
+        );
     if let Some(a) = action {
         r = r.child(a);
     }
@@ -166,7 +214,11 @@ pub fn mpc_hint(s: &State) -> Option<El> {
 /// Settings → VLC web interface: the password field with Save.
 pub fn vlc_field(s: &State) -> El {
     let w = &s.winsetup;
-    let hint = if s.prefs.vlc_set_up { "Saved. Type a new one to change it" } else { "The Lua HTTP password you set in VLC" };
+    let hint = if s.prefs.vlc_set_up {
+        "Saved. Type a new one to change it"
+    } else {
+        "The Lua HTTP password you set in VLC"
+    };
     let input = row()
         .key("set/vlc-password/box")
         .role("textbox")
@@ -186,7 +238,14 @@ pub fn vlc_field(s: &State) -> El {
                 .min_w(0.0)
                 .single_line()
                 .color(PAL.text)
-                .placeholder(if w.vlc_draft.text.is_empty() { hint } else { "" }, PAL.faint)
+                .placeholder(
+                    if w.vlc_draft.text.is_empty() {
+                        hint
+                    } else {
+                        ""
+                    },
+                    PAL.faint,
+                )
                 .on_edit(|s: &mut State| &mut s.winsetup.vlc_draft)
                 .on_input_key(crate::ui::field_page_key)
                 .on_submit(|s: &mut State, tx: &mut Tx| {
@@ -194,8 +253,22 @@ pub fn vlc_field(s: &State) -> El {
                     s.save_vlc_password();
                 }),
         );
-    let save = if w.vlc_draft.text.trim().is_empty() { small_button("set/vlc-password/save", "Save", false, None) } else { small_button("set/vlc-password/save", "Save", true, Some(State::save_vlc_password)) };
-    row().key("set/vlc-password").gap(8.0).center_y().child(input).child(save.h(32.0))
+    let save = if w.vlc_draft.text.trim().is_empty() {
+        small_button("set/vlc-password/save", "Save", false, None)
+    } else {
+        small_button(
+            "set/vlc-password/save",
+            "Save",
+            true,
+            Some(State::save_vlc_password),
+        )
+    };
+    row()
+        .key("set/vlc-password")
+        .gap(8.0)
+        .center_y()
+        .child(input)
+        .child(save.h(32.0))
 }
 
 #[cfg(test)]
@@ -204,7 +277,12 @@ mod tests {
     use crate::precise::PlayerState;
 
     fn mpc(via: &'static str, led: Led) -> PlayerState {
-        PlayerState { switch: Switch::Mpc, via, line: "x".into(), led }
+        PlayerState {
+            switch: Switch::Mpc,
+            via,
+            line: "x".into(),
+            led,
+        }
     }
 
     #[test]
@@ -240,14 +318,25 @@ mod tests {
         n.switch = Switch::Mpv;
         let rule = crate::ui::no_position_rule(&s, &n, true);
         assert!(rule.starts_with("mpv.net shows this file"), "{rule}");
-        assert!(rule.contains("open for 20 minutes") && rule.contains("always asks first") && rule.ends_with("turn on precise detection (Settings \u{2192} Detection)."), "{rule}");
+        assert!(
+            rule.contains("open for 20 minutes")
+                && rule.contains("always asks first")
+                && rule.ends_with("turn on precise detection (Settings \u{2192} Detection)."),
+            "{rule}"
+        );
         n.player = "PotPlayer".into();
         n.switch = Switch::PotPlayer;
         s.prefs.players.process_minutes = 1;
         let rule = crate::ui::no_position_rule(&s, &n, true);
-        assert!(rule.contains("open for 1 minute,") && rule.ends_with("always asks first."), "{rule}");
+        assert!(
+            rule.contains("open for 1 minute,") && rule.ends_with("always asks first."),
+            "{rule}"
+        );
         // The other systems keep their words.
-        assert!(crate::ui::no_position_rule(&s, &n, false).starts_with("Kotora sees the file the player has open"));
+        assert!(
+            crate::ui::no_position_rule(&s, &n, false)
+                .starts_with("Kotora sees the file the player has open")
+        );
     }
 
     #[test]

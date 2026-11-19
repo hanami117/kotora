@@ -51,7 +51,10 @@ pub struct Login {
 impl Login {
     #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     pub fn unavailable(why: &'static str) -> Self {
-        Login { unavailable: Some(why), ..Login::default() }
+        Login {
+            unavailable: Some(why),
+            ..Login::default()
+        }
     }
 
     /// The switch can be used.
@@ -72,7 +75,10 @@ pub fn read() -> Login {
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        Login { on: entry_path().is_file(), ..Login::default() }
+        Login {
+            on: entry_path().is_file(),
+            ..Login::default()
+        }
     }
 }
 
@@ -101,7 +107,11 @@ pub fn set(on: bool, hidden: bool) -> Result<Login, String> {
 /// start. A Windows path can't contain a quote, so there is nothing to escape.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn run_command(exe: &str, hidden: bool) -> String {
-    format!("\"{}\"{}", exe.trim_matches('"'), if hidden { " --hidden" } else { "" })
+    format!(
+        "\"{}\"{}",
+        exe.trim_matches('"'),
+        if hidden { " --hidden" } else { "" }
+    )
 }
 
 /// Windows' own startup switch (Settings → Apps → Startup, Task Manager) for an entry, from its
@@ -155,18 +165,31 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
     }
     // Written beside it, then renamed: a login never sees half a file.
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)).map_err(|e| format!("can't write {}: {e}", path.display()))
+    std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .map_err(|e| format!("can't write {}: {e}", path.display()))
 }
 
 /// An XDG autostart desktop entry. `Exec` quoting follows the Desktop Entry spec.
 #[cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 pub fn desktop_text(exe: &Path, hidden: bool) -> String {
     let exe = exe.to_string_lossy();
-    let needs_quotes = exe.chars().any(|c| c.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(c));
+    let needs_quotes = exe
+        .chars()
+        .any(|c| c.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(c));
     let exe = if needs_quotes {
         // Inside quotes `"`, `` ` ``, `$` and `\` take a backslash; then `\` is doubled again for
         // the key file's own escapes.
-        let inner: String = exe.chars().flat_map(|c| if "\"`$\\".contains(c) { vec!['\\', c] } else { vec![c] }).collect();
+        let inner: String = exe
+            .chars()
+            .flat_map(|c| {
+                if "\"`$\\".contains(c) {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
+            .collect();
         format!("\"{}\"", inner.replace('\\', "\\\\"))
     } else {
         exe.replace('%', "%%")
@@ -189,7 +212,9 @@ pub fn desktop_text(exe: &Path, hidden: bool) -> String {
 /// The LaunchAgent plist Kotora wrote before it used `SMAppService` (macOS, until 2026-11-16).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn old_launch_agent_path() -> PathBuf {
-    home().join("Library/LaunchAgents").join(format!("{APP_ID}.plist"))
+    home()
+        .join("Library/LaunchAgents")
+        .join(format!("{APP_ID}.plist"))
 }
 
 /// What is at the old LaunchAgent's path.
@@ -215,7 +240,11 @@ fn plist_label(text: &str) -> Option<&str> {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn read_old_entry(path: &Path) -> Option<OldEntry> {
     let text = std::fs::read_to_string(path).ok()?;
-    Some(if plist_label(&text) == Some(APP_ID) { OldEntry::Ours } else { OldEntry::Foreign })
+    Some(if plist_label(&text) == Some(APP_ID) {
+        OldEntry::Ours
+    } else {
+        OldEntry::Foreign
+    })
 }
 
 /// What the one-time migration does.
@@ -253,7 +282,9 @@ mod tests {
         assert!(t.starts_with("[Desktop Entry]\n"));
         assert!(t.contains("\nExec=/usr/bin/kotora --hidden\n"), "{t}");
         assert!(t.contains("\nIcon=io.github.hanami117.kotora\n"));
-        assert!(desktop_text(Path::new("/usr/bin/kotora"), false).contains("\nExec=/usr/bin/kotora\n"));
+        assert!(
+            desktop_text(Path::new("/usr/bin/kotora"), false).contains("\nExec=/usr/bin/kotora\n")
+        );
     }
 
     #[test]
@@ -262,22 +293,42 @@ mod tests {
         assert!(t.contains("\nExec=\"/opt/My Apps/kotora\"\n"), "{t}");
         let t = desktop_text(Path::new("/opt/a$b/kotora"), false);
         assert!(t.contains("\nExec=\"/opt/a\\\\$b/kotora\"\n"), "{t}");
-        assert!(desktop_text(Path::new("/opt/100%/kotora"), false).contains("Exec=/opt/100%%/kotora\n"));
+        assert!(
+            desktop_text(Path::new("/opt/100%/kotora"), false).contains("Exec=/opt/100%%/kotora\n")
+        );
     }
 
     #[test]
     fn the_windows_run_value_quotes_the_program() {
-        assert_eq!(run_command(r"C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe", true), r#""C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe" --hidden"#);
-        assert_eq!(run_command(r"D:\Kotora\kotora.exe", false), r#""D:\Kotora\kotora.exe""#);
-        assert_eq!(run_command(r#""D:\Kotora\kotora.exe""#, false), r#""D:\Kotora\kotora.exe""#, "never quoted twice");
+        assert_eq!(
+            run_command(
+                r"C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe",
+                true
+            ),
+            r#""C:\Users\A B\AppData\Local\Programs\Kotora\kotora.exe" --hidden"#
+        );
+        assert_eq!(
+            run_command(r"D:\Kotora\kotora.exe", false),
+            r#""D:\Kotora\kotora.exe""#
+        );
+        assert_eq!(
+            run_command(r#""D:\Kotora\kotora.exe""#, false),
+            r#""D:\Kotora\kotora.exe""#,
+            "never quoted twice"
+        );
     }
 
     #[test]
     fn windows_own_startup_switch_is_read_from_its_first_byte() {
         assert!(startup_approved(None), "never touched in Windows' settings");
-        assert!(startup_approved(Some(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
+        assert!(startup_approved(Some(&[
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ])));
         assert!(startup_approved(Some(&[6, 0, 0, 0])));
-        assert!(!startup_approved(Some(&[3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8])), "switched off in Task Manager");
+        assert!(
+            !startup_approved(Some(&[3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8])),
+            "switched off in Task Manager"
+        );
         assert!(!startup_approved(Some(&[7])));
         assert!(startup_approved(Some(&[])));
     }
@@ -287,11 +338,18 @@ mod tests {
     #[test]
     fn the_old_launch_agent_is_ours_only_by_its_label() {
         assert_eq!(plist_label(OLD_PLIST), Some(APP_ID));
-        assert_eq!(plist_label("<key>Label</key>\n  <string> other.app </string>"), Some("other.app"));
+        assert_eq!(
+            plist_label("<key>Label</key>\n  <string> other.app </string>"),
+            Some("other.app")
+        );
         assert_eq!(plist_label("<key>RunAtLoad</key><true/>"), None);
         let dir = std::env::temp_dir().join(format!("kotora-oldagent-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let (ours, other, none) = (dir.join("a.plist"), dir.join("b.plist"), dir.join("c.plist"));
+        let (ours, other, none) = (
+            dir.join("a.plist"),
+            dir.join("b.plist"),
+            dir.join("c.plist"),
+        );
         std::fs::write(&ours, OLD_PLIST).unwrap();
         std::fs::write(&other, OLD_PLIST.replace(APP_ID, "com.example.thing")).unwrap();
         assert_eq!(read_old_entry(&ours), Some(OldEntry::Ours));
@@ -306,20 +364,42 @@ mod tests {
     #[test]
     fn the_migration_keeps_the_users_choice() {
         let off = Login::default();
-        let on = Login { on: true, ..Login::default() };
-        let waiting = Login { on: true, needs_approval: true, ..Login::default() };
+        let on = Login {
+            on: true,
+            ..Login::default()
+        };
+        let waiting = Login {
+            on: true,
+            needs_approval: true,
+            ..Login::default()
+        };
         let bare = Login::unavailable("Only in the app");
         // An old agent of ours means "start at login was on".
-        assert_eq!(decide_migration(Some(OldEntry::Ours), &off), Migration::RegisterThenRemoveOld);
+        assert_eq!(
+            decide_migration(Some(OldEntry::Ours), &off),
+            Migration::RegisterThenRemoveOld
+        );
         // Already a login item (even one waiting for approval): only the old file goes.
-        assert_eq!(decide_migration(Some(OldEntry::Ours), &on), Migration::RemoveOld);
-        assert_eq!(decide_migration(Some(OldEntry::Ours), &waiting), Migration::RemoveOld);
+        assert_eq!(
+            decide_migration(Some(OldEntry::Ours), &on),
+            Migration::RemoveOld
+        );
+        assert_eq!(
+            decide_migration(Some(OldEntry::Ours), &waiting),
+            Migration::RemoveOld
+        );
         // Can't be a login item here (cargo run, test copy): the old agent stays, nothing is lost.
-        assert_eq!(decide_migration(Some(OldEntry::Ours), &bare), Migration::KeepOld("Only in the app"));
+        assert_eq!(
+            decide_migration(Some(OldEntry::Ours), &bare),
+            Migration::KeepOld("Only in the app")
+        );
         // No agent, or one that isn't ours: nothing to do, whatever the login item says.
         for login in [&off, &on, &bare] {
             assert_eq!(decide_migration(None, login), Migration::Nothing);
-            assert_eq!(decide_migration(Some(OldEntry::Foreign), login), Migration::Nothing);
+            assert_eq!(
+                decide_migration(Some(OldEntry::Foreign), login),
+                Migration::Nothing
+            );
         }
     }
 

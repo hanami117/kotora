@@ -21,7 +21,12 @@ pub fn bind_on(port: u16) -> std::io::Result<TcpListener> {
 
 /// Waits for the redirect and returns the `code`. Other requests (a favicon) are answered and
 /// ignored. Fails on a wrong `state`, an `error` from MAL, the timeout, or `cancel`.
-pub fn wait_for_code(listener: &TcpListener, state: &str, timeout: Duration, cancel: &AtomicBool) -> Result<String, String> {
+pub fn wait_for_code(
+    listener: &TcpListener,
+    state: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + timeout;
     loop {
@@ -38,7 +43,9 @@ pub fn wait_for_code(listener: &TcpListener, state: &str, timeout: Duration, can
                 }
             }
             // Nothing yet. The wait is bounded and only runs during a sign-in the user started.
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(100))
+            }
             Err(e) => return Err(e.to_string()),
         }
     }
@@ -47,7 +54,11 @@ pub fn wait_for_code(listener: &TcpListener, state: &str, timeout: Duration, can
 /// AniList's implicit grant: waits for the token the callback page posts back and returns what
 /// it posted (`access_token=…&token_type=Bearer&expires_in=…`; `anilist::parse_token_input`
 /// reads it). Fails on an `error` from AniList, the timeout, or `cancel`.
-pub fn wait_for_token(listener: &TcpListener, timeout: Duration, cancel: &AtomicBool) -> Result<String, String> {
+pub fn wait_for_token(
+    listener: &TcpListener,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + timeout;
     loop {
@@ -63,7 +74,9 @@ pub fn wait_for_token(listener: &TcpListener, timeout: Duration, cancel: &Atomic
                     return r;
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(100))
+            }
             Err(e) => return Err(e.to_string()),
         }
     }
@@ -85,9 +98,16 @@ fn handle_token(mut stream: TcpStream) -> Option<Result<String, String>> {
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     match (method, target.split('?').next().unwrap_or("")) {
         ("GET", "/callback") => {
-            if let Some(e) = target.split_once('?').and_then(|(_, q)| q.split('&').find_map(|p| p.strip_prefix("error="))) {
+            if let Some(e) = target
+                .split_once('?')
+                .and_then(|(_, q)| q.split('&').find_map(|p| p.strip_prefix("error=")))
+            {
                 let e = pct_decode(e);
-                respond(&mut stream, 400, &format!("Kotora could not sign in: AniList refused the sign-in ({e})"));
+                respond(
+                    &mut stream,
+                    400,
+                    &format!("Kotora could not sign in: AniList refused the sign-in ({e})"),
+                );
                 return Some(Err(format!("AniList refused the sign-in ({e})")));
             }
             respond_html(&mut stream, 200, TOKEN_PAGE);
@@ -96,14 +116,26 @@ fn handle_token(mut stream: TcpStream) -> Option<Result<String, String>> {
         ("POST", "/token") => {
             let posted = body.trim().to_string();
             if posted.contains("access_token=") {
-                respond_text(&mut stream, 200, "Kotora got the sign-in from AniList. You can close this tab.");
+                respond_text(
+                    &mut stream,
+                    200,
+                    "Kotora got the sign-in from AniList. You can close this tab.",
+                );
                 Some(Ok(posted))
             } else if let Some(e) = posted.split('&').find_map(|p| p.strip_prefix("error=")) {
                 let e = pct_decode(e);
-                respond_text(&mut stream, 400, &format!("Kotora could not sign in: AniList refused the sign-in ({e})"));
+                respond_text(
+                    &mut stream,
+                    400,
+                    &format!("Kotora could not sign in: AniList refused the sign-in ({e})"),
+                );
                 Some(Err(format!("AniList refused the sign-in ({e})")))
             } else {
-                respond_text(&mut stream, 400, "There was no sign-in in this address. Copy the token from AniList and paste it into Kotora.");
+                respond_text(
+                    &mut stream,
+                    400,
+                    "There was no sign-in in this address. Copy the token from AniList and paste it into Kotora.",
+                );
                 Some(Err("no token in the redirect".into()))
             }
         }
@@ -127,11 +159,17 @@ fn read_request(stream: &mut TcpStream) -> (String, String) {
             Ok(n) => buf.extend_from_slice(&chunk[..n]),
         }
     }
-    let Some(at) = end(&buf) else { return (String::from_utf8_lossy(&buf).into_owned(), String::new()) };
+    let Some(at) = end(&buf) else {
+        return (String::from_utf8_lossy(&buf).into_owned(), String::new());
+    };
     let head = String::from_utf8_lossy(&buf[..at]).into_owned();
     let len = head
         .lines()
-        .find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.trim().parse::<usize>().ok()))
+        .find_map(|l| {
+            l.split_once(':')
+                .filter(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+        })
         .unwrap_or(0)
         .min(8192);
     let mut body = buf[at + 4..].to_vec();
@@ -149,7 +187,10 @@ fn read_request(stream: &mut TcpStream) -> (String, String) {
 fn handle(mut stream: TcpStream, state: &str) -> Option<Result<String, String>> {
     let (head, _) = read_request(&mut stream);
     let line = head.lines().next().unwrap_or("");
-    let target = line.strip_prefix("GET ").and_then(|r| r.split(' ').next()).unwrap_or("");
+    let target = line
+        .strip_prefix("GET ")
+        .and_then(|r| r.split(' ').next())
+        .unwrap_or("");
     let Some(query) = target.strip_prefix("/callback?") else {
         respond(&mut stream, 404, "Not found");
         return None;
@@ -171,10 +212,15 @@ fn handle(mut stream: TcpStream, state: &str) -> Option<Result<String, String>> 
     } else if got_state.as_deref() != Some(state) {
         Err("sign-in state didn't match; try again".to_string())
     } else {
-        code.filter(|c| !c.is_empty()).ok_or_else(|| "no code in the redirect".to_string())
+        code.filter(|c| !c.is_empty())
+            .ok_or_else(|| "no code in the redirect".to_string())
     };
     match &result {
-        Ok(_) => respond(&mut stream, 200, "Kotora is signed in to MyAnimeList. You can close this tab."),
+        Ok(_) => respond(
+            &mut stream,
+            200,
+            "Kotora is signed in to MyAnimeList. You can close this tab.",
+        ),
         Err(e) => respond(&mut stream, 400, &format!("Kotora could not sign in: {e}")),
     }
     Some(result)
@@ -182,7 +228,13 @@ fn handle(mut stream: TcpStream, state: &str) -> Option<Result<String, String>> 
 
 fn respond(stream: &mut TcpStream, status: u16, message: &str) {
     let message = message.replace('&', "&amp;").replace('<', "&lt;");
-    respond_html(stream, status, &format!("<!doctype html><meta charset=utf-8><title>Kotora</title><body style=\"font:16px system-ui;margin:3em\"><p>{message}</p>"));
+    respond_html(
+        stream,
+        status,
+        &format!(
+            "<!doctype html><meta charset=utf-8><title>Kotora</title><body style=\"font:16px system-ui;margin:3em\"><p>{message}</p>"
+        ),
+    );
 }
 
 fn respond_html(stream: &mut TcpStream, status: u16, body: &str) {
@@ -213,7 +265,10 @@ pub fn pct_decode(s: &str) -> String {
     while i < b.len() {
         match b[i] {
             b'%' if b.len() >= i + 3 => {
-                if let Some(v) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                if let Some(v) = s
+                    .get(i + 1..i + 3)
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
                     out.push(v);
                     i += 3;
                     continue;
@@ -242,18 +297,25 @@ mod tests {
         out
     }
 
-    fn run(targets: Vec<&'static str>, state: &'static str) -> (Result<String, String>, Vec<String>) {
+    fn run(
+        targets: Vec<&'static str>,
+        state: &'static str,
+    ) -> (Result<String, String>, Vec<String>) {
         let l = bind_on(0).unwrap();
         let port = l.local_addr().unwrap().port();
         let cancel = Arc::new(AtomicBool::new(false));
-        let t = std::thread::spawn(move || wait_for_code(&l, state, Duration::from_secs(10), &cancel));
+        let t =
+            std::thread::spawn(move || wait_for_code(&l, state, Duration::from_secs(10), &cancel));
         let replies: Vec<String> = targets.into_iter().map(|t| get(port, t)).collect();
         (t.join().unwrap(), replies)
     }
 
     #[test]
     fn returns_the_code_and_ignores_other_requests() {
-        let (r, replies) = run(vec!["/favicon.ico", "/callback?code=a%2Bb&state=xyz"], "xyz");
+        let (r, replies) = run(
+            vec!["/favicon.ico", "/callback?code=a%2Bb&state=xyz"],
+            "xyz",
+        );
         assert_eq!(r, Ok("a+b".to_string()));
         assert!(replies[0].starts_with("HTTP/1.1 404"));
         assert!(replies[1].starts_with("HTTP/1.1 200") && replies[1].contains("signed in"));
@@ -272,40 +334,84 @@ mod tests {
     fn cancel_and_timeout_end_the_wait() {
         let l = bind_on(0).unwrap();
         let cancel = AtomicBool::new(true);
-        assert!(wait_for_code(&l, "s", Duration::from_secs(5), &cancel).unwrap_err().contains("cancel"));
+        assert!(
+            wait_for_code(&l, "s", Duration::from_secs(5), &cancel)
+                .unwrap_err()
+                .contains("cancel")
+        );
         let cancel = AtomicBool::new(false);
-        assert!(wait_for_code(&l, "s", Duration::from_millis(150), &cancel).unwrap_err().contains("timed out"));
+        assert!(
+            wait_for_code(&l, "s", Duration::from_millis(150), &cancel)
+                .unwrap_err()
+                .contains("timed out")
+        );
     }
 
     fn post(port: u16, target: &str, body: &str) -> String {
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        write!(s, "POST {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        write!(
+            s,
+            "POST {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).unwrap();
         out
     }
 
-    fn run_token(steps: Vec<(&'static str, &'static str, &'static str)>) -> (Result<String, String>, Vec<String>) {
+    fn run_token(
+        steps: Vec<(&'static str, &'static str, &'static str)>,
+    ) -> (Result<String, String>, Vec<String>) {
         let l = bind_on(0).unwrap();
         let port = l.local_addr().unwrap().port();
         let cancel = Arc::new(AtomicBool::new(false));
         let t = std::thread::spawn(move || wait_for_token(&l, Duration::from_secs(10), &cancel));
-        let replies = steps.into_iter().map(|(m, target, body)| if m == "GET" { get(port, target) } else { post(port, target, body) }).collect();
+        let replies = steps
+            .into_iter()
+            .map(|(m, target, body)| {
+                if m == "GET" {
+                    get(port, target)
+                } else {
+                    post(port, target, body)
+                }
+            })
+            .collect();
         (t.join().unwrap(), replies)
     }
 
     #[test]
     fn the_anilist_page_posts_the_token_back() {
-        let (r, replies) = run_token(vec![("GET", "/favicon.ico", ""), ("GET", "/callback", ""), ("POST", "/token", "access_token=a.b.c&token_type=Bearer&expires_in=31536000")]);
-        assert_eq!(r, Ok("access_token=a.b.c&token_type=Bearer&expires_in=31536000".to_string()));
+        let (r, replies) = run_token(vec![
+            ("GET", "/favicon.ico", ""),
+            ("GET", "/callback", ""),
+            (
+                "POST",
+                "/token",
+                "access_token=a.b.c&token_type=Bearer&expires_in=31536000",
+            ),
+        ]);
+        assert_eq!(
+            r,
+            Ok("access_token=a.b.c&token_type=Bearer&expires_in=31536000".to_string())
+        );
         assert!(replies[0].starts_with("HTTP/1.1 404"));
-        assert!(replies[1].starts_with("HTTP/1.1 200") && replies[1].contains("location.hash") && replies[1].contains("replaceState"), "the page strips the token from the history");
+        assert!(
+            replies[1].starts_with("HTTP/1.1 200")
+                && replies[1].contains("location.hash")
+                && replies[1].contains("replaceState"),
+            "the page strips the token from the history"
+        );
         assert!(replies[2].starts_with("HTTP/1.1 200") && replies[2].contains("close this tab"));
     }
 
     #[test]
     fn an_anilist_refusal_or_no_token_fails() {
-        let (r, replies) = run_token(vec![("GET", "/callback?error=access_denied&error_description=x", "")]);
+        let (r, replies) = run_token(vec![(
+            "GET",
+            "/callback?error=access_denied&error_description=x",
+            "",
+        )]);
         assert!(r.unwrap_err().contains("access_denied"));
         assert!(replies[0].starts_with("HTTP/1.1 400"));
         let (r, _) = run_token(vec![("POST", "/token", "")]);

@@ -146,21 +146,35 @@ struct Item {
 
 impl Item {
     fn minutes(&self) -> u32 {
-        self.minutes.filter(|m| *m > 0).unwrap_or_else(|| usual_minutes(&self.format))
+        self.minutes
+            .filter(|m| *m > 0)
+            .unwrap_or_else(|| usual_minutes(&self.format))
     }
 }
 
 impl Store {
     /// Everything the Statistics page shows for one list. `offset`: the user's UTC offset at a
     /// time, in seconds (`time::local_offset`; tests pass a fixed one).
-    pub fn stats<'a>(&self, scope: impl Into<Scope<'a>>, now: i64, offset: &dyn Fn(i64) -> i64) -> Result<Stats> {
+    pub fn stats<'a>(
+        &self,
+        scope: impl Into<Scope<'a>>,
+        now: i64,
+        offset: &dyn Fn(i64) -> i64,
+    ) -> Result<Stats> {
         let sc = scope.into();
         let items = self.stat_items(sc)?;
         let rows = crate::activity::rows(&self.conn, sc)?;
         let today = Clock::at(now, offset(now)).day;
         let list = self.list_stats(sc, &items)?;
         let log = log_stats(&items, &rows, now, today, sc.kind, offset);
-        Ok(Stats { kind: sc.kind, now, today, since: crate::activity::since(&self.conn)?, list, log })
+        Ok(Stats {
+            kind: sc.kind,
+            now,
+            today,
+            since: crate::activity::since(&self.conn)?,
+            list,
+            log,
+        })
     }
 
     fn stat_items(&self, sc: Scope) -> Result<Vec<Item>> {
@@ -185,21 +199,30 @@ impl Store {
                 times: r.get(8)?,
                 air_status: r.get(9)?,
                 format: r.get(10)?,
-                minutes: r.get::<_, Option<i64>>(11)?.and_then(|m| u32::try_from(m).ok()),
+                minutes: r
+                    .get::<_, Option<i64>>(11)?
+                    .and_then(|m| u32::try_from(m).ok()),
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     fn list_stats(&self, sc: Scope, items: &[Item]) -> Result<ListStats> {
-        let mut l = ListStats { titles: items.len() as u32, ..ListStats::default() };
+        let mut l = ListStats {
+            titles: items.len() as u32,
+            ..ListStats::default()
+        };
         for it in items {
-            let i = Status::ALL.iter().position(|s| *s == it.status).unwrap_or(1);
+            let i = Status::ALL
+                .iter()
+                .position(|s| *s == it.status)
+                .unwrap_or(1);
             l.statuses[i] += 1;
             if let Some(sc) = it.score {
                 l.scores[usize::from(sc.to_ten().clamp(1, 10)) - 1] += 1;
             }
-            let units = u64::from(it.progress) + u64::from(it.times) * u64::from(it.total.unwrap_or(0));
+            let units =
+                u64::from(it.progress) + u64::from(it.times) * u64::from(it.total.unwrap_or(0));
             l.units += units;
             l.volumes += u64::from(it.volumes);
             if sc.kind == Kind::Anime && units > 0 {
@@ -211,7 +234,10 @@ impl Store {
             if it.status != Status::PlanToWatch {
                 l.watched += 1;
             }
-            if sc.kind == Kind::Anime && it.status == Status::Watching && it.air_status == "currently_airing" {
+            if sc.kind == Kind::Anime
+                && it.status == Status::Watching
+                && it.air_status == "currently_airing"
+            {
                 l.airing.push(Title {
                     media_id: it.media_id,
                     title: it.title.clone(),
@@ -265,7 +291,9 @@ impl Store {
 
     fn top(&self, sql: &str, sc: Scope) -> Result<Vec<(String, u32)>> {
         let mut st = self.conn.prepare(sql)?;
-        let rows = st.query_map(params![sc.service, sc.kind.name()], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let rows = st.query_map(params![sc.service, sc.kind.name()], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 }
@@ -273,12 +301,27 @@ impl Store {
 /// The first day of `today`'s week (Monday), month and year.
 fn starts(today: i64) -> (i64, i64, i64) {
     let (y, m, _) = civil_from_days(today);
-    (today - i64::from(crate::time::weekday(today)), days_from_civil(y, i64::from(m), 1), days_from_civil(y, 1, 1))
+    (
+        today - i64::from(crate::time::weekday(today)),
+        days_from_civil(y, i64::from(m), 1),
+        days_from_civil(y, 1, 1),
+    )
 }
 
-fn log_stats(items: &[Item], rows: &[Row], now: i64, today: i64, kind: Kind, offset: &dyn Fn(i64) -> i64) -> LogStats {
+fn log_stats(
+    items: &[Item],
+    rows: &[Row],
+    now: i64,
+    today: i64,
+    kind: Kind,
+    offset: &dyn Fn(i64) -> i64,
+) -> LogStats {
     let first_day = today - (DAYS as i64 - 1);
-    let mut l = LogStats { days: vec![0; DAYS], first_day, ..LogStats::default() };
+    let mut l = LogStats {
+        days: vec![0; DAYS],
+        first_day,
+        ..LogStats::default()
+    };
     let minutes: HashMap<u32, u32> = items.iter().map(|it| (it.media_id, it.minutes())).collect();
     let (week, month, year) = starts(today);
     let mut seen: [std::collections::HashSet<u32>; 4] = Default::default();
@@ -287,8 +330,20 @@ fn log_stats(items: &[Item], rows: &[Row], now: i64, today: i64, kind: Kind, off
     for r in rows.iter().filter(|r| r.at <= now) {
         let c = Clock::at(r.at, offset(r.at));
         let (units, vols) = (r.units(), r.volumes());
-        let mins = if kind == Kind::Anime { u64::from(units) * u64::from(minutes.get(&r.media_id).copied().unwrap_or(24)) } else { 0 };
-        for (i, (from, p)) in [(i64::MIN, &mut l.all), (year, &mut l.year), (month, &mut l.month), (week, &mut l.week)].into_iter().enumerate() {
+        let mins = if kind == Kind::Anime {
+            u64::from(units) * u64::from(minutes.get(&r.media_id).copied().unwrap_or(24))
+        } else {
+            0
+        };
+        for (i, (from, p)) in [
+            (i64::MIN, &mut l.all),
+            (year, &mut l.year),
+            (month, &mut l.month),
+            (week, &mut l.week),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             if c.day >= from {
                 p.units += units;
                 p.volumes += vols;
@@ -302,7 +357,11 @@ fn log_stats(items: &[Item], rows: &[Row], now: i64, today: i64, kind: Kind, off
             active_days.insert(c.day);
         }
         // Manga: a volume-only edit still counts on the calendar (as one).
-        let mark = if units > 0 { units } else { u32::from(vols > 0) };
+        let mark = if units > 0 {
+            units
+        } else {
+            u32::from(vols > 0)
+        };
         if c.day >= first_day && c.day <= today {
             l.days[(c.day - first_day) as usize] += mark;
         }
@@ -329,10 +388,21 @@ fn log_stats(items: &[Item], rows: &[Row], now: i64, today: i64, kind: Kind, off
         .into_iter()
         .filter_map(|(id, units)| {
             let it = by_id.get(&id)?;
-            Some(Title { media_id: id, title: it.title.clone(), cover_url: it.cover_url.clone(), progress: it.progress, total: it.total, units })
+            Some(Title {
+                media_id: id,
+                title: it.title.clone(),
+                cover_url: it.cover_url.clone(),
+                progress: it.progress,
+                total: it.total,
+                units,
+            })
         })
         .collect();
-    lately.sort_by(|a, b| b.units.cmp(&a.units).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())));
+    lately.sort_by(|a, b| {
+        b.units
+            .cmp(&a.units)
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+    });
     lately.truncate(TOP_TITLES);
     l.lately = lately;
     l
@@ -365,7 +435,9 @@ pub fn grouped(n: u64) -> String {
 
 /// "Nov 19, 2026" of a day number.
 pub fn date_text(day: i64) -> String {
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let (y, m, d) = civil_from_days(day);
     format!("{} {d}, {y}", MONTHS[(m as usize).saturating_sub(1) % 12])
 }
@@ -376,7 +448,13 @@ pub fn text(s: &Stats, offset: &dyn Fn(i64) -> i64) -> String {
         Kind::Anime => ("episode", "episodes", "watched"),
         Kind::Manga => ("chapter", "chapters", "read"),
     };
-    let n = |x: u64| if x == 1 { format!("1 {unit}") } else { format!("{} {units}", grouped(x)) };
+    let n = |x: u64| {
+        if x == 1 {
+            format!("1 {unit}")
+        } else {
+            format!("{} {units}", grouped(x))
+        }
+    };
     let period = |p: &Period| {
         let mut t = n(u64::from(p.units));
         if s.kind == Kind::Manga && p.volumes > 0 {
@@ -390,22 +468,45 @@ pub fn text(s: &Stats, offset: &dyn Fn(i64) -> i64) -> String {
     let mut out = String::new();
     let l = &s.list;
     out.push_str(&format!("{} statistics\n\n", s.kind.label()));
-    out.push_str(&format!("On your list     {} titles\n", grouped(u64::from(l.titles))));
+    out.push_str(&format!(
+        "On your list     {} titles\n",
+        grouped(u64::from(l.titles))
+    ));
     for (st, c) in Status::ALL.iter().zip(l.statuses) {
-        out.push_str(&format!("  {:<15}{}\n", st.label_in(s.kind), grouped(u64::from(c))));
+        out.push_str(&format!(
+            "  {:<15}{}\n",
+            st.label_in(s.kind),
+            grouped(u64::from(c))
+        ));
     }
-    out.push_str(&format!("{:<17}{}\n", format!("{} {verb}", capital(units)), grouped(l.units)));
+    out.push_str(&format!(
+        "{:<17}{}\n",
+        format!("{} {verb}", capital(units)),
+        grouped(l.units)
+    ));
     if s.kind == Kind::Manga {
         out.push_str(&format!("Volumes read     {}\n", grouped(l.volumes)));
     }
     if s.kind == Kind::Anime {
         let about = if l.guessed > 0 { "about " } else { "" };
-        out.push_str(&format!("Time watched     {about}{}\n", duration(l.minutes)));
+        out.push_str(&format!(
+            "Time watched     {about}{}\n",
+            duration(l.minutes)
+        ));
     }
     let scored: u32 = l.scores.iter().sum();
     if scored > 0 {
-        let mean = l.scores.iter().enumerate().map(|(i, c)| f64::from(*c) * (i as f64 + 1.0)).sum::<f64>() / f64::from(scored);
-        out.push_str(&format!("Mean score       {mean:.2} ({} scored, out of 10)\n", grouped(u64::from(scored))));
+        let mean = l
+            .scores
+            .iter()
+            .enumerate()
+            .map(|(i, c)| f64::from(*c) * (i as f64 + 1.0))
+            .sum::<f64>()
+            / f64::from(scored);
+        out.push_str(&format!(
+            "Mean score       {mean:.2} ({} scored, out of 10)\n",
+            grouped(u64::from(scored))
+        ));
     }
     out.push('\n');
     let since = s.since.map(|t| date_text(Clock::at(t, offset(t)).day));
@@ -416,29 +517,59 @@ pub fn text(s: &Stats, offset: &dyn Fn(i64) -> i64) -> String {
     out.push_str(&format!("  This week      {}\n", period(&s.log.week)));
     out.push_str(&format!("  This month     {}\n", period(&s.log.month)));
     out.push_str(&format!("  This year      {}\n", period(&s.log.year)));
-    out.push_str(&format!("  Streak         {} (best {})\n", days(s.log.streak), days(s.log.best_streak)));
+    out.push_str(&format!(
+        "  Streak         {} (best {})\n",
+        days(s.log.streak),
+        days(s.log.best_streak)
+    ));
     if !s.has_activity() {
-        out.push_str(&format!("  Nothing {verb} in Kotora yet: what you record from now on counts here.\n"));
+        out.push_str(&format!(
+            "  Nothing {verb} in Kotora yet: what you record from now on counts here.\n"
+        ));
     }
     if !l.genres.is_empty() {
-        let g: Vec<String> = l.genres.iter().take(5).map(|(g, c)| format!("{g} ({c})")).collect();
+        let g: Vec<String> = l
+            .genres
+            .iter()
+            .take(5)
+            .map(|(g, c)| format!("{g} ({c})"))
+            .collect();
         out.push_str(&format!("\nTop genres       {}\n", g.join(", ")));
     }
     if !l.makers.is_empty() {
-        let g: Vec<String> = l.makers.iter().take(3).map(|(g, c)| format!("{g} ({c})")).collect();
-        out.push_str(&format!("{:<17}{}\n", if s.kind == Kind::Anime { "Top studios" } else { "Top authors" }, g.join(", ")));
+        let g: Vec<String> = l
+            .makers
+            .iter()
+            .take(3)
+            .map(|(g, c)| format!("{g} ({c})"))
+            .collect();
+        out.push_str(&format!(
+            "{:<17}{}\n",
+            if s.kind == Kind::Anime {
+                "Top studios"
+            } else {
+                "Top authors"
+            },
+            g.join(", ")
+        ));
     }
     out
 }
 
 fn capital(s: &str) -> String {
     let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
 }
 
 /// "1 day", "3 days".
 pub fn days(n: u32) -> String {
-    if n == 1 { "1 day".into() } else { format!("{n} days") }
+    if n == 1 {
+        "1 day".into()
+    } else {
+        format!("{n} days")
+    }
 }
 
 #[cfg(test)]

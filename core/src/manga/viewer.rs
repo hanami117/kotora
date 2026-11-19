@@ -23,14 +23,21 @@ use std::path::{Path, PathBuf};
 /// The viewer's settings folders, most likely first (macOS, Linux, Flatpak).
 pub fn dirs() -> Vec<PathBuf> {
     let home = crate::paths::home_dir().unwrap_or_else(std::env::temp_dir);
-    let data = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".local/share"));
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
     let tail = "YACReader/YACReader";
     let mut v = Vec::new();
     if cfg!(target_os = "macos") {
         v.push(home.join("Library/Application Support").join(tail));
     }
     v.push(data.join(tail));
-    v.push(home.join(".var/app/com.yacreader.YACReader/data").join(tail));
+    v.push(
+        home.join(".var/app/com.yacreader.YACReader/data")
+            .join(tail),
+    );
     v
 }
 
@@ -38,7 +45,14 @@ pub fn dirs() -> Vec<PathBuf> {
 pub fn find_dir() -> Option<PathBuf> {
     dirs()
         .into_iter()
-        .filter_map(|d| Some((std::fs::metadata(d.join("yacreader.log")).and_then(|m| m.modified()).ok()?, d)))
+        .filter_map(|d| {
+            Some((
+                std::fs::metadata(d.join("yacreader.log"))
+                    .and_then(|m| m.modified())
+                    .ok()?,
+                d,
+            ))
+        })
         .max_by_key(|(t, _)| *t)
         .map(|(_, d)| d)
 }
@@ -50,8 +64,15 @@ const OPENED: [&str; 2] = ["Opened archive file : ", "opening archive: "];
 pub fn opened_in(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|l| {
-            let rest = OPENED.iter().find_map(|m| l.find(m).map(|at| &l[at + m.len()..]))?;
-            let p = rest.trim().trim_start_matches('"').trim_end().trim_end_matches('"').trim_end();
+            let rest = OPENED
+                .iter()
+                .find_map(|m| l.find(m).map(|at| &l[at + m.len()..]))?;
+            let p = rest
+                .trim()
+                .trim_start_matches('"')
+                .trim_end()
+                .trim_end_matches('"')
+                .trim_end();
             (p.starts_with('/') || (p.len() > 2 && p.as_bytes()[1] == b':')).then(|| p.to_string())
         })
         .collect()
@@ -74,12 +95,20 @@ const FIRST_LOOK: u64 = 64 * 1024;
 
 impl LogTail {
     pub fn new(dir: &Path) -> LogTail {
-        LogTail { path: dir.join("yacreader.log"), offset: 0, last: None, fresh: None, looked: false }
+        LogTail {
+            path: dir.join("yacreader.log"),
+            offset: 0,
+            last: None,
+            fresh: None,
+            looked: false,
+        }
     }
 
     /// Reads what was added; `true` when it named a newly opened comic.
     pub fn poll(&mut self) -> bool {
-        let Ok(mut f) = std::fs::File::open(&self.path) else { return false };
+        let Ok(mut f) = std::fs::File::open(&self.path) else {
+            return false;
+        };
         let len = f.metadata().map(|m| m.len()).unwrap_or(0);
         if len < self.offset {
             // A new log (YACReader started again): from its start.
@@ -111,14 +140,20 @@ impl LogTail {
 
     /// The comic the log named since `since` (a viewer's start), if any.
     pub fn fresh_since(&self, since: std::time::Instant) -> Option<&str> {
-        self.fresh.as_ref().filter(|(_, at)| *at >= since).map(|(p, _)| p.as_str())
+        self.fresh
+            .as_ref()
+            .filter(|(_, at)| *at >= since)
+            .map(|(p, _)| p.as_str())
     }
 }
 
 /// `bookmarks.yacr`'s key for a file: its name in lower case, then its size in bytes.
 pub fn bookmark_key(path: &Path) -> Option<String> {
     let size = std::fs::metadata(path).ok()?.len();
-    Some(format!("{}{size}", path.file_name()?.to_string_lossy().to_lowercase()))
+    Some(format!(
+        "{}{size}",
+        path.file_name()?.to_string_lossy().to_lowercase()
+    ))
 }
 
 /// One comic's bookmark: the page it was left on (from 0) and when (ms since the epoch, UTC
@@ -143,10 +178,12 @@ impl Stream<'_> {
         self.take(1).map(|b| b[0])
     }
     fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        self.take(4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
     fn i64(&mut self) -> Option<i64> {
-        self.take(8).map(|b| i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+        self.take(8)
+            .map(|b| i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
     }
     fn string(&mut self) -> Option<String> {
         let n = self.u32()?;
@@ -154,7 +191,11 @@ impl Stream<'_> {
             return Some(String::new());
         }
         let b = self.take(n as usize)?;
-        let units: Vec<u16> = b.chunks(2).filter(|c| c.len() == 2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = b
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         String::from_utf16(&units).ok()
     }
 }
@@ -166,7 +207,9 @@ pub fn bookmarks(bytes: &[u8]) -> HashMap<String, Bookmark> {
     let Some(n) = s.u32() else { return out };
     for _ in 0..n {
         let Some(key) = s.string() else { break };
-        let Some(last_page) = s.u32().map(|v| i64::from(v as i32)) else { break };
+        let Some(last_page) = s.u32().map(|v| i64::from(v as i32)) else {
+            break;
+        };
         // QList<int>: the bookmarked pages.
         let Some(count) = s.u32() else { break };
         if s.take(count as usize * 4).is_none() {
@@ -174,7 +217,9 @@ pub fn bookmarks(bytes: &[u8]) -> HashMap<String, Bookmark> {
         }
         // QDateTime (Qt 5.2+ stream): Julian day (qint64), msecs of the day (quint32), spec (quint8),
         // then an offset (OffsetFromUTC) or a zone id (TimeZone).
-        let (Some(jd), Some(ms), Some(spec)) = (s.i64(), s.u32(), s.u8()) else { break };
+        let (Some(jd), Some(ms), Some(spec)) = (s.i64(), s.u32(), s.u8()) else {
+            break;
+        };
         match spec {
             2 if s.u32().is_none() => break,
             3 => {
@@ -187,14 +232,22 @@ pub fn bookmarks(bytes: &[u8]) -> HashMap<String, Bookmark> {
         }
         // Julian day 2440588 is 1970-01-01.
         let added_ms = (jd - 2_440_588) * 86_400_000 + i64::from(ms);
-        out.insert(key, Bookmark { last_page, added_ms });
+        out.insert(
+            key,
+            Bookmark {
+                last_page,
+                added_ms,
+            },
+        );
     }
     out
 }
 
 /// Reads `bookmarks.yacr` in `dir`.
 pub fn read_bookmarks(dir: &Path) -> HashMap<String, Bookmark> {
-    std::fs::read(dir.join("bookmarks.yacr")).map(|b| bookmarks(&b)).unwrap_or_default()
+    std::fs::read(dir.join("bookmarks.yacr"))
+        .map(|b| bookmarks(&b))
+        .unwrap_or_default()
 }
 
 /// The pages of a `.cbz`/`.zip`: its image entries, from the zip's central directory (no
@@ -207,10 +260,13 @@ pub fn zip_pages(path: &Path) -> Option<i64> {
     f.seek(SeekFrom::Start(len - tail)).ok()?;
     let mut buf = vec![0u8; tail as usize];
     f.read_exact(&mut buf).ok()?;
-    let at = buf.windows(4).rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])?;
+    let at = buf
+        .windows(4)
+        .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])?;
     let eocd = &buf[at..];
     let u16le = |b: &[u8], i: usize| u16::from_le_bytes([b[i], b[i + 1]]) as u64;
-    let u32le = |b: &[u8], i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as u64;
+    let u32le =
+        |b: &[u8], i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as u64;
     if eocd.len() < 22 {
         return None;
     }
@@ -226,9 +282,17 @@ pub fn zip_pages(path: &Path) -> Option<i64> {
         if cd.len() < i + 46 || cd[i..i + 4] != [0x50, 0x4b, 0x01, 0x02] {
             break;
         }
-        let (n, x, c) = (u16le(&cd, i + 28) as usize, u16le(&cd, i + 30) as usize, u16le(&cd, i + 32) as usize);
+        let (n, x, c) = (
+            u16le(&cd, i + 28) as usize,
+            u16le(&cd, i + 30) as usize,
+            u16le(&cd, i + 32) as usize,
+        );
         let name = String::from_utf8_lossy(cd.get(i + 46..i + 46 + n)?).to_lowercase();
-        let image = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".jxl", ".bmp"].iter().any(|e| name.ends_with(e));
+        let image = [
+            ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".jxl", ".bmp",
+        ]
+        .iter()
+        .any(|e| name.ends_with(e));
         if image && !name.contains("__macosx/") {
             pages += 1;
         }
@@ -244,11 +308,23 @@ mod tests {
     #[test]
     fn the_log_says_what_was_opened() {
         let log = "DEBUG 2026-11-17T22:30:01.012 \"Opened archive file : /Volumes/Disk/Dragon Ball Z v13 (2003) (Digital) (LuCaZ).cbz\" \n \nWARN  2026-11-17T22:30:39.950 QThread::wait: Thread tried to wait on itself \nDEBUG 2026-11-17T22:30:45.149 \"Opened archive file : /Volumes/Disk/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz\" \n";
-        assert_eq!(opened_in(log), ["/Volumes/Disk/Dragon Ball Z v13 (2003) (Digital) (LuCaZ).cbz", "/Volumes/Disk/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"]);
+        assert_eq!(
+            opened_in(log),
+            [
+                "/Volumes/Disk/Dragon Ball Z v13 (2003) (Digital) (LuCaZ).cbz",
+                "/Volumes/Disk/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"
+            ]
+        );
         assert!(opened_in("ERROR Sending Comic Info : unable to connect to the server").is_empty());
         // Linux, YACReader 10.4 (native and Flatpak).
         let linux = "DEBUG 2026-11-17T22:54:12.667 opening archive: \"/mnt/data/Manga/All You Need Is Kill v01 (2014) (Digital) (LuCaZ).cbz\"\nDEBUG 2026-11-17T22:54:18.001 opening archive: \"/mnt/data/Manga/All You Need Is Kill v02 (2014) (Digital) (LuCaZ).cbz\"\n";
-        assert_eq!(opened_in(linux), ["/mnt/data/Manga/All You Need Is Kill v01 (2014) (Digital) (LuCaZ).cbz", "/mnt/data/Manga/All You Need Is Kill v02 (2014) (Digital) (LuCaZ).cbz"]);
+        assert_eq!(
+            opened_in(linux),
+            [
+                "/mnt/data/Manga/All You Need Is Kill v01 (2014) (Digital) (LuCaZ).cbz",
+                "/mnt/data/Manga/All You Need Is Kill v02 (2014) (Digital) (LuCaZ).cbz"
+            ]
+        );
     }
 
     #[test]
@@ -262,14 +338,30 @@ mod tests {
         let start = std::time::Instant::now();
         assert!(t.poll());
         assert_eq!(t.last.as_deref(), Some("/c/a v01.cbz"));
-        assert_eq!(t.fresh_since(start), None, "from before the first look: not fresh");
+        assert_eq!(
+            t.fresh_since(start),
+            None,
+            "from before the first look: not fresh"
+        );
         assert!(!t.poll(), "nothing added");
         let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
-        std::io::Write::write_all(&mut f, b"WARN y\nDEBUG z \"Opened archive file : /c/a v02.cbz\" \n").unwrap();
+        std::io::Write::write_all(
+            &mut f,
+            b"WARN y\nDEBUG z \"Opened archive file : /c/a v02.cbz\" \n",
+        )
+        .unwrap();
         assert!(t.poll());
         assert_eq!(t.last.as_deref(), Some("/c/a v02.cbz"));
-        assert_eq!(t.fresh_since(start), Some("/c/a v02.cbz"), "the next volume, opened in the viewer");
-        assert_eq!(t.fresh_since(std::time::Instant::now()), None, "older than a viewer started now");
+        assert_eq!(
+            t.fresh_since(start),
+            Some("/c/a v02.cbz"),
+            "the next volume, opened in the viewer"
+        );
+        assert_eq!(
+            t.fresh_since(std::time::Instant::now()),
+            None,
+            "older than a viewer started now"
+        );
         // YACReader started again with a shorter log.
         std::fs::write(&log, "DEBUG \"Opened archive file : /c/b.cbz\"\n").unwrap();
         assert!(t.poll());
@@ -292,7 +384,9 @@ mod tests {
         b.extend(0u32.to_be_bytes());
         b.extend(0u32.to_be_bytes());
         b.extend([0, 0, 0, 0, 0, 0x25, 0x8e, 0xb2, 0x04, 0xd7, 0x24, 0xc9, 0]);
-        b.extend(qstring("dragon ball z v11 (2003) (digital) (lucaz).cbz160525781"));
+        b.extend(qstring(
+            "dragon ball z v11 (2003) (digital) (lucaz).cbz160525781",
+        ));
         b.extend(187u32.to_be_bytes());
         b.extend(2u32.to_be_bytes());
         b.extend(10u32.to_be_bytes());
@@ -302,7 +396,10 @@ mod tests {
         let bm = m["dragon ball z v11 (2003) (digital) (lucaz).cbz160525781"];
         assert_eq!(bm.last_page, 187);
         // 2026-11-17 22:33:28.521.
-        assert_eq!(bm.added_ms, (2_461_362 - 2_440_588) * 86_400_000 + 81_208_521);
+        assert_eq!(
+            bm.added_ms,
+            (2_461_362 - 2_440_588) * 86_400_000 + 81_208_521
+        );
         assert_eq!(bookmarks(&b[..40]).len(), 1, "a cut file: what was read");
         assert!(bookmarks(&[]).is_empty());
     }
@@ -312,7 +409,13 @@ mod tests {
         // A stored (uncompressed) zip built by hand: 3 pages, a ComicInfo.xml, a macOS fork.
         let mut zip = Vec::new();
         let mut cd = Vec::new();
-        let names = ["001.jpg", "002.PNG", "sub/003.webp", "ComicInfo.xml", "__MACOSX/._001.jpg"];
+        let names = [
+            "001.jpg",
+            "002.PNG",
+            "sub/003.webp",
+            "ComicInfo.xml",
+            "__MACOSX/._001.jpg",
+        ];
         for n in names {
             let off = zip.len() as u32;
             zip.extend([0x50, 0x4b, 0x03, 0x04]);
@@ -338,7 +441,11 @@ mod tests {
         let p = std::env::temp_dir().join(format!("kot-viewer-{}.cbz", std::process::id()));
         std::fs::write(&p, &zip).unwrap();
         assert_eq!(zip_pages(&p), Some(3));
-        assert!(bookmark_key(&p).unwrap().ends_with(&format!(".cbz{}", zip.len())));
+        assert!(
+            bookmark_key(&p)
+                .unwrap()
+                .ends_with(&format!(".cbz{}", zip.len()))
+        );
         std::fs::write(&p, b"not a zip").unwrap();
         assert_eq!(zip_pages(&p), None);
         let _ = std::fs::remove_file(&p);
@@ -351,7 +458,9 @@ mod real_file {
     #[test]
     #[ignore = "needs a copy of a real file"]
     fn parses_a_real_copy() {
-        let Some(p) = std::env::var_os("KOT_BOOKMARKS") else { return };
+        let Some(p) = std::env::var_os("KOT_BOOKMARKS") else {
+            return;
+        };
         let m = super::bookmarks(&std::fs::read(p).unwrap());
         let mut pages: Vec<i64> = m.values().map(|b| b.last_page).collect();
         pages.sort();

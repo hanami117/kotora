@@ -49,15 +49,23 @@ fn live(led: Led) -> bool {
 
 /// The socket Kotora watches for IINA: the first watched path with "iina" in it.
 fn iina_socket() -> Option<std::path::PathBuf> {
-    crate::precise::watched_sockets().into_iter().find(|p| kotora_detect::mpv::switch_for(p) == Switch::Iina)
+    crate::precise::watched_sockets()
+        .into_iter()
+        .find(|p| kotora_detect::mpv::switch_for(p) == Switch::Iina)
 }
 
 impl State {
     /// IINA is seen by its open file only: no IPC socket answers.
     pub fn iina_seen_by_process(&self) -> bool {
         self.prefs.players.iina
-            && self.players.iter().any(|p| p.switch == Switch::Iina && p.via == VIA_PROCESS && live(p.led))
-            && !self.players.iter().any(|p| p.switch == Switch::Iina && p.via == VIA_IPC && live(p.led))
+            && self
+                .players
+                .iter()
+                .any(|p| p.switch == Switch::Iina && p.via == VIA_PROCESS && live(p.led))
+            && !self
+                .players
+                .iter()
+                .any(|p| p.switch == Switch::Iina && p.via == VIA_IPC && live(p.led))
     }
 
     /// Check again: re-reads IINA's settings.
@@ -77,11 +85,13 @@ impl State {
         let Some(h) = self.handle.clone() else { return };
         self.iina.busy = true;
         let detector = self.glue.as_ref().map(|g| g.detector());
-        let _ = std::thread::Builder::new().name("kotora-iina-conf".into()).spawn(move || {
-            let r = write(detector.as_deref());
-            let setup = read(detector.as_deref());
-            h.update_if(move |s, _| s.iina_written(r, setup));
-        });
+        let _ = std::thread::Builder::new()
+            .name("kotora-iina-conf".into())
+            .spawn(move || {
+                let r = write(detector.as_deref());
+                let setup = read(detector.as_deref());
+                h.update_if(move |s, _| s.iina_written(r, setup));
+            });
     }
 
     pub fn iina_written(&mut self, r: Precise, setup: Option<(Setup, bool)>) -> bool {
@@ -98,20 +108,22 @@ impl State {
 
 /// At start and on Check again (never headless; on a short thread).
 pub fn check(h: crate::model::Handle, detector: Option<Arc<Detector>>) {
-    let _ = std::thread::Builder::new().name("kotora-iina-conf".into()).spawn(move || {
-        let read = read(detector.as_deref());
-        h.update_if(move |s, _| {
-            let (setup, watched) = match read {
-                Some((setup, watched)) => (Some(setup), watched),
-                None => (None, false),
-            };
-            let changed = s.iina.setup != setup || s.iina.watched != watched || s.iina.busy;
-            s.iina.setup = setup;
-            s.iina.watched = watched;
-            s.iina.busy = false;
-            changed
+    let _ = std::thread::Builder::new()
+        .name("kotora-iina-conf".into())
+        .spawn(move || {
+            let read = read(detector.as_deref());
+            h.update_if(move |s, _| {
+                let (setup, watched) = match read {
+                    Some((setup, watched)) => (Some(setup), watched),
+                    None => (None, false),
+                };
+                let changed = s.iina.setup != setup || s.iina.watched != watched || s.iina.busy;
+                s.iina.setup = setup;
+                s.iina.watched = watched;
+                s.iina.busy = false;
+                changed
+            });
         });
-    });
 }
 
 /// IINA's setup, and whether Kotora watches the socket it sets. A socket IINA sets that Kotora
@@ -126,7 +138,10 @@ fn read(detector: Option<&Detector>) -> Option<(Setup, bool)> {
 /// Kotora watches this socket now: it is in `[players] mpv_sockets` (or the default), or it is
 /// added to the running detection.
 fn watch(detector: Option<&Detector>, socket: &Path) -> bool {
-    if crate::precise::watched_sockets().iter().any(|p| p == socket) {
+    if crate::precise::watched_sockets()
+        .iter()
+        .any(|p| p == socket)
+    {
         return true;
     }
     detector.is_some_and(|d| {
@@ -146,11 +161,18 @@ fn write(detector: Option<&Detector>) -> Precise {
         Ok(Enabled::Wrote { file, text }) => {
             // Watched from now on: IINA only has to be restarted.
             watch(detector, &socket);
-            Precise::Wrote { file: file.display().to_string(), text }
+            Precise::Wrote {
+                file: file.display().to_string(),
+                text,
+            }
         }
         Ok(Enabled::AlreadySet { file, socket: set }) => {
             let watched = watch(detector, &set);
-            Precise::AlreadySet { file: file.display().to_string(), socket: set.display().to_string(), watched }
+            Precise::AlreadySet {
+                file: file.display().to_string(),
+                socket: set.display().to_string(),
+                watched,
+            }
         }
         Err(e) => Precise::Failed(format!("Can't turn it on: {e}. {STEPS}")),
     }
@@ -161,30 +183,107 @@ fn words(s: &State) -> (String, Option<El>) {
     let tilde = crate::precise::tilde;
     if let Some(done) = &s.iina.done {
         return match done {
-            Precise::Wrote { file, text: lines } => (format!("Added to {}: {}. Restart IINA to use it.", tilde(file), lines.lines().last().unwrap_or("").trim()), None),
-            Precise::AlreadySet { file, socket, watched: true } => (format!("{} already sets input-ipc-server={}, which Kotora watches. Restart IINA to use it.", tilde(file), tilde(socket)), None),
-            Precise::AlreadySet { file, socket, watched: false } => {
-                (format!("{} sets input-ipc-server={}, which Kotora doesn't watch: add that path to [players] mpv_sockets in config.toml.", tilde(file), tilde(socket)), None)
-            }
-            Precise::Failed(e) => (e.clone(), Some(small_button("set/iina-check", "Check again", false, Some(State::check_iina)))),
+            Precise::Wrote { file, text: lines } => (
+                format!(
+                    "Added to {}: {}. Restart IINA to use it.",
+                    tilde(file),
+                    lines.lines().last().unwrap_or("").trim()
+                ),
+                None,
+            ),
+            Precise::AlreadySet {
+                file,
+                socket,
+                watched: true,
+            } => (
+                format!(
+                    "{} already sets input-ipc-server={}, which Kotora watches. Restart IINA to use it.",
+                    tilde(file),
+                    tilde(socket)
+                ),
+                None,
+            ),
+            Precise::AlreadySet {
+                file,
+                socket,
+                watched: false,
+            } => (
+                format!(
+                    "{} sets input-ipc-server={}, which Kotora doesn't watch: add that path to [players] mpv_sockets in config.toml.",
+                    tilde(file),
+                    tilde(socket)
+                ),
+                None,
+            ),
+            Precise::Failed(e) => (
+                e.clone(),
+                Some(small_button(
+                    "set/iina-check",
+                    "Check again",
+                    false,
+                    Some(State::check_iina),
+                )),
+            ),
         };
     }
-    let check = || Some(small_button("set/iina-check", if s.iina.busy { "Checking\u{2026}" } else { "Check again" }, false, (!s.iina.busy).then_some(State::check_iina as fn(&mut State))));
+    let check = || {
+        Some(small_button(
+            "set/iina-check",
+            if s.iina.busy {
+                "Checking\u{2026}"
+            } else {
+                "Check again"
+            },
+            false,
+            (!s.iina.busy).then_some(State::check_iina as fn(&mut State)),
+        ))
+    };
     match &s.iina.setup {
         Some(Setup::Set { socket, file }) => {
             let watched = s.iina.watched;
-            let from = file.as_ref().map_or("IINA's additional mpv options".to_string(), |f| tilde(&f.display().to_string()));
+            let from = file
+                .as_ref()
+                .map_or("IINA's additional mpv options".to_string(), |f| {
+                    tilde(&f.display().to_string())
+                });
             if watched {
-                (format!("{from} sets the IPC socket Kotora watches ({}). Restart IINA to use it.", tilde(&socket.display().to_string())), None)
+                (
+                    format!(
+                        "{from} sets the IPC socket Kotora watches ({}). Restart IINA to use it.",
+                        tilde(&socket.display().to_string())
+                    ),
+                    None,
+                )
             } else {
-                (format!("{from} sets input-ipc-server={}, which Kotora doesn't watch: add that path to [players] mpv_sockets in config.toml.", tilde(&socket.display().to_string())), None)
+                (
+                    format!(
+                        "{from} sets input-ipc-server={}, which Kotora doesn't watch: add that path to [players] mpv_sockets in config.toml.",
+                        tilde(&socket.display().to_string())
+                    ),
+                    None,
+                )
             }
         }
         Some(Setup::ConfDir { file }) => (
-            format!("Seen by its open file only: no position. IINA reads {}; Turn on adds its IPC socket there.", tilde(&file.display().to_string())),
-            Some(small_button("set/iina-on", if s.iina.busy { "Turning on\u{2026}" } else { "Turn on" }, true, (!s.iina.busy).then_some(State::enable_iina as fn(&mut State)))),
+            format!(
+                "Seen by its open file only: no position. IINA reads {}; Turn on adds its IPC socket there.",
+                tilde(&file.display().to_string())
+            ),
+            Some(small_button(
+                "set/iina-on",
+                if s.iina.busy {
+                    "Turning on\u{2026}"
+                } else {
+                    "Turn on"
+                },
+                true,
+                (!s.iina.busy).then_some(State::enable_iina as fn(&mut State)),
+            )),
         ),
-        Some(Setup::Manual) | None => (format!("Seen by its open file only: no position. {STEPS}"), check()),
+        Some(Setup::Manual) | None => (
+            format!("Seen by its open file only: no position. {STEPS}"),
+            check(),
+        ),
     }
 }
 
@@ -206,7 +305,15 @@ pub fn settings_hint(s: &State) -> Option<El> {
         .radius(theme::R_MD)
         .fill(PAL.st_completed.alpha(0.08))
         .border(1.0, PAL.st_completed.alpha(0.25))
-        .child(col().grow(1.0).min_w(0.0).child(text(line).key("set/iina/text").font(theme::LABEL).color(PAL.dim).wrap()));
+        .child(
+            col().grow(1.0).min_w(0.0).child(
+                text(line)
+                    .key("set/iina/text")
+                    .font(theme::LABEL)
+                    .color(PAL.dim)
+                    .wrap(),
+            ),
+        );
     if let Some(a) = action {
         r = r.child(a);
     }
@@ -217,10 +324,30 @@ pub fn settings_hint(s: &State) -> Option<El> {
 pub fn fake_process_players() -> Vec<crate::precise::PlayerState> {
     use crate::precise::PlayerState;
     vec![
-        PlayerState { switch: Switch::Mpv, via: VIA_IPC, line: "/tmp/mpv.sock: not running".into(), led: Led::Off },
-        PlayerState { switch: Switch::Iina, via: VIA_PROCESS, line: "video file open".into(), led: Led::Playing },
-        PlayerState { switch: Switch::Iina, via: VIA_IPC, line: "/tmp/iina.sock: not running".into(), led: Led::Off },
-        PlayerState { switch: Switch::Vlc, via: VIA_PROCESS, line: "running, no video open".into(), led: Led::Idle },
+        PlayerState {
+            switch: Switch::Mpv,
+            via: VIA_IPC,
+            line: "/tmp/mpv.sock: not running".into(),
+            led: Led::Off,
+        },
+        PlayerState {
+            switch: Switch::Iina,
+            via: VIA_PROCESS,
+            line: "video file open".into(),
+            led: Led::Playing,
+        },
+        PlayerState {
+            switch: Switch::Iina,
+            via: VIA_IPC,
+            line: "/tmp/iina.sock: not running".into(),
+            led: Led::Off,
+        },
+        PlayerState {
+            switch: Switch::Vlc,
+            via: VIA_PROCESS,
+            line: "running, no video open".into(),
+            led: Led::Idle,
+        },
     ]
 }
 
@@ -248,7 +375,12 @@ mod tests {
         assert!(line(&s).contains("Additional mpv options") && words(&s).1.is_some());
         // The socket answers: no hint.
         let mut s = iina_by_process();
-        s.players.push(crate::precise::PlayerState { switch: Switch::Iina, via: VIA_IPC, line: "playing".into(), led: Led::Playing });
+        s.players.push(crate::precise::PlayerState {
+            switch: Switch::Iina,
+            via: VIA_IPC,
+            line: "playing".into(),
+            led: Led::Playing,
+        });
         assert!(!s.iina_seen_by_process() && settings_hint(&s).is_none());
         // IINA switched off: none either.
         let mut s = iina_by_process();
@@ -259,20 +391,39 @@ mod tests {
     #[test]
     fn the_hint_follows_iinas_settings() {
         let mut s = iina_by_process();
-        s.iina.setup = Some(Setup::ConfDir { file: PathBuf::from("/nowhere/iina/mpv.conf") });
+        s.iina.setup = Some(Setup::ConfDir {
+            file: PathBuf::from("/nowhere/iina/mpv.conf"),
+        });
         let (l, b) = words(&s);
         assert!(l.contains("/nowhere/iina/mpv.conf") && b.is_some(), "{l}");
-        s.iina.setup = Some(Setup::Set { socket: PathBuf::from("/tmp/iina.sock"), file: None });
+        s.iina.setup = Some(Setup::Set {
+            socket: PathBuf::from("/tmp/iina.sock"),
+            file: None,
+        });
         s.iina.watched = true;
         let (l, b) = words(&s);
         assert!(l.contains("Restart IINA") && b.is_none(), "{l}");
-        s.iina.setup = Some(Setup::Set { socket: PathBuf::from("/tmp/other.sock"), file: None });
+        s.iina.setup = Some(Setup::Set {
+            socket: PathBuf::from("/tmp/other.sock"),
+            file: None,
+        });
         s.iina.watched = false;
         assert!(line(&s).contains("doesn't watch"));
         // What Turn on wrote stays shown, without a button.
-        s.iina_written(Precise::Wrote { file: "/nowhere/iina/mpv.conf".into(), text: "# Added by Kotora\ninput-ipc-server=/tmp/iina.sock\n".into() }, None);
+        s.iina_written(
+            Precise::Wrote {
+                file: "/nowhere/iina/mpv.conf".into(),
+                text: "# Added by Kotora\ninput-ipc-server=/tmp/iina.sock\n".into(),
+            },
+            None,
+        );
         let (l, b) = words(&s);
-        assert!(l.contains("input-ipc-server=/tmp/iina.sock") && l.contains("Restart IINA") && b.is_none(), "{l}");
+        assert!(
+            l.contains("input-ipc-server=/tmp/iina.sock")
+                && l.contains("Restart IINA")
+                && b.is_none(),
+            "{l}"
+        );
         assert!(!s.iina.busy);
     }
 }

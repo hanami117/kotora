@@ -10,8 +10,24 @@ use crate::manga::name;
 use crate::{Kind, Media};
 
 fn item(id: u32, title: &str, en: Option<&str>, chapters: u32, total: Option<u32>) -> ListItem {
-    let media = Media { id, kind: Kind::Manga, title: title.into(), title_en: en.map(String::from), episodes: total, ..Default::default() };
-    ListItem { media, status: Status::Watching, progress: chapters, score: None, rewatching: false, times_rewatched: 0, volumes: 0, updated_at: 0 }
+    let media = Media {
+        id,
+        kind: Kind::Manga,
+        title: title.into(),
+        title_en: en.map(String::from),
+        episodes: total,
+        ..Default::default()
+    };
+    ListItem {
+        media,
+        status: Status::Watching,
+        progress: chapters,
+        score: None,
+        rewatching: false,
+        times_rewatched: 0,
+        volumes: 0,
+        updated_at: 0,
+    }
 }
 
 fn read_of(file: &str) -> Read {
@@ -42,16 +58,25 @@ fn list() -> Vec<ListItem> {
 #[test]
 fn a_chapter_file_is_read() {
     let r = read_of("Glass Lantern Club v35 c362 (2024) (Digital).cbz");
-    assert_eq!((r.series.as_str(), r.chapter, r.volume, r.volume_file), ("Glass Lantern Club", Some(362), Some(35), false));
+    assert_eq!(
+        (r.series.as_str(), r.chapter, r.volume, r.volume_file),
+        ("Glass Lantern Club", Some(362), Some(35), false)
+    );
     assert!(r.finished);
     assert_eq!(r.label(), "Ch 362 (Vol 35)");
-    assert_eq!(r.file_name, "Glass Lantern Club v35 c362 (2024) (Digital).cbz");
+    assert_eq!(
+        r.file_name,
+        "Glass Lantern Club v35 c362 (2024) (Digital).cbz"
+    );
 }
 
 #[test]
 fn a_volume_file_and_a_folder_series() {
     let r = read_of("Tsuki no Niwa/Volume 03.cbz");
-    assert_eq!((r.series.as_str(), r.chapter, r.volume, r.volume_file), ("Tsuki no Niwa", None, Some(3), true));
+    assert_eq!(
+        (r.series.as_str(), r.chapter, r.volume, r.volume_file),
+        ("Tsuki no Niwa", None, Some(3), true)
+    );
     let r = read_of("Tsuki no Niwa - Ch. 21.5.cbz");
     assert_eq!(r.chapter, Some(21), "a half chapter is the chapter before");
 }
@@ -60,16 +85,44 @@ fn a_volume_file_and_a_folder_series() {
 fn the_same_title_is_sure() {
     let l = list();
     let f = on_list("Glass Lantern Club", &l, &None).unwrap();
-    assert_eq!(f, Found::List { media_id: 1, sure: true, why: "same title in your list".into() });
+    assert_eq!(
+        f,
+        Found::List {
+            media_id: 1,
+            sure: true,
+            why: "same title in your list".into()
+        }
+    );
     // The English title counts too; punctuation and case don't matter.
-    assert!(matches!(on_list("the moon-garden", &l, &None), Some(Found::List { media_id: 2, sure: true, .. })));
+    assert!(matches!(
+        on_list("the moon-garden", &l, &None),
+        Some(Found::List {
+            media_id: 2,
+            sure: true,
+            ..
+        })
+    ));
 }
 
 #[test]
 fn a_start_or_a_close_title_asks() {
     let l = list();
-    assert!(matches!(on_list("Kirigaoka Detective", &l, &None), Some(Found::List { media_id: 3, sure: false, .. })));
-    assert!(matches!(on_list("Glass Lanten Club", &l, &None), Some(Found::List { media_id: 1, sure: false, .. })));
+    assert!(matches!(
+        on_list("Kirigaoka Detective", &l, &None),
+        Some(Found::List {
+            media_id: 3,
+            sure: false,
+            ..
+        })
+    ));
+    assert!(matches!(
+        on_list("Glass Lanten Club", &l, &None),
+        Some(Found::List {
+            media_id: 1,
+            sure: false,
+            ..
+        })
+    ));
     assert_eq!(on_list("Something Else Entirely", &l, &None), None);
     assert_eq!(on_list("", &l, &None), None);
 }
@@ -78,7 +131,9 @@ fn a_start_or_a_close_title_asks() {
 fn two_entries_with_the_title_ask() {
     let mut l = list();
     l.push(item(9, "Glass Lantern Club", None, 0, None));
-    let Some(Found::List { sure, why, .. }) = on_list("Glass Lantern Club", &l, &None) else { panic!() };
+    let Some(Found::List { sure, why, .. }) = on_list("Glass Lantern Club", &l, &None) else {
+        panic!()
+    };
     assert!(!sure);
     assert_eq!(why, "2 titles in your list match");
 }
@@ -87,51 +142,167 @@ fn two_entries_with_the_title_ask() {
 fn picks_and_ignores_win() {
     let l = list();
     let pick = Some((3, "user".to_string(), String::new()));
-    assert_eq!(on_list("Glass Lantern Club", &l, &pick), Some(Found::List { media_id: 3, sure: true, why: "you picked it".into() }));
+    assert_eq!(
+        on_list("Glass Lantern Club", &l, &pick),
+        Some(Found::List {
+            media_id: 3,
+            sure: true,
+            why: "you picked it".into()
+        })
+    );
     let ignore = Some((0, "ignore".to_string(), String::new()));
-    assert_eq!(on_list("Glass Lantern Club", &l, &ignore), Some(Found::Ignored));
+    assert_eq!(
+        on_list("Glass Lantern Club", &l, &ignore),
+        Some(Found::Ignored)
+    );
     // A pick that left the list is no answer.
     let gone = Some((77, "user".to_string(), String::new()));
-    assert!(matches!(on_list("Glass Lantern Club", &l, &gone), Some(Found::List { media_id: 1, .. })));
+    assert!(matches!(
+        on_list("Glass Lantern Club", &l, &gone),
+        Some(Found::List { media_id: 1, .. })
+    ));
 }
 
 #[test]
 fn a_search_finds_a_manga_off_the_list() {
-    let hit = |id: u32, title: &str| AnimeHit { kind: Kind::Manga, id, title: title.into(), ..Default::default() };
+    let hit = |id: u32, title: &str| AnimeHit {
+        kind: Kind::Manga,
+        id,
+        title: title.into(),
+        ..Default::default()
+    };
     let l = list();
-    assert_eq!(from_search("Paper Swallows", &[hit(50, "Paper Swallows"), hit(51, "Other")], &l, "MyAnimeList"), Found::NotOnList { media_id: 50, title: "Paper Swallows".into() });
-    assert!(matches!(from_search("Paper Swallows", &[hit(2, "Tsuki no Niwa")], &l, "MyAnimeList"), Found::List { media_id: 2, sure: false, .. }));
-    assert_eq!(from_search("Paper Swallows", &[hit(51, "Completely Unrelated")], &l, "MyAnimeList"), Found::Nothing);
+    assert_eq!(
+        from_search(
+            "Paper Swallows",
+            &[hit(50, "Paper Swallows"), hit(51, "Other")],
+            &l,
+            "MyAnimeList"
+        ),
+        Found::NotOnList {
+            media_id: 50,
+            title: "Paper Swallows".into()
+        }
+    );
+    assert!(matches!(
+        from_search(
+            "Paper Swallows",
+            &[hit(2, "Tsuki no Niwa")],
+            &l,
+            "MyAnimeList"
+        ),
+        Found::List {
+            media_id: 2,
+            sure: false,
+            ..
+        }
+    ));
+    assert_eq!(
+        from_search(
+            "Paper Swallows",
+            &[hit(51, "Completely Unrelated")],
+            &l,
+            "MyAnimeList"
+        ),
+        Found::Nothing
+    );
 }
 
 #[test]
 fn offers_only_go_forward() {
     let r = read_of("Glass Lantern Club v35 c362.cbz");
-    assert_eq!(offer(361, None, 34, None, &r), Some(Offer { chapter: Some(362), volume: None }), "volume 34 is done already");
-    assert_eq!(offer(361, None, 30, None, &r), Some(Offer { chapter: Some(362), volume: Some(34) }), "inside volume 35: 34 is done");
-    assert_eq!(offer(361, None, 30, Some(33), &r).and_then(|o| o.volume), None, "never past the volume count");
-    assert_eq!(offer(362, None, 30, None, &r), Some(Offer { chapter: None, volume: Some(34) }), "the volume alone");
-    assert_eq!(offer(361, None, 0, None, &read_of("Glass Lantern Club v01 c003.cbz")).and_then(|o| o.volume), None, "inside volume 1: none done");
+    assert_eq!(
+        offer(361, None, 34, None, &r),
+        Some(Offer {
+            chapter: Some(362),
+            volume: None
+        }),
+        "volume 34 is done already"
+    );
+    assert_eq!(
+        offer(361, None, 30, None, &r),
+        Some(Offer {
+            chapter: Some(362),
+            volume: Some(34)
+        }),
+        "inside volume 35: 34 is done"
+    );
+    assert_eq!(
+        offer(361, None, 30, Some(33), &r).and_then(|o| o.volume),
+        None,
+        "never past the volume count"
+    );
+    assert_eq!(
+        offer(362, None, 30, None, &r),
+        Some(Offer {
+            chapter: None,
+            volume: Some(34)
+        }),
+        "the volume alone"
+    );
+    assert_eq!(
+        offer(
+            361,
+            None,
+            0,
+            None,
+            &read_of("Glass Lantern Club v01 c003.cbz")
+        )
+        .and_then(|o| o.volume),
+        None,
+        "inside volume 1: none done"
+    );
     assert_eq!(offer(362, None, 34, None, &r), None, "already counted");
     assert_eq!(offer(400, None, 40, None, &r), None, "never lower");
     assert_eq!(offer(10, Some(300), 34, None, &r), None, "past the count");
-    assert_eq!(offer(10, Some(0), 0, None, &r).and_then(|o| o.chapter), Some(362), "0 is an unknown count");
+    assert_eq!(
+        offer(10, Some(0), 0, None, &r).and_then(|o| o.chapter),
+        Some(362),
+        "0 is an unknown count"
+    );
 }
 
 #[test]
 fn a_volume_file_offers_the_volume() {
     let r = read_of("Tsuki no Niwa v04.cbz");
-    assert_eq!(offer(20, Some(120), 3, Some(12), &r), Some(Offer { chapter: None, volume: Some(4) }));
+    assert_eq!(
+        offer(20, Some(120), 3, Some(12), &r),
+        Some(Offer {
+            chapter: None,
+            volume: Some(4)
+        })
+    );
     assert_eq!(offer(20, Some(120), 4, Some(12), &r), None);
-    assert_eq!(offer(20, Some(120), 0, Some(3), &r), None, "past the volume count");
-    assert_eq!(Offer { chapter: Some(3), volume: Some(1) }.label(), "Ch 3 and Vol 1");
+    assert_eq!(
+        offer(20, Some(120), 0, Some(3), &r),
+        None,
+        "past the volume count"
+    );
+    assert_eq!(
+        Offer {
+            chapter: Some(3),
+            volume: Some(1)
+        }
+        .label(),
+        "Ch 3 and Vol 1"
+    );
 }
 
 #[test]
 fn a_one_shot_is_chapter_one() {
     let r = read_of("Hoshi (Oneshot).cbz");
-    assert_eq!(offer(0, Some(1), 0, None, &r), Some(Offer { chapter: Some(1), volume: None }));
-    assert_eq!(offer(0, None, 0, None, &r), None, "no number and no known count: nothing to offer");
+    assert_eq!(
+        offer(0, Some(1), 0, None, &r),
+        Some(Offer {
+            chapter: Some(1),
+            volume: None
+        })
+    );
+    assert_eq!(
+        offer(0, None, 0, None, &r),
+        None,
+        "no number and no known count: nothing to offer"
+    );
 }
 
 #[test]
@@ -143,7 +314,10 @@ fn skips_are_said() {
 #[test]
 fn a_typed_path_is_a_library() {
     assert_eq!(library_at("/m/Comics").path, PathBuf::from("/m/Comics"));
-    assert_eq!(library_at("/m/Comics/.yacreaderlibrary/library.ydb").path, PathBuf::from("/m/Comics"));
+    assert_eq!(
+        library_at("/m/Comics/.yacreaderlibrary/library.ydb").path,
+        PathBuf::from("/m/Comics")
+    );
     assert_eq!(library_at("/m/Comics").name, "Comics");
     let v = libraries(&["/m/A".into(), "/m/B".into()], false);
     assert_eq!(v.len(), 2);
@@ -196,8 +370,12 @@ fn put(c: &Connection, id: i64, path: &str, page: i64, pages: i64, last: Option<
 /// Moves the file's mtime on, as a later write by YACReader would (file systems with a coarse
 /// clock would see no change within one second).
 fn touch_later(lib: &Path, secs: u64) {
-    let f = fs::File::options().write(true).open(lib.join(".yacreaderlibrary/library.ydb")).unwrap();
-    f.set_modified(SystemTime::now() + std::time::Duration::from_secs(secs)).unwrap();
+    let f = fs::File::options()
+        .write(true)
+        .open(lib.join(".yacreaderlibrary/library.ydb"))
+        .unwrap();
+    f.set_modified(SystemTime::now() + std::time::Duration::from_secs(secs))
+        .unwrap();
 }
 
 #[test]
@@ -206,14 +384,33 @@ fn the_watcher_reports_the_newest_and_only_on_change() {
     let lib = s.0.join("Comics");
     let c = db(&lib);
     let now = 1_800_000_000;
-    put(&c, 1, "/Glass Lantern Club/c361.cbz", 40, 40, Some(now - 100));
+    put(
+        &c,
+        1,
+        "/Glass Lantern Club/c361.cbz",
+        40,
+        40,
+        Some(now - 100),
+    );
     put(&c, 2, "/Glass Lantern Club/c362.cbz", 3, 40, Some(now - 10));
-    put(&c, 3, "/Old/c001.cbz", 40, 40, Some(now - 2 * FIRST_LOOK_SECS));
+    put(
+        &c,
+        3,
+        "/Old/c001.cbz",
+        40,
+        40,
+        Some(now - 2 * FIRST_LOOK_SECS),
+    );
     put(&c, 4, "/Never Opened/c001.cbz", 1, 40, None);
     let mut w = Watch::new(vec![library_at(&lib.to_string_lossy())], now);
     let mut errors = Vec::new();
-    let r = w.poll(&mut errors).expect("the first look reads the database");
-    assert_eq!((r.series.as_str(), r.chapter, r.page, r.finished), ("Glass Lantern Club", Some(362), 3, false));
+    let r = w
+        .poll(&mut errors)
+        .expect("the first look reads the database");
+    assert_eq!(
+        (r.series.as_str(), r.chapter, r.page, r.finished),
+        ("Glass Lantern Club", Some(362), 3, false)
+    );
     assert!(errors.is_empty());
     assert_eq!(w.poll(&mut errors), None, "unchanged: only a stat");
     // YACReader saves the last page when the comic is closed.
@@ -228,7 +425,10 @@ fn the_watcher_reports_the_newest_and_only_on_change() {
 fn a_missing_library_is_quiet_and_a_broken_one_is_said() {
     let s = Scratch::new("broken");
     let mut errors = Vec::new();
-    let mut w = Watch::new(vec![library_at(&s.0.join("Unplugged").to_string_lossy())], 0);
+    let mut w = Watch::new(
+        vec![library_at(&s.0.join("Unplugged").to_string_lossy())],
+        0,
+    );
     assert_eq!(w.poll(&mut errors), None);
     assert!(errors.is_empty(), "an unplugged drive is no error");
     let bad = s.0.join("Bad");
@@ -244,15 +444,31 @@ fn polling_writes_nothing() {
     let s = Scratch::new("ro");
     let lib = s.0.join("Comics");
     let c = db(&lib);
-    put(&c, 1, "/Glass Lantern Club/c1.cbz", 2, 40, Some(1_800_000_000));
+    put(
+        &c,
+        1,
+        "/Glass Lantern Club/c1.cbz",
+        2,
+        40,
+        Some(1_800_000_000),
+    );
     drop(c);
     let file = lib.join(".yacreaderlibrary/library.ydb");
-    let before = (fs::read(&file).unwrap(), fs::metadata(&file).unwrap().modified().unwrap());
+    let before = (
+        fs::read(&file).unwrap(),
+        fs::metadata(&file).unwrap().modified().unwrap(),
+    );
     let mut w = Watch::new(vec![library_at(&lib.to_string_lossy())], 1_800_000_000);
     assert!(w.poll(&mut Vec::new()).is_some());
-    let after = (fs::read(&file).unwrap(), fs::metadata(&file).unwrap().modified().unwrap());
+    let after = (
+        fs::read(&file).unwrap(),
+        fs::metadata(&file).unwrap().modified().unwrap(),
+    );
     assert_eq!(before, after);
-    let names: Vec<_> = fs::read_dir(lib.join(".yacreaderlibrary")).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let names: Vec<_> = fs::read_dir(lib.join(".yacreaderlibrary"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(names.len(), 1, "no journal or -shm file: {names:?}");
 }
 
@@ -264,7 +480,14 @@ fn idle_poll_cost() {
     let s = Scratch::new("cost");
     let lib = s.0.join("Comics");
     let c = db(&lib);
-    put(&c, 1, "/Glass Lantern Club/c1.cbz", 2, 40, Some(1_800_000_000));
+    put(
+        &c,
+        1,
+        "/Glass Lantern Club/c1.cbz",
+        2,
+        40,
+        Some(1_800_000_000),
+    );
     let mut w = Watch::new(vec![library_at(&lib.to_string_lossy())], 1_800_000_000);
     let mut e = Vec::new();
     let t = std::time::Instant::now();
@@ -274,15 +497,31 @@ fn idle_poll_cost() {
     for _ in 0..1000 {
         assert!(w.poll(&mut e).is_none());
     }
-    println!("first read {first:?}; idle poll {:?} each", t.elapsed() / 1000);
+    println!(
+        "first read {first:?}; idle poll {:?} each",
+        t.elapsed() / 1000
+    );
 }
 
 #[test]
 fn a_digital_volume_offers_the_volume() {
     let r = read_of("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
-    assert_eq!((r.series.as_str(), r.volume, r.volume_file, r.chapter), ("Dragon Ball Z", Some(11), true, None));
-    assert_eq!(offer(0, None, 10, Some(26), &r), Some(Offer { chapter: None, volume: Some(11) }));
-    assert_eq!(on_list("Dragon Ball Z", &list(), &None), None, "not on the list: the caller searches (Add as Reading)");
+    assert_eq!(
+        (r.series.as_str(), r.volume, r.volume_file, r.chapter),
+        ("Dragon Ball Z", Some(11), true, None)
+    );
+    assert_eq!(
+        offer(0, None, 10, Some(26), &r),
+        Some(Offer {
+            chapter: None,
+            volume: Some(11)
+        })
+    );
+    assert_eq!(
+        on_list("Dragon Ball Z", &list(), &None),
+        None,
+        "not on the list: the caller searches (Add as Reading)"
+    );
 }
 
 #[test]
@@ -290,16 +529,46 @@ fn the_viewers_comic_by_id() {
     let s = Scratch::new("viewer");
     let lib = s.0.join("Movies");
     let c = db(&lib);
-    put(&c, 1, "/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", 1, 0, None);
+    put(
+        &c,
+        1,
+        "/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz",
+        1,
+        0,
+        None,
+    );
     let l = lib.to_string_lossy();
-    assert_eq!(viewer_comic(&l, 1), Some(lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz")));
+    assert_eq!(
+        viewer_comic(&l, 1),
+        Some(lib.join("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz"))
+    );
     assert_eq!(viewer_comic(&l, 2), None);
-    assert_eq!(viewer_comic(&s.0.join("nowhere").to_string_lossy(), 1), None);
+    assert_eq!(
+        viewer_comic(&s.0.join("nowhere").to_string_lossy(), 1),
+        None
+    );
     // Fed to the open-file rules: shown at once, as a whole volume of Dragon Ball Z.
     let path = viewer_comic(&l, 1).unwrap().to_string_lossy().into_owned();
     let mut t = crate::manga::openfile::Tracker::new(10);
-    let r = t.update(&[crate::manga::openfile::Open { app: "YACReader".into(), path }], 1_800_000_000).unwrap();
-    assert_eq!((r.series.as_str(), r.volume, r.volume_file, r.finished, r.source.as_str()), ("Dragon Ball Z", Some(11), true, false, "YACReader"));
+    let r = t
+        .update(
+            &[crate::manga::openfile::Open {
+                app: "YACReader".into(),
+                path,
+            }],
+            1_800_000_000,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            r.series.as_str(),
+            r.volume,
+            r.volume_file,
+            r.finished,
+            r.source.as_str()
+        ),
+        ("Dragon Ball Z", Some(11), true, false, "YACReader")
+    );
 }
 
 /// Live test: "Dragon Ball Z v11" was a sure match for "Dragon Ball" (MyAnimeList lists
@@ -315,47 +584,126 @@ fn dragon_ball_z_is_an_unsure_dragon_ball_and_super_is_not() {
     let db = dragon_ball();
     let dbs = item(43, "Dragon Ball Super", None, 0, None);
     // The same series: sure.
-    assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&db), &None), Some(Found::List { media_id: 42, sure: true, .. })));
+    assert!(matches!(
+        on_list("Dragon Ball", std::slice::from_ref(&db), &None),
+        Some(Found::List {
+            media_id: 42,
+            sure: true,
+            ..
+        })
+    ));
     // "Dragon Ball Z" is one of Dragon Ball's titles (VIZ's numbering of the same manga): asks.
     assert_eq!(
         on_list("Dragon Ball Z", std::slice::from_ref(&db), &None),
-        Some(Found::List { media_id: 42, sure: false, why: "\u{201c}Dragon Ball Z\u{201d} is another title of Dragon Ball".into() })
+        Some(Found::List {
+            media_id: 42,
+            sure: false,
+            why: "\u{201c}Dragon Ball Z\u{201d} is another title of Dragon Ball".into()
+        })
     );
     // Super, GT, Part 2 are not among its titles: no match, the search decides.
     for s in ["Dragon Ball Super", "Dragon Ball GT", "Dragon Ball Part 2"] {
         assert_eq!(on_list(s, std::slice::from_ref(&db), &None), None, "{s}");
     }
     let both = vec![db.clone(), dbs.clone()];
-    assert!(matches!(on_list("Dragon Ball Super", &both, &None), Some(Found::List { media_id: 43, sure: true, .. })));
-    assert!(matches!(on_list("Dragon Ball Z", &both, &None), Some(Found::List { media_id: 42, sure: false, .. })), "never Super");
+    assert!(matches!(
+        on_list("Dragon Ball Super", &both, &None),
+        Some(Found::List {
+            media_id: 43,
+            sure: true,
+            ..
+        })
+    ));
+    assert!(
+        matches!(
+            on_list("Dragon Ball Z", &both, &None),
+            Some(Found::List {
+                media_id: 42,
+                sure: false,
+                ..
+            })
+        ),
+        "never Super"
+    );
     // The shorter file name for a longer title still asks (a series by its start).
-    assert!(matches!(on_list("Dragon Ball", std::slice::from_ref(&dbs), &None), Some(Found::List { media_id: 43, sure: false, .. })));
+    assert!(matches!(
+        on_list("Dragon Ball", std::slice::from_ref(&dbs), &None),
+        Some(Found::List {
+            media_id: 43,
+            sure: false,
+            ..
+        })
+    ));
     // A typo is not another series.
-    assert!(matches!(on_list("Glass Lanten Club", &list(), &None), Some(Found::List { media_id: 1, .. })));
+    assert!(matches!(
+        on_list("Glass Lanten Club", &list(), &None),
+        Some(Found::List { media_id: 1, .. })
+    ));
 }
 
 /// Live test: the search's "Dragon Ball Z: Fukkatsu no 'F'" (the movie manga) was taken for
 /// "Dragon Ball Z". A hit with words added to the series is never the answer.
 #[test]
 fn the_search_never_takes_a_title_with_words_added() {
-    let hit = |id: u32, title: &str, syn: &[&str]| AnimeHit { kind: Kind::Manga, id, title: title.into(), synonyms: syn.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+    let hit = |id: u32, title: &str, syn: &[&str]| AnimeHit {
+        kind: Kind::Manga,
+        id,
+        title: title.into(),
+        synonyms: syn.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
     let fukkatsu = hit(9100, "Dragon Ball Z: Fukkatsu no \"F\"", &[]);
     let super_ = hit(9002, "Dragon Ball Super", &[]);
     // Off the list: Fukkatsu and Super are no answer.
-    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu.clone(), super_.clone()], &[], "MyAnimeList"), Found::Nothing);
+    assert_eq!(
+        from_search(
+            "Dragon Ball Z",
+            &[fukkatsu.clone(), super_.clone()],
+            &[],
+            "MyAnimeList"
+        ),
+        Found::Nothing
+    );
     // Dragon Ball itself (with "Dragon Ball Z" among its titles) is, unsure, off the list…
     let db = hit(42, "Dragon Ball", &["Dragon Ball Z"]);
-    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu.clone(), db.clone()], &[], "MyAnimeList"), Found::NotOnList { media_id: 42, title: "Dragon Ball".into() });
+    assert_eq!(
+        from_search(
+            "Dragon Ball Z",
+            &[fukkatsu.clone(), db.clone()],
+            &[],
+            "MyAnimeList"
+        ),
+        Found::NotOnList {
+            media_id: 42,
+            title: "Dragon Ball".into()
+        }
+    );
     // … and on it.
     let l = vec![dragon_ball()];
-    assert!(matches!(from_search("Dragon Ball Z", &[fukkatsu.clone(), db], &l, "MyAnimeList"), Found::List { media_id: 42, sure: false, .. }));
+    assert!(matches!(
+        from_search("Dragon Ball Z", &[fukkatsu.clone(), db], &l, "MyAnimeList"),
+        Found::List {
+            media_id: 42,
+            sure: false,
+            ..
+        }
+    ));
     // A list hit whose title adds words is no fallback either.
     let mut on = item(9100, "Dragon Ball Z: Fukkatsu no \"F\"", None, 0, None);
     on.media.id = 9100;
-    assert_eq!(from_search("Dragon Ball Z", &[fukkatsu], &[on], "MyAnimeList"), Found::Nothing);
+    assert_eq!(
+        from_search("Dragon Ball Z", &[fukkatsu], &[on], "MyAnimeList"),
+        Found::Nothing
+    );
     // A real series with its exact title still wins over a list hit.
     let hits = [hit(9001, "Glass Lantern Club", &[])];
-    assert_eq!(from_search("Glass Lantern Club", &hits, &[], "MyAnimeList"), Found::NotOnList { media_id: 9001, title: "Glass Lantern Club".into() });
+    assert_eq!(
+        from_search("Glass Lantern Club", &hits, &[], "MyAnimeList"),
+        Found::NotOnList {
+            media_id: 9001,
+            title: "Glass Lantern Club".into()
+        }
+    );
 }
 
 #[test]
@@ -363,8 +711,17 @@ fn viz_dragon_ball_z_is_renumbered_to_dragon_ball() {
     let mut r = read_of("Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz");
     renumber(&mut r, "Dragon Ball");
     assert_eq!((r.volume, r.volume_file), (Some(27), true));
-    assert_eq!(r.renumbered.as_deref(), Some("Dragon Ball Z v11 = Dragon Ball vol 27"));
-    assert_eq!(offer(0, Some(520), 26, Some(42), &r), Some(Offer { chapter: None, volume: Some(27) }));
+    assert_eq!(
+        r.renumbered.as_deref(),
+        Some("Dragon Ball Z v11 = Dragon Ball vol 27")
+    );
+    assert_eq!(
+        offer(0, Some(520), 26, Some(42), &r),
+        Some(Offer {
+            chapter: None,
+            volume: Some(27)
+        })
+    );
     let mut c = read_of("Dragon Ball Z - Chapter 001.cbz");
     renumber(&mut c, "Dragon Ball");
     assert_eq!(c.chapter, Some(195));
@@ -379,7 +736,10 @@ fn viz_dragon_ball_z_is_renumbered_to_dragon_ball() {
 
 #[test]
 fn an_old_cached_answer_is_checked_again() {
-    assert!(!title_fits("Dragon Ball Z", "Dragon Ball Z: Fukkatsu no \"F\""));
+    assert!(!title_fits(
+        "Dragon Ball Z",
+        "Dragon Ball Z: Fukkatsu no \"F\""
+    ));
     assert!(!title_fits("Dragon Ball Z", "Dragon Ball Super"));
     assert!(title_fits("Glass Lantern Club", "Glass Lantern Club"));
 }
@@ -390,9 +750,35 @@ fn a_reread_starts_wherever_the_file_is() {
     // but a reread starts at the file's chapter, inside the known counts.
     let r = read_of("Glass Lantern Club v35 c362.cbz");
     assert_eq!(offer(400, Some(400), 40, Some(40), &r), None);
-    assert_eq!(reread_offer(Some(400), Some(40), &r), Some(Offer { chapter: Some(362), volume: Some(34) }));
-    assert_eq!(reread_offer(Some(300), None, &r).and_then(|o| o.chapter), None, "past the count");
-    assert_eq!(reread_offer(None, None, &read_of("Tsuki no Niwa v04.cbz")), Some(Offer { chapter: None, volume: Some(4) }));
-    assert_eq!(reread_offer(Some(1), None, &read_of("Hoshi (Oneshot).cbz")), Some(Offer { chapter: Some(1), volume: None }), "a one-shot");
-    assert_eq!(reread_offer(None, None, &read_of("Hoshi (Oneshot).cbz")), None);
+    assert_eq!(
+        reread_offer(Some(400), Some(40), &r),
+        Some(Offer {
+            chapter: Some(362),
+            volume: Some(34)
+        })
+    );
+    assert_eq!(
+        reread_offer(Some(300), None, &r).and_then(|o| o.chapter),
+        None,
+        "past the count"
+    );
+    assert_eq!(
+        reread_offer(None, None, &read_of("Tsuki no Niwa v04.cbz")),
+        Some(Offer {
+            chapter: None,
+            volume: Some(4)
+        })
+    );
+    assert_eq!(
+        reread_offer(Some(1), None, &read_of("Hoshi (Oneshot).cbz")),
+        Some(Offer {
+            chapter: Some(1),
+            volume: None
+        }),
+        "a one-shot"
+    );
+    assert_eq!(
+        reread_offer(None, None, &read_of("Hoshi (Oneshot).cbz")),
+        None
+    );
 }

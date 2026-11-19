@@ -43,7 +43,16 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { threshold: 0.8, off: Vec::new(), mpv_sockets: crate::mpv::default_sockets(), vlc_port: 8080, vlc_password: String::new(), processes: true, process_minutes: crate::watch::OPEN_MINUTES, mpc_port: crate::mpc::PORT }
+        Settings {
+            threshold: 0.8,
+            off: Vec::new(),
+            mpv_sockets: crate::mpv::default_sockets(),
+            vlc_port: 8080,
+            vlc_password: String::new(),
+            processes: true,
+            process_minutes: crate::watch::OPEN_MINUTES,
+            mpc_port: crate::mpc::PORT,
+        }
     }
 }
 
@@ -73,11 +82,19 @@ pub enum MpcProcess {
 impl Shared {
     #[cfg(test)]
     pub(crate) fn for_tests(settings: Settings) -> Shared {
-        Shared { settings: Mutex::new(settings), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown), mpv_gone: Arc::default() }
+        Shared {
+            settings: Mutex::new(settings),
+            sockets: Mutex::new(HashSet::new()),
+            mpc_process: Mutex::new(MpcProcess::Unknown),
+            mpv_gone: Arc::default(),
+        }
     }
 
     fn get(&self) -> Settings {
-        self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// VLC's web source: switched on, port, password.
@@ -103,7 +120,8 @@ impl Shared {
 
     /// The process scan saw the last mpv or mpv.net process go.
     pub fn mpv_processes_gone(&self) {
-        self.mpv_gone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.mpv_gone
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn set_mpc_process(&self, p: MpcProcess) {
@@ -127,9 +145,16 @@ impl Detector {
         for sock in &s.mpv_sockets {
             self.watch_socket(sock);
         }
-        *self.shared.settings.lock().unwrap_or_else(|e| e.into_inner()) = s;
+        *self
+            .shared
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = s;
         let _ = self.tx.send(Input::Settings);
-        for w in [&self.vlc_wake, &self.proc_wake, &self.mpc_wake].into_iter().flatten() {
+        for w in [&self.vlc_wake, &self.proc_wake, &self.mpc_wake]
+            .into_iter()
+            .flatten()
+        {
             let _ = w.send(());
         }
     }
@@ -143,16 +168,27 @@ impl Detector {
 
     /// The socket has a thread, from the settings or [`Detector::watch_socket`].
     pub fn watches(&self, sock: &std::path::Path) -> bool {
-        self.shared.sockets.lock().unwrap_or_else(|e| e.into_inner()).contains(sock)
+        self.shared
+            .sockets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(sock)
     }
 }
 
 fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> bool {
-    if !shared.sockets.lock().unwrap_or_else(|e| e.into_inner()).insert(sock.to_path_buf()) {
+    if !shared
+        .sockets
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(sock.to_path_buf())
+    {
         return false;
     }
     let (sock, tx, gone) = (sock.to_path_buf(), tx.clone(), shared.mpv_gone.clone());
-    let _ = std::thread::Builder::new().name("kotora-mpv".into()).spawn(move || crate::mpv::run(sock, tx, gone));
+    let _ = std::thread::Builder::new()
+        .name("kotora-mpv".into())
+        .spawn(move || crate::mpv::run(sock, tx, gone));
     true
 }
 
@@ -160,19 +196,28 @@ fn spawn_socket(shared: &Shared, tx: &Sender<Input>, sock: &std::path::Path) -> 
 /// thread.
 pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Detector {
     let (tx, rx) = mpsc::channel::<Input>();
-    let shared = Arc::new(Shared { settings: Mutex::new(settings.clone()), sockets: Mutex::new(HashSet::new()), mpc_process: Mutex::new(MpcProcess::Unknown), mpv_gone: Arc::default() });
+    let shared = Arc::new(Shared {
+        settings: Mutex::new(settings.clone()),
+        sockets: Mutex::new(HashSet::new()),
+        mpc_process: Mutex::new(MpcProcess::Unknown),
+        mpv_gone: Arc::default(),
+    });
     for sock in &settings.mpv_sockets {
         spawn_socket(&shared, &tx, sock);
     }
     #[cfg(target_os = "linux")]
     {
         let tx = tx.clone();
-        let _ = std::thread::Builder::new().name("kotora-mpris".into()).spawn(move || crate::mpris::run(tx));
+        let _ = std::thread::Builder::new()
+            .name("kotora-mpris".into())
+            .spawn(move || crate::mpris::run(tx));
     }
     let vlc_wake = if crate::VLC_WEB {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx) = (shared.clone(), tx.clone());
-        let _ = std::thread::Builder::new().name("kotora-vlc".into()).spawn(move || crate::vlc::run(sh, wrx, tx));
+        let _ = std::thread::Builder::new()
+            .name("kotora-vlc".into())
+            .spawn(move || crate::vlc::run(sh, wrx, tx));
         Some(wtx)
     } else {
         None
@@ -182,7 +227,9 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
     let mpc_wake = if cfg!(windows) {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx) = (shared.clone(), tx.clone());
-        let _ = std::thread::Builder::new().name("kotora-mpc".into()).spawn(move || crate::mpc::run(sh, wrx, tx));
+        let _ = std::thread::Builder::new()
+            .name("kotora-mpc".into())
+            .spawn(move || crate::mpc::run(sh, wrx, tx));
         Some(wtx)
     } else {
         None
@@ -191,50 +238,62 @@ pub fn start(settings: Settings, sink: impl Fn(Report) + Send + 'static) -> Dete
     let proc_wake = {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx, mpc) = (shared.clone(), tx.clone(), mpc_wake.clone());
-        let _ = std::thread::Builder::new().name("kotora-procs".into()).spawn(move || crate::winproc::run(sh, wrx, tx, mpc));
+        let _ = std::thread::Builder::new()
+            .name("kotora-procs".into())
+            .spawn(move || crate::winproc::run(sh, wrx, tx, mpc));
         Some(wtx)
     };
     #[cfg(not(windows))]
     let proc_wake = if cfg!(any(target_os = "linux", target_os = "macos")) {
         let (wtx, wrx) = mpsc::channel();
         let (sh, tx) = (shared.clone(), tx.clone());
-        let _ = std::thread::Builder::new().name("kotora-procs".into()).spawn(move || crate::procfs::run(sh, wrx, tx));
+        let _ = std::thread::Builder::new()
+            .name("kotora-procs".into())
+            .spawn(move || crate::procfs::run(sh, wrx, tx));
         Some(wtx)
     } else {
         None
     };
     let sh = shared.clone();
-    let _ = std::thread::Builder::new().name("kotora-watch".into()).spawn(move || {
-        let mut w = Watch::new(settings.threshold);
-        w.open_secs = f64::from(settings.process_minutes) * 60.0;
-        w.off = settings.off.iter().copied().collect();
-        loop {
-            let now = crate::clock();
-            let got = match w.next_wake(now) {
-                Some(secs) => rx.recv_timeout(Duration::from_secs_f64(secs)),
-                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
-            };
-            let now = crate::clock();
-            let reports = match got {
-                Ok(Input::Update(p)) => w.update(p, now),
-                Ok(Input::Gone(k)) => w.gone(&k, now),
-                Ok(Input::Status(st)) => w.status(st).into_iter().collect(),
-                Ok(Input::Settings) => {
-                    let s = sh.get();
-                    w.threshold = s.threshold;
-                    w.open_secs = f64::from(s.process_minutes) * 60.0;
-                    w.off = s.off.iter().copied().collect();
-                    let mut out = w.drop_off(now);
-                    out.extend(w.tick(now));
-                    out
+    let _ = std::thread::Builder::new()
+        .name("kotora-watch".into())
+        .spawn(move || {
+            let mut w = Watch::new(settings.threshold);
+            w.open_secs = f64::from(settings.process_minutes) * 60.0;
+            w.off = settings.off.iter().copied().collect();
+            loop {
+                let now = crate::clock();
+                let got = match w.next_wake(now) {
+                    Some(secs) => rx.recv_timeout(Duration::from_secs_f64(secs)),
+                    None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                };
+                let now = crate::clock();
+                let reports = match got {
+                    Ok(Input::Update(p)) => w.update(p, now),
+                    Ok(Input::Gone(k)) => w.gone(&k, now),
+                    Ok(Input::Status(st)) => w.status(st).into_iter().collect(),
+                    Ok(Input::Settings) => {
+                        let s = sh.get();
+                        w.threshold = s.threshold;
+                        w.open_secs = f64::from(s.process_minutes) * 60.0;
+                        w.off = s.off.iter().copied().collect();
+                        let mut out = w.drop_off(now);
+                        out.extend(w.tick(now));
+                        out
+                    }
+                    Err(RecvTimeoutError::Timeout) => w.tick(now),
+                    Err(RecvTimeoutError::Disconnected) => return,
+                };
+                for r in reports {
+                    sink(r);
                 }
-                Err(RecvTimeoutError::Timeout) => w.tick(now),
-                Err(RecvTimeoutError::Disconnected) => return,
-            };
-            for r in reports {
-                sink(r);
             }
-        }
-    });
-    Detector { tx, shared, vlc_wake, proc_wake, mpc_wake }
+        });
+    Detector {
+        tx,
+        shared,
+        vlc_wake,
+        proc_wake,
+        mpc_wake,
+    }
 }

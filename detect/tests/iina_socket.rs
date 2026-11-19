@@ -43,13 +43,19 @@ fn serve(listener: UnixListener) {
 }
 
 fn settings(sockets: Vec<PathBuf>) -> Settings {
-    Settings { mpv_sockets: sockets, processes: false, ..Settings::default() }
+    Settings {
+        mpv_sockets: sockets,
+        processes: false,
+        ..Settings::default()
+    }
 }
 
 /// Waits for a report that `want` accepts.
 fn wait_for<T>(rx: &mpsc::Receiver<Report>, mut want: impl FnMut(&Report) -> Option<T>) -> T {
     loop {
-        let r = rx.recv_timeout(Duration::from_secs(5)).expect("the report did not come");
+        let r = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the report did not come");
         if let Some(t) = want(&r) {
             return t;
         }
@@ -58,7 +64,9 @@ fn wait_for<T>(rx: &mpsc::Receiver<Report>, mut want: impl FnMut(&Report) -> Opt
 
 fn plays_with_position(r: &Report) -> Option<(Switch, Via, Option<f64>)> {
     match r {
-        Report::Now(Some(t)) if t.playing.position.is_some() => Some((t.playing.switch, t.playing.via, t.playing.position)),
+        Report::Now(Some(t)) if t.playing.position.is_some() => {
+            Some((t.playing.switch, t.playing.via, t.playing.position))
+        }
         _ => None,
     }
 }
@@ -73,7 +81,10 @@ fn an_iina_socket_that_is_already_there_gives_the_position() {
     let _d = start(settings(vec![sock]), move |r| {
         let _ = tx.send(r);
     });
-    assert_eq!(wait_for(&rx, plays_with_position), (Switch::Iina, Via::MpvIpc, Some(42.5)));
+    assert_eq!(
+        wait_for(&rx, plays_with_position),
+        (Switch::Iina, Via::MpvIpc, Some(42.5))
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -85,11 +96,16 @@ fn an_iina_socket_that_appears_later_is_found() {
     let _d = start(settings(vec![sock.clone()]), move |r| {
         let _ = tx.send(r);
     });
-    wait_for(&rx, |r| matches!(r, Report::Sources(s) if s.iter().any(|s| s.switch == Switch::Iina && s.led == Led::Off)).then_some(()));
+    wait_for(&rx, |r| {
+        matches!(r, Report::Sources(s) if s.iter().any(|s| s.switch == Switch::Iina && s.led == Led::Off)).then_some(())
+    });
     // mpv binds the socket, and listens a moment later.
     let s2 = sock.clone();
     std::thread::spawn(move || serve(bind_slowly(&s2)));
-    assert_eq!(wait_for(&rx, plays_with_position), (Switch::Iina, Via::MpvIpc, Some(42.5)));
+    assert_eq!(
+        wait_for(&rx, plays_with_position),
+        (Switch::Iina, Via::MpvIpc, Some(42.5))
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -106,7 +122,14 @@ fn bind_slowly(sock: &Path) -> UnixListener {
         for (d, b) in addr.sun_path.iter_mut().zip(sock.as_os_str().as_bytes()) {
             *d = *b as libc::c_char;
         }
-        assert_eq!(libc::bind(fd, (&raw const addr).cast(), std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t), 0);
+        assert_eq!(
+            libc::bind(
+                fd,
+                (&raw const addr).cast(),
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t
+            ),
+            0
+        );
         std::thread::sleep(Duration::from_millis(40));
         assert_eq!(libc::listen(fd, 8), 0);
         UnixListener::from_raw_fd(fd)
@@ -126,7 +149,10 @@ fn a_socket_added_while_running_is_watched_at_once() {
     assert!(!d.watches(&sock));
     assert!(d.watch_socket(&sock));
     assert!(d.watches(&sock) && !d.watch_socket(&sock), "once only");
-    assert_eq!(wait_for(&rx, plays_with_position), (Switch::Iina, Via::MpvIpc, Some(42.5)));
+    assert_eq!(
+        wait_for(&rx, plays_with_position),
+        (Switch::Iina, Via::MpvIpc, Some(42.5))
+    );
     // New settings that name a socket start it too.
     let other = dir.join("mpv.sock");
     d.set(settings(vec![other.clone()]));

@@ -62,7 +62,11 @@ const fn parse_build(s: &str) -> u32 {
 
 /// The version and build as `--version` prints them: `0.1.0 (build 1)`, plus the dev suffix.
 pub fn version_line() -> String {
-    format!("{} (build {BUILD}){}", env!("CARGO_PKG_VERSION"), dev_suffix())
+    format!(
+        "{} (build {BUILD}){}",
+        env!("CARGO_PKG_VERSION"),
+        dev_suffix()
+    )
 }
 
 /// What `build.rs` found in git: the branch, short hash, whether the tree has changes, and whether
@@ -81,7 +85,12 @@ pub struct GitFacts<'a> {
 pub fn git_suffix(facts: Option<GitFacts>) -> String {
     match facts {
         Some(f) if !(f.at_release_tag && !f.dirty) => {
-            format!(" \u{b7} {} {}{}", f.branch, f.hash, if f.dirty { " dirty" } else { "" })
+            format!(
+                " \u{b7} {} {}{}",
+                f.branch,
+                f.hash,
+                if f.dirty { " dirty" } else { "" }
+            )
         }
         _ => String::new(),
     }
@@ -91,7 +100,12 @@ pub fn git_suffix(facts: Option<GitFacts>) -> String {
 fn parse_facts(s: &str) -> Option<GitFacts<'_>> {
     let mut p = s.split('\t');
     let (branch, hash, dirty, tag) = (p.next()?, p.next()?, p.next()?, p.next()?);
-    (!branch.is_empty() && !hash.is_empty()).then_some(GitFacts { branch, hash, dirty: dirty == "1", at_release_tag: tag == "1" })
+    (!branch.is_empty() && !hash.is_empty()).then_some(GitFacts {
+        branch,
+        hash,
+        dirty: dirty == "1",
+        at_release_tag: tag == "1",
+    })
 }
 
 /// [`git_suffix`] for this build.
@@ -127,7 +141,9 @@ pub fn runtime_dir() -> PathBuf {
 /// login), and the app started from the Dock and `kot` over ssh must find the same socket.
 #[cfg(target_os = "macos")]
 pub fn runtime_dir() -> PathBuf {
-    darwin_user_temp_dir().unwrap_or_else(std::env::temp_dir).join(format!("kotora-{}", uid()))
+    darwin_user_temp_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("kotora-{}", uid()))
 }
 
 #[cfg(target_os = "macos")]
@@ -136,7 +152,13 @@ fn darwin_user_temp_dir() -> Option<PathBuf> {
     let mut buf = vec![0u8; 1024];
     // SAFETY: `buf` is writable for `buf.len()` bytes; confstr writes at most that many,
     // NUL included, and returns the size it needs (NUL included), or 0 on failure.
-    let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
+    let n = unsafe {
+        libc::confstr(
+            libc::_CS_DARWIN_USER_TEMP_DIR,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
     if n <= 1 || n > buf.len() {
         return None;
     }
@@ -319,8 +341,12 @@ pub enum Reply {
         note: Option<String>,
     },
     /// The entry after an edit; the change waits in the queue.
-    Edited { entry: Entry },
-    Queue { ops: Vec<QueueItem> },
+    Edited {
+        entry: Entry,
+    },
+    Queue {
+        ops: Vec<QueueItem>,
+    },
     /// `None`: nothing plays.
     Now {
         now: Option<NowInfo>,
@@ -329,7 +355,9 @@ pub enum Reply {
         reading: Option<ReadingInfo>,
     },
     /// Done, in a sentence.
-    Done { message: String },
+    Done {
+        message: String,
+    },
     /// The next episodes of the list, soonest first; `note` says why there are none yet.
     Airing {
         items: Vec<AiringItem>,
@@ -656,7 +684,11 @@ impl Client {
         #[cfg(windows)]
         let stream = pipe::connect(path)?;
         let reader = BufReader::new(stream.try_clone()?);
-        Ok(Self { writer: stream, reader, timeout: REPLY_TIMEOUT })
+        Ok(Self {
+            writer: stream,
+            reader,
+            timeout: REPLY_TIMEOUT,
+        })
     }
 
     /// Waits this long for a reply instead of [`REPLY_TIMEOUT`] (Unix: the socket's read timeout).
@@ -685,7 +717,10 @@ impl Client {
             pipe::with_deadline(&pipe, timeout, || reader.read_line(&mut answer))?
         };
         if read == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the app closed the connection"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the app closed the connection",
+            ));
         }
         serde_json::from_str(&answer).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
@@ -719,7 +754,10 @@ impl Drop for Server {
 /// answers means another app owns it (`AddrInUse`). The accept thread sleeps in `accept`: no
 /// timers, no polling.
 #[cfg(unix)]
-pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'static) -> io::Result<Server> {
+pub fn serve(
+    path: &Path,
+    handler: impl Fn(Request) -> Reply + Send + Sync + 'static,
+) -> io::Result<Server> {
     if let Some(dir) = path.parent()
         && !dir.exists()
     {
@@ -728,33 +766,50 @@ pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'st
     }
     if path.exists() {
         if UnixStream::connect(path).is_ok() {
-            return Err(io::Error::new(io::ErrorKind::AddrInUse, format!("{} is in use", path.display())));
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("{} is in use", path.display()),
+            ));
         }
         std::fs::remove_file(path)?;
     }
     let listener = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     let handler = Arc::new(handler);
-    std::thread::Builder::new().name("kotora-ctl".into()).spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
-            let handler = handler.clone();
-            let _ = std::thread::Builder::new().name("kotora-ctl-conn".into()).spawn(move || connection(stream, &*handler));
-        }
-    })?;
-    Ok(Server { path: path.to_path_buf() })
+    std::thread::Builder::new()
+        .name("kotora-ctl".into())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let handler = handler.clone();
+                let _ = std::thread::Builder::new()
+                    .name("kotora-ctl-conn".into())
+                    .spawn(move || connection(stream, &*handler));
+            }
+        })?;
+    Ok(Server {
+        path: path.to_path_buf(),
+    })
 }
 
 /// Windows: listens on the named pipe for `path` (see `pipe.rs`). The pipe's first instance is
 /// exclusive, so a second app gets `AddrInUse`; there is no stale file to clean up.
 #[cfg(windows)]
-pub fn serve(path: &Path, handler: impl Fn(Request) -> Reply + Send + Sync + 'static) -> io::Result<Server> {
+pub fn serve(
+    path: &Path,
+    handler: impl Fn(Request) -> Reply + Send + Sync + 'static,
+) -> io::Result<Server> {
     let pipe = pipe::listen(path, Arc::new(handler))?;
-    Ok(Server { path: path.to_path_buf(), pipe })
+    Ok(Server {
+        path: path.to_path_buf(),
+        pipe,
+    })
 }
 
 fn connection(stream: Stream, handler: &(dyn Fn(Request) -> Reply + Send + Sync)) {
-    let Ok(mut writer) = stream.try_clone() else { return };
+    let Ok(mut writer) = stream.try_clone() else {
+        return;
+    };
     for line in BufReader::new(stream).lines() {
         let Ok(line) = line else { return };
         if line.trim().is_empty() {
@@ -762,11 +817,20 @@ fn connection(stream: Stream, handler: &(dyn Fn(Request) -> Reply + Send + Sync)
         }
         let reply = match serde_json::from_str::<Request>(&line) {
             Ok(req) => handler(req),
-            Err(e) => Reply::Error { message: format!("bad request: {e}"), anyway: false },
+            Err(e) => Reply::Error {
+                message: format!("bad request: {e}"),
+                anyway: false,
+            },
         };
-        let Ok(mut out) = serde_json::to_string(&reply) else { return };
+        let Ok(mut out) = serde_json::to_string(&reply) else {
+            return;
+        };
         out.push('\n');
-        if writer.write_all(out.as_bytes()).and_then(|_| writer.flush()).is_err() {
+        if writer
+            .write_all(out.as_bytes())
+            .and_then(|_| writer.flush())
+            .is_err()
+        {
             return;
         }
     }

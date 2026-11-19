@@ -57,7 +57,9 @@ pub fn play(handle: &Handle, id: u32) {
 
 /// The tray's first line: what plays, as the sidebar card has it ("Title · Ep 7"), or empty.
 pub fn now_line(s: &State) -> String {
-    let Some(now) = &s.now else { return String::new() };
+    let Some(now) = &s.now else {
+        return String::new();
+    };
     let (_, title) = crate::ui::now_title(s, now);
     match now.episode() {
         Some(ep) => format!("{title} \u{b7} Ep {ep}"),

@@ -6,15 +6,23 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::IntoRawHandle;
 
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
+use windows_sys::Win32::System::Console::{
+    ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    SetStdHandle,
+};
 use windows_sys::Win32::UI::Shell::{SetCurrentProcessExplicitAppUserModelID, ShellExecuteW};
-use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow, SW_SHOWNORMAL};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    ASFW_ANY, AllowSetForegroundWindow, SW_SHOWNORMAL,
+};
 
 /// The log is started again when it is larger than this at start.
 const LOG_MAX: u64 = 1024 * 1024;
 
 fn wide(s: &str) -> Vec<u16> {
-    std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
+    std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(Some(0))
+        .collect()
 }
 
 fn has(std_handle: u32) -> bool {
@@ -38,7 +46,13 @@ pub fn attach_output() {
     if out && err {
         return;
     }
-    let console = || std::fs::OpenOptions::new().read(true).write(true).open("CONOUT$").ok();
+    let console = || {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("CONOUT$")
+            .ok()
+    };
     // SAFETY: no preconditions; fails when the parent has no console.
     let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } != 0;
     for (present, which) in [(out, STD_OUTPUT_HANDLE), (err, STD_ERROR_HANDLE)] {
@@ -51,7 +65,11 @@ pub fn attach_output() {
         }
     }
     if !attached {
-        eprintln!("--- kotora {} started (unix time {})", kotora_ctl::version_line(), kotora_core::time::now_unix());
+        eprintln!(
+            "--- kotora {} started (unix time {})",
+            kotora_ctl::version_line(),
+            kotora_core::time::now_unix()
+        );
     }
 }
 
@@ -66,7 +84,11 @@ fn log_file() -> Option<std::fs::File> {
     let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_MAX);
     let mut o = std::fs::OpenOptions::new();
     o.create(true);
-    if big { o.write(true).truncate(true) } else { o.append(true) };
+    if big {
+        o.write(true).truncate(true)
+    } else {
+        o.append(true)
+    };
     o.open(&path).ok()
 }
 
@@ -74,9 +96,25 @@ fn log_file() -> Option<std::fs::File> {
 pub fn open(target: &str) -> Result<(), String> {
     let (verb, target_w) = (wide("open"), wide(target));
     // SAFETY: both strings are NUL-terminated and live across the call.
-    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target_w.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target_w.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
     // A value above 32 is success (the call's old contract).
-    if r as usize > 32 { Ok(()) } else { Err(format!("Windows can't open {target} (code {}).", r as usize)) }
+    if r as usize > 32 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows can't open {target} (code {}).",
+            r as usize
+        ))
+    }
 }
 
 /// The second copy calls this before it asks the running one to show its window: Windows only
@@ -90,8 +128,13 @@ pub fn allow_focus() {
 /// until the dialog closes.
 pub fn pick_folder(title: &str) -> Result<Option<String>, String> {
     use windows::Win32::Foundation::ERROR_CANCELLED;
-    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
-    use windows::Win32::UI::Shell::{FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoTaskMemFree, CoUninitialize,
+    };
+    use windows::Win32::UI::Shell::{
+        FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH,
+    };
     use windows::core::{HRESULT, HSTRING};
 
     // SAFETY: COM is started for this thread and stopped again when it was started here; every
@@ -99,11 +142,16 @@ pub fn pick_folder(title: &str) -> Result<Option<String>, String> {
     unsafe {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let picked = (|| -> windows::core::Result<Option<String>> {
-            let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
             dialog.SetOptions(dialog.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM)?;
             dialog.SetTitle(&HSTRING::from(title))?;
             if let Err(e) = dialog.Show(None) {
-                return if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) { Ok(None) } else { Err(e) };
+                return if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                };
             }
             let name = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
             let path = name.to_string().ok();
@@ -123,35 +171,62 @@ pub fn pick_folder(title: &str) -> Result<Option<String>, String> {
 /// blocks until the dialog closes.
 pub fn pick_file(title: &str, save: Option<&str>) -> Result<Option<String>, String> {
     use windows::Win32::Foundation::ERROR_CANCELLED;
-    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoTaskMemFree, CoUninitialize,
+    };
     use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
-    use windows::Win32::UI::Shell::{FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FileOpenDialog, FileSaveDialog, IFileDialog, SIGDN_FILESYSPATH};
+    use windows::Win32::UI::Shell::{
+        FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FileOpenDialog,
+        FileSaveDialog, IFileDialog, SIGDN_FILESYSPATH,
+    };
     use windows::core::{HRESULT, HSTRING, w};
 
     // SAFETY: as in `pick_folder`; the filter strings are static and outlive the dialog.
     unsafe {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let picked = (|| -> windows::core::Result<Option<String>> {
-            let all = COMDLG_FILTERSPEC { pszName: w!("All files"), pszSpec: w!("*.*") };
+            let all = COMDLG_FILTERSPEC {
+                pszName: w!("All files"),
+                pszSpec: w!("*.*"),
+            };
             let dialog: IFileDialog = match save {
                 Some(name) => {
-                    let d: IFileDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
-                    d.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("MyAnimeList XML (*.xml)"), pszSpec: w!("*.xml") }, all])?;
+                    let d: IFileDialog =
+                        CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+                    d.SetFileTypes(&[
+                        COMDLG_FILTERSPEC {
+                            pszName: w!("MyAnimeList XML (*.xml)"),
+                            pszSpec: w!("*.xml"),
+                        },
+                        all,
+                    ])?;
                     d.SetFileName(&HSTRING::from(name))?;
                     d.SetDefaultExtension(w!("xml"))?;
                     d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT)?;
                     d
                 }
                 None => {
-                    let d: IFileDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
-                    d.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: w!("MyAnimeList export (*.xml, *.gz)"), pszSpec: w!("*.xml;*.gz") }, all])?;
+                    let d: IFileDialog =
+                        CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+                    d.SetFileTypes(&[
+                        COMDLG_FILTERSPEC {
+                            pszName: w!("MyAnimeList export (*.xml, *.gz)"),
+                            pszSpec: w!("*.xml;*.gz"),
+                        },
+                        all,
+                    ])?;
                     d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
                     d
                 }
             };
             dialog.SetTitle(&HSTRING::from(title))?;
             if let Err(e) = dialog.Show(None) {
-                return if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) { Ok(None) } else { Err(e) };
+                return if e.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                };
             }
             let name = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
             let path = name.to_string().ok();
@@ -166,7 +241,8 @@ pub fn pick_file(title: &str, save: Option<&str>) -> Result<Option<String>, Stri
 }
 
 /// The 256 px app icon, written beside the database so Windows can draw it on toasts.
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/256x256/apps/io.github.hanami117.kotora.png");
+const ICON_PNG: &[u8] =
+    include_bytes!("../../assets/icons/hicolor/256x256/apps/io.github.hanami117.kotora.png");
 
 /// Where the app id's name and icon are registered for toasts, under `HKEY_CURRENT_USER`.
 pub fn app_id_key() -> String {
@@ -188,10 +264,17 @@ pub fn set_app_id() {
 pub fn register_app_id() -> bool {
     let key = app_id_key();
     let mut ok = reg::set_string(&key, "DisplayName", "Kotora").is_ok();
-    let icon = kotora_core::paths::log_dir().parent().map(|d| d.join("kotora-icon.png"));
+    let icon = kotora_core::paths::log_dir()
+        .parent()
+        .map(|d| d.join("kotora-icon.png"));
     if let Some(icon) = icon {
         let fresh = std::fs::metadata(&icon).is_ok_and(|m| m.len() == ICON_PNG.len() as u64);
-        if fresh || (icon.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&icon, ICON_PNG).is_ok()) {
+        if fresh
+            || (icon
+                .parent()
+                .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+                && std::fs::write(&icon, ICON_PNG).is_ok())
+        {
             ok &= reg::set_string(&key, "IconUri", &icon.to_string_lossy()).is_ok();
         }
     }
@@ -204,10 +287,15 @@ pub fn register_app_id() -> bool {
 pub fn on_window(handle: &rune::WindowHandle) {
     use rune::raw_window_handle::RawWindowHandle;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON,
+        SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
+    };
 
     let _ = handle.with_raw_handle(|h| {
-        let RawWindowHandle::Win32(h) = h.as_raw() else { return };
+        let RawWindowHandle::Win32(h) = h.as_raw() else {
+            return;
+        };
         let hwnd = h.hwnd.get() as windows_sys::Win32::Foundation::HWND;
         // SAFETY: the window is alive for this callback; resource id 1 is passed the way
         // MAKEINTRESOURCE does (a small number in place of a name); LR_SHARED icons belong
@@ -215,8 +303,18 @@ pub fn on_window(handle: &rune::WindowHandle) {
         // window keeps the default.
         unsafe {
             let module = GetModuleHandleW(std::ptr::null());
-            for (which, cx, cy) in [(ICON_BIG, SM_CXICON, SM_CYICON), (ICON_SMALL, SM_CXSMICON, SM_CYSMICON)] {
-                let icon = LoadImageW(module, std::ptr::without_provenance::<u16>(1), IMAGE_ICON, GetSystemMetrics(cx), GetSystemMetrics(cy), LR_SHARED);
+            for (which, cx, cy) in [
+                (ICON_BIG, SM_CXICON, SM_CYICON),
+                (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+            ] {
+                let icon = LoadImageW(
+                    module,
+                    std::ptr::without_provenance::<u16>(1),
+                    IMAGE_ICON,
+                    GetSystemMetrics(cx),
+                    GetSystemMetrics(cy),
+                    LR_SHARED,
+                );
                 if !icon.is_null() {
                     SendMessageW(hwnd, WM_SETICON, which as usize, icon as isize);
                 }
@@ -229,7 +327,9 @@ pub fn on_window(handle: &rune::WindowHandle) {
 /// None when Windows doesn't say.
 pub fn work_area() -> Option<(f32, f32)> {
     use windows_sys::Win32::Foundation::{POINT, RECT};
-    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+    };
     use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 
     // SAFETY: plain calls; `info` has its size set, as GetMonitorInfoW asks, and the out
@@ -239,7 +339,22 @@ pub fn work_area() -> Option<(f32, f32)> {
         if monitor.is_null() {
             return None;
         }
-        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, rcMonitor: RECT { left: 0, top: 0, right: 0, bottom: 0 }, rcWork: RECT { left: 0, top: 0, right: 0, bottom: 0 }, dwFlags: 0 };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            rcWork: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            dwFlags: 0,
+        };
         if GetMonitorInfoW(monitor, &mut info) == 0 {
             return None;
         }
@@ -247,7 +362,13 @@ pub fn work_area() -> Option<(f32, f32)> {
         if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) != 0 || dx == 0 {
             dx = 96;
         }
-        points((info.rcWork.right - info.rcWork.left, info.rcWork.bottom - info.rcWork.top), dx)
+        points(
+            (
+                info.rcWork.right - info.rcWork.left,
+                info.rcWork.bottom - info.rcWork.top,
+            ),
+            dx,
+        )
     }
 }
 
@@ -270,7 +391,11 @@ pub fn tray_icon_px() -> u32 {
 /// The few registry calls the app needs, all under `HKEY_CURRENT_USER`.
 pub mod reg {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
-    use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegGetValueW, RegSetValueExW};
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_BINARY,
+        RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegGetValueW,
+        RegSetValueExW,
+    };
 
     use super::wide;
 
@@ -282,16 +407,41 @@ pub mod reg {
     pub fn set_string(key: &str, name: &str, value: &str) -> std::io::Result<()> {
         let mut h: HKEY = std::ptr::null_mut();
         // SAFETY: the key name is NUL-terminated; the handle is closed below.
-        let r = unsafe { RegCreateKeyExW(HKEY_CURRENT_USER, wide(key).as_ptr(), 0, std::ptr::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, std::ptr::null(), &mut h, std::ptr::null_mut()) };
+        let r = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                wide(key).as_ptr(),
+                0,
+                std::ptr::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                std::ptr::null(),
+                &mut h,
+                std::ptr::null_mut(),
+            )
+        };
         if r != ERROR_SUCCESS {
             return Err(io(r));
         }
         let data = wide(value);
         // SAFETY: `h` is open for writing; `data` is NUL-terminated UTF-16 and its size is in bytes.
-        let r = unsafe { RegSetValueExW(h, wide(name).as_ptr(), 0, REG_SZ, data.as_ptr().cast(), (data.len() * 2) as u32) };
+        let r = unsafe {
+            RegSetValueExW(
+                h,
+                wide(name).as_ptr(),
+                0,
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
         // SAFETY: `h` was opened above.
         unsafe { RegCloseKey(h) };
-        if r == ERROR_SUCCESS { Ok(()) } else { Err(io(r)) }
+        if r == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io(r))
+        }
     }
 
     /// A value's bytes, when it has the type `flags` asks for. `None`: no such key or value.
@@ -301,7 +451,17 @@ pub mod reg {
         loop {
             let mut size = buf.len() as u32;
             // SAFETY: the strings are NUL-terminated; `buf` is `size` bytes long.
-            let r = unsafe { RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size) };
+            let r = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    flags,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            };
             match r {
                 ERROR_SUCCESS => {
                     buf.truncate(size as usize);
@@ -317,7 +477,13 @@ pub mod reg {
     /// A text value.
     pub fn get_string(key: &str, name: &str) -> std::io::Result<Option<String>> {
         Ok(get(key, name, RRF_RT_REG_SZ)?.map(|b| {
-            let w: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|c| *c != 0).collect();
+            let w: Vec<u16> = b
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
+                .take_while(|c| *c != 0)
+                .collect();
             String::from_utf16_lossy(&w)
         }))
     }
@@ -330,7 +496,9 @@ pub mod reg {
     /// Removes a value; one that isn't there is fine.
     pub fn delete_value(key: &str, name: &str) -> std::io::Result<()> {
         // SAFETY: both strings are NUL-terminated.
-        match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, wide(key).as_ptr(), wide(name).as_ptr()) } {
+        match unsafe {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, wide(key).as_ptr(), wide(name).as_ptr())
+        } {
             ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
             e => Err(io(e)),
         }
@@ -353,7 +521,10 @@ mod tests {
     fn this_machine_answers_sanely() {
         // A runner has a screen of some size (or none): never nonsense.
         if let Some((w, h)) = work_area() {
-            assert!((200.0..20000.0).contains(&w) && (200.0..20000.0).contains(&h), "{w}x{h}");
+            assert!(
+                (200.0..20000.0).contains(&w) && (200.0..20000.0).contains(&h),
+                "{w}x{h}"
+            );
             eprintln!("work area {w}x{h} pt");
         }
         assert!((16..=64).contains(&tray_icon_px()));
@@ -365,8 +536,16 @@ mod tests {
         let key = format!(r"Software\KotoraTest-app-{}", std::process::id());
         assert_eq!(reg::get_string(&key, "a").unwrap(), None);
         reg::delete_value(&key, "a").unwrap();
-        reg::set_string(&key, "a", r#""C:\Program Files\Kotora\kotora.exe" --hidden"#).unwrap();
-        assert_eq!(reg::get_string(&key, "a").unwrap().as_deref(), Some(r#""C:\Program Files\Kotora\kotora.exe" --hidden"#));
+        reg::set_string(
+            &key,
+            "a",
+            r#""C:\Program Files\Kotora\kotora.exe" --hidden"#,
+        )
+        .unwrap();
+        assert_eq!(
+            reg::get_string(&key, "a").unwrap().as_deref(),
+            Some(r#""C:\Program Files\Kotora\kotora.exe" --hidden"#)
+        );
         assert_eq!(reg::get_binary(&key, "missing").unwrap(), None);
         reg::delete_value(&key, "a").unwrap();
         assert_eq!(reg::get_string(&key, "a").unwrap(), None);

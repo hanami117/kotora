@@ -5,18 +5,21 @@
 use std::f32::consts::PI;
 
 use kotora_core::Status;
-use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
+use rune::{
+    Color, Cx, El, GrowthSpec, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text,
+    text_input,
+};
 
 use crate::icons;
 use kotora_core::queue::{Op, OpState};
 
 use crate::model::{Air, Auth, Editor, Entry, Filter, Page, Sort, State};
 use crate::now::{Now, clock_text};
-use kotora_core::recognize::Found;
-use kotora_detect::{Led, Switch};
 use crate::online;
 use crate::queue::Cmd;
 use crate::theme::{self, PAL};
+use kotora_core::recognize::Found;
+use kotora_detect::{Led, Switch};
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // The palette first: Settings → Appearance, or the desktop's preference, which Rune follows
@@ -26,38 +29,61 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     #[cfg(target_os = "macos")]
     crate::menu_bar::sync();
     // The type column hides below 1100 pt (design-spec §3).
-    let wide = cx.layout_size("root").is_none_or(|[w, _]| w >= theme::NARROW_W);
+    let wide = cx
+        .layout_size("root")
+        .is_none_or(|[w, _]| w >= theme::NARROW_W);
     // macOS draws the traffic lights over the window's top-left (Rune's full-size content), so the
     // sidebar keeps a band clear for them. None in full screen; Linux draws its own frame.
     s.covers.set_scale(cx.env().scale);
-    let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 { theme::TITLEBAR_BAND } else { 0.0 };
+    let chrome_top = if cfg!(target_os = "macos") && cx.titlebar_inset() > 0.0 {
+        theme::TITLEBAR_BAND
+    } else {
+        0.0
+    };
     // A window resize (the window's size changed since the last build) reflows the pages:
     // posters change rows, columns and the sidebar card change size. That lands at once, as in
     // Finder: no fading rows, no cards sliding up. Changes the user makes (filter, sort, view)
     // keep their own transitions.
     let size = cx.layout_size("root").unwrap_or([0.0, 0.0]);
     let resized = s.main_size.replace(size) != size;
-    let root = row()
-        .key("root")
-        .w_full()
-        .h_full()
-        .fill(PAL.bg);
-    let root = if resized { root.instant_changes() } else { root };
+    let root = row().key("root").w_full().h_full().fill(PAL.bg);
+    let root = if resized {
+        root.instant_changes()
+    } else {
+        root
+    };
     let root = root
-        .child(sidebar(s, chrome_top, cx.layout_size("root").map_or(800.0, |[_, h]| h)))
+        .child(sidebar(
+            s,
+            chrome_top,
+            cx.layout_size("root").map_or(800.0, |[_, h]| h),
+        ))
         .child(el().w(1.0).h_full().fill(PAL.border))
-        .child(main(s, wide, cx.layout_size("main").unwrap_or([1056.0, 800.0])))
+        .child(main(
+            s,
+            wide,
+            cx.layout_size("main").unwrap_or([1056.0, 800.0]),
+        ))
         // Menus last, so they draw over everything.
         .children(s.sort_menu.then(|| sort_menu(s)))
         .children((s.airing.menu && s.page == Page::Airing).then(|| crate::airing::season_menu(s)))
-        .children(s.ctx.as_ref().map(|c| crate::ctxmenu::view(s, c)).unwrap_or_default())
+        .children(
+            s.ctx
+                .as_ref()
+                .map(|c| crate::ctxmenu::view(s, c))
+                .unwrap_or_default(),
+        )
         .children(s.toast.as_ref().map(crate::library::toast))
         .children(account_tip(s))
         .children(crate::volfill::editor_tip(s));
     // The startup intro covers everything while it plays. It sits beside `root`, not in it: a
     // window resize lands every change inside `root` at once, and that must not cut the intro's
     // own tweens short (a window manager that enlarges the window as it opens).
-    el().key("shell").w_full().h_full().child(root).children(crate::intro::overlay(s, cx))
+    el().key("shell")
+        .w_full()
+        .h_full()
+        .child(root)
+        .children(crate::intro::overlay(s, cx))
 }
 
 /// Workers report through `update_if`. The one timer is the position of a playing file, only
@@ -85,10 +111,16 @@ pub(crate) const LIST_PAGES: [kotora_core::Status; 5] = {
 /// The list page `k` opens with the chosen modifier (`[keys] pages`) and 1 to 5, if it is one.
 /// The exact modifier: Ctrl+Shift+1 or Ctrl+Alt+1 (AltGr) is not it.
 pub(crate) fn page_key(s: &State, k: &rune::KeyEvent, tx: &Tx) -> Option<kotora_core::Status> {
-    if !matches!(k.key, rune::Key::Text(_) | rune::Key::Command(_)) || !(k.mods.cmd || k.mods.ctrl || k.mods.alt) {
+    if !matches!(k.key, rune::Key::Text(_) | rune::Key::Command(_))
+        || !(k.mods.cmd || k.mods.ctrl || k.mods.alt)
+    {
         return None;
     }
-    ('1'..='5').zip(LIST_PAGES).find_map(|(d, st)| rune::Chord::parse(&s.prefs.page_keys.chord(d)).is_ok_and(|c| c.matches_tx(k, tx)).then_some(st))
+    ('1'..='5').zip(LIST_PAGES).find_map(|(d, st)| {
+        rune::Chord::parse(&s.prefs.page_keys.chord(d))
+            .is_ok_and(|c| c.matches_tx(k, tx))
+            .then_some(st)
+    })
 }
 
 /// For a text field's `on_input_key`: the page keys go to their page instead of typing (Alt+1
@@ -98,7 +130,9 @@ pub(crate) fn field_page_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> 
         quit(s, tx);
         return true;
     }
-    let Some(st) = page_key(s, k, tx) else { return false };
+    let Some(st) = page_key(s, k, tx) else {
+        return false;
+    };
     tx.blur();
     go_to(s, s.list_page(st), tx);
     true
@@ -162,7 +196,9 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         s.ask = None;
         return true;
     }
-    if k.key == rune::Key::Escape && (s.confirm_remove.is_some() || s.manga.confirm_remove.is_some()) {
+    if k.key == rune::Key::Escape
+        && (s.confirm_remove.is_some() || s.manga.confirm_remove.is_some())
+    {
         s.confirm_remove = None;
         s.manga.confirm_remove = None;
         return true;
@@ -194,7 +230,9 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     // The Menu key or Shift+F10 that no focused control took: the selected entry's menu.
-    if (k.key == rune::Key::ContextMenu || (k.key == rune::Key::Function(10) && k.mods.shift)) && s.ctx_key() {
+    if (k.key == rune::Key::ContextMenu || (k.key == rune::Key::Function(10) && k.mods.shift))
+        && s.ctx_key()
+    {
         return true;
     }
     // Airing: `[` and `]` (also Cmd+Left and Right) step to the previous and next season.
@@ -208,8 +246,11 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     // P (or Cmd/Ctrl+Return) plays the selected entry's next episode, as a middle-click does.
-    let p = matches!(&k.key, rune::Key::Text(t) if t.eq_ignore_ascii_case("p")) && !(k.mods.cmd || k.mods.ctrl || k.mods.alt);
-    if (p || (k.key == rune::Key::Enter && k.mods.cmd)) && let Some(id) = s.play_target() {
+    let p = matches!(&k.key, rune::Key::Text(t) if t.eq_ignore_ascii_case("p"))
+        && !(k.mods.cmd || k.mods.ctrl || k.mods.alt);
+    if (p || (k.key == rune::Key::Enter && k.mods.cmd))
+        && let Some(id) = s.play_target()
+    {
         s.play_entry(id);
         return true;
     }
@@ -235,10 +276,17 @@ pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
 /// `chrome_top`: the traffic-light band's height (macOS), or 0 where the system draws the frame.
 /// `height`: the window's, for the playing card's size.
 fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
-    let side = col().key("sidebar").w(theme::SIDEBAR_W).h_full().fill(PAL.side).px(10.0).pb(12.0);
+    let side = col()
+        .key("sidebar")
+        .w(theme::SIDEBAR_W)
+        .h_full()
+        .fill(PAL.side)
+        .px(10.0)
+        .pb(12.0);
     let side = if chrome_top > 0.0 {
         // The band drags the window like a title bar; the brand sits just under it.
-        side.child(el().key("sb-titlebar").w_full().h(chrome_top).window_drag()).child(el().h(4.0))
+        side.child(el().key("sb-titlebar").w_full().h(chrome_top).window_drag())
+            .child(el().h(4.0))
     } else {
         side.pt(14.0)
     };
@@ -255,40 +303,126 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
     // and the sync line stay at the bottom.
     let mut nav = col().w_full();
     if s.has_list() {
-        nav = nav.child(nav_item("home", NavMark::Icon(&icons::HOME), "Home", None, lit == Page::Home, Page::Home));
+        nav = nav.child(nav_item(
+            "home",
+            NavMark::Icon(&icons::HOME),
+            "Home",
+            None,
+            lit == Page::Home,
+            Page::Home,
+        ));
     }
     if s.has_list() {
-        let kbd = if cfg!(target_os = "macos") { "\u{2318} K" } else { "Ctrl K" };
-        nav = nav.child(nav_item("search", NavMark::Icon(&icons::SEARCH), "Search", Some(NavEnd::Kbd(kbd)), lit == Page::Search, Page::Search).mb(6.0));
+        let kbd = if cfg!(target_os = "macos") {
+            "\u{2318} K"
+        } else {
+            "Ctrl K"
+        };
+        nav = nav.child(
+            nav_item(
+                "search",
+                NavMark::Icon(&icons::SEARCH),
+                "Search",
+                Some(NavEnd::Kbd(kbd)),
+                lit == Page::Search,
+                Page::Search,
+            )
+            .mb(6.0),
+        );
     }
     nav = nav.child(nav_heading("My list"));
     let manga = s.manga.mode;
     for st in Status::ALL {
         let (count, label, page) = if manga {
             let first = s.manga.loading && s.manga.synced_at.is_none();
-            ((!first).then(|| s.manga_count(st).to_string()), st.label_in(kotora_core::Kind::Manga), Page::Manga(st))
+            (
+                (!first).then(|| s.manga_count(st).to_string()),
+                st.label_in(kotora_core::Kind::Manga),
+                Page::Manga(st),
+            )
         } else {
-            ((!s.loading && s.has_list()).then(|| s.count(st).to_string()), st.label(), Page::List(st))
+            (
+                (!s.loading && s.has_list()).then(|| s.count(st).to_string()),
+                st.label(),
+                Page::List(st),
+            )
         };
-        let key = if manga { format!("manga-{}", st.slug()) } else { st.slug().to_string() };
-        nav = nav.child(nav_item(&key, NavMark::Dot(PAL.status(st)), label, count.map(NavEnd::Count), lit == page, page));
+        let key = if manga {
+            format!("manga-{}", st.slug())
+        } else {
+            st.slug().to_string()
+        };
+        nav = nav.child(nav_item(
+            &key,
+            NavMark::Dot(PAL.status(st)),
+            label,
+            count.map(NavEnd::Count),
+            lit == page,
+            page,
+        ));
     }
     nav = nav.child(nav_heading("Kotora").mt(12.0));
     nav = nav
         .child(if crate::reading::now_reading_mode(s) {
-            nav_item("now-playing", NavMark::Icon(&icons::BOOK), "Now Reading", None, lit == Page::NowPlaying, Page::NowPlaying)
+            nav_item(
+                "now-playing",
+                NavMark::Icon(&icons::BOOK),
+                "Now Reading",
+                None,
+                lit == Page::NowPlaying,
+                Page::NowPlaying,
+            )
         } else {
-            nav_item("now-playing", NavMark::Icon(&icons::PLAY), "Now Playing", None, lit == Page::NowPlaying, Page::NowPlaying)
+            nav_item(
+                "now-playing",
+                NavMark::Icon(&icons::PLAY),
+                "Now Playing",
+                None,
+                lit == Page::NowPlaying,
+                Page::NowPlaying,
+            )
         })
         .child(if manga {
-            nav_item("publishing", NavMark::Icon(&icons::CALENDAR), "Publishing", None, lit == Page::Publishing, Page::Publishing)
+            nav_item(
+                "publishing",
+                NavMark::Icon(&icons::CALENDAR),
+                "Publishing",
+                None,
+                lit == Page::Publishing,
+                Page::Publishing,
+            )
         } else {
-            nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)
+            nav_item(
+                "airing",
+                NavMark::Icon(&icons::CALENDAR),
+                "Airing",
+                None,
+                lit == Page::Airing,
+                Page::Airing,
+            )
         })
-        .child(if s.has_list() { nav_item("stats", NavMark::Icon(&icons::CHART), "Statistics", None, lit == Page::Stats, Page::Stats) } else { el() })
+        .child(if s.has_list() {
+            nav_item(
+                "stats",
+                NavMark::Icon(&icons::CHART),
+                "Statistics",
+                None,
+                lit == Page::Stats,
+                Page::Stats,
+            )
+        } else {
+            el()
+        })
         .child(if s.has_list() && s.feeds.cfg.enabled && !manga {
             let n = s.feeds_count();
-            nav_item("feeds", NavMark::Icon(&icons::DOWNLOAD), "Torrents", (n > 0).then(|| NavEnd::Badge(n.to_string())), lit == Page::Feeds, Page::Feeds)
+            nav_item(
+                "feeds",
+                NavMark::Icon(&icons::DOWNLOAD),
+                "Torrents",
+                (n > 0).then(|| NavEnd::Badge(n.to_string())),
+                lit == Page::Feeds,
+                Page::Feeds,
+            )
         } else {
             el()
         })
@@ -296,14 +430,34 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
             "queue",
             NavMark::Icon(&icons::SYNC),
             "Sync queue",
-            (s.queue + s.mirror.badge() > 0).then(|| NavEnd::Badge((s.queue + s.mirror.badge()).to_string())),
+            (s.queue + s.mirror.badge() > 0)
+                .then(|| NavEnd::Badge((s.queue + s.mirror.badge()).to_string())),
             lit == Page::Queue,
             Page::Queue,
         ))
-        .child(nav_item("settings", NavMark::Icon(&icons::SLIDERS), "Settings", None, lit == Page::Settings, Page::Settings));
-    side = side.child(col().key("sb-nav").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(nav.pb(8.0)));
+        .child(nav_item(
+            "settings",
+            NavMark::Icon(&icons::SLIDERS),
+            "Settings",
+            None,
+            lit == Page::Settings,
+            Page::Settings,
+        ));
+    side = side.child(
+        col()
+            .key("sb-nav")
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .grow(1.0)
+            .min_h(0.0)
+            .child(nav.pb(8.0)),
+    );
     // Manga mode: the comic being read; else (or with none) what plays.
-    if let Some(r) = s.now_reading().filter(|_| crate::reading::now_reading_mode(s)) {
+    if let Some(r) = s
+        .now_reading()
+        .filter(|_| crate::reading::now_reading_mode(s))
+    {
         side = side.child(crate::reading::mini(s, r, height >= 760.0));
     } else if let Some(now) = &s.now {
         side = side.child(now_mini(s, now, height >= 760.0));
@@ -344,7 +498,9 @@ fn now_mini(s: &State, now: &Now, tall: bool) -> El {
     use crate::look;
     let (id, title) = now_title(s, now);
     let url = now_cover_url(s, now);
-    let entry = now.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let entry = now
+        .media_id()
+        .and_then(|id| s.entries.iter().find(|e| e.id == id));
     let episode = match (now.episode(), entry.and_then(|e| e.episodes)) {
         (Some(ep), Some(total)) => format!("Episode {ep} of {total}"),
         (Some(ep), None) => format!("Episode {ep}"),
@@ -362,9 +518,23 @@ fn now_mini(s: &State, now: &Now, tall: bool) -> El {
             .key("np-mini/progress")
             .gap(6.0)
             .center_y()
-            .child(col().grow(1.0).child(look::bar(f, PAL.accent, 4.0, PAL.text.alpha(0.16))))
-            .child(text(format!("{:.0}%", f * 100.0)).font(theme::LABEL_NUM).color(PAL.dim)),
-        None => text(if now.reached { "Counts as watched" } else { "Open in the player" }).font(theme::SMALL).color(PAL.dim),
+            .child(
+                col()
+                    .grow(1.0)
+                    .child(look::bar(f, PAL.accent, 4.0, PAL.text.alpha(0.16))),
+            )
+            .child(
+                text(format!("{:.0}%", f * 100.0))
+                    .font(theme::LABEL_NUM)
+                    .color(PAL.dim),
+            ),
+        None => text(if now.reached {
+            "Counts as watched"
+        } else {
+            "Open in the player"
+        })
+        .font(theme::SMALL)
+        .color(PAL.dim),
     };
     el().key("np-mini")
         .role("button")
@@ -388,15 +558,43 @@ fn now_mini(s: &State, now: &Now, tall: bool) -> El {
                 .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
                 .padding(if tall { 10.0 } else { 8.0 })
                 .gap(10.0)
-                .child(if tall { look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM) } else { look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS) }.shadow(4.0, 10.0, Color::BLACK.alpha(0.35)))
+                .child(
+                    if tall {
+                        look::poster(s, id, &title, url, 68.0, 102.0, theme::R_SM)
+                    } else {
+                        look::poster(s, id, &title, url, 40.0, 60.0, theme::R_XS)
+                    }
+                    .shadow(4.0, 10.0, Color::BLACK.alpha(0.35)),
+                )
                 .child(
                     col()
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(3.0)
-                        .child(row().gap(6.0).center_y().child(look::live_dot(now.playing, 6.0)).child(text(player.to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()))
-                        .child(text(title).font(TextStyle::new(13.0, 600.0)).color(PAL.text).wrap().max_lines(if tall { 2 } else { 1 }))
-                        .child(if tall { text(episode).font(theme::SMALL).color(PAL.dim).truncate() } else { el() })
+                        .child(
+                            row()
+                                .gap(6.0)
+                                .center_y()
+                                .child(look::live_dot(now.playing, 6.0))
+                                .child(
+                                    text(player.to_uppercase())
+                                        .font(theme::CAPTION)
+                                        .color(PAL.dim)
+                                        .truncate(),
+                                ),
+                        )
+                        .child(
+                            text(title)
+                                .font(TextStyle::new(13.0, 600.0))
+                                .color(PAL.text)
+                                .wrap()
+                                .max_lines(if tall { 2 } else { 1 }),
+                        )
+                        .child(if tall {
+                            text(episode).font(theme::SMALL).color(PAL.dim).truncate()
+                        } else {
+                            el()
+                        })
                         .child(spacer())
                         .child(tail),
                 ),
@@ -434,11 +632,23 @@ fn brand(s: &State) -> El {
                 .key("brand/name")
                 .gap(6.0)
                 .center_y()
-                .child(text("Kotora").font(rune::TextStyle::new(15.0, 600.0).tracking(0.2)).color(PAL.text))
+                .child(
+                    text("Kotora")
+                        .font(rune::TextStyle::new(15.0, 600.0).tracking(0.2))
+                        .color(PAL.text),
+                )
                 .child(crate::kanji::name(12.0, false, PAL.faint).mt(2.0)),
         )
         .child(spacer())
-        .child(text(env!("CARGO_PKG_VERSION").rsplit_once('.').map_or("", |(v, _)| v)).font(theme::SMALL).color(PAL.faint))
+        .child(
+            text(
+                env!("CARGO_PKG_VERSION")
+                    .rsplit_once('.')
+                    .map_or("", |(v, _)| v),
+            )
+            .font(theme::SMALL)
+            .color(PAL.faint),
+        )
 }
 
 /// The cover cache's id for the profile picture (no anime has it).
@@ -446,17 +656,34 @@ pub(crate) const AVATAR_ID: u32 = u32::MAX;
 
 /// The account card; it opens the Profile page (`on`: that page is open).
 fn account(s: &State, name: &str, service: &str, on: bool) -> El {
-    let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    let initial: String = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
     // The profile picture, round, over the initial (shown while it loads, offline or with none).
     let mut face = el()
         .size(24.0, 24.0)
         .radius(12.0)
-        .linear_gradient(160.0 * PI / 180.0, [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))])
+        .linear_gradient(
+            160.0 * PI / 180.0,
+            [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))],
+        )
         .center()
         // The fill is MAL's blue in both themes, so the letter stays light.
-        .child(text(initial).font(rune::TextStyle::new(10.0, 600.0)).color(hex("#edf0f7")));
+        .child(
+            text(initial)
+                .font(rune::TextStyle::new(10.0, 600.0))
+                .color(hex("#edf0f7")),
+        );
     if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), 24.0, 24.0) {
-        face = face.child(el().key("avatar-img").absolute(0.0, 0.0).size(24.0, 24.0).radius(12.0).pixels(img.pixels()));
+        face = face.child(
+            el().key("avatar-img")
+                .absolute(0.0, 0.0)
+                .size(24.0, 24.0)
+                .radius(12.0)
+                .pixels(img.pixels()),
+        );
     }
     // The mirror (0.2.1): "MyAnimeList ⇄ AniList" (main ⇄ mirror), a tooltip saying where
     // changes also go, and a dot while the mirror has something in the Sync queue (the badge's
@@ -489,14 +716,36 @@ fn account(s: &State, name: &str, service: &str, on: bool) -> El {
             col()
                 .min_w(0.0)
                 .grow(1.0)
-                .child(text(name.to_string()).font(theme::BODY).color(PAL.text).truncate())
-                .child(text(line).key("account/service").font(theme::SMALL).color(PAL.faint).truncate()),
+                .child(
+                    text(name.to_string())
+                        .font(theme::BODY)
+                        .color(PAL.text)
+                        .truncate(),
+                )
+                .child(
+                    text(line)
+                        .key("account/service")
+                        .font(theme::SMALL)
+                        .color(PAL.faint)
+                        .truncate(),
+                ),
         );
     if dot {
-        chip = chip.child(el().key("account/dot").size(8.0, 8.0).mr(2.0).radius(4.0).fill(PAL.accent));
+        chip = chip.child(
+            el().key("account/dot")
+                .size(8.0, 8.0)
+                .mr(2.0)
+                .radius(4.0)
+                .fill(PAL.accent),
+        );
     }
     if mirror.is_some() {
-        chip = chip.hover_delays(std::time::Duration::from_millis(450), std::time::Duration::ZERO).on_hover_change(|s: &mut State, inside: bool, _tx: &mut Tx| s.account_tip = inside);
+        chip = chip
+            .hover_delays(
+                std::time::Duration::from_millis(450),
+                std::time::Duration::ZERO,
+            )
+            .on_hover_change(|s: &mut State, inside: bool, _tx: &mut Tx| s.account_tip = inside);
     }
     chip
 }
@@ -522,7 +771,9 @@ pub(crate) fn account_tip_text(s: &State, to: &str) -> String {
 
 /// The account chip's tooltip, under the chip (drawn over the page, like the menus).
 fn account_tip(s: &State) -> Option<El> {
-    let to = s.mirror_target().filter(|_| s.account_tip && s.account.is_some())?;
+    let to = s
+        .mirror_target()
+        .filter(|_| s.account_tip && s.account.is_some())?;
     Some(
         text(account_tip_text(s, to))
             .key("account-tip")
@@ -535,13 +786,21 @@ fn account_tip(s: &State) -> Option<El> {
             .radius(theme::R_SM)
             .fill(PAL.raised)
             .border(1.0, PAL.border_strong)
-            .shadow(4.0, 12.0, Color::BLACK.alpha(if PAL.light { 0.12 } else { 0.35 }))
+            .shadow(
+                4.0,
+                12.0,
+                Color::BLACK.alpha(if PAL.light { 0.12 } else { 0.35 }),
+            )
             .anchored("account", rune::Side::Bottom, rune::Align::Start, 6.0),
     )
 }
 
 fn nav_heading(label: &str) -> El {
-    text(label.to_uppercase()).font(theme::CAPTION).color(PAL.faint).py(6.0).px(8.0)
+    text(label.to_uppercase())
+        .font(theme::CAPTION)
+        .color(PAL.faint)
+        .py(6.0)
+        .px(8.0)
 }
 
 enum NavMark {
@@ -556,7 +815,14 @@ enum NavEnd {
     Kbd(&'static str),
 }
 
-fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool, page: Page) -> El {
+fn nav_item(
+    key: &str,
+    mark: NavMark,
+    label: &str,
+    end: Option<NavEnd>,
+    on: bool,
+    page: Page,
+) -> El {
     let fg = if on { PAL.text } else { PAL.dim };
     let mark = match mark {
         NavMark::Dot(c) => el().size(8.0, 8.0).radius(4.0).mx(4.0).fill(c),
@@ -577,15 +843,31 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
         .press(PAL.press())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| go_to(s, page, tx))
         .child(mark)
-        .child(text(label.to_string()).font(rune::TextStyle::new(13.0, weight)).color(fg))
+        .child(
+            text(label.to_string())
+                .font(rune::TextStyle::new(13.0, weight))
+                .color(fg),
+        )
         .child(spacer());
     if on {
         item = item.fill(PAL.raised);
     }
     match end {
-        Some(NavEnd::Count(n)) => item.child(text(n).font(theme::LABEL_NUM).color(if on { PAL.text } else { PAL.faint })),
+        Some(NavEnd::Count(n)) => {
+            item.child(
+                text(n)
+                    .font(theme::LABEL_NUM)
+                    .color(if on { PAL.text } else { PAL.faint }),
+            )
+        }
         Some(NavEnd::Badge(n)) => item.child(
-            el().min_w(18.0).h(18.0).px(5.0).radius(9.0).fill(PAL.accent).center().child(text(n).font(theme::BADGE).color(PAL.on_accent)),
+            el().min_w(18.0)
+                .h(18.0)
+                .px(5.0)
+                .radius(9.0)
+                .fill(PAL.accent)
+                .center()
+                .child(text(n).font(theme::BADGE).color(PAL.on_accent)),
         ),
         Some(NavEnd::Kbd(k)) => item.child(kbd(k)),
         None => item,
@@ -594,7 +876,15 @@ fn nav_item(key: &str, mark: NavMark, label: &str, end: Option<NavEnd>, on: bool
 
 /// A shortcut hint: small text in an outlined box.
 pub(crate) fn kbd(label: &str) -> El {
-    el().px(5.0).py(1.0).radius(4.0).border(1.0, PAL.border_strong).child(text(label.to_string()).font(TextStyle::new(10.0, 500.0)).color(PAL.faint))
+    el().px(5.0)
+        .py(1.0)
+        .radius(4.0)
+        .border(1.0, PAL.border_strong)
+        .child(
+            text(label.to_string())
+                .font(TextStyle::new(10.0, 500.0))
+                .color(PAL.faint),
+        )
 }
 
 // --------------------------------------------------------------------------------------- main
@@ -648,10 +938,17 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
     if let Some(a) = &s.ask {
         m = m.child(ask_bar(a, s.service));
     }
-    if let Some(bar) = s.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Anime, id)) {
+    if let Some(bar) = s
+        .confirm_remove
+        .and_then(|id| crate::remove::bar(s, kotora_core::Kind::Anime, id))
+    {
         m = m.child(bar);
     }
-    if let Some(bar) = s.manga.confirm_remove.and_then(|id| crate::remove::bar(s, kotora_core::Kind::Manga, id)) {
+    if let Some(bar) = s
+        .manga
+        .confirm_remove
+        .and_then(|id| crate::remove::bar(s, kotora_core::Kind::Manga, id))
+    {
         m = m.child(bar);
     }
     // A newer Kotora is out (`update.rs`): quiet, under the rest.
@@ -681,16 +978,44 @@ fn ask_bar(a: &crate::model::Ask, svc: kotora_core::service::ServiceId) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(3.0)
-                .child(text(a.question.clone()).key("ask/question").font(theme::BODY).color(PAL.text).wrap())
-                .child(text(if svc == kotora_core::service::ServiceId::AniList { "Times come from AniList\u{2019}s airing schedule." } else { "Times are estimated from MyAnimeList's weekly slot." }).font(theme::LABEL).color(PAL.dim)),
+                .child(
+                    text(a.question.clone())
+                        .key("ask/question")
+                        .font(theme::BODY)
+                        .color(PAL.text)
+                        .wrap(),
+                )
+                .child(
+                    text(if svc == kotora_core::service::ServiceId::AniList {
+                        "Times come from AniList\u{2019}s airing schedule."
+                    } else {
+                        "Times are estimated from MyAnimeList's weekly slot."
+                    })
+                    .font(theme::LABEL)
+                    .color(PAL.dim),
+                ),
         )
-        .child(text("Mark anyway?").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
-        .child(button("ask/anyway", "Mark anyway", true, Some(|s: &mut State| {
-            if let Err(m) = s.mark_anyway() {
-                s.error = Some(m);
-            }
-        })))
-        .child(button("ask/cancel", "Cancel", false, Some(|s: &mut State| s.ask = None)))
+        .child(
+            text("Mark anyway?")
+                .font(TextStyle::new(14.0, 600.0))
+                .color(PAL.cream),
+        )
+        .child(button(
+            "ask/anyway",
+            "Mark anyway",
+            true,
+            Some(|s: &mut State| {
+                if let Err(m) = s.mark_anyway() {
+                    s.error = Some(m);
+                }
+            }),
+        ))
+        .child(button(
+            "ask/cancel",
+            "Cancel",
+            false,
+            Some(|s: &mut State| s.ask = None),
+        ))
 }
 
 /// The page's top bar: title, count, and (on the list) search and sort.
@@ -703,21 +1028,38 @@ fn top_extra(s: &State, title: &str, count: usize, extra: String) -> El {
     top_with(s, title, Some(count), Some(extra), true)
 }
 
-pub(crate) fn top_with(s: &State, title: &str, count: Option<usize>, extra: Option<String>, tools: bool) -> El {
-    let mut t = row().key("top").gap(12.0).center_y().px(theme::PAGE_PAD).pt(18.0).pb(14.0).child(
-        row()
-            .gap(6.0)
-            .items_end()
-            .child(text(title.to_string()).font(theme::TITLE).color(PAL.text))
-            .child(match count {
-                Some(n) => text(n.to_string()).font(theme::TITLE_NUM).color(PAL.faint),
-                None => el(),
-            })
-            .child(match extra {
-                Some(x) => text(x).key("top/extra").font(theme::LABEL).color(PAL.faint).pb(3.0),
-                None => el(),
-            }),
-    );
+pub(crate) fn top_with(
+    s: &State,
+    title: &str,
+    count: Option<usize>,
+    extra: Option<String>,
+    tools: bool,
+) -> El {
+    let mut t = row()
+        .key("top")
+        .gap(12.0)
+        .center_y()
+        .px(theme::PAGE_PAD)
+        .pt(18.0)
+        .pb(14.0)
+        .child(
+            row()
+                .gap(6.0)
+                .items_end()
+                .child(text(title.to_string()).font(theme::TITLE).color(PAL.text))
+                .child(match count {
+                    Some(n) => text(n.to_string()).font(theme::TITLE_NUM).color(PAL.faint),
+                    None => el(),
+                })
+                .child(match extra {
+                    Some(x) => text(x)
+                        .key("top/extra")
+                        .font(theme::LABEL)
+                        .color(PAL.faint)
+                        .pb(3.0),
+                    None => el(),
+                }),
+        );
     if tools {
         t = t.child(spacer()).child(search_box(s)).child(sort_select(s));
         if s.auth == Auth::SignedIn {
@@ -728,7 +1070,11 @@ pub(crate) fn top_with(s: &State, title: &str, count: Option<usize>, extra: Opti
 }
 
 fn search_box(s: &State) -> El {
-    let kbd = if cfg!(target_os = "macos") { "\u{2318} F" } else { "Ctrl F" };
+    let kbd = if cfg!(target_os = "macos") {
+        "\u{2318} F"
+    } else {
+        "Ctrl F"
+    };
     row()
         .key("search")
         .w(260.0)
@@ -775,7 +1121,11 @@ pub(crate) fn sort_select(s: &State) -> El {
     let b = row()
         .key("sort")
         .role("button")
-        .label(format!("Sort: {}, {}", sort.label(), sort.directions()[usize::from(s.sort_rev)]))
+        .label(format!(
+            "Sort: {}, {}",
+            sort.label(),
+            sort.directions()[usize::from(s.sort_rev)]
+        ))
         .focusable(true)
         .h(32.0)
         .px(10.0)
@@ -797,7 +1147,16 @@ pub(crate) fn sort_select(s: &State) -> El {
         .child(text("Sort").font(theme::BODY).color(PAL.faint))
         .child(text(sort.label()).font(theme::BODY_MED).color(PAL.text));
     // A reversed order shows as an arrow (the words are in the label and the menu).
-    let b = if s.sort_rev { b.child(text("\u{2191}").key("sort/rev").font(theme::BODY_MED).color(PAL.accent_hi)) } else { b };
+    let b = if s.sort_rev {
+        b.child(
+            text("\u{2191}")
+                .key("sort/rev")
+                .font(theme::BODY_MED)
+                .color(PAL.accent_hi),
+        )
+    } else {
+        b
+    };
     b.child(icon(&icons::DOWN, 14.0).color(PAL.text))
 }
 
@@ -826,10 +1185,25 @@ fn sort_menu(s: &State) -> El {
                 pick(s);
                 s.sort_menu = false;
             })
-            .child(el().size(14.0, 14.0).center().child(if on { icon(&icons::CHECK, 14.0).color(PAL.accent_hi) } else { el() }))
-            .child(text(label.to_string()).font(if on { theme::BODY_MED } else { theme::BODY }).color(PAL.text))
+            .child(el().size(14.0, 14.0).center().child(if on {
+                icon(&icons::CHECK, 14.0).color(PAL.accent_hi)
+            } else {
+                el()
+            }))
+            .child(
+                text(label.to_string())
+                    .font(if on { theme::BODY_MED } else { theme::BODY })
+                    .color(PAL.text),
+            )
     };
-    let heading = |t: &str| text(t.to_uppercase()).font(theme::CAPTION).color(PAL.faint).px(8.0).pt(6.0).pb(2.0);
+    let heading = |t: &str| {
+        text(t.to_uppercase())
+            .font(theme::CAPTION)
+            .color(PAL.faint)
+            .px(8.0)
+            .pt(6.0)
+            .pb(2.0)
+    };
     let mut m = col()
         .key("sort-menu")
         .role("menu")
@@ -840,18 +1214,34 @@ fn sort_menu(s: &State) -> El {
         .radius(theme::R_MD)
         .fill(PAL.surface)
         .border(1.0, PAL.border_strong)
-        .shadow(8.0, 24.0, Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }))
+        .shadow(
+            8.0,
+            24.0,
+            Color::BLACK.alpha(if PAL.light { 0.14 } else { 0.4 }),
+        )
         .anchored("sort", rune::Side::Bottom, rune::Align::End, 6.0)
         .modal(true, |s: &mut State| s.sort_menu = false)
         .focus_return("sort")
         .child(heading("Sort by"));
     for o in Sort::ALL {
-        m = m.child(item(format!("sort/{}", o.slug()), o.label(), s.sort == o, Box::new(move |s: &mut State| s.set_sort(o))));
+        m = m.child(item(
+            format!("sort/{}", o.slug()),
+            o.label(),
+            s.sort == o,
+            Box::new(move |s: &mut State| s.set_sort(o)),
+        ));
     }
-    m = m.child(el().w_full().h(1.0).my(4.0).fill(PAL.border)).child(heading("Order"));
+    m = m
+        .child(el().w_full().h(1.0).my(4.0).fill(PAL.border))
+        .child(heading("Order"));
     for (i, label) in s.sort.directions().into_iter().enumerate() {
         let rev = i == 1;
-        m = m.child(item(format!("sort/dir/{i}"), label, s.sort_rev == rev, Box::new(move |s: &mut State| s.set_sort_rev(rev))));
+        m = m.child(item(
+            format!("sort/dir/{i}"),
+            label,
+            s.sort_rev == rev,
+            Box::new(move |s: &mut State| s.set_sort_rev(rev)),
+        ));
     }
     m
 }
@@ -882,7 +1272,11 @@ fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     let count = s.count(st);
     // The Watching page shows rewatches too; the sidebar counts MAL's status only, so the page
     // says how many more it shows.
-    let rewatches = if st == Status::Watching { s.rewatch_count() } else { 0 };
+    let rewatches = if st == Status::Watching {
+        s.rewatch_count()
+    } else {
+        0
+    };
     let mut head = top(s, st.label(), (!s.loading).then_some(count), true);
     if rewatches > 0 && !s.loading {
         head = top_extra(s, st.label(), count, format!("+ {rewatches} rewatching"));
@@ -892,7 +1286,11 @@ fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     if !s.loading && wide {
         head = head.child(crate::grid::switcher(s, st, true));
     }
-    let mut page = col().key(format!("page/{}", st.slug())).w_full().h_full().child(head);
+    let mut page = col()
+        .key(format!("page/{}", st.slug()))
+        .w_full()
+        .h_full()
+        .child(head);
     if let Some(a) = status_alert(s) {
         page = page.child(a);
     }
@@ -902,7 +1300,13 @@ fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     if count == 0 {
         return page.child(empty(st, s.service.title()));
     }
-    page = page.child(if wide { chips(s, st) } else { chips(s, st).child(spacer()).child(crate::grid::switcher(s, st, false).mt(-3.0)) });
+    page = page.child(if wide {
+        chips(s, st)
+    } else {
+        chips(s, st)
+            .child(spacer())
+            .child(crate::grid::switcher(s, st, false).mt(-3.0))
+    });
     if s.rows.is_empty() {
         return page.child(no_match(s));
     }
@@ -911,27 +1315,45 @@ fn list_page(s: &State, st: Status, wide: bool, width: f32) -> El {
     }
     let n = s.rows.len();
     page.child(header(wide, s.sort)).child(
-        col().key(format!("rows-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-            col().key("rows").growth(GrowthSpec::default()).virtual_rows(
-                n,
-                theme::ROW_H,
-                move |s: &State, i| {
-                    // `i` is an index into the shown rows; the key is the media id.
-                    s.rows.get(i).map_or_else(|| format!("gone-{i}").into(), |&k| s.entries[k].id.to_string().into())
-                },
-                move |s: &State, i| match s.rows.get(i) {
-                    Some(&k) => list_row(s, &s.entries[k], wide),
-                    None => el(),
-                },
+        col()
+            .key(format!("rows-scroll/{}", st.slug()))
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .grow(1.0)
+            .min_h(0.0)
+            .child(
+                col()
+                    .key("rows")
+                    .growth(GrowthSpec::default())
+                    .virtual_rows(
+                        n,
+                        theme::ROW_H,
+                        move |s: &State, i| {
+                            // `i` is an index into the shown rows; the key is the media id.
+                            s.rows.get(i).map_or_else(
+                                || format!("gone-{i}").into(),
+                                |&k| s.entries[k].id.to_string().into(),
+                            )
+                        },
+                        move |s: &State, i| match s.rows.get(i) {
+                            Some(&k) => list_row(s, &s.entries[k], wide),
+                            None => el(),
+                        },
+                    ),
             ),
-        ),
     )
 }
 
 /// The list page while its filter box holds a query: the list's matches (every status), then a
 /// line that takes the query to the search page (`search.rs`).
 fn search_page(s: &State, st: Status, wide: bool) -> El {
-    let page = col().key("page/filter").w_full().h_full().child(top(s, "Your list", Some(s.rows.len()), true));
+    let page = col().key("page/filter").w_full().h_full().child(top(
+        s,
+        "Your list",
+        Some(s.rows.len()),
+        true,
+    ));
     results(s, page, format!("filter-scroll/{}", st.slug()), wide)
 }
 
@@ -944,20 +1366,47 @@ fn results(s: &State, mut page: El, scroll_key: String, wide: bool) -> El {
     }
     let n = layout(s).len();
     let manga = s.page == Page::Search && s.search_kind() == kotora_core::Kind::Manga;
-    page.child(if manga { crate::manga::header(wide, s.sort) } else { header(wide, s.sort) }).child(
-        col().key(scroll_key).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-            col().key("rows").growth(GrowthSpec::default()).virtual_rows(
-                n,
-                theme::ROW_H,
-                |s: &State, i| layout(s).get(i).map_or_else(|| format!("gone-{i}"), |r| crate::search::key(s, *r)).into(),
-                move |s: &State, i| match layout(s).get(i) {
-                    Some(SRow::List(k)) if manga => s.manga.rows.get(*k).map_or_else(el, |&k| crate::manga::list_row(s, &s.manga.entries[k], wide)),
-                    Some(SRow::List(k)) => s.rows.get(*k).map_or_else(el, |&k| list_row(s, &s.entries[k], wide)),
-                    Some(r) => crate::search::line(s, *r),
-                    None => el(),
-                },
+    page.child(if manga {
+        crate::manga::header(wide, s.sort)
+    } else {
+        header(wide, s.sort)
+    })
+    .child(
+        col()
+            .key(scroll_key)
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .grow(1.0)
+            .min_h(0.0)
+            .child(
+                col()
+                    .key("rows")
+                    .growth(GrowthSpec::default())
+                    .virtual_rows(
+                        n,
+                        theme::ROW_H,
+                        |s: &State, i| {
+                            layout(s)
+                                .get(i)
+                                .map_or_else(|| format!("gone-{i}"), |r| crate::search::key(s, *r))
+                                .into()
+                        },
+                        move |s: &State, i| match layout(s).get(i) {
+                            Some(SRow::List(k)) if manga => {
+                                s.manga.rows.get(*k).map_or_else(el, |&k| {
+                                    crate::manga::list_row(s, &s.manga.entries[k], wide)
+                                })
+                            }
+                            Some(SRow::List(k)) => s
+                                .rows
+                                .get(*k)
+                                .map_or_else(el, |&k| list_row(s, &s.entries[k], wide)),
+                            Some(r) => crate::search::line(s, *r),
+                            None => el(),
+                        },
+                    ),
             ),
-        ),
     )
 }
 
@@ -983,7 +1432,20 @@ fn search_view(s: &State, wide: bool) -> El {
                 .single_line()
                 .color(PAL.text)
                 .placeholder(
-                    field_hint(&s.find, &if s.search_kind() == kotora_core::Kind::Manga { format!("Search your manga and {svc}, or paste a {svc} manga link", svc = s.service.title()) } else { format!("Search your list and {svc}, or paste a {svc} link", svc = s.service.title()) }),
+                    field_hint(
+                        &s.find,
+                        &if s.search_kind() == kotora_core::Kind::Manga {
+                            format!(
+                                "Search your manga and {svc}, or paste a {svc} manga link",
+                                svc = s.service.title()
+                            )
+                        } else {
+                            format!(
+                                "Search your list and {svc}, or paste a {svc} link",
+                                svc = s.service.title()
+                            )
+                        },
+                    ),
                     PAL.faint,
                 )
                 .on_edit(|s: &mut State| &mut s.find)
@@ -993,7 +1455,13 @@ fn search_view(s: &State, wide: bool) -> El {
                         return true;
                     }
                     // Tab: anime or manga (with Manga on); Shift+Tab still moves the focus.
-                    if k.key == rune::Key::Tab && !k.mods.shift && !k.mods.ctrl && !k.mods.alt && !k.mods.cmd && s.toggle_search_kind() {
+                    if k.key == rune::Key::Tab
+                        && !k.mods.shift
+                        && !k.mods.ctrl
+                        && !k.mods.alt
+                        && !k.mods.cmd
+                        && s.toggle_search_kind()
+                    {
                         tx.instant();
                         return true;
                     }
@@ -1017,15 +1485,29 @@ fn search_view(s: &State, wide: bool) -> El {
                 }),
         )
         .child(kbd("Esc"));
-    let count = s.searching().then(|| s.search_list_len() + s.new_hits().len());
+    let count = s
+        .searching()
+        .then(|| s.search_list_len() + s.new_hits().len());
     let page = col()
         .key("page/search")
         .w_full()
         .h_full()
         .child(top(s, "Search", count, false))
-        .child(row().w_full().px(theme::PAGE_PAD).pb(14.0).gap(12.0).center_y().child(field.grow(1.0).max_w(720.0)).children(s.manga.enabled.then(|| kind_toggle(s))));
+        .child(
+            row()
+                .w_full()
+                .px(theme::PAGE_PAD)
+                .pb(14.0)
+                .gap(12.0)
+                .center_y()
+                .child(field.grow(1.0).max_w(720.0))
+                .children(s.manga.enabled.then(|| kind_toggle(s))),
+        );
     if !s.searching() {
-        return page.child(search_hint(s.service.title(), s.search_kind() == kotora_core::Kind::Manga));
+        return page.child(search_hint(
+            s.service.title(),
+            s.search_kind() == kotora_core::Kind::Manga,
+        ));
     }
     results(s, page, "search-scroll".into(), wide)
 }
@@ -1045,21 +1527,40 @@ fn kind_toggle(s: &State) -> El {
             .px(12.0)
             .radius(theme::R_SM)
             .center()
-            .child(text(kind.label()).font(if on { theme::BODY_MED } else { theme::BODY }).color(if on { PAL.text } else { PAL.dim }));
+            .child(
+                text(kind.label())
+                    .font(if on { theme::BODY_MED } else { theme::BODY })
+                    .color(if on { PAL.text } else { PAL.dim }),
+            );
         if on {
             c.fill(PAL.raised).border(1.0, PAL.border_strong)
         } else {
-            c.focusable(true).hover(PAL.hover()).press(PAL.press()).cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut State, tx: &mut Tx| {
-                tx.instant();
-                s.set_search_kind(kind);
-            })
+            c.focusable(true)
+                .hover(PAL.hover())
+                .press(PAL.press())
+                .cursor(rune::Cursor::Pointer)
+                .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                    tx.instant();
+                    s.set_search_kind(kind);
+                })
         }
     };
     row()
         .key("search/kind")
         .gap(8.0)
         .center_y()
-        .child(row().h(40.0).padding(4.0).gap(2.0).center_y().radius(theme::R_SM).fill(PAL.field).border(1.0, PAL.border).child(seg(Kind::Anime)).child(seg(Kind::Manga)))
+        .child(
+            row()
+                .h(40.0)
+                .padding(4.0)
+                .gap(2.0)
+                .center_y()
+                .radius(theme::R_SM)
+                .fill(PAL.field)
+                .border(1.0, PAL.border)
+                .child(seg(Kind::Anime))
+                .child(seg(Kind::Manga)),
+        )
         .child(kbd("Tab"))
 }
 
@@ -1084,7 +1585,11 @@ fn search_hint(svc: &str, manga: bool) -> El {
 fn chips(s: &State, st: Status) -> El {
     let mut r = row().key("chips").gap(6.0).px(theme::PAGE_PAD).pb(10.0);
     for f in Filter::ALL {
-        let n = s.entries.iter().filter(|e| e.on_page(st) && f.keeps(e)).count();
+        let n = s
+            .entries
+            .iter()
+            .filter(|e| e.on_page(st) && f.keeps(e))
+            .count();
         if n == 0 && f != Filter::All {
             continue;
         }
@@ -1105,15 +1610,31 @@ fn chips(s: &State, st: Status) -> El {
                 tx.instant();
                 s.set_filter(f);
             })
-            .child(text(format!("{} {n}", f.label())).font(theme::LABEL_NUM).color(if on { PAL.accent_hi } else { PAL.dim }));
-        chip = if on { chip.fill(PAL.accent.alpha(0.14)) } else { chip.border(1.0, PAL.border) };
+            .child(
+                text(format!("{} {n}", f.label()))
+                    .font(theme::LABEL_NUM)
+                    .color(if on { PAL.accent_hi } else { PAL.dim }),
+            );
+        chip = if on {
+            chip.fill(PAL.accent.alpha(0.14))
+        } else {
+            chip.border(1.0, PAL.border)
+        };
         r = r.child(chip);
     }
     r
 }
 
 /// Column widths shared by the header and the rows.
-pub(crate) fn columns(cover: El, title: El, progress: El, score: El, kind: El, updated: El, wide: bool) -> El {
+pub(crate) fn columns(
+    cover: El,
+    title: El,
+    progress: El,
+    score: El,
+    kind: El,
+    updated: El,
+    wide: bool,
+) -> El {
     let r = row()
         .w_full()
         .gap(theme::COL_GAP)
@@ -1122,12 +1643,20 @@ pub(crate) fn columns(cover: El, title: El, progress: El, score: El, kind: El, u
         .child(title.grow(1.0).min_w(0.0))
         .child(progress.w(theme::COL_PROGRESS))
         .child(score.w(theme::COL_SCORE));
-    let r = if wide { r.child(kind.w(theme::COL_TYPE)) } else { r };
+    let r = if wide {
+        r.child(kind.w(theme::COL_TYPE))
+    } else {
+        r
+    };
     r.child(updated.w(theme::COL_UPDATED))
 }
 
 fn header(wide: bool, sort: Sort) -> El {
-    let h = |s: &str, sorted: bool| text(s.to_uppercase()).font(theme::CAPTION).color(if sorted { PAL.dim } else { PAL.faint });
+    let h = |s: &str, sorted: bool| {
+        text(s.to_uppercase())
+            .font(theme::CAPTION)
+            .color(if sorted { PAL.dim } else { PAL.faint })
+    };
     col()
         .key("thead")
         .w_full()
@@ -1138,7 +1667,11 @@ fn header(wide: bool, sort: Sort) -> El {
                 h("Progress", sort == Sort::Progress),
                 h("Score", sort == Sort::Score),
                 h("Type", false).key("thead/type"),
-                row().gap(4.0).center_y().child(h("Updated", sort == Sort::Updated)).child(icon(&icons::DOWN, 10.0).color(PAL.dim)),
+                row()
+                    .gap(4.0)
+                    .center_y()
+                    .child(h("Updated", sort == Sort::Updated))
+                    .child(icon(&icons::DOWN, 10.0).color(PAL.dim)),
                 wide,
             )
             .h(30.0)
@@ -1153,7 +1686,12 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     let status_c = PAL.status(e.status);
 
     // The tag line fades out at the title column's end instead of running into the progress.
-    let mut sub = row().w_full().min_w(0.0).gap(8.0).center_y().clip_fade(0.0, 0.0, 16.0, 0.0);
+    let mut sub = row()
+        .w_full()
+        .min_w(0.0)
+        .gap(8.0)
+        .center_y()
+        .clip_fade(0.0, 0.0, 16.0, 0.0);
     if s.searching() {
         sub = sub.child(tag(e.status.label(), PAL.status(e.status), true));
     }
@@ -1170,14 +1708,28 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         sub = sub.child(text(e.note()).font(theme::LABEL).color(PAL.faint));
     }
     if let Some(n) = e.new_episode {
-        sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.tint(PAL.accent, 0.14)));
+        sub = sub.child(tag_tinted(
+            &format!("Ep {n} out"),
+            PAL.accent_hi,
+            PAL.tint(PAL.accent, 0.14),
+        ));
     }
     if let Some(b) = crate::feeds::badge(s, e.id) {
         sub = sub.child(b);
     }
     // The title opens the details page; the rest of the row opens the editor.
-    let name = text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).group_color(PAL.accent_hi).truncate();
-    let title = col().gap(2.0).child(crate::details::title_link(name, crate::details::Stub::from_entry(e))).child(sub);
+    let name = text(e.title.clone())
+        .font(theme::ROW_TITLE)
+        .color(PAL.text)
+        .group_color(PAL.accent_hi)
+        .truncate();
+    let title = col()
+        .gap(2.0)
+        .child(crate::details::title_link(
+            name,
+            crate::details::Stub::from_entry(e),
+        ))
+        .child(sub);
 
     let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
     // `+1` while there is a next episode; the space stays so the columns line up.
@@ -1199,11 +1751,19 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
             row()
                 .w(54.0)
                 .justify_end()
-                .child(text(e.progress.to_string()).font(theme::NUM_MED).color(PAL.text))
+                .child(
+                    text(e.progress.to_string())
+                        .font(theme::NUM_MED)
+                        .color(PAL.text),
+                )
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
         .children(crate::library::row_button(s, e))
-        .child(if plus { plus_button(id) } else { el().size(38.0, 26.0) });
+        .child(if plus {
+            plus_button(id)
+        } else {
+            el().size(38.0, 26.0)
+        });
     let score = match e.score {
         Some(n) => crate::scores::mark(s.score_format(), n, theme::NUM_MED, PAL.text),
         None => text("\u{2013}").font(theme::BODY).color(PAL.faint),
@@ -1215,7 +1775,9 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         progress,
         score,
         text(e.kind).font(theme::LABEL).color(PAL.dim),
-        text(kotora_core::time::age(e.updated_at, now)).font(theme::LABEL).color(PAL.dim),
+        text(kotora_core::time::age(e.updated_at, now))
+            .font(theme::LABEL)
+            .color(PAL.dim),
         wide,
     )
     .key("line")
@@ -1239,7 +1801,11 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
         }
         s.toggle_editor(id);
     });
-    let mut c = col().w_full().child(if open.is_some() { line.fill(PAL.surface) } else { line });
+    let mut c = col().w_full().child(if open.is_some() {
+        line.fill(PAL.surface)
+    } else {
+        line
+    });
     if let Some(ed) = open {
         c = c.child(editor(e, &ed, s.score_format()));
     }
@@ -1266,14 +1832,26 @@ pub(crate) fn plus_button(id: u32) -> El {
                 s.error = Some(m);
             }
         })
-        .child(text("+1").font(theme::LABEL_BTN).color(PAL.dim).group_color(PAL.on_accent))
+        .child(
+            text("+1")
+                .font(theme::LABEL_BTN)
+                .color(PAL.dim)
+                .group_color(PAL.on_accent),
+        )
 }
 
 // -------------------------------------------------------------------------------- inline editor
 
 /// A labelled group in the editor.
 pub(crate) fn field(label: &str, body: El) -> El {
-    col().gap(6.0).child(text(label.to_uppercase()).font(theme::CAPTION).color(PAL.faint)).child(body)
+    col()
+        .gap(6.0)
+        .child(
+            text(label.to_uppercase())
+                .font(theme::CAPTION)
+                .color(PAL.faint),
+        )
+        .child(body)
 }
 
 /// A small pressable cell (status chips, score cells, stepper buttons).
@@ -1295,7 +1873,12 @@ pub(crate) fn cell(key: String, label: String, on: bool, f: impl Fn(&mut State) 
             tx.instant();
             f(s);
         });
-    if on { c.fill(PAL.accent.alpha(0.14)).border(1.0, PAL.accent.alpha(0.5)) } else { c.fill(PAL.field).border(1.0, PAL.border) }
+    if on {
+        c.fill(PAL.accent.alpha(0.14))
+            .border(1.0, PAL.accent.alpha(0.5))
+    } else {
+        c.fill(PAL.field).border(1.0, PAL.border)
+    }
 }
 
 /// Under an open row: status, progress and score, then Cancel / Save. Nothing is queued until
@@ -1305,9 +1888,18 @@ pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> E
     for st in Status::ALL {
         let on = ed.status == st;
         statuses = statuses.child(
-            cell(format!("ed/status/{}", st.slug()), st.label().into(), on, move |s| s.editor_status(st))
-                .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.status(st)))
-                .child(text(st.label()).font(theme::LABEL).color(if on { PAL.text } else { PAL.dim })),
+            cell(
+                format!("ed/status/{}", st.slug()),
+                st.label().into(),
+                on,
+                move |s| s.editor_status(st),
+            )
+            .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.status(st)))
+            .child(
+                text(st.label())
+                    .font(theme::LABEL)
+                    .color(if on { PAL.text } else { PAL.dim }),
+            ),
         );
     }
     statuses = statuses.child(rewatch_cell(e));
@@ -1324,7 +1916,11 @@ pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> E
             row()
                 .min_w(76.0)
                 .center()
-                .child(text(ed.progress.to_string()).font(theme::NUM_MED).color(PAL.text))
+                .child(
+                    text(ed.progress.to_string())
+                        .font(theme::NUM_MED)
+                        .color(PAL.text),
+                )
                 .child(text(format!(" / {total}")).font(theme::NUM).color(PAL.dim)),
         )
         .child(step_button("ed/plus", "+", 1));
@@ -1354,7 +1950,12 @@ pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> E
                         .grow(1.0)
                         .gap(8.0)
                         .justify_end()
-                        .child(button("ed/cancel", "Cancel", false, Some(|s: &mut State| s.editor = None)))
+                        .child(button(
+                            "ed/cancel",
+                            "Cancel",
+                            false,
+                            Some(|s: &mut State| s.editor = None),
+                        ))
                         .child(button(
                             "ed/save",
                             "Save",
@@ -1374,22 +1975,32 @@ pub(crate) fn editor(e: &Entry, ed: &Editor, fmt: kotora_core::ScoreFormat) -> E
 pub(crate) fn rewatch_cell(e: &Entry) -> El {
     let id = e.id;
     if e.rewatching {
-        return cell("ed/stop-rewatch".into(), "Stop rewatching".into(), false, move |s| {
-            if let Err(m) = s.stop_rewatch(id) {
-                s.error = Some(m);
-            }
-        })
+        return cell(
+            "ed/stop-rewatch".into(),
+            "Stop rewatching".into(),
+            false,
+            move |s| {
+                if let Err(m) = s.stop_rewatch(id) {
+                    s.error = Some(m);
+                }
+            },
+        )
         .ml(10.0)
         .child(text("Stop rewatching").font(theme::LABEL).color(PAL.dim));
     }
     if e.status != Status::Completed {
         return el();
     }
-    cell("ed/rewatch".into(), "Rewatch from episode 1".into(), false, move |s| {
-        if let Err(m) = s.start_rewatch(id) {
-            s.error = Some(m);
-        }
-    })
+    cell(
+        "ed/rewatch".into(),
+        "Rewatch from episode 1".into(),
+        false,
+        move |s| {
+            if let Err(m) = s.start_rewatch(id) {
+                s.error = Some(m);
+            }
+        },
+    )
     .ml(10.0)
     .child(icon(&icons::SYNC, 13.0).color(PAL.st_completed))
     .child(text("Rewatch").font(theme::LABEL).color(PAL.text))
@@ -1408,19 +2019,43 @@ pub(crate) fn step_button(key: &str, label: &str, delta: i32) -> El {
             tx.instant();
             s.editor_step(delta);
         })
-        .child(text(label.to_string()).font(TextStyle::new(15.0, 500.0)).color(PAL.dim))
+        .child(
+            text(label.to_string())
+                .font(TextStyle::new(15.0, 500.0))
+                .color(PAL.dim),
+        )
 }
 
 pub(crate) fn tag(label: &str, c: Color, dot: bool) -> El {
-    let mut t = row().h(18.0).px(6.0).gap(4.0).center_y().radius(theme::R_XS).fill(PAL.tint(c, 0.12));
+    let mut t = row()
+        .h(18.0)
+        .px(6.0)
+        .gap(4.0)
+        .center_y()
+        .radius(theme::R_XS)
+        .fill(PAL.tint(c, 0.12));
     if dot {
         t = t.child(el().size(5.0, 5.0).radius(2.5).fill(c));
     }
-    t.child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
+    t.child(
+        text(label.to_string())
+            .font(theme::CAPTION.tracking(0.0))
+            .color(c),
+    )
 }
 
 pub(crate) fn tag_tinted(label: &str, fg: Color, bg: Color) -> El {
-    row().h(18.0).px(6.0).center_y().radius(theme::R_XS).fill(bg).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(fg))
+    row()
+        .h(18.0)
+        .px(6.0)
+        .center_y()
+        .radius(theme::R_XS)
+        .fill(bg)
+        .child(
+            text(label.to_string())
+                .font(theme::CAPTION.tracking(0.0))
+                .color(fg),
+        )
 }
 
 /// Cover pairs from the mockup; an id picks one (design-spec §3: covers while loading or missing).
@@ -1449,7 +2084,11 @@ pub(crate) fn cover(id: u32, title: &str, w: f32, h: f32, size: f32) -> El {
         .linear_gradient(160.0 * PI / 180.0, [(0.0, hex(a)), (1.0, hex(b))])
         .border(1.0, Color::WHITE.alpha(0.06))
         .center()
-        .child(text(initials(title)).font(rune::TextStyle::new(size, 600.0).tracking(0.3)).color(Color::WHITE.alpha(0.88)))
+        .child(
+            text(initials(title))
+                .font(rune::TextStyle::new(size, 600.0).tracking(0.3))
+                .color(Color::WHITE.alpha(0.88)),
+        )
 }
 
 /// A row's cover: the generated tile, with the real cover over it once it is in memory (a
@@ -1458,7 +2097,13 @@ pub(crate) fn row_cover(s: &State, e: &Entry) -> El {
     let (w, h) = (34.0, 48.0);
     let tile = cover(e.id, &e.title, w, h, 12.0);
     match s.covers.get(e.id, e.cover_url.as_deref(), w, h) {
-        Some(img) => tile.child(el().key("cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().key("cover-img")
+                .absolute(0.0, 0.0)
+                .size(w, h)
+                .radius(theme::R_XS)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
@@ -1466,13 +2111,21 @@ pub(crate) fn row_cover(s: &State, e: &Entry) -> El {
 /// The cover address of a queued change: its entry's, if the entry is on the list. A change
 /// for something not on the list (an add still waiting) has none, so it keeps the tile.
 pub(crate) fn op_cover_url(s: &State, media_id: u32) -> Option<&str> {
-    s.entries.iter().find(|e| e.id == media_id).and_then(|e| e.cover_url.as_deref())
+    s.entries
+        .iter()
+        .find(|e| e.id == media_id)
+        .and_then(|e| e.cover_url.as_deref())
 }
 
 /// [`op_cover_url`] for a change of either kind.
 fn op_cover_url_of<'a>(s: &'a State, op: &Op) -> Option<&'a str> {
     match op.kind {
-        kotora_core::Kind::Manga => s.manga.entries.iter().find(|e| e.id == op.media_id).and_then(|e| e.cover_url.as_deref()),
+        kotora_core::Kind::Manga => s
+            .manga
+            .entries
+            .iter()
+            .find(|e| e.id == op.media_id)
+            .and_then(|e| e.cover_url.as_deref()),
         kotora_core::Kind::Anime => op_cover_url(s, op.media_id),
     }
 }
@@ -1480,10 +2133,20 @@ fn op_cover_url_of<'a>(s: &'a State, op: &Op) -> Option<&'a str> {
 /// A queued change's poster: the tile, with the real cover over it once it is in memory.
 fn op_cover(s: &State, op: &Op, title: &str) -> El {
     let (w, h) = (34.0, 48.0);
-    let id = if op.kind == kotora_core::Kind::Manga { crate::manga::cover_id(op.media_id) } else { op.media_id };
+    let id = if op.kind == kotora_core::Kind::Manga {
+        crate::manga::cover_id(op.media_id)
+    } else {
+        op.media_id
+    };
     let tile = cover(id, title, w, h, 12.0);
     match s.covers.get(id, op_cover_url_of(s, op), w, h) {
-        Some(img) => tile.child(el().key("cover-img").absolute(0.0, 0.0).size(w, h).radius(theme::R_XS).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().key("cover-img")
+                .absolute(0.0, 0.0)
+                .size(w, h)
+                .radius(theme::R_XS)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
@@ -1493,9 +2156,21 @@ const SMALL_WORDS: [&str; 10] = ["the", "of", "to", "no", "on", "a", "an", "and"
 
 /// Two letters: the first letters of the first two words that aren't small words.
 pub fn initials(title: &str) -> String {
-    let words: Vec<&str> = title.split_whitespace().filter(|w| !SMALL_WORDS.iter().any(|s| w.eq_ignore_ascii_case(s))).collect();
-    let words = if words.is_empty() { title.split_whitespace().collect() } else { words };
-    words.iter().filter_map(|w| w.chars().find(|c| c.is_alphanumeric())).take(2).flat_map(char::to_uppercase).collect()
+    let words: Vec<&str> = title
+        .split_whitespace()
+        .filter(|w| !SMALL_WORDS.iter().any(|s| w.eq_ignore_ascii_case(s)))
+        .collect();
+    let words = if words.is_empty() {
+        title.split_whitespace().collect()
+    } else {
+        words
+    };
+    words
+        .iter()
+        .filter_map(|w| w.chars().find(|c| c.is_alphanumeric()))
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect()
 }
 
 // ------------------------------------------------------------------------------------- states
@@ -1515,16 +2190,36 @@ fn empty(st: Status, svc: &str) -> El {
         .center()
         .gap(4.0)
         .pb(60.0)
-        .child(text(format!("No anime in {}", st.label())).font(theme::SECTION).color(PAL.text))
+        .child(
+            text(format!("No anime in {}", st.label()))
+                .font(theme::SECTION)
+                .color(PAL.text),
+        )
         .child(text(help).font(theme::LABEL).color(PAL.dim))
 }
 
 /// The first sync with nothing saved: four skeleton rows. Static for now (the shimmer would be the
 /// one looping animation; it waits until loading is real, so nothing ticks at rest).
 fn loading() -> El {
-    let mut c = col().key("loading").px(theme::PAGE_PAD).pt(4.0).gap(8.0).child(text("Loading your list…").font(theme::LABEL).color(PAL.faint).pb(2.0));
+    let mut c = col()
+        .key("loading")
+        .px(theme::PAGE_PAD)
+        .pt(4.0)
+        .gap(8.0)
+        .child(
+            text("Loading your list…")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .pb(2.0),
+        );
     for i in 0..4 {
-        c = c.child(el().key(format!("skel/{i}")).w_full().h(44.0).radius(theme::R_MD).fill(PAL.raised));
+        c = c.child(
+            el().key(format!("skel/{i}"))
+                .w_full()
+                .h(44.0)
+                .radius(theme::R_MD)
+                .fill(PAL.raised),
+        );
     }
     c
 }
@@ -1532,8 +2227,17 @@ fn loading() -> El {
 // ------------------------------------------------------------------------------------ queue
 
 /// A button whose press needs a value (an op id): `button` takes plain fns only.
-pub(crate) fn action(key: String, label: &str, primary: bool, f: impl Fn(&mut State, &mut Tx) + 'static) -> El {
-    let (fg, fill) = if primary { (PAL.on_accent, PAL.accent) } else { (PAL.text, PAL.raised) };
+pub(crate) fn action(
+    key: String,
+    label: &str,
+    primary: bool,
+    f: impl Fn(&mut State, &mut Tx) + 'static,
+) -> El {
+    let (fg, fill) = if primary {
+        (PAL.on_accent, PAL.accent)
+    } else {
+        (PAL.text, PAL.raised)
+    };
     let b = el()
         .key(key)
         .role("button")
@@ -1544,14 +2248,22 @@ pub(crate) fn action(key: String, label: &str, primary: bool, f: impl Fn(&mut St
         .radius(theme::R_SM)
         .fill(fill)
         .center()
-        .hover(if primary { Color::BLACK.alpha(0.08) } else { PAL.hover() })
+        .hover(if primary {
+            Color::BLACK.alpha(0.08)
+        } else {
+            PAL.hover()
+        })
         .press(PAL.press())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
             f(s, tx);
         })
         .child(text(label.to_string()).font(theme::LABEL_BTN).color(fg));
-    if primary { b } else { b.border(1.0, PAL.border_strong) }
+    if primary {
+        b
+    } else {
+        b.border(1.0, PAL.border_strong)
+    }
 }
 
 /// The sync queue (design-spec §4): sign-in or offline alert, conflicts as cards, then Waiting,
@@ -1561,7 +2273,12 @@ fn queue_page(s: &State) -> El {
     let can_sync = s.auth == Auth::SignedIn && !s.syncing;
     let top = top(s, "Sync queue", Some(s.queue as usize), false)
         .child(spacer())
-        .child(button("queue/sync-now", "Sync now", false, can_sync.then_some(State::sync_now as fn(&mut State))));
+        .child(button(
+            "queue/sync-now",
+            "Sync now",
+            false,
+            can_sync.then_some(State::sync_now as fn(&mut State)),
+        ));
     let mut body = col().key("queue-body").gap(14.0).pb(theme::PAGE_PAD);
     if s.auth == Auth::Expired {
         let n = s.queue;
@@ -1584,8 +2301,16 @@ fn queue_page(s: &State) -> El {
             alert(
                 "queue/offline",
                 PAL.warn(),
-                format!("You are offline. Your changes are kept here and go out when {} answers again.", s.service.title()),
-                Some(button("queue/try-now", "Try now", false, Some(State::sync_now))),
+                format!(
+                    "You are offline. Your changes are kept here and go out when {} answers again.",
+                    s.service.title()
+                ),
+                Some(button(
+                    "queue/try-now",
+                    "Try now",
+                    false,
+                    Some(State::sync_now),
+                )),
             )
             .mb(0.0),
         );
@@ -1593,31 +2318,54 @@ fn queue_page(s: &State) -> El {
     if let Some(e) = &s.error
         && !(s.offline && e.starts_with("Can't reach"))
     {
-        body = body.child(alert("queue/error", PAL.status(Status::Dropped), e.clone(), None).mb(0.0));
+        body =
+            body.child(alert("queue/error", PAL.status(Status::Dropped), e.clone(), None).mb(0.0));
     }
     if s.ops.is_empty() && !crate::mirror::in_queue(s) {
-        return col().key("page/queue").w_full().h_full().child(top).child(body).child(
-            col()
-                .key("queue-empty")
-                .grow(1.0)
-                .min_h(0.0)
-                .center()
-                .gap(4.0)
-                .pb(60.0)
-                .child(text("Nothing waiting").font(theme::SECTION).color(PAL.text))
-                .child(text(format!("Your changes go here first, then to {}.", s.service.title())).font(theme::LABEL).color(PAL.dim)),
-        );
+        return col()
+            .key("page/queue")
+            .w_full()
+            .h_full()
+            .child(top)
+            .child(body)
+            .child(
+                col()
+                    .key("queue-empty")
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .center()
+                    .gap(4.0)
+                    .pb(60.0)
+                    .child(text("Nothing waiting").font(theme::SECTION).color(PAL.text))
+                    .child(
+                        text(format!(
+                            "Your changes go here first, then to {}.",
+                            s.service.title()
+                        ))
+                        .font(theme::LABEL)
+                        .color(PAL.dim),
+                    ),
+            );
     }
     for op in s.ops.iter().filter(|o| o.state == OpState::Conflict) {
         body = body.child(conflict_card(s, op, s.op_title(op), now).mx(theme::PAGE_PAD));
     }
     type Group = (&'static str, &'static str, fn(OpState) -> bool);
     let groups: [Group; 3] = [
-        ("waiting", "Waiting", |st| matches!(st, OpState::Queued | OpState::Sending)),
+        ("waiting", "Waiting", |st| {
+            matches!(st, OpState::Queued | OpState::Sending)
+        }),
         ("failed", "Failed", |st| st == OpState::Failed),
         ("sent", "Sent today", |st| st == OpState::Done),
     ];
-    let mut list = col().key("queue-list").px(16.0).py(6.0).radius(theme::R_LG).fill(PAL.surface).border(1.0, PAL.border).mx(theme::PAGE_PAD);
+    let mut list = col()
+        .key("queue-list")
+        .px(16.0)
+        .py(6.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border)
+        .mx(theme::PAGE_PAD);
     let mut any = false;
     for (key, label, keep) in groups {
         let ops: Vec<&Op> = s.ops.iter().filter(|o| keep(o.state)).collect();
@@ -1625,8 +2373,19 @@ fn queue_page(s: &State) -> El {
             continue;
         }
         any = true;
-        let count = if key == "sent" { String::new() } else { format!(" {}", ops.len()) };
-        list = list.child(text(format!("{}{count}", label.to_uppercase())).key(format!("qh/{key}")).font(theme::CAPTION).color(PAL.faint).pt(12.0).pb(4.0));
+        let count = if key == "sent" {
+            String::new()
+        } else {
+            format!(" {}", ops.len())
+        };
+        list = list.child(
+            text(format!("{}{count}", label.to_uppercase()))
+                .key(format!("qh/{key}"))
+                .font(theme::CAPTION)
+                .color(PAL.faint)
+                .pt(12.0)
+                .pb(4.0),
+        );
         for (i, op) in ops.iter().enumerate() {
             if i > 0 {
                 list = list.child(el().w_full().h(1.0).fill(PAL.border));
@@ -1640,16 +2399,24 @@ fn queue_page(s: &State) -> El {
     if crate::mirror::in_queue(s) {
         body = body.child(crate::mirror::queue_section(s));
     }
-    col()
-        .key("page/queue")
-        .w_full()
-        .h_full()
-        .child(top)
-        .child(col().key("queue-scroll").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(body))
+    col().key("page/queue").w_full().h_full().child(top).child(
+        col()
+            .key("queue-scroll")
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .grow(1.0)
+            .min_h(0.0)
+            .child(body),
+    )
 }
 
 fn changes(n: u32) -> String {
-    if n == 1 { "1 change".into() } else { format!("{n} changes") }
+    if n == 1 {
+        "1 change".into()
+    } else {
+        format!("{n} changes")
+    }
 }
 
 /// One change: cover, title, what changes (and the service's words when it failed), its state
@@ -1658,15 +2425,37 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
     let id = op.id;
     let media = op.media_id;
     let manga = op.kind == kotora_core::Kind::Manga;
-    let mut line = row().gap(6.0).center_y().child(text(kotora_core::queue::describe_op_with(op, s.score_format())).font(theme::LABEL_NUM).color(PAL.text));
+    let mut line = row().gap(6.0).center_y().child(
+        text(kotora_core::queue::describe_op_with(op, s.score_format()))
+            .font(theme::LABEL_NUM)
+            .color(PAL.text),
+    );
     if op.edits > 1 && op.state.is_open() {
-        line = line.child(text(format!("({} edits merged)", op.edits)).font(theme::LABEL).color(PAL.faint));
+        line = line.child(
+            text(format!("({} edits merged)", op.edits))
+                .font(theme::LABEL)
+                .color(PAL.faint),
+        );
     }
     // The service's words under the change: red when it refused, grey while it retries.
     let mut what = col().gap(2.0).grow(1.0).min_w(0.0).child(line);
     match (&op.error, op.state) {
-        (Some(e), OpState::Failed) => what = what.child(text(e.clone()).font(theme::LABEL).color(PAL.status(Status::Dropped)).truncate()),
-        (Some(e), OpState::Queued) => what = what.child(text(format!("{e}; Kotora tries again by itself")).font(theme::LABEL).color(PAL.faint).truncate()),
+        (Some(e), OpState::Failed) => {
+            what = what.child(
+                text(e.clone())
+                    .font(theme::LABEL)
+                    .color(PAL.status(Status::Dropped))
+                    .truncate(),
+            )
+        }
+        (Some(e), OpState::Queued) => {
+            what = what.child(
+                text(format!("{e}; Kotora tries again by itself"))
+                    .font(theme::LABEL)
+                    .color(PAL.faint)
+                    .truncate(),
+            )
+        }
         _ => {}
     }
     let end = match op.state {
@@ -1675,35 +2464,73 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
             .gap(6.0)
             .center_y()
             .children((op.state == OpState::Queued).then(|| pill(op.state.label(), PAL.warn())))
-            .child(action(format!("q/{id}/undo"), "Undo", false, move |s, _| s.queue_cmd(Cmd::Discard(id)))),
+            .child(action(
+                format!("q/{id}/undo"),
+                "Undo",
+                false,
+                move |s, _| s.queue_cmd(Cmd::Discard(id)),
+            )),
         OpState::Failed => row()
             .gap(6.0)
-            .child(action(format!("q/{id}/edit"), "Edit", false, move |s, tx| {
-                // The entry's page, its editor open, scrolled to it.
-                if manga {
-                    if let Some(st) = s.manga.entries.iter().find(|e| e.id == media).map(|e| e.status) {
-                        s.manga.query.replace_text("");
-                        if !s.manga.mode {
-                            s.set_kind(kotora_core::Kind::Manga);
+            .child(action(
+                format!("q/{id}/edit"),
+                "Edit",
+                false,
+                move |s, tx| {
+                    // The entry's page, its editor open, scrolled to it.
+                    if manga {
+                        if let Some(st) = s
+                            .manga
+                            .entries
+                            .iter()
+                            .find(|e| e.id == media)
+                            .map(|e| e.status)
+                        {
+                            s.manga.query.replace_text("");
+                            if !s.manga.mode {
+                                s.set_kind(kotora_core::Kind::Manga);
+                            }
+                            s.go(Page::Manga(st));
+                            s.set_manga_filter(crate::manga::MFilter::All);
+                            s.manga.editor = None;
+                            s.manga_toggle_editor(media);
+                            tx.scroll_into_view(format!("m{media}"));
                         }
-                        s.go(Page::Manga(st));
-                        s.set_manga_filter(crate::manga::MFilter::All);
-                        s.manga.editor = None;
-                        s.manga_toggle_editor(media);
-                        tx.scroll_into_view(format!("m{media}"));
+                    } else if let Some(st) =
+                        s.entries.iter().find(|e| e.id == media).map(|e| e.status)
+                    {
+                        s.query.replace_text("");
+                        s.go(Page::List(st));
+                        s.set_filter(Filter::All);
+                        s.editor = None;
+                        s.toggle_editor(media);
+                        tx.scroll_into_view(media.to_string());
                     }
-                } else if let Some(st) = s.entries.iter().find(|e| e.id == media).map(|e| e.status) {
-                    s.query.replace_text("");
-                    s.go(Page::List(st));
-                    s.set_filter(Filter::All);
-                    s.editor = None;
-                    s.toggle_editor(media);
-                    tx.scroll_into_view(media.to_string());
-                }
-            }))
-            .child(action(format!("q/{id}/discard"), "Discard", false, move |s, _| s.queue_cmd(Cmd::Discard(id)))),
-        OpState::Done => row().gap(4.0).center_y().child(icon(&icons::CHECK, 13.0).color(PAL.ok())).child(text("Sent").font(theme::CAPTION.tracking(0.0)).color(PAL.ok())),
-        st => pill(st.label(), if st == OpState::Sending { PAL.dim } else { PAL.warn() }),
+                },
+            ))
+            .child(action(
+                format!("q/{id}/discard"),
+                "Discard",
+                false,
+                move |s, _| s.queue_cmd(Cmd::Discard(id)),
+            )),
+        OpState::Done => row()
+            .gap(4.0)
+            .center_y()
+            .child(icon(&icons::CHECK, 13.0).color(PAL.ok()))
+            .child(
+                text("Sent")
+                    .font(theme::CAPTION.tracking(0.0))
+                    .color(PAL.ok()),
+            ),
+        st => pill(
+            st.label(),
+            if st == OpState::Sending {
+                PAL.dim
+            } else {
+                PAL.warn()
+            },
+        ),
     };
     let when = op.sent_at.unwrap_or(op.edited_at);
     let r = row()
@@ -1712,15 +2539,41 @@ fn queue_row(s: &State, op: &Op, title: &str, now: i64) -> El {
         .gap(14.0)
         .center_y()
         .child(op_cover(s, op, title))
-        .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).truncate().w(240.0))
+        .child(
+            text(title.to_string())
+                .font(theme::BODY_MED)
+                .color(PAL.text)
+                .truncate()
+                .w(240.0),
+        )
         .child(what)
         .child(end)
-        .child(text(kotora_core::time::age(when, now)).font(theme::LABEL_NUM).color(PAL.faint).w(52.0).justify_end());
-    if op.state == OpState::Done { r.opacity(0.6) } else { r }
+        .child(
+            text(kotora_core::time::age(when, now))
+                .font(theme::LABEL_NUM)
+                .color(PAL.faint)
+                .w(52.0)
+                .justify_end(),
+        );
+    if op.state == OpState::Done {
+        r.opacity(0.6)
+    } else {
+        r
+    }
 }
 
 pub(crate) fn pill(label: &str, c: Color) -> El {
-    row().h(20.0).px(8.0).center_y().radius(10.0).fill(PAL.tint(c, 0.10)).child(text(label.to_string()).font(theme::CAPTION.tracking(0.0)).color(c))
+    row()
+        .h(20.0)
+        .px(8.0)
+        .center_y()
+        .radius(10.0)
+        .fill(PAL.tint(c, 0.10))
+        .child(
+            text(label.to_string())
+                .font(theme::CAPTION.tracking(0.0))
+                .color(c),
+        )
 }
 
 /// The fields of `op`'s change, as `values` has them: "Progress 7 / 24 · Score 8".
@@ -1732,13 +2585,19 @@ fn conflict_values(op: &Op, v: &kotora_core::Values, fmt: kotora_core::ScoreForm
         parts.push(v.status.label_in(op.kind).to_string());
     }
     if op.change.progress.is_some() {
-        parts.push(format!("{} {} / {total}", if manga { "Chapters" } else { "Progress" }, v.progress));
+        parts.push(format!(
+            "{} {} / {total}",
+            if manga { "Chapters" } else { "Progress" },
+            v.progress
+        ));
     }
     if op.change.volumes.is_some() {
         parts.push(format!("Volumes {}", v.volumes));
     }
     if op.change.score.is_some() {
-        parts.push(v.score.map_or("No score".to_string(), |n| format!("Score {}", fmt.words(n))));
+        parts.push(v.score.map_or("No score".to_string(), |n| {
+            format!("Score {}", fmt.words(n))
+        }));
     }
     parts.join(" \u{b7} ")
 }
@@ -1755,18 +2614,54 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
             .padding(12.0)
             .radius(theme::R_MD)
             .fill(PAL.field)
-            .border(1.0, if on { PAL.accent.alpha(0.5) } else { PAL.border })
+            .border(
+                1.0,
+                if on {
+                    PAL.accent.alpha(0.5)
+                } else {
+                    PAL.border
+                },
+            )
             .child(text(head).font(theme::LABEL).color(PAL.faint))
-            .child(text(big).font(TextStyle::new(16.0, 500.0).features("'tnum' 1")).color(PAL.text).pb(4.0))
+            .child(
+                text(big)
+                    .font(TextStyle::new(16.0, 500.0).features("'tnum' 1"))
+                    .color(PAL.text)
+                    .pb(4.0),
+            )
             .child(row().child(act))
     };
     let (theirs_head, theirs, take) = match &op.remote {
-        Some(r) if op.removed => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format()), "Keep it"),
-        Some(r) => (format!("{} \u{b7} changed {}", s.service.title(), sync_age(now - r.updated_at)), conflict_values(op, &r.values, s.score_format()), "Take theirs"),
-        None => (s.service.title().to_string(), "Removed from your list".to_string(), "Remove here too"),
+        Some(r) if op.removed => (
+            format!(
+                "{} \u{b7} changed {}",
+                s.service.title(),
+                sync_age(now - r.updated_at)
+            ),
+            crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format()),
+            "Keep it",
+        ),
+        Some(r) => (
+            format!(
+                "{} \u{b7} changed {}",
+                s.service.title(),
+                sync_age(now - r.updated_at)
+            ),
+            conflict_values(op, &r.values, s.score_format()),
+            "Take theirs",
+        ),
+        None => (
+            s.service.title().to_string(),
+            "Removed from your list".to_string(),
+            "Remove here too",
+        ),
     };
     let aside = match &op.remote {
-        Some(r) => format!("{} has {}", s.service.title(), crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format())),
+        Some(r) => format!(
+            "{} has {}",
+            s.service.title(),
+            crate::model::remote_text_of(op.kind, r, op.episodes, s.score_format())
+        ),
         None => "removed on another device".into(),
     };
     col()
@@ -1782,23 +2677,80 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
                 .center_y()
                 .child(op_cover(s, op, title))
                 .child(icon(&icons::ALERT, 16.0).color(PAL.accent))
-                .child(text(format!("Conflict: {title}")).font(theme::SECTION).color(PAL.text).truncate().min_w(0.0))
-                .child(text(aside).font(theme::LABEL).color(PAL.faint).truncate().min_w(0.0)),
+                .child(
+                    text(format!("Conflict: {title}"))
+                        .font(theme::SECTION)
+                        .color(PAL.text)
+                        .truncate()
+                        .min_w(0.0),
+                )
+                .child(
+                    text(aside)
+                        .font(theme::LABEL)
+                        .color(PAL.faint)
+                        .truncate()
+                        .min_w(0.0),
+                ),
         )
-        .child(text(if op.removed { format!("{} changed after you removed it. Kotora did not delete it. Pick one.", s.service.title()) } else { format!("{} changed after your edit. Kotora did not overwrite it. Pick one.", s.service.title()) }).font(theme::LABEL).color(PAL.dim))
+        .child(
+            text(if op.removed {
+                format!(
+                    "{} changed after you removed it. Kotora did not delete it. Pick one.",
+                    s.service.title()
+                )
+            } else {
+                format!(
+                    "{} changed after your edit. Kotora did not overwrite it. Pick one.",
+                    s.service.title()
+                )
+            })
+            .font(theme::LABEL)
+            .color(PAL.dim),
+        )
         .child(
             row()
                 .gap(12.0)
                 .child(side(
                     "mine",
-                    format!("Yours \u{b7} {} here, {}", if op.removed { "removed" } else { "edited" }, sync_age(now - op.edited_at)),
-                    if op.removed { "Remove from list".to_string() } else { conflict_values(op, &op.mine(), s.score_format()) },
-                    action(format!("conflict/{id}/keep"), if op.removed { "Remove anyway" } else { "Keep mine" }, true, move |s, _| s.queue_cmd(Cmd::KeepMine(id))),
+                    format!(
+                        "Yours \u{b7} {} here, {}",
+                        if op.removed { "removed" } else { "edited" },
+                        sync_age(now - op.edited_at)
+                    ),
+                    if op.removed {
+                        "Remove from list".to_string()
+                    } else {
+                        conflict_values(op, &op.mine(), s.score_format())
+                    },
+                    action(
+                        format!("conflict/{id}/keep"),
+                        if op.removed {
+                            "Remove anyway"
+                        } else {
+                            "Keep mine"
+                        },
+                        true,
+                        move |s, _| s.queue_cmd(Cmd::KeepMine(id)),
+                    ),
                     true,
                 ))
-                .child(side("theirs", theirs_head, theirs, action(format!("conflict/{id}/take"), take, false, move |s, _| s.queue_cmd(Cmd::TakeTheirs(id))), false)),
+                .child(side(
+                    "theirs",
+                    theirs_head,
+                    theirs,
+                    action(format!("conflict/{id}/take"), take, false, move |s, _| {
+                        s.queue_cmd(Cmd::TakeTheirs(id))
+                    }),
+                    false,
+                )),
         )
-        .children((!op.removed).then(|| text("When only the progress differs and yours is higher, Kotora sends yours by itself.").font(theme::LABEL).color(PAL.faint)))
+        .children((!op.removed).then(|| {
+            text(
+                "When only the progress differs and yours is higher, Kotora sends yours by itself.",
+            )
+            .font(theme::LABEL)
+            .color(PAL.faint)
+        }))
 }
 
 // ------------------------------------------------------------------- alerts, sign-in, settings
@@ -1806,7 +2758,11 @@ fn conflict_card(s: &State, op: &Op, title: &str, now: i64) -> El {
 /// A field's placeholder, empty while the field has focus. Rune draws the caret at the text's
 /// start, right on top of the placeholder's first letter, which then looks cut off.
 pub(crate) fn field_hint(edit: &rune::TextEdit, hint: &str) -> String {
-    if edit.focused { String::new() } else { hint.to_string() }
+    if edit.focused {
+        String::new()
+    } else {
+        hint.to_string()
+    }
 }
 
 pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
@@ -1834,7 +2790,11 @@ pub(crate) fn button(key: &str, label: &str, primary: bool, on: Option<fn(&mut S
     match on {
         Some(f) => b
             .focusable(true)
-            .hover(if primary { Color::BLACK.alpha(0.08) } else { PAL.hover() })
+            .hover(if primary {
+                Color::BLACK.alpha(0.08)
+            } else {
+                PAL.hover()
+            })
             .press(PAL.press())
             .on_press_tx(move |s: &mut State, tx: &mut Tx| {
                 tx.instant();
@@ -1858,7 +2818,14 @@ pub(crate) fn alert(key: &str, c: Color, message: String, action: Option<El>) ->
         .fill(c.alpha(0.08))
         .border(1.0, c.alpha(0.3))
         .child(el().size(6.0, 6.0).radius(3.0).fill(c))
-        .child(text(message).font(theme::BODY).color(PAL.text).wrap().grow(1.0).min_w(0.0));
+        .child(
+            text(message)
+                .font(theme::BODY)
+                .color(PAL.text)
+                .wrap()
+                .grow(1.0)
+                .min_w(0.0),
+        );
     if let Some(a) = action {
         r = r.child(a);
     }
@@ -1871,37 +2838,85 @@ pub(crate) fn status_alert(s: &State) -> Option<El> {
         return Some(alert(
             "alert/expired",
             PAL.warn(),
-            format!("{} needs you to sign in again. Your saved list still works.", s.service.title()),
-            Some(button("alert/sign-in", "Sign in", true, Some(online::sign_in))),
+            format!(
+                "{} needs you to sign in again. Your saved list still works.",
+                s.service.title()
+            ),
+            Some(button(
+                "alert/sign-in",
+                "Sign in",
+                true,
+                Some(online::sign_in),
+            )),
         ));
     }
     let err = s.error.as_ref()?;
     let mut msg = err.clone();
-    if s.offline && let Some(at) = s.synced_at {
+    if s.offline
+        && let Some(at) = s.synced_at
+    {
         msg = format!("{msg} Last synced {}.", sync_age(s.clock() - at));
     }
-    Some(alert("alert/error", PAL.status(Status::Dropped), msg, Some(button("alert/retry", "Retry", false, Some(online::refresh)))))
+    Some(alert(
+        "alert/error",
+        PAL.status(Status::Dropped),
+        msg,
+        Some(button("alert/retry", "Retry", false, Some(online::refresh))),
+    ))
 }
 
 /// A status page that has entries, but none match the chip or the search.
 fn no_match(s: &State) -> El {
     let q = s.query.text.trim();
-    let line = if q.is_empty() { "No anime match this filter.".to_string() } else { format!("Nothing matches \u{201c}{q}\u{201d}.") };
-    col().key("no-match").grow(1.0).min_h(0.0).center().gap(4.0).pb(60.0).child(text(line).font(theme::SECTION).color(PAL.text))
+    let line = if q.is_empty() {
+        "No anime match this filter.".to_string()
+    } else {
+        format!("Nothing matches \u{201c}{q}\u{201d}.")
+    };
+    col()
+        .key("no-match")
+        .grow(1.0)
+        .min_h(0.0)
+        .center()
+        .gap(4.0)
+        .pb(60.0)
+        .child(text(line).font(theme::SECTION).color(PAL.text))
 }
 
 /// The list pages before there is a list: no Client ID, signed out, or waiting for the browser.
 fn welcome(s: &State) -> El {
-    let mut c = col().key("welcome").w_full().h_full().center().gap(10.0).pb(40.0);
+    let mut c = col()
+        .key("welcome")
+        .w_full()
+        .h_full()
+        .center()
+        .gap(10.0)
+        .pb(40.0);
     if let Some(img) = &s.logo {
         c = c.child(el().size(64.0, 64.0).radius(14.0).pixels(img.pixels()));
     }
-    c = c.child(text("Welcome to Kotora").font(TextStyle::new(28.0, 600.0)).color(PAL.text));
+    c = c.child(
+        text("Welcome to Kotora")
+            .font(TextStyle::new(28.0, 600.0))
+            .color(PAL.text),
+    );
     match s.auth {
         Auth::SigningIn => {
             c = c
-                .child(text(format!("Waiting for {} in your browser\u{2026}", s.service.title())).font(theme::BODY).color(PAL.dim))
-                .child(row().mt(6.0).child(button("cancel", "Cancel", false, Some(online::cancel_sign_in))));
+                .child(
+                    text(format!(
+                        "Waiting for {} in your browser\u{2026}",
+                        s.service.title()
+                    ))
+                    .font(theme::BODY)
+                    .color(PAL.dim),
+                )
+                .child(row().mt(6.0).child(button(
+                    "cancel",
+                    "Cancel",
+                    false,
+                    Some(online::cancel_sign_in),
+                )));
         }
         _ => {
             if s.client_id.saved {
@@ -1915,12 +2930,29 @@ fn welcome(s: &State) -> El {
                 );
             }
             c = c
-                .child(text(format!("Sign in to {} to see and update your list.", s.service.title())).font(theme::BODY).color(PAL.dim))
-                .child(row().mt(6.0).child(button("sign-in", "Sign in", true, Some(online::sign_in))));
+                .child(
+                    text(format!(
+                        "Sign in to {} to see and update your list.",
+                        s.service.title()
+                    ))
+                    .font(theme::BODY)
+                    .color(PAL.dim),
+                )
+                .child(row().mt(6.0).child(button(
+                    "sign-in",
+                    "Sign in",
+                    true,
+                    Some(online::sign_in),
+                )));
         }
     }
     if let Some(e) = &s.error {
-        c = c.child(text(e.clone()).font(theme::LABEL).color(PAL.status(Status::Dropped)).mt(8.0));
+        c = c.child(
+            text(e.clone())
+                .font(theme::LABEL)
+                .color(PAL.status(Status::Dropped))
+                .mt(8.0),
+        );
     }
     c
 }
@@ -1932,11 +2964,24 @@ pub(crate) fn card(key: &str, title: &str) -> El {
         .radius(theme::R_LG)
         .fill(PAL.surface)
         .border(1.0, PAL.border)
-        .child(text(title.to_string()).font(theme::SECTION).color(PAL.text).pb(4.0))
+        .child(
+            text(title.to_string())
+                .font(theme::SECTION)
+                .color(PAL.text)
+                .pb(4.0),
+        )
 }
 
 /// A service in Settings → Account: badge, name and state, and its button.
-pub(crate) fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str, line: String, action: El, on: bool) -> El {
+pub(crate) fn service_row(
+    key: &str,
+    badge: &str,
+    badge_fill: Color,
+    name: &str,
+    line: String,
+    action: El,
+    on: bool,
+) -> El {
     let fg = if on { PAL.text } else { PAL.dim };
     row()
         .key(key.to_string())
@@ -1949,21 +2994,40 @@ pub(crate) fn service_row(key: &str, badge: &str, badge_fill: Color, name: &str,
                 .fill(badge_fill)
                 .center()
                 // Brand fills are dark in both themes: the letters stay light.
-                .child(text(badge.to_string()).font(TextStyle::new(11.0, 600.0)).color(hex(if on { "#edf0f7" } else { "#a4afc6" }))),
+                .child(
+                    text(badge.to_string())
+                        .font(TextStyle::new(11.0, 600.0))
+                        .color(hex(if on { "#edf0f7" } else { "#a4afc6" })),
+                ),
         )
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(2.0)
-                .child(text(name.to_string()).font(theme::BODY_MED).color(fg).truncate())
-                .child(text(line).font(theme::LABEL).color(if on { PAL.dim } else { PAL.faint }).truncate()),
+                .child(
+                    text(name.to_string())
+                        .font(theme::BODY_MED)
+                        .color(fg)
+                        .truncate(),
+                )
+                .child(
+                    text(line)
+                        .font(theme::LABEL)
+                        .color(if on { PAL.dim } else { PAL.faint })
+                        .truncate(),
+                ),
         )
         .child(action)
 }
 
 /// The `sm` button (26 high) of the settings rows.
-pub(crate) fn small_button(key: &str, label: &str, primary: bool, on: Option<fn(&mut State)>) -> El {
+pub(crate) fn small_button(
+    key: &str,
+    label: &str,
+    primary: bool,
+    on: Option<fn(&mut State)>,
+) -> El {
     button(key, label, primary, on).h(26.0).px(10.0)
 }
 
@@ -1978,9 +3042,16 @@ pub(crate) fn now_title(s: &State, n: &Now) -> (u32, String) {
         return (id, e.title.clone());
     }
     match &n.found {
-        Found::NotOnList { media_id, .. } => (*media_id, s.not_on_list_title(n).unwrap_or_default()),
+        Found::NotOnList { media_id, .. } => {
+            (*media_id, s.not_on_list_title(n).unwrap_or_default())
+        }
         _ => {
-            let t = n.parsed.as_ref().map(|p| p.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| n.file.clone());
+            let t = n
+                .parsed
+                .as_ref()
+                .map(|p| p.title.clone())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| n.file.clone());
             (t.bytes().map(u32::from).sum(), t)
         }
     }
@@ -1998,7 +3069,13 @@ pub(crate) fn now_cover_url<'a>(s: &'a State, n: &'a Now) -> Option<&'a str> {
         .find(|e| e.id == id)
         .and_then(|e| e.cover_url.as_deref())
         .or(n.cover_url.as_deref())
-        .or_else(|| s.detail.as_ref().filter(|d| d.id() == id && !d.is_manga()).and_then(|d| d.info.as_ref()).and_then(|i| i.cover_url.as_deref()))
+        .or_else(|| {
+            s.detail
+                .as_ref()
+                .filter(|d| d.id() == id && !d.is_manga())
+                .and_then(|d| d.info.as_ref())
+                .and_then(|i| i.cover_url.as_deref())
+        })
 }
 
 /// A cover for what plays: the real one when loaded (at its own pixel size), else the tile.
@@ -2008,14 +3085,25 @@ fn now_cover(s: &State, n: &Now, w: f32, h: f32, size: f32) -> El {
     let tile = cover(id, &title, w, h, size).radius(r);
     let url = now_cover_url(s, n);
     match s.covers.get(id, url, w, h) {
-        Some(img) => tile.child(el().key("np-cover-img").absolute(0.0, 0.0).size(w, h).radius(r).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().key("np-cover-img")
+                .absolute(0.0, 0.0)
+                .size(w, h)
+                .radius(r)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
 
 /// Mixes `a` toward `b` by `t` (linear colours).
 pub(crate) fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t, a: 1.0 }
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: 1.0,
+    }
 }
 
 /// A ghost button (no fill, dim text): "Wrong anime…".
@@ -2034,7 +3122,11 @@ pub(crate) fn ghost(key: &str, label: &str, f: impl Fn(&mut State) + 'static) ->
             tx.instant();
             f(s);
         })
-        .child(text(label.to_string()).font(theme::LABEL_BTN).color(PAL.dim))
+        .child(
+            text(label.to_string())
+                .font(theme::LABEL_BTN)
+                .color(PAL.dim),
+        )
 }
 
 /// The banner on top of every page: the offer (Update / Not now / Wrong anime…), or an episode
@@ -2052,7 +3144,14 @@ fn banner(s: &State) -> El {
         .gap(14.0)
         .center_y()
         .radius(theme::R_LG)
-        .linear_gradient(PI / 2.0, [(0.0, mix(PAL.bg, PAL.accent, 0.18)), (0.6, mix(PAL.bg, PAL.accent, 0.06)), (1.0, mix(PAL.bg, PAL.accent, 0.03))])
+        .linear_gradient(
+            PI / 2.0,
+            [
+                (0.0, mix(PAL.bg, PAL.accent, 0.18)),
+                (0.6, mix(PAL.bg, PAL.accent, 0.06)),
+                (1.0, mix(PAL.bg, PAL.accent, 0.03)),
+            ],
+        )
         .border(1.0, PAL.accent.alpha(0.35))
         .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
         .child(now_cover(s, n, 36.0, 52.0, 12.0));
@@ -2063,7 +3162,13 @@ fn banner(s: &State) -> El {
             .min_w(0.0)
             .clip_fade(0.0, 0.0, 16.0, 0.0)
             .child(text(lead.to_string()).font(theme::BODY).color(PAL.text))
-            .child(text(bold).font(TextStyle::new(13.0, 600.0)).color(PAL.text).truncate().min_w(0.0))
+            .child(
+                text(bold)
+                    .font(TextStyle::new(13.0, 600.0))
+                    .color(PAL.text)
+                    .truncate()
+                    .min_w(0.0),
+            )
             .child(text(tail).font(theme::BODY).color(PAL.text))
     };
     if let Some(r) = n.recorded {
@@ -2077,7 +3182,16 @@ fn banner(s: &State) -> El {
             (true, false) => "Updated automatically",
             (false, false) => "Updated",
         };
-        let waiting = s.entries.iter().find(|e| e.id == r.id).and_then(|e| e.waiting).unwrap_or(if s.service == kotora_core::service::ServiceId::AniList { "Sent to AniList" } else { "Sent to MyAnimeList" });
+        let waiting = s
+            .entries
+            .iter()
+            .find(|e| e.id == r.id)
+            .and_then(|e| e.waiting)
+            .unwrap_or(if s.service == kotora_core::service::ServiceId::AniList {
+                "Sent to AniList"
+            } else {
+                "Sent to MyAnimeList"
+            });
         b = b
             .child(
                 col()
@@ -2085,9 +3199,18 @@ fn banner(s: &State) -> El {
                     .min_w(0.0)
                     .gap(3.0)
                     .child(line("Recorded ", title, format!(" episode {}", r.episode)))
-                    .child(text(format!("{how} \u{b7} {waiting}")).font(theme::LABEL).color(PAL.dim)),
+                    .child(
+                        text(format!("{how} \u{b7} {waiting}"))
+                            .font(theme::LABEL)
+                            .color(PAL.dim),
+                    ),
             )
-            .child(button("banner/undo", "Undo", false, Some(State::undo_record)))
+            .child(button(
+                "banner/undo",
+                "Undo",
+                false,
+                Some(State::undo_record),
+            ))
             .child(ghost("banner/close", "Close", |s| {
                 s.dismiss_now();
             }));
@@ -2101,7 +3224,11 @@ fn banner(s: &State) -> El {
             0 => "Completed".to_string(),
             n => format!("Completed, rewatched {}", kotora_core::queue::times(n)),
         };
-        let small = [pct.as_deref(), Some(times.as_str())].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+        let small = [pct.as_deref(), Some(times.as_str())]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
         return b
             .key("banner")
             .child(
@@ -2109,51 +3236,130 @@ fn banner(s: &State) -> El {
                     .grow(1.0)
                     .min_w(0.0)
                     .gap(3.0)
-                    .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
+                    .child(line(
+                        "Watching ",
+                        title,
+                        format!(" episode {ep} in {}", n.player),
+                    ))
                     .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
             )
-            .child(text("Watching it again?").key("banner/rewatch-ask").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
-            .child(action("banner/rewatch".into(), &format!("Start rewatch at episode {ep}"), true, |s, _| {
-                let _ = s.confirm_offer();
-            }).h(32.0).px(12.0))
-            .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
-                s.dismiss_now();
-            })))
-            .child(ghost("banner/wrong", "Wrong anime\u{2026}", State::wrong_anime));
+            .child(
+                text("Watching it again?")
+                    .key("banner/rewatch-ask")
+                    .font(TextStyle::new(14.0, 600.0))
+                    .color(PAL.cream),
+            )
+            .child(
+                action(
+                    "banner/rewatch".into(),
+                    &format!("Start rewatch at episode {ep}"),
+                    true,
+                    |s, _| {
+                        let _ = s.confirm_offer();
+                    },
+                )
+                .h(32.0)
+                .px(12.0),
+            )
+            .child(button(
+                "banner/not-now",
+                "Not now",
+                false,
+                Some(|s: &mut State| {
+                    s.dismiss_now();
+                }),
+            ))
+            .child(ghost(
+                "banner/wrong",
+                "Wrong anime\u{2026}",
+                State::wrong_anime,
+            ));
     }
     let ep = s.offer().map_or(0, |(_, ep)| ep);
-    let total = s.offer().and_then(|(i, _)| s.entries[i].episodes).map_or("?".to_string(), |n| n.to_string());
-    let matched = if n.sure() { "Matched in your list" } else { "Not sure it's this one" };
+    let total = s
+        .offer()
+        .and_then(|(i, _)| s.entries[i].episodes)
+        .map_or("?".to_string(), |n| n.to_string());
+    let matched = if n.sure() {
+        "Matched in your list"
+    } else {
+        "Not sure it's this one"
+    };
     // Skips an episode, or not aired yet by the estimate: said here, and never recorded by itself.
     // For a sure match the note takes the place of "Matched in your list".
     let note = s.offer_note();
-    let matched = if note.is_some() && n.sure() { None } else { Some(matched) };
-    let small = [pct.as_deref(), matched].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+    let matched = if note.is_some() && n.sure() {
+        None
+    } else {
+        Some(matched)
+    };
+    let small = [pct.as_deref(), matched]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
     let small = match note {
         Some(note) => row()
             .min_w(0.0)
             .gap(6.0)
-            .child(text(small).font(theme::LABEL).color(PAL.dim).truncate().min_w(0.0))
+            .child(
+                text(small)
+                    .font(theme::LABEL)
+                    .color(PAL.dim)
+                    .truncate()
+                    .min_w(0.0),
+            )
             .child(text("\u{b7}").font(theme::LABEL).color(PAL.dim))
-            .child(text(note).key("banner/note").font(theme::LABEL).color(PAL.warn()).truncate().min_w(0.0)),
-        None => row().min_w(0.0).child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
+            .child(
+                text(note)
+                    .key("banner/note")
+                    .font(theme::LABEL)
+                    .color(PAL.warn())
+                    .truncate()
+                    .min_w(0.0),
+            ),
+        None => row()
+            .min_w(0.0)
+            .child(text(small).font(theme::LABEL).color(PAL.dim).truncate()),
     };
     b.child(
         col()
             .grow(1.0)
             .min_w(0.0)
             .gap(3.0)
-            .child(line("Watching ", title, format!(" episode {ep} in {}", n.player)))
+            .child(line(
+                "Watching ",
+                title,
+                format!(" episode {ep} in {}", n.player),
+            ))
             .child(small),
     )
-    .child(text(format!("Update to {ep} / {total}?")).font(TextStyle::new(14.0, 600.0).features("'tnum' 1")).color(PAL.cream))
-    .child(button("banner/update", "Update", true, Some(|s: &mut State| {
-        let _ = s.confirm_offer();
-    })))
-    .child(button("banner/not-now", "Not now", false, Some(|s: &mut State| {
-        s.dismiss_now();
-    })))
-    .child(ghost("banner/wrong", "Wrong anime\u{2026}", State::wrong_anime))
+    .child(
+        text(format!("Update to {ep} / {total}?"))
+            .font(TextStyle::new(14.0, 600.0).features("'tnum' 1"))
+            .color(PAL.cream),
+    )
+    .child(button(
+        "banner/update",
+        "Update",
+        true,
+        Some(|s: &mut State| {
+            let _ = s.confirm_offer();
+        }),
+    ))
+    .child(button(
+        "banner/not-now",
+        "Not now",
+        false,
+        Some(|s: &mut State| {
+            s.dismiss_now();
+        }),
+    ))
+    .child(ghost(
+        "banner/wrong",
+        "Wrong anime\u{2026}",
+        State::wrong_anime,
+    ))
 }
 
 pub(crate) fn led_color(led: Led) -> Color {
@@ -2174,9 +3380,28 @@ fn player_line(s: &State, sw: Switch) -> El {
         .gap(8.0)
         .py(6.0)
         .center_y()
-        .child(el().size(7.0, 7.0).radius(3.5).fill(if on { led_color(led) } else { PAL.faint }))
-        .child(text(sw.label().to_string()).font(theme::BODY_MED).color(PAL.text))
-        .child(text(if on { line } else { "switched off in Settings".into() }).font(theme::LABEL).color(PAL.dim).truncate().grow(1.0).min_w(0.0))
+        .child(
+            el().size(7.0, 7.0)
+                .radius(3.5)
+                .fill(if on { led_color(led) } else { PAL.faint }),
+        )
+        .child(
+            text(sw.label().to_string())
+                .font(theme::BODY_MED)
+                .color(PAL.text),
+        )
+        .child(
+            text(if on {
+                line
+            } else {
+                "switched off in Settings".into()
+            })
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .truncate()
+            .grow(1.0)
+            .min_w(0.0),
+        )
 }
 
 fn players_status_card(s: &State) -> El {
@@ -2187,7 +3412,12 @@ fn players_status_card(s: &State) -> El {
     } else {
         "Linux"
     };
-    let mut c = card("np-players", "Players").child(text(platform.to_string()).font(theme::CAPTION).color(PAL.faint).pb(4.0));
+    let mut c = card("np-players", "Players").child(
+        text(platform.to_string())
+            .font(theme::CAPTION)
+            .color(PAL.faint)
+            .pb(4.0),
+    );
     for sw in Switch::here() {
         c = c.child(player_line(s, *sw));
     }
@@ -2196,17 +3426,49 @@ fn players_status_card(s: &State) -> El {
 
 /// A label and a value in the Now Playing card.
 pub(crate) fn kv(label: &str, value: El) -> El {
-    row().gap(12.0).py(3.0).items_start().child(text(label.to_string()).font(theme::LABEL).color(PAL.faint).w(110.0)).child(value.grow(1.0).min_w(0.0))
+    row()
+        .gap(12.0)
+        .py(3.0)
+        .items_start()
+        .child(
+            text(label.to_string())
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .w(110.0),
+        )
+        .child(value.grow(1.0).min_w(0.0))
 }
 
 fn match_text(s: &State, n: &Now) -> (String, Color) {
     match &n.found {
-        Found::List { media_id, sure, why } => {
+        Found::List {
+            media_id,
+            sure,
+            why,
+        } => {
             // Never "In your list" without its entry (it left the list: looked up again).
-            let Some(st) = s.entries.iter().find(|e| e.id == *media_id).map(|e| e.status.label()) else { return ("Not on your list now".into(), PAL.faint) };
-            if *sure { (format!("In your list ({st}), sure: {why}"), PAL.ok()) } else { (format!("In your list ({st}), not sure: {why}"), PAL.warn()) }
+            let Some(st) = s
+                .entries
+                .iter()
+                .find(|e| e.id == *media_id)
+                .map(|e| e.status.label())
+            else {
+                return ("Not on your list now".into(), PAL.faint);
+            };
+            if *sure {
+                (format!("In your list ({st}), sure: {why}"), PAL.ok())
+            } else {
+                (format!("In your list ({st}), not sure: {why}"), PAL.warn())
+            }
         }
-        Found::NotOnList { .. } => (format!("Not on your list: {} (found on {})", s.not_on_list_title(n).unwrap_or_default(), s.service.title()), PAL.dim),
+        Found::NotOnList { .. } => (
+            format!(
+                "Not on your list: {} (found on {})",
+                s.not_on_list_title(n).unwrap_or_default(),
+                s.service.title()
+            ),
+            PAL.dim,
+        ),
         Found::Ignored => ("You marked this file as not an anime".into(), PAL.faint),
         Found::Nothing if n.recognizing => ("Looking\u{2026}".into(), PAL.faint),
         Found::Nothing => ("Not found on your list".into(), PAL.faint),
@@ -2219,7 +3481,9 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
     use crate::look;
     let (id, title) = now_title(s, n);
     let url = now_cover_url(s, n);
-    let entry = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let entry = n
+        .media_id()
+        .and_then(|id| s.entries.iter().find(|e| e.id == id));
     let mut sub = Vec::new();
     match (n.episode(), entry.and_then(|e| e.episodes)) {
         (Some(ep), Some(total)) => sub.push(format!("Episode {ep} of {total}")),
@@ -2242,9 +3506,22 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
     let t = f32::from(threshold) / 100.0;
     // With no match nothing will ever be offered: no tick and no "Offer at" label.
     let unmatched = matches!(n.found, Found::Nothing);
-    let mut bar = col().key("np-bar").w_full().gap(2.0).child(look::bar(frac, PAL.accent, 6.0, PAL.text.alpha(0.16)));
+    let mut bar = col().key("np-bar").w_full().gap(2.0).child(look::bar(
+        frac,
+        PAL.accent,
+        6.0,
+        PAL.text.alpha(0.16),
+    ));
     if !unmatched {
-        bar = bar.child(row().key("np-tick").w_full().h(6.0).child(el().grow(t)).child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream)).child(el().grow(1.0 - t)));
+        bar = bar.child(
+            row()
+                .key("np-tick")
+                .w_full()
+                .h(6.0)
+                .child(el().grow(t))
+                .child(el().w(2.0).h(6.0).radius(1.0).fill(PAL.cream))
+                .child(el().grow(1.0 - t)),
+        );
     }
     // The process source has no position: say so instead of an empty bar.
     let no_position = n.position.is_none() && n.via == crate::precise::VIA_PROCESS;
@@ -2258,9 +3535,25 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
         "Paused"
     };
     let (wide, tall) = (size[0] >= 900.0, size[1] >= 700.0);
-    let (pw, ph) = if wide && tall { (180.0, 270.0) } else if wide { (150.0, 225.0) } else { (124.0, 186.0) };
-    let title_font = if wide { look::HERO_TITLE } else { TextStyle::new(24.0, 600.0).tracking(-0.2) };
-    let title_el = text(title.clone()).key("np-title").font(title_font).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2);
+    let (pw, ph) = if wide && tall {
+        (180.0, 270.0)
+    } else if wide {
+        (150.0, 225.0)
+    } else {
+        (124.0, 186.0)
+    };
+    let title_font = if wide {
+        look::HERO_TITLE
+    } else {
+        TextStyle::new(24.0, 600.0).tracking(-0.2)
+    };
+    let title_el = text(title.clone())
+        .key("np-title")
+        .font(title_font)
+        .color(PAL.text)
+        .group_color(PAL.accent_hi)
+        .wrap()
+        .max_lines(2);
     let mut info = col()
         .grow(1.0)
         .min_w(0.0)
@@ -2271,31 +3564,67 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(look::live_dot(n.playing && !no_position, 8.0))
-                .child(text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase()).font(theme::CAPTION).color(PAL.dim).truncate()),
+                .child(
+                    text(format!("{verb} in {} \u{b7} {}", n.player, n.via).to_uppercase())
+                        .font(theme::CAPTION)
+                        .color(PAL.dim)
+                        .truncate(),
+                ),
         )
         .child(match now_stub(s, n) {
             Some(stub) => crate::details::title_link(title_el, stub),
             None => title_el,
         })
-        .child(text(sub.join(" \u{b7} ")).font(TextStyle::new(16.0, 500.0)).color(PAL.dim))
+        .child(
+            text(sub.join(" \u{b7} "))
+                .font(TextStyle::new(16.0, 500.0))
+                .color(PAL.dim),
+        )
         .child(if no_position {
             col()
                 .key("np-no-position")
                 .mt(12.0)
                 .gap(4.0)
-                .child(text(if n.reached { "Counts as watched" } else { "No position from the player" }).font(theme::LABEL_NUM).color(PAL.text))
-                .child(text(no_position_rule(s, n, cfg!(windows))).key("np-no-position/rule").font(theme::LABEL).color(PAL.dim).wrap())
+                .child(
+                    text(if n.reached {
+                        "Counts as watched"
+                    } else {
+                        "No position from the player"
+                    })
+                    .font(theme::LABEL_NUM)
+                    .color(PAL.text),
+                )
+                .child(
+                    text(no_position_rule(s, n, cfg!(windows)))
+                        .key("np-no-position/rule")
+                        .font(theme::LABEL)
+                        .color(PAL.dim)
+                        .wrap(),
+                )
         } else {
             col()
                 .mt(12.0)
                 .child({
-                    let head = row().mb(6.0).child(text(times).font(theme::NUM_MED).color(PAL.text)).child(spacer());
+                    let head = row()
+                        .mb(6.0)
+                        .child(text(times).font(theme::NUM_MED).color(PAL.text))
+                        .child(spacer());
                     if n.reached {
-                        head.child(text("Counts as watched").key("np-offer-at").font(theme::LABEL).color(PAL.dim))
+                        head.child(
+                            text("Counts as watched")
+                                .key("np-offer-at")
+                                .font(theme::LABEL)
+                                .color(PAL.dim),
+                        )
                     } else if unmatched {
                         head
                     } else {
-                        head.child(text(format!("Offer at {threshold}%")).key("np-offer-at").font(theme::LABEL).color(PAL.dim))
+                        head.child(
+                            text(format!("Offer at {threshold}%"))
+                                .key("np-offer-at")
+                                .font(theme::LABEL)
+                                .color(PAL.dim),
+                        )
                     }
                 })
                 .child(bar)
@@ -2304,18 +3633,43 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
     if n.recorded.is_none()
         && let Some((_, ep)) = s.offer()
     {
-        actions = actions.child(button("np/update", &format!("Update to episode {ep}"), true, Some(|s: &mut State| {
-            let _ = s.confirm_offer();
-        })));
+        actions = actions.child(button(
+            "np/update",
+            &format!("Update to episode {ep}"),
+            true,
+            Some(|s: &mut State| {
+                let _ = s.confirm_offer();
+            }),
+        ));
     }
     if n.recorded.is_some() {
         actions = actions.child(button("np/undo", "Undo", false, Some(State::undo_record)));
     }
     if !matches!(n.found, Found::Ignored) {
-        actions = actions.child(ghost("np/wrong", if unmatched { "Pick anime\u{2026}" } else { "Wrong anime\u{2026}" }, State::wrong_anime));
+        actions = actions.child(ghost(
+            "np/wrong",
+            if unmatched {
+                "Pick anime\u{2026}"
+            } else {
+                "Wrong anime\u{2026}"
+            },
+            State::wrong_anime,
+        ));
     }
     info = info.child(actions);
-    let scrim = if PAL.light { look::Scrim { top: 0.5, mid: 0.62, bottom: 1.0 } } else { look::Scrim { top: 0.4, mid: 0.6, bottom: 1.0 } };
+    let scrim = if PAL.light {
+        look::Scrim {
+            top: 0.5,
+            mid: 0.62,
+            bottom: 1.0,
+        }
+    } else {
+        look::Scrim {
+            top: 0.4,
+            mid: 0.6,
+            bottom: 1.0,
+        }
+    };
     let band_h = ph + if tall { 84.0 } else { 56.0 };
     el().key("np-card")
         .w_full()
@@ -2330,7 +3684,15 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
                 .pb(if tall { 28.0 } else { 18.0 })
                 .gap(if wide { 32.0 } else { 20.0 })
                 .items_end()
-                .child(look::poster(s, id, &title, url, pw, ph, theme::R_LG).border(1.0, look::glass_border()).shadow(14.0, 36.0, Color::BLACK.alpha(if PAL.light { 0.25 } else { 0.55 })))
+                .child(
+                    look::poster(s, id, &title, url, pw, ph, theme::R_LG)
+                        .border(1.0, look::glass_border())
+                        .shadow(
+                            14.0,
+                            36.0,
+                            Color::BLACK.alpha(if PAL.light { 0.25 } else { 0.55 }),
+                        ),
+                )
                 .child(info),
         )
 }
@@ -2338,35 +3700,70 @@ fn now_card(s: &State, n: &Now, size: [f32; 2]) -> El {
 /// What Kotora made of the file: the file name, what the parser read, the match and the
 /// user's progress (under the hero).
 fn now_facts(s: &State, n: &Now) -> El {
-    let entry = n.media_id().and_then(|id| s.entries.iter().find(|e| e.id == id));
+    let entry = n
+        .media_id()
+        .and_then(|id| s.entries.iter().find(|e| e.id == id));
     let mut facts = card("np-recog", "Recognised from").child(
         row()
             .gap(8.0)
             .pb(6.0)
             .center_y()
             .child(icon(&icons::FILE, 14.0).color(PAL.faint))
-            .child(text(n.file.clone()).key("np-file").font(TextStyle::new(12.0, 400.0).mono()).color(PAL.dim).truncate().min_w(0.0)),
+            .child(
+                text(n.file.clone())
+                    .key("np-file")
+                    .font(TextStyle::new(12.0, 400.0).mono())
+                    .color(PAL.dim)
+                    .truncate()
+                    .min_w(0.0),
+            ),
     );
     if let Some(p) = &n.parsed {
-        facts = facts.child(kv("Parsed title", text(p.title.clone()).font(theme::BODY).color(PAL.text).wrap()));
-        facts = facts.child(kv("Episode", text(p.episode.map_or("–".into(), |e| e.to_string())).font(theme::LABEL_NUM).color(PAL.text)));
+        facts = facts.child(kv(
+            "Parsed title",
+            text(p.title.clone())
+                .font(theme::BODY)
+                .color(PAL.text)
+                .wrap(),
+        ));
+        facts = facts.child(kv(
+            "Episode",
+            text(p.episode.map_or("–".into(), |e| e.to_string()))
+                .font(theme::LABEL_NUM)
+                .color(PAL.text),
+        ));
         if let Some(season) = p.season {
-            facts = facts.child(kv("Season", text(season.to_string()).font(theme::LABEL_NUM).color(PAL.text)));
+            facts = facts.child(kv(
+                "Season",
+                text(season.to_string())
+                    .font(theme::LABEL_NUM)
+                    .color(PAL.text),
+            ));
         }
-        let group = [p.group.as_deref(), p.resolution.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+        let group = [p.group.as_deref(), p.resolution.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
         if !group.is_empty() {
             facts = facts.child(kv("Group", text(group).font(theme::BODY).color(PAL.text)));
         }
     }
     let (m, c) = match_text(s, n);
-    facts = facts.child(kv("Match", text(m).key("np-match").font(theme::BODY).color(c).wrap()));
+    facts = facts.child(kv(
+        "Match",
+        text(m).key("np-match").font(theme::BODY).color(c).wrap(),
+    ));
     if let Some(e) = entry {
         let total = e.episodes.map_or("?".to_string(), |n| n.to_string());
         let after = match s.offer() {
             Some((_, ep)) => format!("{} / {total} \u{2192} {ep} after update", e.progress),
             None => format!("{} / {total}", e.progress),
         };
-        facts = facts.child(kv("Your progress", text(after).font(theme::LABEL_NUM).color(PAL.text)));
+        facts = facts.child(kv(
+            "Your progress",
+            text(after).font(theme::LABEL_NUM).color(PAL.text),
+        ));
     }
     facts
 }
@@ -2374,9 +3771,17 @@ fn now_facts(s: &State, n: &Now) -> El {
 /// "Not sure: is this X episode N?" with Yes / Pick another.
 fn unsure_card(s: &State, n: &Now) -> El {
     let (_, title) = now_title(s, n);
-    let ep = n.episode().map(|e| format!(", episode {e}")).unwrap_or_default();
+    let ep = n
+        .episode()
+        .map(|e| format!(", episode {e}"))
+        .unwrap_or_default();
     // The season is the file's, not the entry's: "S03E07" next to a season 1 title misleads.
-    let season = n.parsed.as_ref().and_then(|p| p.season).map(|se| format!(" (season {se})")).unwrap_or_default();
+    let season = n
+        .parsed
+        .as_ref()
+        .and_then(|p| p.season)
+        .map(|se| format!(" (season {se})"))
+        .unwrap_or_default();
     let id = n.media_id().unwrap_or(0);
     card("np-unsure", "Not sure")
         .child(
@@ -2385,13 +3790,25 @@ fn unsure_card(s: &State, n: &Now) -> El {
                 .pt(4.0)
                 .items_start()
                 .child(now_cover(s, n, 40.0, 56.0, 12.0))
-                .child(text(format!("From {}{season}: is this {title}{ep}?", n.file)).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0)),
+                .child(
+                    text(format!("From {}{season}: is this {title}{ep}?", n.file))
+                        .font(theme::LABEL)
+                        .color(PAL.text)
+                        .wrap()
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
         )
         .child(
             row()
                 .gap(8.0)
                 .mt(12.0)
-                .child(action("np/yes".into(), "Yes, that one", false, move |s, _| s.pick_anime(id)))
+                .child(action(
+                    "np/yes".into(),
+                    "Yes, that one",
+                    false,
+                    move |s, _| s.pick_anime(id),
+                ))
                 .child(ghost("np/pick", "Pick another\u{2026}", State::wrong_anime).h(26.0)),
         )
 }
@@ -2399,10 +3816,19 @@ fn unsure_card(s: &State, n: &Now) -> El {
 /// "Wrong anime…": the closest titles on the list, and "not an anime".
 fn picker_card(n: &Now) -> El {
     let mut c = card("np-picker", "Which anime is it?").child(
-        text("The closest titles on your list. Kotora remembers your pick for this title.").font(theme::LABEL).color(PAL.dim).wrap().pb(6.0),
+        text("The closest titles on your list. Kotora remembers your pick for this title.")
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .wrap()
+            .pb(6.0),
     );
     if n.candidates.is_empty() {
-        c = c.child(text("Nothing on your list comes close.").font(theme::LABEL).color(PAL.faint).py(4.0));
+        c = c.child(
+            text("Nothing on your list comes close.")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .py(4.0),
+        );
     }
     for (id, title) in &n.candidates {
         let id = *id;
@@ -2421,62 +3847,99 @@ fn picker_card(n: &Now) -> El {
                 .press(PAL.press())
                 .on_press(move |s: &mut State| s.pick_anime(id))
                 .child(cover(id, title, 22.0, 31.0, 8.0))
-                .child(text(title.clone()).font(theme::BODY).color(PAL.text).truncate().grow(1.0).min_w(0.0)),
+                .child(
+                    text(title.clone())
+                        .font(theme::BODY)
+                        .color(PAL.text)
+                        .truncate()
+                        .grow(1.0)
+                        .min_w(0.0),
+                ),
         );
     }
     c.child(
         row()
             .gap(8.0)
             .mt(10.0)
-            .child(button("pick/none", "Not an anime", false, Some(State::ignore_file)).h(26.0).px(10.0))
-            .child(ghost("pick/cancel", "Cancel", |s| {
-                if let Some(n) = &mut s.now {
-                    n.picking = false;
-                }
-            })
-            .h(26.0)),
+            .child(
+                button("pick/none", "Not an anime", false, Some(State::ignore_file))
+                    .h(26.0)
+                    .px(10.0),
+            )
+            .child(
+                ghost("pick/cancel", "Cancel", |s| {
+                    if let Some(n) = &mut s.now {
+                        n.picking = false;
+                    }
+                })
+                .h(26.0),
+            ),
     )
 }
 
 /// What the details page needs for the playing anime, when it is known.
 fn now_stub(s: &State, n: &Now) -> Option<crate::details::Stub> {
     match &n.found {
-        Found::List { media_id, .. } => s.entries.iter().find(|e| e.id == *media_id).map(crate::details::Stub::from_entry),
-        Found::NotOnList { media_id, .. } => Some(crate::details::Stub::bare(*media_id, &s.not_on_list_title(n).unwrap_or_default())),
+        Found::List { media_id, .. } => s
+            .entries
+            .iter()
+            .find(|e| e.id == *media_id)
+            .map(crate::details::Stub::from_entry),
+        Found::NotOnList { media_id, .. } => Some(crate::details::Stub::bare(
+            *media_id,
+            &s.not_on_list_title(n).unwrap_or_default(),
+        )),
         _ => None,
     }
 }
 
-fn not_on_list_card(id: u32, title: &str, relation: Option<&str>, episode: Option<u32>, svc: &str) -> El {
+fn not_on_list_card(
+    id: u32,
+    title: &str,
+    relation: Option<&str>,
+    episode: Option<u32>,
+    svc: &str,
+) -> El {
     let (say, add) = match episode {
         Some(ep) => (
-            format!("{svc} knows this as {title}, but it isn't on your list. Add it as Watching and record episode {ep} in one change."),
+            format!(
+                "{svc} knows this as {title}, but it isn't on your list. Add it as Watching and record episode {ep} in one change."
+            ),
             format!("Add as Watching at episode {ep}"),
         ),
-        None => (format!("{svc} knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."), "Add as Watching".to_string()),
+        None => (
+            format!(
+                "{svc} knows this as {title}, but it isn't on your list. Add it, and Kotora offers the episode."
+            ),
+            "Add as Watching".to_string(),
+        ),
     };
-    let mut c = card("np-not-on-list", "Not on your list").child(
-        text(say)
-            .font(theme::LABEL)
-            .color(PAL.dim)
-            .wrap(),
-    );
+    let mut c = card("np-not-on-list", "Not on your list")
+        .child(text(say).font(theme::LABEL).color(PAL.dim).wrap());
     // anime-relations moved the file here: say so, or the other title looks like a wrong match.
     if let Some(why) = relation {
         let mut why = why.to_string();
         if let Some(first) = why.get(..1) {
             why.replace_range(..1, &first.to_uppercase());
         }
-        c = c.child(text(format!("{why}.")).key("np-relation").font(theme::LABEL).color(PAL.faint).wrap().mt(6.0));
+        c = c.child(
+            text(format!("{why}."))
+                .key("np-relation")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .wrap()
+                .mt(6.0),
+        );
     }
-    c
-        .child(
-            row()
-                .gap(8.0)
-                .mt(12.0)
-                .child(action("np/add".into(), &add, true, |s, _| s.add_playing()))
-                .child(crate::details::details_ghost(crate::details::Stub::bare(id, title))),
-        )
+    c.child(
+        row()
+            .gap(8.0)
+            .mt(12.0)
+            .child(action("np/add".into(), &add, true, |s, _| s.add_playing()))
+            .child(crate::details::details_ghost(crate::details::Stub::bare(
+                id, title,
+            ))),
+    )
 }
 
 /// Why there is no position, and the rule that counts the episode instead. On Windows the rule
@@ -2488,12 +3951,21 @@ pub(crate) fn no_position_rule(s: &State, n: &Now, windows: bool) -> String {
     let minutes = s.prefs.players.process_minutes.clamp(1, 180);
     let unit = if minutes == 1 { "minute" } else { "minutes" };
     let better = match n.switch {
-        Switch::Mpv => " For the real position, turn on precise detection (Settings \u{2192} Detection).",
-        Switch::Mpc => " For the real position, turn on the player\u{2019}s web interface (Settings \u{2192} Detection).",
-        Switch::Vlc => " For the real position, set up VLC\u{2019}s web interface (Settings \u{2192} Detection).",
+        Switch::Mpv => {
+            " For the real position, turn on precise detection (Settings \u{2192} Detection)."
+        }
+        Switch::Mpc => {
+            " For the real position, turn on the player\u{2019}s web interface (Settings \u{2192} Detection)."
+        }
+        Switch::Vlc => {
+            " For the real position, set up VLC\u{2019}s web interface (Settings \u{2192} Detection)."
+        }
         _ => "",
     };
-    format!("{} shows this file but doesn\u{2019}t say how far in you are. Kotora offers the update once the file has been open for {minutes} {unit}, also when you close it after that, and always asks first.{better}", n.player)
+    format!(
+        "{} shows this file but doesn\u{2019}t say how far in you are. Kotora offers the update once the file has been open for {minutes} {unit}, also when you close it after that, and always asks first.{better}",
+        n.player
+    )
 }
 
 /// Nothing plays: how to let Kotora see the players.
@@ -2531,33 +4003,64 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
             side = side.child(unsure_card(s, n));
         } else if let Found::NotOnList { media_id, .. } = &n.found {
             let title = s.not_on_list_title(n).unwrap_or_default();
-            side = side.child(not_on_list_card(*media_id, &title, s.relation_text(n).as_deref(), n.episode().filter(|ep| *ep > 0), s.service.title()));
+            side = side.child(not_on_list_card(
+                *media_id,
+                &title,
+                s.relation_text(n).as_deref(),
+                n.episode().filter(|ep| *ep > 0),
+                s.service.title(),
+            ));
         }
     }
     side = side.child(players_status_card(s));
     // Reading detection (Manga): the comic read last, above the rest.
     // Only the comic open now: a closed one that still asks is in the banner (live test: a
     // closed, answered comic stayed here and hid what Okular had open).
-    let reading = s.now_reading().filter(|_| s.manga.enabled).map(|r| crate::reading::card_for(s, r));
+    let reading = s
+        .now_reading()
+        .filter(|_| s.manga.enabled)
+        .map(|r| crate::reading::card_for(s, r));
     // Manga mode: Now Reading. The comic first (or how to start), what plays below it.
     if crate::reading::now_reading_mode(s) {
-        let mut main = col().gap(16.0).w_full().child(reading.unwrap_or_else(|| crate::reading::empty(s)));
+        let mut main = col()
+            .gap(16.0)
+            .w_full()
+            .child(reading.unwrap_or_else(|| crate::reading::empty(s)));
         if let Some(n) = &s.now {
             main = main.child(now_facts(s, n));
         }
         let body = if wide {
-            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
+            row()
+                .gap(16.0)
+                .w_full()
+                .items_start()
+                .child(main.grow(1.0).min_w(0.0))
+                .child(side.w(340.0))
         } else {
             col().gap(16.0).w_full().child(main).child(side)
         };
-        return col().key("page/now").w_full().h_full().child(top(s, "Now Reading", None, false)).child(
-            col()
-                .key("now-scroll")
-                .scroll(ScrollSpec { stick_bottom: false })
-                .grow(1.0)
-                .min_h(0.0)
-                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
-        );
+        return col()
+            .key("page/now")
+            .w_full()
+            .h_full()
+            .child(top(s, "Now Reading", None, false))
+            .child(
+                col()
+                    .key("now-scroll")
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .child(
+                        col()
+                            .px(theme::PAGE_PAD)
+                            .pt(4.0)
+                            .pb(theme::PAGE_PAD)
+                            .max_w(1120.0)
+                            .child(body),
+                    ),
+            );
     }
     let Some(n) = &s.now else {
         let main = match reading {
@@ -2565,18 +4068,37 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
             None => now_empty(),
         };
         let body = if wide {
-            row().gap(16.0).w_full().items_start().child(main.grow(1.0).min_w(0.0)).child(side.w(340.0))
+            row()
+                .gap(16.0)
+                .w_full()
+                .items_start()
+                .child(main.grow(1.0).min_w(0.0))
+                .child(side.w(340.0))
         } else {
             col().gap(16.0).w_full().child(main).child(side)
         };
-        return col().key("page/now").w_full().h_full().child(top(s, "Now Playing", None, false)).child(
-            col()
-                .key("now-scroll")
-                .scroll(ScrollSpec { stick_bottom: false })
-                .grow(1.0)
-                .min_h(0.0)
-                .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
-        );
+        return col()
+            .key("page/now")
+            .w_full()
+            .h_full()
+            .child(top(s, "Now Playing", None, false))
+            .child(
+                col()
+                    .key("now-scroll")
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .child(
+                        col()
+                            .px(theme::PAGE_PAD)
+                            .pt(4.0)
+                            .pb(theme::PAGE_PAD)
+                            .max_w(1120.0)
+                            .child(body),
+                    ),
+            );
     };
     // Something plays: the hero band on top (no title bar: the band says it), the cards below.
     let facts = match reading {
@@ -2584,31 +4106,59 @@ fn now_page(s: &State, wide: bool, size: [f32; 2]) -> El {
         None => now_facts(s, n),
     };
     let body = if wide {
-        row().gap(16.0).w_full().items_start().child(facts.grow(1.0).min_w(0.0)).child(side.w(340.0))
+        row()
+            .gap(16.0)
+            .w_full()
+            .items_start()
+            .child(facts.grow(1.0).min_w(0.0))
+            .child(side.w(340.0))
     } else {
         col().gap(16.0).w_full().child(facts).child(side)
     };
     col().key("page/now").w_full().h_full().child(
         col()
             .key("now-scroll")
-            .scroll(ScrollSpec { stick_bottom: false })
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
             .grow(1.0)
             .min_h(0.0)
             .child(now_card(s, n, size))
-            .child(col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(1120.0).child(body)),
+            .child(
+                col()
+                    .px(theme::PAGE_PAD)
+                    .pt(4.0)
+                    .pb(theme::PAGE_PAD)
+                    .max_w(1120.0)
+                    .child(body),
+            ),
     )
 }
 
 // --------------------------------------------------------------------- settings: updates, players
 
 /// The 36 × 20 switch (design-spec §4): off `border_strong`, on `accent`.
-pub(crate) fn switch(key: String, label: &str, on: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
+pub(crate) fn switch(
+    key: String,
+    label: &str,
+    on: bool,
+    set: impl Fn(&mut State, bool) + 'static,
+) -> El {
     switch_if(key, label, on, true, set)
 }
 
 /// A switch that can be disabled: dimmed, not focusable, and it ignores presses.
-pub(crate) fn switch_if(key: String, label: &str, on: bool, enabled: bool, set: impl Fn(&mut State, bool) + 'static) -> El {
-    let knob = el().size(16.0, 16.0).radius(8.0).fill(if on { PAL.on_accent } else { PAL.knob });
+pub(crate) fn switch_if(
+    key: String,
+    label: &str,
+    on: bool,
+    enabled: bool,
+    set: impl Fn(&mut State, bool) + 'static,
+) -> El {
+    let knob = el()
+        .size(16.0, 16.0)
+        .radius(8.0)
+        .fill(if on { PAL.on_accent } else { PAL.knob });
     let track = row()
         .key(key)
         .role("switch")
@@ -2622,7 +4172,9 @@ pub(crate) fn switch_if(key: String, label: &str, on: bool, enabled: bool, set: 
         .fill(if on { PAL.accent } else { PAL.border_strong });
     let track = if on { track.justify_end() } else { track }.child(knob);
     if enabled {
-        track.cursor(rune::Cursor::Pointer).on_press(move |s: &mut State| set(s, !on))
+        track
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut State| set(s, !on))
     } else {
         track.opacity(0.4).cursor(rune::Cursor::NotAllowed)
     }
@@ -2634,8 +4186,21 @@ mod tests {
 
     /// Ctrl (Cmd on macOS) with a key, as the platform sends it.
     fn chord(c: char) -> rune::KeyEvent {
-        let mods = if cfg!(target_os = "macos") { rune::Mods { cmd: true, ..Default::default() } } else { rune::Mods { ctrl: true, ..Default::default() } };
-        rune::KeyEvent { key: rune::Key::Command(c), mods }
+        let mods = if cfg!(target_os = "macos") {
+            rune::Mods {
+                cmd: true,
+                ..Default::default()
+            }
+        } else {
+            rune::Mods {
+                ctrl: true,
+                ..Default::default()
+            }
+        };
+        rune::KeyEvent {
+            key: rune::Key::Command(c),
+            mods,
+        }
     }
 
     #[test]
@@ -2651,15 +4216,32 @@ mod tests {
     fn ctrl_q_quits_but_not_with_shift_or_alt() {
         let mut s = crate::model::State::fake();
         let mut tx = rune::Tx::default();
-        for mods in [rune::Mods { ctrl: true, shift: true, ..Default::default() }, rune::Mods { ctrl: true, alt: true, ..Default::default() }] {
-            let k = rune::KeyEvent { key: rune::Key::Command('q'), mods };
+        for mods in [
+            rune::Mods {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            },
+            rune::Mods {
+                ctrl: true,
+                alt: true,
+                ..Default::default()
+            },
+        ] {
+            let k = rune::KeyEvent {
+                key: rune::Key::Command('q'),
+                mods,
+            };
             assert!(!super::quit_key(&k), "{k:?}");
             assert!(!super::field_page_key(&mut s, &k, &mut tx), "{k:?}");
         }
         assert!(!super::on_key(&mut s, &chord('w'), &mut tx));
         assert!(super::quit_key(&chord('q')));
         assert!(super::on_key(&mut s, &chord('q'), &mut tx), "Ctrl Q quits");
-        assert!(super::field_page_key(&mut s, &chord('q'), &mut tx), "also in a text field");
+        assert!(
+            super::field_page_key(&mut s, &chord('q'), &mut tx),
+            "also in a text field"
+        );
     }
 
     #[test]
@@ -2668,7 +4250,13 @@ mod tests {
         use kotora_core::Status::*;
         let mut s = crate::model::State::fake();
         let mut tx = rune::Tx::default();
-        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([Watching, PlanToWatch, Completed, OnHold, Dropped]) {
+        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([
+            Watching,
+            PlanToWatch,
+            Completed,
+            OnHold,
+            Dropped,
+        ]) {
             s.go(Page::Settings);
             assert!(super::on_key(&mut s, &chord(c), &mut tx));
             assert_eq!(s.page, Page::List(st), "chord {c}");
@@ -2677,7 +4265,13 @@ mod tests {
     }
 
     fn alt(c: char) -> rune::KeyEvent {
-        rune::KeyEvent { key: rune::Key::Text(c.to_string()), mods: rune::Mods { alt: true, ..Default::default() } }
+        rune::KeyEvent {
+            key: rune::Key::Text(c.to_string()),
+            mods: rune::Mods {
+                alt: true,
+                ..Default::default()
+            },
+        }
     }
 
     #[test]
@@ -2688,21 +4282,48 @@ mod tests {
         let mut s = crate::model::State::fake();
         let mut tx = rune::Tx::default();
         s.go(Page::Settings);
-        assert!(!super::on_key(&mut s, &alt('2'), &mut tx), "Alt is not the page key by default");
+        assert!(
+            !super::on_key(&mut s, &alt('2'), &mut tx),
+            "Alt is not the page key by default"
+        );
         assert_eq!(s.page, Page::Settings);
         s.prefs.page_keys = PageKeys::Alt;
-        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([Watching, PlanToWatch, Completed, OnHold, Dropped]) {
+        for (c, st) in ['1', '2', '3', '4', '5'].into_iter().zip([
+            Watching,
+            PlanToWatch,
+            Completed,
+            OnHold,
+            Dropped,
+        ]) {
             s.go(Page::Settings);
             assert!(super::on_key(&mut s, &alt(c), &mut tx), "alt {c}");
             assert_eq!(s.page, Page::List(st), "alt {c}");
             s.go(Page::Settings);
-            assert!(!super::on_key(&mut s, &chord(c), &mut tx), "ctrl {c} is no longer it");
+            assert!(
+                !super::on_key(&mut s, &chord(c), &mut tx),
+                "ctrl {c} is no longer it"
+            );
             assert_eq!(s.page, Page::Settings);
         }
         assert!(!super::on_key(&mut s, &alt('6'), &mut tx));
         // Shift, or Ctrl+Alt (AltGr on Linux), is another chord.
-        let shifted = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: rune::Mods { alt: true, shift: true, ..Default::default() } };
-        let altgr = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: rune::Mods { alt: true, ctrl: true, cmd: !cfg!(target_os = "macos"), ..Default::default() } };
+        let shifted = rune::KeyEvent {
+            key: rune::Key::Text("1".into()),
+            mods: rune::Mods {
+                alt: true,
+                shift: true,
+                ..Default::default()
+            },
+        };
+        let altgr = rune::KeyEvent {
+            key: rune::Key::Text("1".into()),
+            mods: rune::Mods {
+                alt: true,
+                ctrl: true,
+                cmd: !cfg!(target_os = "macos"),
+                ..Default::default()
+            },
+        };
         for k in [shifted, altgr] {
             assert_eq!(super::page_key(&s, &k, &tx), None, "{k:?}");
         }
@@ -2717,17 +4338,26 @@ mod tests {
         let mut s = crate::model::State::fake();
         let mut tx = rune::Tx::default();
         s.go(Page::Settings);
-        let plain = rune::KeyEvent { key: rune::Key::Text("1".into()), mods: Default::default() };
+        let plain = rune::KeyEvent {
+            key: rune::Key::Text("1".into()),
+            mods: Default::default(),
+        };
         for keys in PageKeys::ALL {
             s.prefs.page_keys = keys;
-            assert!(!super::field_page_key(&mut s, &plain, &mut tx), "a plain digit types ({keys:?})");
+            assert!(
+                !super::field_page_key(&mut s, &plain, &mut tx),
+                "a plain digit types ({keys:?})"
+            );
         }
         s.prefs.page_keys = PageKeys::Alt;
         assert!(super::field_page_key(&mut s, &alt('3'), &mut tx));
         assert_eq!(s.page, Page::List(kotora_core::Status::Completed));
         s.prefs.page_keys = PageKeys::Primary;
         s.go(Page::Settings);
-        assert!(!super::field_page_key(&mut s, &alt('3'), &mut tx), "Alt 3 is the field's when Ctrl is chosen");
+        assert!(
+            !super::field_page_key(&mut s, &alt('3'), &mut tx),
+            "Alt 3 is the field's when Ctrl is chosen"
+        );
         assert!(super::field_page_key(&mut s, &chord('4'), &mut tx));
         assert_eq!(s.page, Page::List(kotora_core::Status::OnHold));
     }
@@ -2738,7 +4368,14 @@ mod tests {
         let mut tx = rune::Tx::default();
         let before = s.page;
         for c in [',', '1'] {
-            super::on_key(&mut s, &rune::KeyEvent { key: rune::Key::Text(c.to_string()), mods: Default::default() }, &mut tx);
+            super::on_key(
+                &mut s,
+                &rune::KeyEvent {
+                    key: rune::Key::Text(c.to_string()),
+                    mods: Default::default(),
+                },
+                &mut tx,
+            );
         }
         assert_eq!(s.page, before);
     }
@@ -2760,23 +4397,48 @@ mod tests {
         let mut s = crate::model::State::fake();
         let id = s.entries[0].id;
         s.entries[0].cover_url = Some("https://cdn.example.invalid/x.jpg".into());
-        assert_eq!(super::op_cover_url(&s, id), Some("https://cdn.example.invalid/x.jpg"));
-        assert_eq!(super::op_cover_url(&s, 4_000_000), None, "not on the list: the tile");
+        assert_eq!(
+            super::op_cover_url(&s, id),
+            Some("https://cdn.example.invalid/x.jpg")
+        );
+        assert_eq!(
+            super::op_cover_url(&s, 4_000_000),
+            None,
+            "not on the list: the tile"
+        );
     }
 
     #[test]
     fn now_cover_url_from_the_entry_or_the_match() {
         let mut s = crate::model::State::fake();
         let n = s.now.clone().unwrap();
-        assert_eq!(super::now_cover_url(&s, &n), None, "the fake entry has no cover");
-        s.entries.iter_mut().find(|e| e.id == 0).unwrap().cover_url = Some("https://cdn.example.invalid/0.jpg".into());
-        assert_eq!(super::now_cover_url(&s, &n), Some("https://cdn.example.invalid/0.jpg"));
+        assert_eq!(
+            super::now_cover_url(&s, &n),
+            None,
+            "the fake entry has no cover"
+        );
+        s.entries.iter_mut().find(|e| e.id == 0).unwrap().cover_url =
+            Some("https://cdn.example.invalid/0.jpg".into());
+        assert_eq!(
+            super::now_cover_url(&s, &n),
+            Some("https://cdn.example.invalid/0.jpg")
+        );
         let mut n = n;
-        n.found = kotora_core::recognize::Found::NotOnList { media_id: 9001, title: "Velvet".into() };
+        n.found = kotora_core::recognize::Found::NotOnList {
+            media_id: 9001,
+            title: "Velvet".into(),
+        };
         assert_eq!(super::now_cover_url(&s, &n), None);
         n.cover_url = Some("https://cdn.example.invalid/9001l.jpg".into());
-        assert_eq!(super::now_cover_url(&s, &n), Some("https://cdn.example.invalid/9001l.jpg"));
+        assert_eq!(
+            super::now_cover_url(&s, &n),
+            Some("https://cdn.example.invalid/9001l.jpg")
+        );
         n.found = kotora_core::recognize::Found::Nothing;
-        assert_eq!(super::now_cover_url(&s, &n), None, "nothing matched: the tile");
+        assert_eq!(
+            super::now_cover_url(&s, &n),
+            None,
+            "nothing matched: the tile"
+        );
     }
 }

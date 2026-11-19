@@ -30,14 +30,25 @@ pub fn set(on: bool, hidden: bool) -> Result<Login, String> {
         return Err("off in a test copy".into());
     }
     let exe = std::env::current_exe().map_err(|e| format!("can't find Kotora's own path: {e}"))?;
-    set_at(RUN, APPROVED, NAME, on.then(|| run_command(&exe.to_string_lossy(), hidden)))?;
+    set_at(
+        RUN,
+        APPROVED,
+        NAME,
+        on.then(|| run_command(&exe.to_string_lossy(), hidden)),
+    )?;
     Ok(read())
 }
 
 fn read_at(run: &str, approved: &str, name: &str) -> Login {
-    let entry = reg::get_string(run, name).ok().flatten().is_some_and(|v| !v.trim().is_empty());
+    let entry = reg::get_string(run, name)
+        .ok()
+        .flatten()
+        .is_some_and(|v| !v.trim().is_empty());
     let allowed = startup_approved(reg::get_binary(approved, name).ok().flatten().as_deref());
-    Login { on: entry && allowed, ..Login::default() }
+    Login {
+        on: entry && allowed,
+        ..Login::default()
+    }
 }
 
 /// `Some(command)`: writes the entry and clears Windows' "disabled" for it. `None`: removes both.
@@ -59,10 +70,20 @@ mod tests {
     /// The real calls on a scratch key of this test (never the user's Run key).
     #[test]
     fn the_entry_is_written_read_and_removed() {
-        use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_BINARY, RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW};
-        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        use windows_sys::Win32::System::Registry::{
+            HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_BINARY, RegCloseKey, RegCreateKeyExW,
+            RegDeleteTreeW, RegSetValueExW,
+        };
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
         let root = format!(r"Software\KotoraTest-login-{}", std::process::id());
-        let (run, approved) = (format!(r"{root}\Run"), format!(r"{root}\StartupApproved\Run"));
+        let (run, approved) = (
+            format!(r"{root}\Run"),
+            format!(r"{root}\StartupApproved\Run"),
+        );
         assert!(!read_at(&run, &approved, NAME).on);
         let cmd = run_command(r"C:\Users\A B\Kotora\kotora.exe", true);
         set_at(&run, &approved, NAME, Some(cmd.clone())).unwrap();
@@ -72,17 +93,49 @@ mod tests {
         let mut h: HKEY = std::ptr::null_mut();
         // SAFETY: plain registry calls on the scratch key; strings are NUL-terminated.
         unsafe {
-            assert_eq!(RegCreateKeyExW(HKEY_CURRENT_USER, wide(&approved).as_ptr(), 0, std::ptr::null(), 0, KEY_SET_VALUE, std::ptr::null(), &mut h, std::ptr::null_mut()), 0);
+            assert_eq!(
+                RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    wide(&approved).as_ptr(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    KEY_SET_VALUE,
+                    std::ptr::null(),
+                    &mut h,
+                    std::ptr::null_mut()
+                ),
+                0
+            );
             let off = [3u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-            assert_eq!(RegSetValueExW(h, wide(NAME).as_ptr(), 0, REG_BINARY, off.as_ptr(), off.len() as u32), 0);
+            assert_eq!(
+                RegSetValueExW(
+                    h,
+                    wide(NAME).as_ptr(),
+                    0,
+                    REG_BINARY,
+                    off.as_ptr(),
+                    off.len() as u32
+                ),
+                0
+            );
             RegCloseKey(h);
         }
         assert!(!read_at(&run, &approved, NAME).on);
         assert_eq!(reg::get_string(&run, NAME).unwrap(), Some(cmd));
         // Turned on again in Kotora: on in Windows too, without `--hidden` this time.
-        set_at(&run, &approved, NAME, Some(run_command(r"C:\Users\A B\Kotora\kotora.exe", false))).unwrap();
+        set_at(
+            &run,
+            &approved,
+            NAME,
+            Some(run_command(r"C:\Users\A B\Kotora\kotora.exe", false)),
+        )
+        .unwrap();
         assert!(read_at(&run, &approved, NAME).on);
-        assert_eq!(reg::get_string(&run, NAME).unwrap().as_deref(), Some(r#""C:\Users\A B\Kotora\kotora.exe""#));
+        assert_eq!(
+            reg::get_string(&run, NAME).unwrap().as_deref(),
+            Some(r#""C:\Users\A B\Kotora\kotora.exe""#)
+        );
         // Off: gone, and off twice is fine.
         set_at(&run, &approved, NAME, None).unwrap();
         set_at(&run, &approved, NAME, None).unwrap();

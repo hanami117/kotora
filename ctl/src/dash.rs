@@ -33,7 +33,15 @@ fn paint(text: &str, style: Style, color: bool) -> String {
 /// Columns a character takes: 2 for East Asian wide ones (titles are often Japanese), else 1.
 fn char_width(c: char) -> usize {
     match c as u32 {
-        0x1100..=0x115F | 0x2E80..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE6F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 | 0x1F300..=0x1FAFF | 0x20000..=0x3FFFD => 2,
+        0x1100..=0x115F
+        | 0x2E80..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1FAFF
+        | 0x20000..=0x3FFFD => 2,
         _ => 1,
     }
 }
@@ -71,12 +79,22 @@ fn pad(s: &str, w: usize) -> String {
 
 fn bar(progress: u32, total: Option<u32>) -> String {
     let filled = match total {
-        Some(t) if t > 0 => ((u64::from(progress.min(t)) * BAR as u64 + u64::from(t) / 2) / u64::from(t)) as usize,
+        Some(t) if t > 0 => {
+            ((u64::from(progress.min(t)) * BAR as u64 + u64::from(t) / 2) / u64::from(t)) as usize
+        }
         _ => 0,
     };
     // A started show shows at least one cell.
-    let filled = if progress > 0 && filled == 0 && total.is_some() { 1 } else { filled };
-    format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(BAR - filled))
+    let filled = if progress > 0 && filled == 0 && total.is_some() {
+        1
+    } else {
+        filled
+    };
+    format!(
+        "{}{}",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(BAR - filled)
+    )
 }
 
 /// "in 2d", "in 5h", "in 40m": the short form for the table.
@@ -111,11 +129,17 @@ fn clock(secs: u32) -> String {
 /// The now-playing line: "▶ mpv · Title · ep 6 · 16:08/23:40 · Update to ep 6? (kot confirm)".
 fn now_line(n: &NowInfo, width: usize, color: bool) -> String {
     let icon = if n.playing { "\u{25b6}" } else { "\u{23f8}" };
-    let ep = n.episode.map(|e| format!(" \u{b7} ep {e}")).unwrap_or_default();
+    let ep = n
+        .episode
+        .map(|e| format!(" \u{b7} ep {e}"))
+        .unwrap_or_default();
     let time = match (n.position, n.duration) {
         (Some(p), Some(d)) if d > 0 => format!(" \u{b7} {}/{}", clock(p), clock(d)),
         (Some(p), _) => format!(" \u{b7} {}", clock(p)),
-        _ => n.percent.map(|p| format!(" \u{b7} {p}%")).unwrap_or_default(),
+        _ => n
+            .percent
+            .map(|p| format!(" \u{b7} {p}%"))
+            .unwrap_or_default(),
     };
     let offer = match (n.recorded, n.offer) {
         (Some(e), _) => format!(" \u{b7} recorded ep {e}"),
@@ -127,10 +151,15 @@ fn now_line(n: &NowInfo, width: usize, color: bool) -> String {
     let head = format!("{icon} {}", n.player);
     let tail = format!("{ep}{time}{offer}");
     // The title takes what is left, but at least 8 columns.
-    let room = width.saturating_sub(width_of(&head) + width_of(&tail) + 3).max(8);
+    let room = width
+        .saturating_sub(width_of(&head) + width_of(&tail) + 3)
+        .max(8);
     let title = truncate(&n.title, room);
     // Even with the title at its minimum the line may be too wide: cut the end.
-    let rest = truncate(&format!(" \u{b7} {title}{tail}"), width.saturating_sub(width_of(&head)));
+    let rest = truncate(
+        &format!(" \u{b7} {title}{tail}"),
+        width.saturating_sub(width_of(&head)),
+    );
     format!("{}{rest}", paint(&head, Style::Green, color))
 }
 
@@ -138,15 +167,27 @@ fn now_line(n: &NowInfo, width: usize, color: bool) -> String {
 /// ones with something aired or nothing known, each group by most recently updated.
 fn sorted(rows: &[DashRow]) -> Vec<&DashRow> {
     let mut v: Vec<&DashRow> = rows.iter().collect();
-    v.sort_by_key(|r| (!r.on_disk, r.air_at.filter(|_| !r.on_disk).unwrap_or(i64::MAX), std::cmp::Reverse(r.updated_at)));
+    v.sort_by_key(|r| {
+        (
+            !r.on_disk,
+            r.air_at.filter(|_| !r.on_disk).unwrap_or(i64::MAX),
+            std::cmp::Reverse(r.updated_at),
+        )
+    });
     v
 }
 
 fn next_cell(r: &DashRow, now: i64) -> (String, Style) {
     if r.on_disk {
-        (format!("\u{25b6} Ep {} on disk", r.progress + 1), Style::Green)
+        (
+            format!("\u{25b6} Ep {} on disk", r.progress + 1),
+            Style::Green,
+        )
     } else if let Some(at) = r.air_at {
-        (format!("{} ({})", r.air_slot, countdown(at - now)), Style::Plain)
+        (
+            format!("{} ({})", r.air_slot, countdown(at - now)),
+            Style::Plain,
+        )
     } else if r.aired {
         ("aired \u{b7} not on disk".into(), Style::Yellow)
     } else {
@@ -166,11 +207,24 @@ pub fn render(d: &Dashboard, width: usize, color: bool) -> String {
         out.push_str(&paint("Nothing in Watching.", Style::Dim, color));
         out.push('\n');
     } else {
-        out.push_str(&paint(&format!("WATCHING ({})", d.rows.len()), Style::Bold, color));
+        out.push_str(&paint(
+            &format!("WATCHING ({})", d.rows.len()),
+            Style::Bold,
+            color,
+        ));
         out.push('\n');
         let rows = sorted(&d.rows);
         let with_bar = width >= NARROW;
-        let progress: Vec<String> = rows.iter().map(|r| format!("{}/{}", r.progress, r.episodes.map_or("?".to_string(), |n| n.to_string()))).collect();
+        let progress: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}/{}",
+                    r.progress,
+                    r.episodes.map_or("?".to_string(), |n| n.to_string())
+                )
+            })
+            .collect();
         let nexts: Vec<(String, Style)> = rows.iter().map(|r| next_cell(r, d.now_unix)).collect();
         let pw = progress.iter().map(|p| width_of(p)).max().unwrap_or(0);
         let bw = if with_bar { BAR + 1 } else { 0 };
@@ -214,7 +268,9 @@ fn footer(d: &Dashboard) -> String {
         1 => "1 change waiting to sync".to_string(),
         n => format!("{n} changes waiting to sync"),
     };
-    let last = d.synced_at.map_or("not synced yet".to_string(), |t| format!("last sync {}", ago(d.now_unix - t)));
+    let last = d.synced_at.map_or("not synced yet".to_string(), |t| {
+        format!("last sync {}", ago(d.now_unix - t))
+    });
     let offline = if d.offline { " \u{b7} offline" } else { "" };
     format!("{queue} \u{b7} {last}{offline}")
 }

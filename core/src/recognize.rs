@@ -28,8 +28,8 @@ pub use release::{Codec, Release, parse_release};
 use anitomy_ng::{ElementKind, Options};
 use relations::Relations;
 
-use crate::service::SearchHit;
 use crate::ListItem;
+use crate::service::SearchHit;
 
 /// What the file name says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -53,13 +53,25 @@ impl Parsed {
 
 fn last_number(s: &str) -> Option<u32> {
     // "06", "06v2" (the version is its own element), "01-02" (the last), "12.5" (the whole part).
-    s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).next_back()
+    s.split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.parse().ok())
+        .next_back()
 }
 
 fn parse_name(name: &str) -> Parsed {
     let els = anitomy_ng::parse(name, Options::default());
-    let first = |k: ElementKind| els.iter().find(|e| e.kind == k).map(|e| e.value.trim().to_string()).filter(|v| !v.is_empty());
-    let episode = els.iter().filter(|e| e.kind == ElementKind::Episode).filter_map(|e| last_number(&e.value)).next_back();
+    let first = |k: ElementKind| {
+        els.iter()
+            .find(|e| e.kind == k)
+            .map(|e| e.value.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let episode = els
+        .iter()
+        .filter(|e| e.kind == ElementKind::Episode)
+        .filter_map(|e| last_number(&e.value))
+        .next_back();
     Parsed {
         file_name: name.to_string(),
         title: first(ElementKind::Title).unwrap_or_default(),
@@ -77,7 +89,10 @@ pub fn parse(path: &str) -> Option<Parsed> {
     let mut parsed = parse_name(&name);
     if parsed.title.is_empty() || parsed.title.chars().all(|c| c.is_ascii_digit()) {
         // "06.mkv" in "Lanterns of Kirigaoka/": the folder names the show.
-        let folder = p.parent().and_then(|d| d.file_name()).map(|d| parse_name(&d.to_string_lossy()));
+        let folder = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .map(|d| parse_name(&d.to_string_lossy()));
         match folder {
             Some(f) if !f.title.is_empty() => {
                 parsed.title = f.title;
@@ -107,7 +122,11 @@ pub fn normalize(s: &str) -> String {
 }
 
 fn ordinal(w: &str) -> Option<u32> {
-    let digits = w.strip_suffix("st").or_else(|| w.strip_suffix("nd")).or_else(|| w.strip_suffix("rd")).or_else(|| w.strip_suffix("th"))?;
+    let digits = w
+        .strip_suffix("st")
+        .or_else(|| w.strip_suffix("nd"))
+        .or_else(|| w.strip_suffix("rd"))
+        .or_else(|| w.strip_suffix("th"))?;
     digits.parse().ok()
 }
 
@@ -149,7 +168,17 @@ pub fn split_season(norm: &str) -> (String, Option<u32>) {
     let n = words.len();
     let before = |k: usize, season: u32| (words[..k].join(" "), Some(season));
     // Only the marker goes: "x 2nd season part 2" is "x part 2", season 2 (not "x").
-    let without = |from: usize, to: usize, season: u32| (words[..from].iter().chain(&words[to..]).copied().collect::<Vec<_>>().join(" "), Some(season));
+    let without = |from: usize, to: usize, season: u32| {
+        (
+            words[..from]
+                .iter()
+                .chain(&words[to..])
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" "),
+            Some(season),
+        )
+    };
     // The last marker after the first word wins.
     for i in (1..n).rev() {
         if words[i] == "season" {
@@ -180,7 +209,11 @@ pub fn split_season(norm: &str) -> (String, Option<u32>) {
     }
     if n >= 2 {
         let last = words[n - 1];
-        if let Some(s) = last.strip_prefix('s').and_then(|d| d.parse().ok()).filter(|_| last.len() <= 3) {
+        if let Some(s) = last
+            .strip_prefix('s')
+            .and_then(|d| d.parse().ok())
+            .filter(|_| last.len() <= 3)
+        {
             return before(n - 1, s);
         }
         if let Some(s) = roman(last) {
@@ -231,7 +264,9 @@ pub fn file_season(p: &Parsed) -> Option<u32> {
 /// The seasons an anime's titles name: one title is enough ("Yakusou no Sasayaki: Kouhen" with
 /// the English "… Season 3" is season 3). None named: season 1.
 fn seasons_of<'a>(titles: impl Iterator<Item = &'a str>) -> Vec<u32> {
-    let mut v: Vec<u32> = titles.filter_map(|t| split_season(&normalize(t)).1).collect();
+    let mut v: Vec<u32> = titles
+        .filter_map(|t| split_season(&normalize(t)).1)
+        .collect();
     if v.is_empty() {
         v.push(1);
     }
@@ -288,7 +323,14 @@ pub fn candidates(p: &Parsed, items: &[ListItem]) -> Vec<Candidate> {
                 })
                 .fold(0.0f32, f32::max);
             let watching = it.rewatching || it.status == crate::Status::Watching;
-            (Candidate { media_id: it.media.id, title: it.media.title.clone(), score }, watching)
+            (
+                Candidate {
+                    media_id: it.media.id,
+                    title: it.media.title.clone(),
+                    score,
+                },
+                watching,
+            )
         })
         .filter(|(c, _)| c.score > 0.3)
         .collect();
@@ -300,9 +342,16 @@ pub fn candidates(p: &Parsed, items: &[ListItem]) -> Vec<Candidate> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Found {
     /// On the user's list. `sure`: the same title and season, or the user's pick.
-    List { media_id: u32, sure: bool, why: String },
+    List {
+        media_id: u32,
+        sure: bool,
+        why: String,
+    },
     /// A search found it, but it is not on the list.
-    NotOnList { media_id: u32, title: String },
+    NotOnList {
+        media_id: u32,
+        title: String,
+    },
     /// The user said this file is not an anime.
     Ignored,
     Nothing,
@@ -328,7 +377,11 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
             "user" => {
                 if let Some(it) = items.iter().find(|it| it.media.id == *id) {
                     if !season_conflict(p, it) {
-                        return Some(Found::List { media_id: *id, sure: true, why: "you picked it".into() });
+                        return Some(Found::List {
+                            media_id: *id,
+                            sure: true,
+                            why: "you picked it".into(),
+                        });
                     }
                     passed_over = Some((it.media.id, it.media.title.clone()));
                 }
@@ -337,15 +390,22 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
         }
     }
     // The passed-over pick itself is no answer.
-    let best = c.first().filter(|b| b.score >= UNSURE_AT && passed_over.as_ref().is_none_or(|(id, _)| *id != b.media_id))?;
+    let best = c.first().filter(|b| {
+        b.score >= UNSURE_AT && passed_over.as_ref().is_none_or(|(id, _)| *id != b.media_id)
+    })?;
     let ties = c.iter().filter(|x| x.score >= best.score).count();
     let mut sure = best.score >= PREFIX_SURE && ties == 1;
     let named = file_season(p).filter(|s| *s > 1);
     let mut why = match (sure, named) {
-        (true, Some(s)) if best.score < 1.0 => format!("season {s} of a title in your list that starts with \u{201c}{}\u{201d}", p.title),
+        (true, Some(s)) if best.score < 1.0 => format!(
+            "season {s} of a title in your list that starts with \u{201c}{}\u{201d}",
+            p.title
+        ),
         (true, Some(s)) => format!("the title and season {s} match your list"),
         (true, None) => "same title in your list".to_string(),
-        (false, _) if ties > 1 && best.score >= PREFIX_SURE => format!("{ties} titles in your list match"),
+        (false, _) if ties > 1 && best.score >= PREFIX_SURE => {
+            format!("{ties} titles in your list match")
+        }
         (false, _) => format!("close to a title in your list ({:.0}%)", best.score * 100.0),
     };
     if let Some((_, t)) = passed_over {
@@ -360,7 +420,11 @@ pub fn on_list(p: &Parsed, items: &[ListItem], cached: &Cached, rel: &Relations)
         sure = false;
         why = format!("episode {ep} is past its {n}");
     }
-    Some(Found::List { media_id: best.media_id, sure, why })
+    Some(Found::List {
+        media_id: best.media_id,
+        sure,
+        why,
+    })
 }
 
 /// Step 4: the search's hits against the list. A hit on the list of another season than the
@@ -371,40 +435,72 @@ pub fn from_search(p: &Parsed, hits: &[SearchHit], items: &[ListItem]) -> Found 
 
 /// As [`from_search`], with the user's pick that [`on_list`] passed over (another season than
 /// the file's): a hit naming the file's season beats it; with none, the pick stands.
-pub fn from_search_picked(p: &Parsed, hits: &[SearchHit], items: &[ListItem], pick: Option<u32>) -> Found {
+pub fn from_search_picked(
+    p: &Parsed,
+    hits: &[SearchHit],
+    items: &[ListItem],
+    pick: Option<u32>,
+) -> Found {
     let on_list = |h: &SearchHit| items.iter().find(|it| it.media.id == h.id);
     let mut other_season = None;
     for h in hits {
         if let Some(it) = on_list(h) {
             if !season_conflict(p, it) {
-                return Found::List { media_id: h.id, sure: false, why: "found by a MyAnimeList search".into() };
+                return Found::List {
+                    media_id: h.id,
+                    sure: false,
+                    why: "found by a MyAnimeList search".into(),
+                };
             }
             other_season = other_season.or(Some(h.id));
         }
     }
     let off: Vec<&SearchHit> = hits.iter().filter(|h| on_list(h).is_none()).collect();
-    let names_season = |h: &&&SearchHit| file_season(p).is_some_and(|s| seasons_of(std::iter::once(h.title.as_str()).chain(h.other_titles.iter().map(String::as_str))).contains(&s));
+    let names_season = |h: &&&SearchHit| {
+        file_season(p).is_some_and(|s| {
+            seasons_of(
+                std::iter::once(h.title.as_str()).chain(h.other_titles.iter().map(String::as_str)),
+            )
+            .contains(&s)
+        })
+    };
     if let Some(h) = off.iter().find(names_season) {
-        return Found::NotOnList { media_id: h.id, title: h.title.clone() };
+        return Found::NotOnList {
+            media_id: h.id,
+            title: h.title.clone(),
+        };
     }
     if let Some(id) = pick.filter(|id| items.iter().any(|it| it.media.id == *id)) {
-        return Found::List { media_id: id, sure: true, why: "you picked it".into() };
+        return Found::List {
+            media_id: id,
+            sure: true,
+            why: "you picked it".into(),
+        };
     }
     if let Some(id) = other_season {
         let s = file_season(p).unwrap_or(1);
-        return Found::List { media_id: id, sure: false, why: format!("found by a MyAnimeList search, but the file says season {s}") };
+        return Found::List {
+            media_id: id,
+            sure: false,
+            why: format!("found by a MyAnimeList search, but the file says season {s}"),
+        };
     }
     match off.first() {
-        Some(h) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
+        Some(h) => Found::NotOnList {
+            media_id: h.id,
+            title: h.title.clone(),
+        },
         None => Found::Nothing,
     }
 }
 
-
 /// The destination's title said shortly: what it adds to the source's title ("Part 2"), or all
 /// of it.
 fn short_title<'a>(from: &str, to: &'a str) -> &'a str {
-    match to.strip_prefix(from).and_then(|rest| rest.strip_prefix(' ')) {
+    match to
+        .strip_prefix(from)
+        .and_then(|rest| rest.strip_prefix(' '))
+    {
         Some(rest) if !rest.trim().is_empty() => rest.trim(),
         _ => to,
     }
@@ -416,21 +512,46 @@ fn short_title<'a>(from: &str, to: &'a str) -> &'a str {
 /// the list is a list match (as sure as the source's); one not on the list is
 /// [`Found::NotOnList`]. Applied once (no chains), like Taiga.
 pub fn redirect(found: Found, parsed: &mut Parsed, items: &[ListItem], rel: &Relations) -> Found {
-    let Some(ep) = parsed.episode else { return found };
+    let Some(ep) = parsed.episode else {
+        return found;
+    };
     let (from, sure, why_before, title_before) = match &found {
-        Found::List { media_id, sure, why } => (*media_id, *sure, Some(why.as_str()), None),
+        Found::List {
+            media_id,
+            sure,
+            why,
+        } => (*media_id, *sure, Some(why.as_str()), None),
         Found::NotOnList { media_id, title } => (*media_id, false, None, Some(title.as_str())),
         _ => return found,
     };
-    let Some(r) = rel.redirect(from, ep) else { return found };
-    let title_of = |id: u32| items.iter().find(|it| it.media.id == id).map(|it| it.media.title.clone());
-    let from_title = title_of(from).or(title_before.map(str::to_string)).or(r.from_title.clone()).unwrap_or_else(|| "this anime".into());
+    let Some(r) = rel.redirect(from, ep) else {
+        return found;
+    };
+    let title_of = |id: u32| {
+        items
+            .iter()
+            .find(|it| it.media.id == id)
+            .map(|it| it.media.title.clone())
+    };
+    let from_title = title_of(from)
+        .or(title_before.map(str::to_string))
+        .or(r.from_title.clone())
+        .unwrap_or_else(|| "this anime".into());
     let to_item = items.iter().find(|it| it.media.id == r.to);
-    let to_title = title_of(r.to).or(r.to_title.clone()).unwrap_or_else(|| format!("MyAnimeList anime {}", r.to));
+    let to_title = title_of(r.to)
+        .or(r.to_title.clone())
+        .unwrap_or_else(|| format!("MyAnimeList anime {}", r.to));
     let because = if r.to == from {
-        format!("episode {ep} of {from_title} is its episode {} (numbered on from the season before)", r.episode)
+        format!(
+            "episode {ep} of {from_title} is its episode {} (numbered on from the season before)",
+            r.episode
+        )
     } else {
-        format!("episode {ep} of {from_title} is episode {} of {}", r.episode, short_title(&from_title, &to_title))
+        format!(
+            "episode {ep} of {from_title} is episode {} of {}",
+            r.episode,
+            short_title(&from_title, &to_title)
+        )
     };
     parsed.episode = Some(r.episode);
     match to_item {
@@ -440,9 +561,16 @@ pub fn redirect(found: Found, parsed: &mut Parsed, items: &[ListItem], rel: &Rel
                 Some(w) if w == "you picked it" => format!("{w}; {because}"),
                 _ => because,
             };
-            Found::List { media_id: r.to, sure, why }
+            Found::List {
+                media_id: r.to,
+                sure,
+                why,
+            }
         }
-        None => Found::NotOnList { media_id: r.to, title: to_title },
+        None => Found::NotOnList {
+            media_id: r.to,
+            title: to_title,
+        },
     }
 }
 

@@ -13,8 +13,13 @@
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
+use objc2_app_kit::{
+    NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSVariableStatusItemLength,
+};
 use objc2_foundation::{NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
 use crate::model::Handle;
@@ -101,7 +106,14 @@ impl TrayCtl {
         menu.setAutoenablesItems(false);
         menu.setDelegate(Some(ProtocolObject::from_ref(&*target)));
         item.setMenu(Some(&menu));
-        let ctl = Self { item, menu, target, mtm, line: String::new(), play: Vec::new() };
+        let ctl = Self {
+            item,
+            menu,
+            target,
+            mtm,
+            line: String::new(),
+            play: Vec::new(),
+        };
         ctl.rebuild();
         Some(ctl)
     }
@@ -113,7 +125,11 @@ impl TrayCtl {
         }
         self.line = line.to_string();
         if let Some(button) = self.item.button(self.mtm) {
-            button.setToolTip(Some(&NSString::from_str(if line.is_empty() { "Kotora" } else { line })));
+            button.setToolTip(Some(&NSString::from_str(if line.is_empty() {
+                "Kotora"
+            } else {
+                line
+            })));
         }
         self.rebuild();
     }
@@ -155,7 +171,12 @@ impl TrayCtl {
 
     fn add(&self, menu: &NSMenu, title: &str, tag: isize) {
         let item = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(self.mtm.alloc::<NSMenuItem>(), &NSString::from_str(title), Some(sel!(trayAction:)), &NSString::new())
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                self.mtm.alloc::<NSMenuItem>(),
+                &NSString::from_str(title),
+                Some(sel!(trayAction:)),
+                &NSString::new(),
+            )
         };
         item.setTag(tag);
         let target: &AnyObject = &self.target;
@@ -175,7 +196,8 @@ fn template_image() -> Option<Retained<NSImage>> {
     let (w, h, rgba) = template_pixels()?;
     let img = image::RgbaImage::from_raw(w, h, rgba)?;
     let mut png = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
     let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&png))?;
     // The pixels are for 2x, so the point size is half and it stays sharp on Retina.
     image.setSize(NSSize::new(ICON_PT * f64::from(w) / f64::from(h), ICON_PT));
@@ -184,10 +206,13 @@ fn template_image() -> Option<Retained<NSImage>> {
 }
 
 /// The 128 px app icon (the desktop entry's).
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/128x128/apps/io.github.hanami117.kotora.png");
+const ICON_PNG: &[u8] =
+    include_bytes!("../../assets/icons/hicolor/128x128/apps/io.github.hanami117.kotora.png");
 
 fn template_pixels() -> Option<(u32, u32, Vec<u8>)> {
-    let src = image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png).ok()?.to_rgba8();
+    let src = image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
     Some(template_from(&src))
 }
 
@@ -215,8 +240,18 @@ fn template_from(src: &image::RgbaImage) -> (u32, u32, Vec<u8>) {
     // A square canvas so the head isn't stretched, then the menu bar size.
     let side = w.max(h);
     let mut square = image::RgbaImage::new(side, side);
-    image::imageops::replace(&mut square, &cropped, i64::from((side - w) / 2), i64::from((side - h) / 2));
-    let out = image::imageops::resize(&square, ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3);
+    image::imageops::replace(
+        &mut square,
+        &cropped,
+        i64::from((side - w) / 2),
+        i64::from((side - h) / 2),
+    );
+    let out = image::imageops::resize(
+        &square,
+        ICON_PX,
+        ICON_PX,
+        image::imageops::FilterType::Lanczos3,
+    );
     (ICON_PX, ICON_PX, out.into_raw())
 }
 
@@ -226,7 +261,10 @@ mod tests {
     fn the_template_is_a_black_tiger_without_the_tile() {
         let (w, h, rgba) = super::template_pixels().expect("the icon decodes");
         assert_eq!((w, h), (super::ICON_PX, super::ICON_PX));
-        assert!(rgba.chunks(4).all(|p| p[..3] == [0, 0, 0]), "black only; macOS tints it");
+        assert!(
+            rgba.chunks(4).all(|p| p[..3] == [0, 0, 0]),
+            "black only; macOS tints it"
+        );
         let alpha = |x: u32, y: u32| rgba[((y * w + x) * 4 + 3) as usize];
         for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
             assert!(alpha(x, y) < 40, "clear corner at {x},{y}");
@@ -234,9 +272,15 @@ mod tests {
         let solid = rgba.chunks(4).filter(|p| p[3] > 200).count();
         let clear = rgba.chunks(4).filter(|p| p[3] < 20).count();
         assert!(solid > 300, "a head, got {solid} solid pixels");
-        assert!(clear > 150, "and not a filled square, got {clear} clear pixels");
+        assert!(
+            clear > 150,
+            "and not a filled square, got {clear} clear pixels"
+        );
         if let Some(path) = std::env::var_os("KOTORA_DUMP_TRAY") {
-            image::RgbaImage::from_raw(w, h, rgba).unwrap().save(path).unwrap();
+            image::RgbaImage::from_raw(w, h, rgba)
+                .unwrap()
+                .save(path)
+                .unwrap();
         }
     }
 }

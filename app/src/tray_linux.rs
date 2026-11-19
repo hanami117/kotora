@@ -37,16 +37,29 @@ use crate::model::Handle;
 const ICON_PX: u32 = 64;
 
 /// The 64 px app icon (the same file the desktop entry uses).
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/hicolor/64x64/apps/io.github.hanami117.kotora.png");
+const ICON_PNG: &[u8] =
+    include_bytes!("../../assets/icons/hicolor/64x64/apps/io.github.hanami117.kotora.png");
 
 /// Windows: the sizes drawn by hand for small use, (side, PNG). The notification area shows
 /// 16 to 32 px; a size in between is scaled down from the next larger one.
 #[cfg(windows)]
 static SMALL_PNGS: [(u32, &[u8]); 4] = [
-    (16, include_bytes!("../../assets/icons/hicolor/16x16/apps/io.github.hanami117.kotora.png")),
-    (24, include_bytes!("../../assets/icons/hicolor/24x24/apps/io.github.hanami117.kotora.png")),
-    (32, include_bytes!("../../assets/icons/hicolor/32x32/apps/io.github.hanami117.kotora.png")),
-    (48, include_bytes!("../../assets/icons/hicolor/48x48/apps/io.github.hanami117.kotora.png")),
+    (
+        16,
+        include_bytes!("../../assets/icons/hicolor/16x16/apps/io.github.hanami117.kotora.png"),
+    ),
+    (
+        24,
+        include_bytes!("../../assets/icons/hicolor/24x24/apps/io.github.hanami117.kotora.png"),
+    ),
+    (
+        32,
+        include_bytes!("../../assets/icons/hicolor/32x32/apps/io.github.hanami117.kotora.png"),
+    ),
+    (
+        48,
+        include_bytes!("../../assets/icons/hicolor/48x48/apps/io.github.hanami117.kotora.png"),
+    ),
 ];
 
 pub struct TrayCtl {
@@ -58,7 +71,9 @@ pub struct TrayCtl {
 impl TrayCtl {
     /// None when D-Bus is unavailable.
     pub fn start(handle: Handle) -> Option<Self> {
-        let spec = TraySpec::new("kotora", "Kotora", icon()).tooltip("Kotora").menu(menu("", &[]));
+        let spec = TraySpec::new("kotora", "Kotora", icon())
+            .tooltip("Kotora")
+            .menu(menu("", &[]));
         let on_event = move |ev: TrayEvent| match ev {
             TrayEvent::Activate { token } => {
                 match token {
@@ -77,7 +92,11 @@ impl TrayCtl {
             _ => {}
         };
         match Tray::new(spec, on_event) {
-            Ok(tray) => Some(Self { tray, line: String::new(), play: Vec::new() }),
+            Ok(tray) => Some(Self {
+                tray,
+                line: String::new(),
+                play: Vec::new(),
+            }),
             Err(e) => {
                 eprintln!("kotora: no tray icon: {e}");
                 None
@@ -89,7 +108,11 @@ impl TrayCtl {
     pub fn set_now(&mut self, line: &str) {
         if line != self.line {
             self.line = line.to_string();
-            self.tray.set_tooltip(if line.is_empty() { "Kotora".to_string() } else { line.to_string() });
+            self.tray.set_tooltip(if line.is_empty() {
+                "Kotora".to_string()
+            } else {
+                line.to_string()
+            });
             self.tray.set_menu(menu(line, &self.play));
         }
     }
@@ -117,7 +140,10 @@ fn action_for(id: &str) -> Option<Action> {
     match id {
         "show" => Some(Action::Show),
         "quit" => Some(Action::Quit),
-        _ => id.strip_prefix("play:").and_then(|n| n.parse().ok()).map(Action::Play),
+        _ => id
+            .strip_prefix("play:")
+            .and_then(|n| n.parse().ok())
+            .map(Action::Play),
     }
 }
 
@@ -145,7 +171,11 @@ fn short_label(label: &str) -> String {
 
 /// The menu (see the module's note on its fixed shape). `play`: (media id, "Title · Ep N").
 fn menu(line: &str, play: &[(u32, String)]) -> Vec<TrayItem> {
-    let line = if line.is_empty() { "Nothing playing" } else { line };
+    let line = if line.is_empty() {
+        "Nothing playing"
+    } else {
+        line
+    };
     let mut v = vec![
         TrayItem::action("now", short_label(line)).enabled(false),
         TrayItem::Separator,
@@ -153,7 +183,11 @@ fn menu(line: &str, play: &[(u32, String)]) -> Vec<TrayItem> {
         TrayItem::action("quit", "Quit Kotora"),
     ];
     let mut seen = std::collections::HashSet::new();
-    let items: Vec<TrayItem> = play.iter().filter(|(id, _)| seen.insert(*id)).map(|(id, label)| TrayItem::action(format!("play:{id}"), short_label(label))).collect();
+    let items: Vec<TrayItem> = play
+        .iter()
+        .filter(|(id, _)| seen.insert(*id))
+        .map(|(id, label)| TrayItem::action(format!("play:{id}"), short_label(label)))
+        .collect();
     if !items.is_empty() {
         v.push(TrayItem::Separator);
         v.push(TrayItem::action("play-head", "Play next").enabled(false));
@@ -177,7 +211,10 @@ fn icon() -> TrayIcon {
 /// The smallest drawn size that is at least `px` (else the 64 px one).
 #[cfg(windows)]
 fn source_for(px: u32) -> &'static [u8] {
-    SMALL_PNGS.iter().find(|(side, _)| *side >= px).map_or(ICON_PNG, |(_, png)| png)
+    SMALL_PNGS
+        .iter()
+        .find(|(side, _)| *side >= px)
+        .map_or(ICON_PNG, |(_, png)| png)
 }
 
 /// Straight RGBA rows of the icon at `px` (decoded from a PNG built into the binary; a PNG
@@ -185,7 +222,10 @@ fn source_for(px: u32) -> &'static [u8] {
 fn icon_pixels(png: &[u8], px: u32) -> Vec<u8> {
     match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
         Ok(img) if img.width() == px && img.height() == px => img.to_rgba8().into_raw(),
-        Ok(img) => img.resize_exact(px, px, image::imageops::FilterType::Lanczos3).to_rgba8().into_raw(),
+        Ok(img) => img
+            .resize_exact(px, px, image::imageops::FilterType::Lanczos3)
+            .to_rgba8()
+            .into_raw(),
         Err(_) => vec![0; (px * px * 4) as usize],
     }
 }
@@ -205,14 +245,24 @@ mod tests {
     #[test]
     fn windows_gets_the_drawn_size_for_each_scale() {
         for (px, side) in [(16, 16), (20, 24), (24, 24), (32, 32), (40, 48), (48, 48)] {
-            let want = super::SMALL_PNGS.iter().find(|(s, _)| *s == side).unwrap().1;
+            let want = super::SMALL_PNGS
+                .iter()
+                .find(|(s, _)| *s == side)
+                .unwrap()
+                .1;
             // By content: the compiler is free to keep one copy of the bytes or several.
-            assert!(super::source_for(px) == want, "{px} px comes from the {side} px drawing");
+            assert!(
+                super::source_for(px) == want,
+                "{px} px comes from the {side} px drawing"
+            );
             let rgba = super::icon_pixels(super::source_for(px), px);
             assert_eq!(rgba.len(), (px * px * 4) as usize);
             assert!(rgba.chunks(4).any(|p| p[3] == 255), "{px} px is not blank");
         }
-        assert!(super::source_for(64) == super::ICON_PNG, "above the drawn sizes: the 64 px one");
+        assert!(
+            super::source_for(64) == super::ICON_PNG,
+            "above the drawn sizes: the 64 px one"
+        );
         let _ = super::icon();
     }
 
@@ -231,13 +281,24 @@ mod tests {
     }
 
     fn ids(m: &[TrayItem]) -> Vec<String> {
-        m.iter().filter_map(|i| if let TrayItem::Action { id, .. } = i { Some(id.clone()) } else { None }).collect()
+        m.iter()
+            .filter_map(|i| {
+                if let TrayItem::Action { id, .. } = i {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn play() -> Vec<(u32, String)> {
         vec![
             (42, "Lanterns of Kirigaoka \u{b7} Ep 3".into()),
-            (7, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season \u{b7} Ep 4".into()),
+            (
+                7,
+                "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season \u{b7} Ep 4".into(),
+            ),
             (9, "Black Clover 2nd Season \u{b7} Ep 1".into()),
             (42, "Lanterns of Kirigaoka \u{b7} Ep 3".into()),
         ]
@@ -248,14 +309,26 @@ mod tests {
     /// only enabled episodes.
     #[test]
     fn no_position_ever_changes_kind() {
-        let menus = [menu("", &[]), menu("Frieren \u{b7} Ep 7", &[]), menu("", &play()), menu("Frieren \u{b7} Ep 7", &play()[..1]), menu("x", &play())];
-        let longest = menus.iter().map(|m| kinds(m)).max_by_key(String::len).unwrap();
+        let menus = [
+            menu("", &[]),
+            menu("Frieren \u{b7} Ep 7", &[]),
+            menu("", &play()),
+            menu("Frieren \u{b7} Ep 7", &play()[..1]),
+            menu("x", &play()),
+        ];
+        let longest = menus
+            .iter()
+            .map(|m| kinds(m))
+            .max_by_key(String::len)
+            .unwrap();
         assert_eq!(longest, "dsaasdaaa");
         for m in &menus {
             assert!(longest.starts_with(&kinds(m)), "{}", kinds(m));
         }
         // The line is always there (greyed), even when nothing plays.
-        assert!(matches!(&menu("", &[])[0], TrayItem::Action { label, enabled: false, .. } if label == "Nothing playing"));
+        assert!(
+            matches!(&menu("", &[])[0], TrayItem::Action { label, enabled: false, .. } if label == "Nothing playing")
+        );
     }
 
     /// Ids are unique, every enabled item does something, the disabled ones nothing, and each
@@ -271,20 +344,49 @@ mod tests {
                 assert_eq!(action_for(id).is_some(), *enabled, "{id}");
             }
         }
-        let plays: Vec<Action> = ids.iter().filter_map(|i| action_for(i)).filter(|a| matches!(a, Action::Play(_))).collect();
+        let plays: Vec<Action> = ids
+            .iter()
+            .filter_map(|i| action_for(i))
+            .filter(|a| matches!(a, Action::Play(_)))
+            .collect();
         assert_eq!(plays, [Action::Play(42), Action::Play(7), Action::Play(9)]);
-        assert_eq!((action_for("show"), action_for("quit")), (Some(Action::Show), Some(Action::Quit)));
-        assert_eq!((action_for("play-head"), action_for("now"), action_for("play:x")), (None, None, None));
+        assert_eq!(
+            (action_for("show"), action_for("quit")),
+            (Some(Action::Show), Some(Action::Quit))
+        );
+        assert_eq!(
+            (
+                action_for("play-head"),
+                action_for("now"),
+                action_for("play:x")
+            ),
+            (None, None, None)
+        );
         // No indent: labels start with the title.
-        assert!(m.iter().all(|i| !matches!(i, TrayItem::Action { label, .. } if label.starts_with(' '))));
+        assert!(
+            m.iter()
+                .all(|i| !matches!(i, TrayItem::Action { label, .. } if label.starts_with(' ')))
+        );
     }
 
     #[test]
     fn long_titles_are_cut_but_keep_the_episode() {
         let l = short_label("Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season \u{b7} Ep 4");
-        assert_eq!(l, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd\u{2026} \u{b7} Ep 4");
-        assert_eq!(short_label("Bocchi the Rock! \u{b7} Ep 2"), "Bocchi the Rock! \u{b7} Ep 2");
-        assert!(short_label(&"\u{732b}".repeat(60)).ends_with('\u{2026}'), "no episode, no space: cut anyway");
-        assert!(short_label("A Title That Has Quite a Few Words in It \u{b7} Ep 12 \u{b7} Ep 13").ends_with("\u{b7} Ep 13"));
+        assert_eq!(
+            l,
+            "Re:Zero kara Hajimeru Isekai Seikatsu 3rd\u{2026} \u{b7} Ep 4"
+        );
+        assert_eq!(
+            short_label("Bocchi the Rock! \u{b7} Ep 2"),
+            "Bocchi the Rock! \u{b7} Ep 2"
+        );
+        assert!(
+            short_label(&"\u{732b}".repeat(60)).ends_with('\u{2026}'),
+            "no episode, no space: cut anyway"
+        );
+        assert!(
+            short_label("A Title That Has Quite a Few Words in It \u{b7} Ep 12 \u{b7} Ep 13")
+                .ends_with("\u{b7} Ep 13")
+        );
     }
 }

@@ -304,8 +304,18 @@ impl Airing {
     }
 }
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const DAY_LONG: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const DAY_LONG: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
 
 impl State {
     /// Opens the page (the sidebar): fetches what is missing or old.
@@ -403,13 +413,27 @@ impl State {
         let mine = token.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
             let store = Store::open(&paths::db_file()).ok();
-            let run = Run { store: store.as_ref(), now: now_unix(), force, online };
+            let run = Run {
+                store: store.as_ref(),
+                now: now_unix(),
+                force,
+                online,
+            };
             let mut mal = if online { crate::account::open() } else { None };
             let signed_in = mal.is_some();
-            let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
+            let mut get = |se: Season, page: u32| {
+                mal.as_mut()
+                    .map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page))
+            };
             let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
             let send = &mut |a: Answer| h.update_if(move |s, _| s.airing_browse_answer(a));
-            run_browse(&run, season, get, &|| token.load(Ordering::SeqCst) == mine, send);
+            run_browse(
+                &run,
+                season,
+                get,
+                &|| token.load(Ordering::SeqCst) == mine,
+                send,
+            );
         });
     }
 
@@ -470,15 +494,32 @@ impl State {
         let mine = token.load(Ordering::SeqCst);
         std::thread::spawn(move || {
             let store = Store::open(&paths::db_file()).ok();
-            let list = store.as_ref().and_then(|st| st.load_list("mal").ok()).unwrap_or_default();
-            let run = Run { store: store.as_ref(), now: now_unix(), force, online };
+            let list = store
+                .as_ref()
+                .and_then(|st| st.load_list("mal").ok())
+                .unwrap_or_default();
+            let run = Run {
+                store: store.as_ref(),
+                now: now_unix(),
+                force,
+                online,
+            };
             let mut mal = if online { crate::account::open() } else { None };
             let signed_in = mal.is_some();
-            let mut get = |se: Season, page: u32| mal.as_mut().map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page));
+            let mut get = |se: Season, page: u32| {
+                mal.as_mut()
+                    .map_or(Err(ServiceError::SignInAgain), |m| m.season(se, page))
+            };
             let get: Option<Source> = if signed_in { Some(&mut get) } else { None };
             let send = &mut |a: Answer| h.update_if(move |s, _| s.airing_answer(a));
             // A season picked meanwhile has the budget: the previous season waits.
-            run_current(&run, &list, get, &|| token.load(Ordering::SeqCst) == mine, send);
+            run_current(
+                &run,
+                &list,
+                get,
+                &|| token.load(Ordering::SeqCst) == mine,
+                send,
+            );
         });
     }
 
@@ -530,10 +571,19 @@ impl State {
     pub fn airing_rebuild(&mut self) {
         let now = self.clock();
         // The list as the page sees it: status and progress (pending edits included).
-        let mine: HashMap<u32, (Status, u32)> = self.entries.iter().map(|e| (e.id, (e.status, e.progress))).collect();
+        let mine: HashMap<u32, (Status, u32)> = self
+            .entries
+            .iter()
+            .map(|e| (e.id, (e.status, e.progress)))
+            .collect();
         // Episodes out and not watched, of Watching and On hold shows (the browsed seasons too).
-        let shows: HashMap<u32, &SeasonAnime> = self.airing.shown().iter().map(|s| (s.id, s)).collect();
-        let behind: HashMap<u32, kotora_core::airing::ToWatch> = self.entries.iter().filter_map(|e| Some((e.id, self.to_watch_in(e, shows.get(&e.id).copied())?))).collect();
+        let shows: HashMap<u32, &SeasonAnime> =
+            self.airing.shown().iter().map(|s| (s.id, s)).collect();
+        let behind: HashMap<u32, kotora_core::airing::ToWatch> = self
+            .entries
+            .iter()
+            .filter_map(|e| Some((e.id, self.to_watch_in(e, shows.get(&e.id).copied())?)))
+            .collect();
         let lang = self.prefs.titles;
         let a = &mut self.airing;
         a.minute = now.div_euclid(60);
@@ -552,7 +602,10 @@ impl State {
         let browsing = a.browse.is_some();
         let src = a.browse.as_ref().map_or(&a.shows, |b| &b.shows);
         for (i, show) in src.iter().enumerate() {
-            let entry = mine.get(&show.id).copied().filter(|(st, _)| *st != Status::Dropped);
+            let entry = mine
+                .get(&show.id)
+                .copied()
+                .filter(|(st, _)| *st != Status::Dropped);
             if !a.kind.keeps(&show.format) || !a.mine.keeps(entry.is_some()) {
                 continue;
             }
@@ -567,7 +620,10 @@ impl State {
             // The week.
             match tt {
                 Some(t) => {
-                    if let Some((ep, at)) = t.slot_in(a.day0, week_end).filter(|(_, at)| (0..7).contains(&a.day_from_today(*at, now))) {
+                    if let Some((ep, at)) = t
+                        .slot_in(a.day0, week_end)
+                        .filter(|(_, at)| (0..7).contains(&a.day_from_today(*at, now)))
+                    {
                         let c = a.clock(at);
                         let note = if at <= now {
                             "aired".to_string()
@@ -578,13 +634,24 @@ impl State {
                         };
                         let k = a.day_from_today(at, now) as usize;
                         if let Some(day) = a.days.get_mut(k) {
-                            day.push(Slot { show: i, episode: ep, at, time: c.hhmm(), mine: entry.is_some(), note, to_watch: behind.get(&show.id).map(|w| w.label()) });
+                            day.push(Slot {
+                                show: i,
+                                episode: ep,
+                                at,
+                                time: c.hhmm(),
+                                mine: entry.is_some(),
+                                note,
+                                to_watch: behind.get(&show.id).map(|w| w.label()),
+                            });
                         }
                     }
                 }
                 None if show.is_airing() && !browsing => {
                     let why = match show.broadcast {
-                        Some(b) => format!("{}s in Japan, time not known", DAY_LONG[usize::from(b.day % 7)]),
+                        Some(b) => format!(
+                            "{}s in Japan, time not known",
+                            DAY_LONG[usize::from(b.day % 7)]
+                        ),
                         None => format!("No broadcast slot on {}", self.service.title()),
                     };
                     a.untimed.push((i, why));
@@ -609,12 +676,18 @@ impl State {
                 (Some((ep, at)), _) => {
                     let c = a.clock(at);
                     let slot = format!("{} {}", DAY_SHORT[usize::from(c.weekday)], c.hhmm());
-                    if entry.is_some() { format!("{slot} \u{b7} ep {ep} in {}", airing::countdown(at - now)) } else { format!("{slot} \u{b7} ep {ep}") }
+                    if entry.is_some() {
+                        format!("{slot} \u{b7} ep {ep} in {}", airing::countdown(at - now))
+                    } else {
+                        format!("{slot} \u{b7} ep {ep}")
+                    }
                 }
-                (None, "not_yet_aired") => match show.start_date.as_deref().map(crate::details::date_text) {
-                    Some(d) => format!("Starts {d}"),
-                    None => "Not yet aired".into(),
-                },
+                (None, "not_yet_aired") => {
+                    match show.start_date.as_deref().map(crate::details::date_text) {
+                        Some(d) => format!("Starts {d}"),
+                        None => "Not yet aired".into(),
+                    }
+                }
                 (None, "finished_airing") => "Finished airing".into(),
                 (None, _) => match show.broadcast {
                     Some(b) => format!("{}s", DAY_LONG[usize::from(b.day % 7)]),
@@ -623,11 +696,20 @@ impl State {
             };
             let lit = entry.is_some() && next.is_some_and(|(_, at)| at - now < 2 * 86_400);
             let to_watch = behind.get(&show.id).map(|w| (w.label(), w.behind));
-            a.cards.push(Card { show: i, meta: meta.join(" \u{b7} "), when, status: entry.map(|(st, _)| st), lit, to_watch });
+            a.cards.push(Card {
+                show: i,
+                meta: meta.join(" \u{b7} "),
+                when,
+                status: entry.map(|(st, _)| st),
+                lit,
+                to_watch,
+            });
         }
         if a.order == Order::ToWatch {
             // Stable: equal ones keep the popular order; shows not watched last.
-            a.cards.sort_by_key(|c| std::cmp::Reverse(c.to_watch.as_ref().map_or(-1, |(_, n)| i64::from(*n))));
+            a.cards.sort_by_key(|c| {
+                std::cmp::Reverse(c.to_watch.as_ref().map_or(-1, |(_, n)| i64::from(*n)))
+            });
         }
         for d in &mut a.days {
             d.sort_by_key(|s| (s.at, !s.mine));
@@ -652,12 +734,16 @@ impl State {
     /// The title of show `i` in the chosen language.
     pub fn airing_title(&self, i: usize) -> &str {
         let a = &self.airing.shown()[i];
-        self.prefs.titles.pick(&a.title, a.title_en.as_deref(), a.title_ja.as_deref())
+        self.prefs
+            .titles
+            .pick(&a.title, a.title_en.as_deref(), a.title_ja.as_deref())
     }
 
     /// "+ Watching" / "+ Plan to watch" on a card or a line: through the queue, as search does.
     pub fn airing_add(&mut self, id: u32, status: Status) {
-        let Some(show) = self.airing.shown().iter().find(|a| a.id == id) else { return };
+        let Some(show) = self.airing.shown().iter().find(|a| a.id == id) else {
+            return;
+        };
         let media = show.media();
         match self.add_media(media, status) {
             Ok(_) => self.airing_rebuild(),
@@ -667,9 +753,18 @@ impl State {
 
     /// Opens the details page of show `id`.
     pub fn airing_details(&mut self, id: u32) {
-        let Some(i) = self.airing.shown().iter().position(|a| a.id == id) else { return };
+        let Some(i) = self.airing.shown().iter().position(|a| a.id == id) else {
+            return;
+        };
         let a = &self.airing.shown()[i];
-        let stub = crate::details::Stub { id, title: self.airing_title(i).to_string(), cover_url: a.cover_url.clone(), format: a.format.clone(), episodes: a.episodes, kind: kotora_core::Kind::Anime };
+        let stub = crate::details::Stub {
+            id,
+            title: self.airing_title(i).to_string(),
+            cover_url: a.cover_url.clone(),
+            format: a.format.clone(),
+            episodes: a.episodes,
+            kind: kotora_core::Kind::Anime,
+        };
         self.open_details(stub);
     }
 
@@ -678,9 +773,19 @@ impl State {
         let now = self.clock();
         let mut out: Vec<kotora_ctl::AiringItem> = Vec::new();
         for (i, show) in self.airing.shows.iter().enumerate() {
-            let Some(e) = self.entries.iter().find(|e| e.id == show.id && e.status != Status::Dropped) else { continue };
-            let Some(t) = Timetable::of(show).map(|t| t.with_progress(e.progress, now)) else { continue };
-            let Some((episode, at)) = t.next(now) else { continue };
+            let Some(e) = self
+                .entries
+                .iter()
+                .find(|e| e.id == show.id && e.status != Status::Dropped)
+            else {
+                continue;
+            };
+            let Some(t) = Timetable::of(show).map(|t| t.with_progress(e.progress, now)) else {
+                continue;
+            };
+            let Some((episode, at)) = t.next(now) else {
+                continue;
+            };
             if at - now <= WEEK {
                 let (c, today) = (self.airing.clock(at), self.airing.clock(now));
                 let day = match c.day - today.day {
@@ -696,7 +801,9 @@ impl State {
                     time: c.hhmm(),
                     countdown: format!("in {}", airing::countdown(at - now)),
                     behind: self.to_watch_in(e, Some(show)).map_or(0, |w| w.behind),
-                    estimate: self.to_watch_in(e, Some(show)).is_some_and(|w| !w.exact && w.behind > 0),
+                    estimate: self
+                        .to_watch_in(e, Some(show))
+                        .is_some_and(|w| !w.exact && w.behind > 0),
                 });
             }
         }
@@ -714,21 +821,42 @@ impl State {
             .filter(|e| e.status == Status::Watching || e.rewatching)
             .map(|e| {
                 let on_disk = crate::library::has_next_file(self, e);
-                let timetable = self.airing.shows.iter().find(|a| a.id == e.id).and_then(Timetable::of).map(|t| t.with_progress(e.progress, now));
-                let mut row = kotora_ctl::DashRow { title: e.title.clone(), progress: e.progress, episodes: e.episodes, updated_at: e.updated_at, on_disk, ..Default::default() };
+                let timetable = self
+                    .airing
+                    .shows
+                    .iter()
+                    .find(|a| a.id == e.id)
+                    .and_then(Timetable::of)
+                    .map(|t| t.with_progress(e.progress, now));
+                let mut row = kotora_ctl::DashRow {
+                    title: e.title.clone(),
+                    progress: e.progress,
+                    episodes: e.episodes,
+                    updated_at: e.updated_at,
+                    on_disk,
+                    ..Default::default()
+                };
                 if let Some(t) = timetable {
                     if t.aired(now) > e.progress {
                         row.aired = true;
                     } else if let Some((_, at)) = t.next(now) {
                         let c = self.airing.clock(at);
                         row.air_at = Some(at);
-                        row.air_slot = format!("{} {}", DAY_SHORT[usize::from(c.weekday)], c.hhmm());
+                        row.air_slot =
+                            format!("{} {}", DAY_SHORT[usize::from(c.weekday)], c.hhmm());
                     }
                 }
                 row
             })
             .collect();
-        kotora_ctl::Dashboard { now_unix: now, now: self.ctl_now(), rows, queue: self.queue, synced_at: self.synced_at, offline: self.offline }
+        kotora_ctl::Dashboard {
+            now_unix: now,
+            now: self.ctl_now(),
+            rows,
+            queue: self.queue,
+            synced_at: self.synced_at,
+            offline: self.offline,
+        }
     }
 }
 
@@ -736,7 +864,8 @@ impl State {
 
 /// Where season pages come from: a season and a page number (from 0) give that page's anime and
 /// whether more follow. MyAnimeList in the app, a fake in tests.
-pub type Source<'a> = &'a mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>;
+pub type Source<'a> =
+    &'a mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>;
 
 /// What a season worker needs besides its source.
 pub struct Run<'a> {
@@ -748,7 +877,12 @@ pub struct Run<'a> {
 
 /// Asks for the pages of `season`, calling `each` with everything so far after each page but the
 /// last. `Ok(None)`: `wanted` turned false, so it stopped between two requests.
-fn pages(get: &mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>, season: Season, wanted: &dyn Fn() -> bool, each: &mut dyn FnMut(&[SeasonAnime])) -> Result<Option<Vec<SeasonAnime>>, ServiceError> {
+fn pages(
+    get: &mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError>,
+    season: Season,
+    wanted: &dyn Fn() -> bool,
+    each: &mut dyn FnMut(&[SeasonAnime]),
+) -> Result<Option<Vec<SeasonAnime>>, ServiceError> {
     let mut all = Vec::new();
     for page in 0..PAGES {
         if !wanted() {
@@ -771,13 +905,24 @@ fn pages(get: &mut dyn FnMut(Season, u32) -> Result<(Vec<SeasonAnime>, bool), Se
 /// 2. the current season from MyAnimeList. With no saved copy of it the rows show after the first
 ///    page and grow with each one; with an old copy the page keeps it until the new list is whole;
 /// 3. the previous season (the shows of it still airing) at low priority: only while `wanted`.
-pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &dyn Fn() -> bool, send: &mut dyn FnMut(Answer)) {
+pub fn run_current(
+    run: &Run,
+    list: &[ListItem],
+    get: Option<Source>,
+    wanted: &dyn Fn() -> bool,
+    send: &mut dyn FnMut(Answer),
+) {
     let (now, force) = (run.now, run.force);
     let cur = Season::of(now);
     let prev = cur.previous();
-    let saved = |se: Season| run.store.and_then(|st| st.season(crate::account::name(), se).ok().flatten());
+    let saved = |se: Season| {
+        run.store
+            .and_then(|st| st.season(crate::account::name(), se).ok().flatten())
+    };
     let (c, p) = (saved(cur), saved(prev));
-    let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now));
+    let fresh = |se: Season, x: &Option<(Vec<SeasonAnime>, i64)>| {
+        x.as_ref().is_some_and(|(_, at)| se.is_fresh(cur, *at, now))
+    };
     let (need_c, need_p) = (force || !fresh(cur, &c), force || !fresh(prev, &p));
     let mut fetched_at = c.as_ref().map(|(_, at)| *at);
     let mut c_shows = c.map_or_else(Vec::new, |x| x.0);
@@ -785,25 +930,61 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
     let mut p_shows = p.as_ref().map_or_else(Vec::new, |x| x.0.clone());
     let had_any = had_c || p.is_some();
     if had_any {
-        send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: !(need_c || need_p) || !run.online });
+        send(Answer {
+            season: cur,
+            shows: airing::merge(&c_shows, &p_shows, list),
+            fetched_at,
+            error: None,
+            done: !(need_c || need_p) || !run.online,
+        });
     }
     if !(need_c || need_p) {
         return;
     }
     if !run.online {
         if !had_any {
-            send(Answer { season: cur, shows: Vec::new(), fetched_at: None, error: Some(format!("Offline: the season lists come from {}.", crate::account::active().title())), done: true });
+            send(Answer {
+                season: cur,
+                shows: Vec::new(),
+                fetched_at: None,
+                error: Some(format!(
+                    "Offline: the season lists come from {}.",
+                    crate::account::active().title()
+                )),
+                done: true,
+            });
         }
         return;
     }
     let Some(get) = get else {
-        return send(Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(format!("Sign in to {} to see the seasons.", crate::account::active().title())), done: true });
+        return send(Answer {
+            season: cur,
+            shows: Vec::new(),
+            fetched_at,
+            error: Some(format!(
+                "Sign in to {} to see the seasons.",
+                crate::account::active().title()
+            )),
+            done: true,
+        });
     };
-    let fail = |e: ServiceError, fetched_at| Answer { season: cur, shows: Vec::new(), fetched_at, error: Some(crate::online::error_text(e)), done: true };
+    let fail = |e: ServiceError, fetched_at| Answer {
+        season: cur,
+        shows: Vec::new(),
+        fetched_at,
+        error: Some(crate::online::error_text(e)),
+        done: true,
+    };
     if need_c {
         let mut partial = |v: &[SeasonAnime]| {
             if !had_c {
-                send(Answer { season: cur, shows: airing::merge(v, &p_shows, list), fetched_at: None, error: None, done: false });
+                send(Answer {
+                    season: cur,
+                    shows: airing::merge(v, &p_shows, list),
+                    fetched_at: None,
+                    error: None,
+                    done: false,
+                });
             }
         };
         match pages(get, cur, &|| true, &mut partial) {
@@ -813,7 +994,13 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
                     let _ = st.save_season(crate::account::name(), cur, &all, now, &[prev]);
                 }
                 (c_shows, fetched_at) = (all, Some(now));
-                send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: !need_p });
+                send(Answer {
+                    season: cur,
+                    shows: airing::merge(&c_shows, &p_shows, list),
+                    fetched_at,
+                    error: None,
+                    done: !need_p,
+                });
             }
             Err(e) => return send(fail(e, fetched_at)),
         }
@@ -821,7 +1008,13 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
     if need_p {
         if !wanted() {
             // Another season was picked: it has the budget. The next visit asks again.
-            return send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true });
+            return send(Answer {
+                season: cur,
+                shows: airing::merge(&c_shows, &p_shows, list),
+                fetched_at,
+                error: None,
+                done: true,
+            });
         }
         match pages(get, prev, wanted, &mut |_| {}) {
             Ok(Some(all)) => {
@@ -829,9 +1022,21 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
                     let _ = st.save_season(crate::account::name(), prev, &all, now, &[cur]);
                 }
                 p_shows = all;
-                send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true });
+                send(Answer {
+                    season: cur,
+                    shows: airing::merge(&c_shows, &p_shows, list),
+                    fetched_at,
+                    error: None,
+                    done: true,
+                });
             }
-            Ok(None) => send(Answer { season: cur, shows: airing::merge(&c_shows, &p_shows, list), fetched_at, error: None, done: true }),
+            Ok(None) => send(Answer {
+                season: cur,
+                shows: airing::merge(&c_shows, &p_shows, list),
+                fetched_at,
+                error: None,
+                done: true,
+            }),
             Err(e) => send(fail(e, fetched_at)),
         }
     }
@@ -839,41 +1044,99 @@ pub fn run_current(run: &Run, list: &[ListItem], get: Option<Source>, wanted: &d
 
 /// The worker of a browsed season (see [`State::airing_browse_fetch`]), without the thread. A
 /// season picked since (`wanted` false) stops it between two requests, and its answers are dropped.
-pub fn run_browse(run: &Run, season: Season, get: Option<Source>, wanted: &dyn Fn() -> bool, send: &mut dyn FnMut(Answer)) {
+pub fn run_browse(
+    run: &Run,
+    season: Season,
+    get: Option<Source>,
+    wanted: &dyn Fn() -> bool,
+    send: &mut dyn FnMut(Answer),
+) {
     let (now, force) = (run.now, run.force);
     let cur = Season::of(now);
-    let saved = run.store.and_then(|st| st.season(crate::account::name(), season).ok().flatten());
-    let fresh = saved.as_ref().is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
+    let saved = run
+        .store
+        .and_then(|st| st.season(crate::account::name(), season).ok().flatten());
+    let fresh = saved
+        .as_ref()
+        .is_some_and(|(_, at)| season.is_fresh(cur, *at, now));
     let fetched_at = saved.as_ref().map(|(_, at)| *at);
     if let Some((shows, at)) = saved {
-        send(Answer { season, shows, fetched_at: Some(at), error: None, done: (fresh && !force) || !run.online });
+        send(Answer {
+            season,
+            shows,
+            fetched_at: Some(at),
+            error: None,
+            done: (fresh && !force) || !run.online,
+        });
     }
     if fresh && !force {
         return;
     }
     if !run.online {
         if fetched_at.is_none() {
-            send(Answer { season, shows: Vec::new(), fetched_at: None, error: Some(format!("Offline: the season lists come from {}.", crate::account::active().title())), done: true });
+            send(Answer {
+                season,
+                shows: Vec::new(),
+                fetched_at: None,
+                error: Some(format!(
+                    "Offline: the season lists come from {}.",
+                    crate::account::active().title()
+                )),
+                done: true,
+            });
         }
         return;
     }
     let Some(get) = get else {
-        return send(Answer { season, shows: Vec::new(), fetched_at, error: Some(format!("Sign in to {} to see the seasons.", crate::account::active().title())), done: true });
+        return send(Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at,
+            error: Some(format!(
+                "Sign in to {} to see the seasons.",
+                crate::account::active().title()
+            )),
+            done: true,
+        });
     };
     let mut partial = |v: &[SeasonAnime]| {
         if fetched_at.is_none() {
-            send(Answer { season, shows: v.to_vec(), fetched_at: None, error: None, done: false });
+            send(Answer {
+                season,
+                shows: v.to_vec(),
+                fetched_at: None,
+                error: None,
+                done: false,
+            });
         }
     };
     match pages(get, season, wanted, &mut partial) {
         Ok(Some(all)) => {
             if let Some(st) = run.store {
-                let _ = st.save_season(crate::account::name(), season, &all, now, &[cur, cur.previous()]);
+                let _ = st.save_season(
+                    crate::account::name(),
+                    season,
+                    &all,
+                    now,
+                    &[cur, cur.previous()],
+                );
             }
-            send(Answer { season, shows: all, fetched_at: Some(now), error: None, done: true });
+            send(Answer {
+                season,
+                shows: all,
+                fetched_at: Some(now),
+                error: None,
+                done: true,
+            });
         }
         Ok(None) => {}
-        Err(e) => send(Answer { season, shows: Vec::new(), fetched_at, error: Some(crate::online::error_text(e)), done: true }),
+        Err(e) => send(Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at,
+            error: Some(crate::online::error_text(e)),
+            done: true,
+        }),
     }
 }
 
@@ -887,7 +1150,9 @@ pub fn tick(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     }
     let now = s.clock();
-    tx.wake_after(std::time::Duration::from_secs((60 - now.rem_euclid(60)).clamp(1, 60) as u64));
+    tx.wake_after(std::time::Duration::from_secs(
+        (60 - now.rem_euclid(60)).clamp(1, 60) as u64,
+    ));
     if now.div_euclid(60) == s.airing.minute {
         return false;
     }
@@ -903,7 +1168,13 @@ pub fn page(s: &State, width: f32) -> El {
     let mut head = top(s, "Airing", None, false).child(season_picker(s));
     // The rows shown are saved or partial ones and a worker still asks: say so, small.
     if a.is_loading() && !a.shown().is_empty() {
-        head = head.child(text("Updating\u{2026}").key("airing/updating").font(theme::LABEL).color(PAL.faint).px(12.0));
+        head = head.child(
+            text("Updating\u{2026}")
+                .key("airing/updating")
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .px(12.0),
+        );
     }
     head = head.child(spacer());
     // Another season is a plain grid: no week to switch to.
@@ -927,19 +1198,43 @@ pub fn page(s: &State, width: f32) -> El {
                     tx.instant();
                     s.airing_refresh();
                 })
-                .child(rune::icon(&crate::icons::SYNC, 16.0).color(if a.is_loading() { PAL.faint } else { PAL.dim })),
+                .child(
+                    rune::icon(&crate::icons::SYNC, 16.0).color(if a.is_loading() {
+                        PAL.faint
+                    } else {
+                        PAL.dim
+                    }),
+                ),
         );
     }
     let mut page = col().key("page/airing").w_full().h_full().child(head);
     let shown = a.shown();
     if let Some(e) = a.shown_error() {
-        let retry = button("airing/retry", "Retry", false, Some(|s: &mut State| s.airing_refresh()));
-        let msg = if shown.is_empty() { e.to_string() } else { format!("{e} Showing the saved season.") };
-        page = page.child(alert("airing/error", PAL.status(Status::Dropped), msg, Some(retry)));
+        let retry = button(
+            "airing/retry",
+            "Retry",
+            false,
+            Some(|s: &mut State| s.airing_refresh()),
+        );
+        let msg = if shown.is_empty() {
+            e.to_string()
+        } else {
+            format!("{e} Showing the saved season.")
+        };
+        page = page.child(alert(
+            "airing/error",
+            PAL.status(Status::Dropped),
+            msg,
+            Some(retry),
+        ));
     }
     if shown.is_empty() {
         let first = a.browse.is_none() && a.error.is_none() && a.season.is_none();
-        return page.child(if a.is_loading() || first { loading(&s.viewed_season().label()) } else { empty(a.shown_error().is_some(), s.service.title()) });
+        return page.child(if a.is_loading() || first {
+            loading(&s.viewed_season().label())
+        } else {
+            empty(a.shown_error().is_some(), s.service.title())
+        });
     }
     page = page.child(filters(s));
     match a.view {
@@ -1145,11 +1440,20 @@ pub(crate) fn season_menu(s: &State) -> El {
 }
 
 fn views(v: View) -> El {
-    let mut r = row().key("airing/views").gap(2.0).padding(2.0).radius(theme::R_SM).fill(PAL.field).border(1.0, PAL.border);
+    let mut r = row()
+        .key("airing/views")
+        .gap(2.0)
+        .padding(2.0)
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border);
     for (view, label) in [(View::Week, "This week"), (View::Season, "This season")] {
         let on = v == view;
         let c = el()
-            .key(format!("airing/view/{}", if view == View::Week { "week" } else { "season" }))
+            .key(format!(
+                "airing/view/{}",
+                if view == View::Week { "week" } else { "season" }
+            ))
             .role("button")
             .label(label)
             .focusable(true)
@@ -1162,7 +1466,11 @@ fn views(v: View) -> El {
                 tx.instant();
                 s.airing_view(view);
             })
-            .child(text(label).font(theme::LABEL_BTN).color(if on { PAL.text } else { PAL.dim }));
+            .child(
+                text(label)
+                    .font(theme::LABEL_BTN)
+                    .color(if on { PAL.text } else { PAL.dim }),
+            );
         r = r.child(if on { c.fill(PAL.raised) } else { c });
     }
     r
@@ -1184,19 +1492,43 @@ fn chip(key: String, label: &str, on: bool, f: impl Fn(&mut State) + 'static) ->
             tx.instant();
             f(s);
         })
-        .child(text(label.to_string()).font(theme::LABEL).color(if on { PAL.accent_hi } else { PAL.dim }));
-    if on { c.fill(PAL.accent.alpha(0.14)) } else { c.border(1.0, PAL.border) }
+        .child(text(label.to_string()).font(theme::LABEL).color(if on {
+            PAL.accent_hi
+        } else {
+            PAL.dim
+        }));
+    if on {
+        c.fill(PAL.accent.alpha(0.14))
+    } else {
+        c.border(1.0, PAL.border)
+    }
 }
 
 fn filters(s: &State) -> El {
     let a = &s.airing;
-    let mut r = row().key("airing/filters").flex_wrap().gap(6.0).px(theme::PAGE_PAD).pb(10.0).center_y();
+    let mut r = row()
+        .key("airing/filters")
+        .flex_wrap()
+        .gap(6.0)
+        .px(theme::PAGE_PAD)
+        .pb(10.0)
+        .center_y();
     for k in Kind::ALL {
-        r = r.child(chip(format!("airing/kind/{}", k.label()), k.label(), a.kind == k, move |s: &mut State| s.airing_kind(k)));
+        r = r.child(chip(
+            format!("airing/kind/{}", k.label()),
+            k.label(),
+            a.kind == k,
+            move |s: &mut State| s.airing_kind(k),
+        ));
     }
     r = r.child(el().w(1.0).h(18.0).mx(4.0).fill(PAL.border));
     for m in Mine::ALL {
-        r = r.child(chip(format!("airing/mine/{}", m.label()), m.label(), a.mine == m, move |s: &mut State| s.airing_mine(m)));
+        r = r.child(chip(
+            format!("airing/mine/{}", m.label()),
+            m.label(),
+            a.mine == m,
+            move |s: &mut State| s.airing_mine(m),
+        ));
     }
     if a.browse.is_some() {
         return r;
@@ -1204,25 +1536,57 @@ fn filters(s: &State) -> El {
     if a.view == View::Season {
         r = r.child(el().w(1.0).h(18.0).mx(4.0).fill(PAL.border));
         for o in Order::ALL {
-            r = r.child(chip(format!("airing/order/{}", o.label()), o.label(), a.order == o, move |s: &mut State| s.airing_order(o)));
+            r = r.child(chip(
+                format!("airing/order/{}", o.label()),
+                o.label(),
+                a.order == o,
+                move |s: &mut State| s.airing_order(o),
+            ));
         }
     }
-    r.child(spacer()).child(text("Times are estimated; ~ marks estimated counts".to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
+    r.child(spacer()).child(
+        text("Times are estimated; ~ marks estimated counts".to_string())
+            .key("airing/estimated")
+            .font(theme::SMALL)
+            .color(PAL.faint),
+    )
 }
 
 fn loading(season: &str) -> El {
-    let mut c = col().key("airing/loading").px(theme::PAGE_PAD).pt(4.0).gap(8.0).child(text(format!("Loading {season}\u{2026}")).font(theme::LABEL).color(PAL.faint).pb(2.0));
+    let mut c = col()
+        .key("airing/loading")
+        .px(theme::PAGE_PAD)
+        .pt(4.0)
+        .gap(8.0)
+        .child(
+            text(format!("Loading {season}\u{2026}"))
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .pb(2.0),
+        );
     for i in 0..4 {
-        c = c.child(el().key(format!("airing/skel/{i}")).w_full().h(44.0).radius(theme::R_MD).fill(PAL.raised));
+        c = c.child(
+            el().key(format!("airing/skel/{i}"))
+                .w_full()
+                .h(44.0)
+                .radius(theme::R_MD)
+                .fill(PAL.raised),
+        );
     }
     c
 }
 
 fn empty(failed: bool, svc: &str) -> El {
     let (title, help) = if failed {
-        ("No season to show", format!("Kotora shows the season once {svc} answers."))
+        (
+            "No season to show",
+            format!("Kotora shows the season once {svc} answers."),
+        )
     } else {
-        ("Nothing airing", format!("{svc} lists no anime for this season yet."))
+        (
+            "Nothing airing",
+            format!("{svc} lists no anime for this season yet."),
+        )
     };
     col()
         .key("airing/empty")
@@ -1247,31 +1611,81 @@ fn week(s: &State) -> El {
             .center()
             .gap(4.0)
             .pb(60.0)
-            .child(text("Nothing airs this week with these filters").font(theme::SECTION).color(PAL.text))
-            .child(text("Try Everything, or All types.").font(theme::LABEL).color(PAL.dim));
+            .child(
+                text("Nothing airs this week with these filters")
+                    .font(theme::SECTION)
+                    .color(PAL.text),
+            )
+            .child(
+                text("Try Everything, or All types.")
+                    .font(theme::LABEL)
+                    .color(PAL.dim),
+            );
     }
-    col().key("airing/week-scroll").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-        col().key("airing/week").growth(GrowthSpec::default()).virtual_rows(
-            n,
-            WEEK_ROW_H,
-            |s: &State, i| match s.airing.week.get(i) {
-                Some(WeekRow::Day(d)) => format!("day/{d}").into(),
-                Some(WeekRow::Slot(d, k)) => s.airing.days[usize::from(*d)].get(*k).map_or_else(|| format!("gone-{i}"), |sl| format!("slot/{}", s.airing.shows[sl.show].id)).into(),
-                Some(WeekRow::Nothing(d)) => format!("nothing/{d}").into(),
-                Some(WeekRow::UntimedHead) => "untimed".into(),
-                Some(WeekRow::Untimed(k)) => s.airing.untimed.get(*k).map_or_else(|| format!("gone-{i}"), |(j, _)| format!("untimed/{}", s.airing.shows[*j].id)).into(),
-                None => format!("gone-{i}").into(),
-            },
-            |s: &State, i| match s.airing.week.get(i) {
-                Some(WeekRow::Day(d)) => day_head(s, *d),
-                Some(WeekRow::Slot(d, k)) => s.airing.days[usize::from(*d)].get(*k).map_or_else(el, |sl| slot_row(s, sl)),
-                Some(WeekRow::Nothing(_)) => row().h(36.0).px(theme::PAGE_PAD).pl(theme::PAGE_PAD + 64.0).center_y().child(text("Nothing airs").font(theme::LABEL).color(PAL.faint)),
-                Some(WeekRow::UntimedHead) => head_line("No broadcast time".into(), false, Some(format!("airing on {}, no time to estimate", s.service.title()))),
-                Some(WeekRow::Untimed(k)) => s.airing.untimed.get(*k).map_or_else(el, |(j, why)| untimed_row(s, *j, why)),
-                None => el(),
-            },
-        ),
-    )
+    col()
+        .key("airing/week-scroll")
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .key("airing/week")
+                .growth(GrowthSpec::default())
+                .virtual_rows(
+                    n,
+                    WEEK_ROW_H,
+                    |s: &State, i| match s.airing.week.get(i) {
+                        Some(WeekRow::Day(d)) => format!("day/{d}").into(),
+                        Some(WeekRow::Slot(d, k)) => s.airing.days[usize::from(*d)]
+                            .get(*k)
+                            .map_or_else(
+                                || format!("gone-{i}"),
+                                |sl| format!("slot/{}", s.airing.shows[sl.show].id),
+                            )
+                            .into(),
+                        Some(WeekRow::Nothing(d)) => format!("nothing/{d}").into(),
+                        Some(WeekRow::UntimedHead) => "untimed".into(),
+                        Some(WeekRow::Untimed(k)) => s
+                            .airing
+                            .untimed
+                            .get(*k)
+                            .map_or_else(
+                                || format!("gone-{i}"),
+                                |(j, _)| format!("untimed/{}", s.airing.shows[*j].id),
+                            )
+                            .into(),
+                        None => format!("gone-{i}").into(),
+                    },
+                    |s: &State, i| match s.airing.week.get(i) {
+                        Some(WeekRow::Day(d)) => day_head(s, *d),
+                        Some(WeekRow::Slot(d, k)) => s.airing.days[usize::from(*d)]
+                            .get(*k)
+                            .map_or_else(el, |sl| slot_row(s, sl)),
+                        Some(WeekRow::Nothing(_)) => row()
+                            .h(36.0)
+                            .px(theme::PAGE_PAD)
+                            .pl(theme::PAGE_PAD + 64.0)
+                            .center_y()
+                            .child(text("Nothing airs").font(theme::LABEL).color(PAL.faint)),
+                        Some(WeekRow::UntimedHead) => head_line(
+                            "No broadcast time".into(),
+                            false,
+                            Some(format!(
+                                "airing on {}, no time to estimate",
+                                s.service.title()
+                            )),
+                        ),
+                        Some(WeekRow::Untimed(k)) => s
+                            .airing
+                            .untimed
+                            .get(*k)
+                            .map_or_else(el, |(j, why)| untimed_row(s, *j, why)),
+                        None => el(),
+                    },
+                ),
+        )
 }
 
 fn head_line(label: String, today: bool, end: Option<String>) -> El {
@@ -1281,7 +1695,11 @@ fn head_line(label: String, today: bool, end: Option<String>) -> El {
         .pt(14.0)
         .gap(8.0)
         .center_y()
-        .child(text(label.to_uppercase()).font(theme::CAPTION).color(if today { PAL.accent_hi } else { PAL.faint }));
+        .child(
+            text(label.to_uppercase())
+                .font(theme::CAPTION)
+                .color(if today { PAL.accent_hi } else { PAL.faint }),
+        );
     if let Some(e) = end {
         r = r.child(text(e).font(theme::SMALL).color(PAL.faint));
     }
@@ -1292,7 +1710,12 @@ fn head_line(label: String, today: bool, end: Option<String>) -> El {
 fn day_head(s: &State, d: u8) -> El {
     let a = &s.airing;
     let c = a.clock(a.day0 + i64::from(d) * 86_400 + 12 * 3600);
-    let name = format!("{} {} {}", DAY_LONG[usize::from(c.weekday)], MONTHS[(c.month - 1) as usize % 12], c.date);
+    let name = format!(
+        "{} {} {}",
+        DAY_LONG[usize::from(c.weekday)],
+        MONTHS[(c.month - 1) as usize % 12],
+        c.date
+    );
     let today = d == 0;
     let label = match d {
         0 => format!("Today \u{b7} {name}"),
@@ -1302,14 +1725,28 @@ fn day_head(s: &State, d: u8) -> El {
     let n = a.days[usize::from(d)].iter().filter(|x| x.mine).count();
     let end = (n > 0).then(|| format!("{n} on your list"));
     let h = head_line(label, today, end).key(format!("airing/day/{d}"));
-    if today { h.child(el().key("airing/today").size(6.0, 6.0).radius(3.0).fill(PAL.accent)) } else { h }
+    if today {
+        h.child(
+            el().key("airing/today")
+                .size(6.0, 6.0)
+                .radius(3.0)
+                .fill(PAL.accent),
+        )
+    } else {
+        h
+    }
 }
 
 fn small_cover(s: &State, i: usize) -> El {
     let a = &s.airing.shows[i];
     let tile = cover(a.id, s.airing_title(i), 30.0, 42.0, 11.0);
     match s.covers.get(a.id, a.cover_url.as_deref(), 30.0, 42.0) {
-        Some(img) => tile.child(el().absolute(0.0, 0.0).size(30.0, 42.0).radius(theme::R_XS).pixels(img.pixels())),
+        Some(img) => tile.child(
+            el().absolute(0.0, 0.0)
+                .size(30.0, 42.0)
+                .radius(theme::R_XS)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     }
 }
@@ -1320,8 +1757,18 @@ fn add_or_status(s: &State, id: u32, status: Option<Status>) -> El {
         Some(st) => tag(st.label(), PAL.status(st), true),
         None if s.has_list() => row()
             .gap(6.0)
-            .child(action(format!("airing/add/{id}"), "+ Watching", false, move |s: &mut State, _| s.airing_add(id, Status::Watching)))
-            .child(action(format!("airing/plan/{id}"), "+ Plan", false, move |s: &mut State, _| s.airing_add(id, Status::PlanToWatch))),
+            .child(action(
+                format!("airing/add/{id}"),
+                "+ Watching",
+                false,
+                move |s: &mut State, _| s.airing_add(id, Status::Watching),
+            ))
+            .child(action(
+                format!("airing/plan/{id}"),
+                "+ Plan",
+                false,
+                move |s: &mut State, _| s.airing_add(id, Status::PlanToWatch),
+            )),
         None => el(),
     }
 }
@@ -1332,18 +1779,42 @@ fn slot_row(s: &State, sl: &Slot) -> El {
     let title = s.airing_title(sl.show);
     let status = s.entries.iter().find(|e| e.id == id).map(|e| e.status);
     let fg = if sl.mine { PAL.text } else { PAL.dim };
-    let mut info = row().gap(8.0).center_y().child(text(format!("Ep {}", sl.episode)).font(theme::LABEL_NUM).color(PAL.dim));
+    let mut info = row().gap(8.0).center_y().child(
+        text(format!("Ep {}", sl.episode))
+            .font(theme::LABEL_NUM)
+            .color(PAL.dim),
+    );
     let kind = kind_label(&a.format);
     if !kind.is_empty() {
         info = info.child(tag_tinted(kind, PAL.dim, PAL.raised));
     }
     if !sl.note.is_empty() {
-        let c = if sl.note == "aired" { PAL.faint } else { PAL.accent_hi };
-        info = info.child(text(sl.note.clone()).key("note").font(theme::LABEL_NUM).color(c));
+        let c = if sl.note == "aired" {
+            PAL.faint
+        } else {
+            PAL.accent_hi
+        };
+        info = info.child(
+            text(sl.note.clone())
+                .key("note")
+                .font(theme::LABEL_NUM)
+                .color(c),
+        );
     }
     if let Some(w) = &sl.to_watch {
-        let c = if w.contains("to watch") { PAL.text } else { PAL.faint };
-        info = info.child(text("\u{b7}").font(theme::LABEL).color(PAL.faint)).child(text(w.clone()).key("to-watch").font(theme::LABEL_NUM).color(c));
+        let c = if w.contains("to watch") {
+            PAL.text
+        } else {
+            PAL.faint
+        };
+        info = info
+            .child(text("\u{b7}").font(theme::LABEL).color(PAL.faint))
+            .child(
+                text(w.clone())
+                    .key("to-watch")
+                    .font(theme::LABEL_NUM)
+                    .color(c),
+            );
     }
     let line = row()
         .key("line")
@@ -1358,12 +1829,41 @@ fn slot_row(s: &State, sl: &Slot) -> El {
             tx.instant();
             s.airing_details(id);
         })
-        .child(text(sl.time.clone()).font(theme::NUM_MED).color(if sl.mine { PAL.text } else { PAL.dim }).w(50.0))
+        .child(
+            text(sl.time.clone())
+                .font(theme::NUM_MED)
+                .color(if sl.mine { PAL.text } else { PAL.dim })
+                .w(50.0),
+        )
         .child(small_cover(s, sl.show))
-        .child(col().grow(1.0).min_w(0.0).gap(2.0).child(text(title.to_string()).font(theme::ROW_TITLE).color(fg).truncate()).child(info))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(
+                    text(title.to_string())
+                        .font(theme::ROW_TITLE)
+                        .color(fg)
+                        .truncate(),
+                )
+                .child(info),
+        )
         .child(add_or_status(s, id, status));
-    let line = if sl.mine { line.fill(PAL.accent.alpha(0.06)).child(el().absolute(0.0, 8.0).size(3.0, WEEK_ROW_H - 16.0).radius(1.5).fill(PAL.accent)) } else { line };
-    col().w_full().child(line).child(el().w_full().h(1.0).fill(PAL.border.alpha(0.5)))
+    let line = if sl.mine {
+        line.fill(PAL.accent.alpha(0.06)).child(
+            el().absolute(0.0, 8.0)
+                .size(3.0, WEEK_ROW_H - 16.0)
+                .radius(1.5)
+                .fill(PAL.accent),
+        )
+    } else {
+        line
+    };
+    col()
+        .w_full()
+        .child(line)
+        .child(el().w_full().h(1.0).fill(PAL.border.alpha(0.5)))
 }
 
 fn untimed_row(s: &State, i: usize, why: &str) -> El {
@@ -1384,15 +1884,30 @@ fn untimed_row(s: &State, i: usize, why: &str) -> El {
             tx.instant();
             s.airing_details(id);
         })
-        .child(text("\u{2013}").font(theme::NUM_MED).color(PAL.faint).w(50.0))
+        .child(
+            text("\u{2013}")
+                .font(theme::NUM_MED)
+                .color(PAL.faint)
+                .w(50.0),
+        )
         .child(small_cover(s, i))
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(2.0)
-                .child(text(title.to_string()).font(theme::ROW_TITLE).color(PAL.dim).truncate())
-                .child(text(why.to_string()).font(theme::LABEL).color(PAL.faint).truncate()),
+                .child(
+                    text(title.to_string())
+                        .font(theme::ROW_TITLE)
+                        .color(PAL.dim)
+                        .truncate(),
+                )
+                .child(
+                    text(why.to_string())
+                        .font(theme::LABEL)
+                        .color(PAL.faint)
+                        .truncate(),
+                ),
         )
         .child(add_or_status(s, id, status))
 }
@@ -1415,23 +1930,50 @@ fn grid(s: &State, width: f32) -> El {
             .center()
             .gap(4.0)
             .pb(60.0)
-            .child(text("No anime match these filters").font(theme::SECTION).color(PAL.text));
+            .child(
+                text("No anime match these filters")
+                    .font(theme::SECTION)
+                    .color(PAL.text),
+            );
     }
     let rows = n.div_ceil(per);
-    col().key("airing/grid-scroll").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-        col().key("airing/grid").growth(GrowthSpec::default()).virtual_rows(
-            rows,
-            CARD_ROW_H,
-            move |s: &State, r| s.airing.cards.get(r * per).map_or_else(|| format!("gone-{r}"), |c| format!("cards/{}", s.airing.shown()[c.show].id)).into(),
-            move |s: &State, r| {
-                let mut line = row().px(theme::PAGE_PAD).pb(CARD_GAP).gap(CARD_GAP).items_start();
-                for c in s.airing.cards.iter().skip(r * per).take(per) {
-                    line = line.child(card(s, c));
-                }
-                line
-            },
-        ),
-    )
+    col()
+        .key("airing/grid-scroll")
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .key("airing/grid")
+                .growth(GrowthSpec::default())
+                .virtual_rows(
+                    rows,
+                    CARD_ROW_H,
+                    move |s: &State, r| {
+                        s.airing
+                            .cards
+                            .get(r * per)
+                            .map_or_else(
+                                || format!("gone-{r}"),
+                                |c| format!("cards/{}", s.airing.shown()[c.show].id),
+                            )
+                            .into()
+                    },
+                    move |s: &State, r| {
+                        let mut line = row()
+                            .px(theme::PAGE_PAD)
+                            .pb(CARD_GAP)
+                            .gap(CARD_GAP)
+                            .items_start();
+                        for c in s.airing.cards.iter().skip(r * per).take(per) {
+                            line = line.child(card(s, c));
+                        }
+                        line
+                    },
+                ),
+        )
 }
 
 fn card(s: &State, c: &Card) -> El {
@@ -1439,26 +1981,61 @@ fn card(s: &State, c: &Card) -> El {
     let id = a.id;
     let title = s.airing_title(c.show);
     let tile = cover(id, title, CARD_W, CARD_COVER_H, 24.0).radius(theme::R_MD);
-    let mut art = match s.covers.get(id, a.cover_url.as_deref(), CARD_W, CARD_COVER_H) {
-        Some(img) => tile.child(el().absolute(0.0, 0.0).size(CARD_W, CARD_COVER_H).radius(theme::R_MD).pixels(img.pixels())),
+    let mut art = match s
+        .covers
+        .get(id, a.cover_url.as_deref(), CARD_W, CARD_COVER_H)
+    {
+        Some(img) => tile.child(
+            el().absolute(0.0, 0.0)
+                .size(CARD_W, CARD_COVER_H)
+                .radius(theme::R_MD)
+                .pixels(img.pixels()),
+        ),
         None => tile,
     };
     if let Some(st) = c.status {
-        art = art.child(el().absolute(6.0, 6.0).child(tag_tinted(st.label(), PAL.text, PAL.bg.alpha(0.85))));
+        art = art.child(el().absolute(6.0, 6.0).child(tag_tinted(
+            st.label(),
+            PAL.text,
+            PAL.bg.alpha(0.85),
+        )));
     }
     let when = if c.when.is_empty() {
         el()
     } else {
-        text(c.when.clone()).key("when").font(TextStyle::new(11.0, if c.lit { 600.0 } else { 400.0 }).features("'tnum' 1")).color(if c.lit { PAL.accent_hi } else { PAL.dim }).max_lines(2).wrap()
+        text(c.when.clone())
+            .key("when")
+            .font(TextStyle::new(11.0, if c.lit { 600.0 } else { 400.0 }).features("'tnum' 1"))
+            .color(if c.lit { PAL.accent_hi } else { PAL.dim })
+            .max_lines(2)
+            .wrap()
     };
     let mut words = col()
         .h(CARD_TEXT_H)
         .gap(3.0)
-        .child(text(title.to_string()).font(TextStyle::new(12.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).max_lines(2).wrap())
-        .child(text(c.meta.clone()).font(theme::SMALL).color(PAL.faint).truncate())
+        .child(
+            text(title.to_string())
+                .font(TextStyle::new(12.0, 500.0))
+                .color(PAL.text)
+                .group_color(PAL.accent_hi)
+                .max_lines(2)
+                .wrap(),
+        )
+        .child(
+            text(c.meta.clone())
+                .font(theme::SMALL)
+                .color(PAL.faint)
+                .truncate(),
+        )
         .child(when);
     if let Some((w, n)) = &c.to_watch {
-        words = words.child(text(w.clone()).key("to-watch").font(TextStyle::new(11.0, if *n > 0 { 600.0 } else { 400.0 }).features("'tnum' 1")).color(if *n > 0 { PAL.text } else { PAL.faint }).truncate());
+        words = words.child(
+            text(w.clone())
+                .key("to-watch")
+                .font(TextStyle::new(11.0, if *n > 0 { 600.0 } else { 400.0 }).features("'tnum' 1"))
+                .color(if *n > 0 { PAL.text } else { PAL.faint })
+                .truncate(),
+        );
     }
     let open = col()
         .key("open")
@@ -1473,14 +2050,31 @@ fn card(s: &State, c: &Card) -> El {
         })
         .child(art)
         .child(words);
-    let mut card = col().key(format!("card/{id}")).w(CARD_W).gap(4.0).child(open);
+    let mut card = col()
+        .key(format!("card/{id}"))
+        .w(CARD_W)
+        .gap(4.0)
+        .child(open);
     if c.status.is_none() && s.has_list() {
         card = card.child(
             row()
                 .w_full()
                 .gap(4.0)
-                .child(small_add(format!("airing/add/{id}"), "+ Watching", id, Status::Watching).grow(1.0))
-                .child(small_add(format!("airing/plan/{id}"), "+ Plan", id, Status::PlanToWatch)),
+                .child(
+                    small_add(
+                        format!("airing/add/{id}"),
+                        "+ Watching",
+                        id,
+                        Status::Watching,
+                    )
+                    .grow(1.0),
+                )
+                .child(small_add(
+                    format!("airing/plan/{id}"),
+                    "+ Plan",
+                    id,
+                    Status::PlanToWatch,
+                )),
         );
     }
     card
@@ -1504,7 +2098,11 @@ fn small_add(key: String, label: &str, id: u32, status: Status) -> El {
             tx.instant();
             s.airing_add(id, status);
         })
-        .child(text(label.to_string()).font(TextStyle::new(11.0, 600.0)).color(PAL.text))
+        .child(
+            text(label.to_string())
+                .font(TextStyle::new(11.0, 600.0))
+                .color(PAL.text),
+        )
 }
 
 // ------------------------------------------------------------------------------ fake data
@@ -1514,9 +2112,23 @@ fn small_add(key: String, label: &str, id: u32, status: Status) -> El {
 /// entries (ids 0, 1, 3, 6, 10) are here too, with slots that match their "Ep 7 on Sat" notes.
 pub fn fake_season() -> (Season, Vec<SeasonAnime>) {
     use kotora_core::airing::Broadcast;
-    let b = |day: u8, h: u16, m: u16| Some(Broadcast { day, minute: Some(h * 60 + m) });
+    let b = |day: u8, h: u16, m: u16| {
+        Some(Broadcast {
+            day,
+            minute: Some(h * 60 + m),
+        })
+    };
     #[allow(clippy::too_many_arguments)]
-    let a = |id: u32, title: &str, en: Option<&str>, format: &str, eps: Option<u32>, air: &str, start: &str, bc: Option<Broadcast>, members: u32, mean: Option<f32>| SeasonAnime {
+    let a = |id: u32,
+             title: &str,
+             en: Option<&str>,
+             format: &str,
+             eps: Option<u32>,
+             air: &str,
+             start: &str,
+             bc: Option<Broadcast>,
+             members: u32,
+             mean: Option<f32>| SeasonAnime {
         id,
         title: title.into(),
         title_en: en.map(Into::into),
@@ -1533,34 +2145,318 @@ pub fn fake_season() -> (Season, Vec<SeasonAnime>) {
     let airing = "currently_airing";
     let shows = vec![
         // On the fake list (the Watching page's airing rows).
-        a(0, "Lanterns of Kirigaoka", Some("The Lanterns on Kirigaoka Hill"), "tv", Some(12), airing, "2026-12-05", b(5, 23, 30), 412_000, Some(8.44)),
-        a(1, "Starfall Delivery Service", Some("Starfall Express"), "tv", Some(13), airing, "2026-11-25", b(2, 22, 0), 268_000, Some(8.1)),
-        a(3, "Slow Life on Hoshizora Island", Some("Island Under the Stars"), "tv", Some(12), airing, "2026-12-27", b(6, 1, 0), 120_500, Some(7.6)),
-        a(6, "Mecha Bento Club", None, "tv", Some(10), airing, "2026-12-18", b(4, 23, 0), 98_000, Some(7.2)),
-        a(10, "Tidepool Radio", None, "tv", Some(12), airing, "2026-11-17", b(1, 0, 30), 64_000, Some(6.9)),
+        a(
+            0,
+            "Lanterns of Kirigaoka",
+            Some("The Lanterns on Kirigaoka Hill"),
+            "tv",
+            Some(12),
+            airing,
+            "2026-12-05",
+            b(5, 23, 30),
+            412_000,
+            Some(8.44),
+        ),
+        a(
+            1,
+            "Starfall Delivery Service",
+            Some("Starfall Express"),
+            "tv",
+            Some(13),
+            airing,
+            "2026-11-25",
+            b(2, 22, 0),
+            268_000,
+            Some(8.1),
+        ),
+        a(
+            3,
+            "Slow Life on Hoshizora Island",
+            Some("Island Under the Stars"),
+            "tv",
+            Some(12),
+            airing,
+            "2026-12-27",
+            b(6, 1, 0),
+            120_500,
+            Some(7.6),
+        ),
+        a(
+            6,
+            "Mecha Bento Club",
+            None,
+            "tv",
+            Some(10),
+            airing,
+            "2026-12-18",
+            b(4, 23, 0),
+            98_000,
+            Some(7.2),
+        ),
+        a(
+            10,
+            "Tidepool Radio",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2026-11-17",
+            b(1, 0, 30),
+            64_000,
+            Some(6.9),
+        ),
         // Winter 2027, not on the list.
-        a(9301, "Moonlit Harbor Academy", Some("Moonlit Harbor"), "tv", Some(12), airing, "2027-01-08", b(4, 0, 0), 350_000, Some(8.31)),
-        a(9302, "Crimson Signal", None, "tv", Some(24), airing, "2027-01-10", b(6, 17, 0), 301_000, Some(8.02)),
-        a(9303, "Quiet Orchard Detective Agency", None, "tv", Some(12), airing, "2027-01-07", b(3, 23, 30), 233_000, Some(7.88)),
-        a(9304, "Electric Lighthouse", Some("The Electric Lighthouse"), "ona", Some(10), airing, "2027-01-13", b(2, 18, 0), 187_000, Some(7.5)),
-        a(9305, "Silver Comet Festival", None, "movie", Some(1), "not_yet_aired", "2027-02-19", None, 150_000, None),
-        a(9306, "Hidden Garden Workshop", None, "tv", Some(13), airing, "2027-01-11", b(0, 21, 0), 142_000, Some(7.41)),
-        a(9307, "Northern Station Rebirth", None, "tv", Some(12), airing, "2027-01-09", b(5, 1, 30), 131_000, Some(7.33)),
-        a(9308, "Velvet Market Zero", None, "ona", None, airing, "2027-01-05", Some(Broadcast { day: 1, minute: None }), 99_000, Some(6.95)),
-        a(9309, "Gentle Valley Side Stories", None, "tv", Some(12), airing, "2027-01-06", b(2, 0, 0), 87_000, Some(7.05)),
-        a(9310, "Endless Bridge", None, "tv", Some(12), "not_yet_aired", "2027-01-24", b(6, 22, 0), 82_000, None),
-        a(9311, "Winter Theatre", None, "tv", Some(12), airing, "2027-01-08", b(4, 23, 45), 76_000, Some(7.18)),
-        a(9312, "Bright Archive", None, "ona", Some(8), airing, "2027-01-15", None, 52_000, None),
-        a(9313, "Lost Academy Final Act", None, "tv", Some(12), airing, "2027-01-04", b(0, 23, 0), 49_000, Some(6.81)),
-        a(9314, "Hollow Garden", None, "movie", Some(1), "finished_airing", "2027-01-01", None, 47_000, Some(7.9)),
-        a(9315, "Paper Lantern Market", None, "tv", Some(12), airing, "2027-01-12", b(1, 23, 0), 41_000, Some(7.02)),
-        a(9316, "Second Signal", None, "tv", Some(12), airing, "2027-01-09", b(5, 9, 0), 36_000, Some(6.6)),
-        a(9317, "Electric Valley", None, "ona", Some(12), airing, "2027-01-14", b(3, 12, 0), 33_000, Some(6.77)),
-        a(9318, "Moonlit Workshop", None, "tv", Some(24), airing, "2027-01-03", b(6, 9, 30), 30_000, Some(6.4)),
-        a(9319, "Quiet Comet", None, "tv", Some(12), airing, "2027-01-10", b(6, 23, 0), 28_000, Some(6.9)),
-        a(9320, "Northern Lantern", None, "tv", Some(12), airing, "2027-01-15", b(4, 12, 0), 21_000, None),
+        a(
+            9301,
+            "Moonlit Harbor Academy",
+            Some("Moonlit Harbor"),
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-08",
+            b(4, 0, 0),
+            350_000,
+            Some(8.31),
+        ),
+        a(
+            9302,
+            "Crimson Signal",
+            None,
+            "tv",
+            Some(24),
+            airing,
+            "2027-01-10",
+            b(6, 17, 0),
+            301_000,
+            Some(8.02),
+        ),
+        a(
+            9303,
+            "Quiet Orchard Detective Agency",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-07",
+            b(3, 23, 30),
+            233_000,
+            Some(7.88),
+        ),
+        a(
+            9304,
+            "Electric Lighthouse",
+            Some("The Electric Lighthouse"),
+            "ona",
+            Some(10),
+            airing,
+            "2027-01-13",
+            b(2, 18, 0),
+            187_000,
+            Some(7.5),
+        ),
+        a(
+            9305,
+            "Silver Comet Festival",
+            None,
+            "movie",
+            Some(1),
+            "not_yet_aired",
+            "2027-02-19",
+            None,
+            150_000,
+            None,
+        ),
+        a(
+            9306,
+            "Hidden Garden Workshop",
+            None,
+            "tv",
+            Some(13),
+            airing,
+            "2027-01-11",
+            b(0, 21, 0),
+            142_000,
+            Some(7.41),
+        ),
+        a(
+            9307,
+            "Northern Station Rebirth",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-09",
+            b(5, 1, 30),
+            131_000,
+            Some(7.33),
+        ),
+        a(
+            9308,
+            "Velvet Market Zero",
+            None,
+            "ona",
+            None,
+            airing,
+            "2027-01-05",
+            Some(Broadcast {
+                day: 1,
+                minute: None,
+            }),
+            99_000,
+            Some(6.95),
+        ),
+        a(
+            9309,
+            "Gentle Valley Side Stories",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-06",
+            b(2, 0, 0),
+            87_000,
+            Some(7.05),
+        ),
+        a(
+            9310,
+            "Endless Bridge",
+            None,
+            "tv",
+            Some(12),
+            "not_yet_aired",
+            "2027-01-24",
+            b(6, 22, 0),
+            82_000,
+            None,
+        ),
+        a(
+            9311,
+            "Winter Theatre",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-08",
+            b(4, 23, 45),
+            76_000,
+            Some(7.18),
+        ),
+        a(
+            9312,
+            "Bright Archive",
+            None,
+            "ona",
+            Some(8),
+            airing,
+            "2027-01-15",
+            None,
+            52_000,
+            None,
+        ),
+        a(
+            9313,
+            "Lost Academy Final Act",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-04",
+            b(0, 23, 0),
+            49_000,
+            Some(6.81),
+        ),
+        a(
+            9314,
+            "Hollow Garden",
+            None,
+            "movie",
+            Some(1),
+            "finished_airing",
+            "2027-01-01",
+            None,
+            47_000,
+            Some(7.9),
+        ),
+        a(
+            9315,
+            "Paper Lantern Market",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-12",
+            b(1, 23, 0),
+            41_000,
+            Some(7.02),
+        ),
+        a(
+            9316,
+            "Second Signal",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-09",
+            b(5, 9, 0),
+            36_000,
+            Some(6.6),
+        ),
+        a(
+            9317,
+            "Electric Valley",
+            None,
+            "ona",
+            Some(12),
+            airing,
+            "2027-01-14",
+            b(3, 12, 0),
+            33_000,
+            Some(6.77),
+        ),
+        a(
+            9318,
+            "Moonlit Workshop",
+            None,
+            "tv",
+            Some(24),
+            airing,
+            "2027-01-03",
+            b(6, 9, 30),
+            30_000,
+            Some(6.4),
+        ),
+        a(
+            9319,
+            "Quiet Comet",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-10",
+            b(6, 23, 0),
+            28_000,
+            Some(6.9),
+        ),
+        a(
+            9320,
+            "Northern Lantern",
+            None,
+            "tv",
+            Some(12),
+            airing,
+            "2027-01-15",
+            b(4, 12, 0),
+            21_000,
+            None,
+        ),
     ];
-    (Season { year: 2027, quarter: 0 }, shows)
+    (
+        Season {
+            year: 2027,
+            quarter: 0,
+        },
+        shows,
+    )
 }
 
 /// A made-up other season for the scenes and tests: `season` is a quarter of the fake year, its
@@ -1843,17 +2739,28 @@ mod tests {
         const FRI: i64 = 1_799_971_200; // Friday 2027-01-15 00:00 UTC
         const H: i64 = 3600;
         let at = |tz: i64, t: i64, now: i64| {
-            let a = Airing { tz: Some(tz), ..Airing::default() };
+            let a = Airing {
+                tz: Some(tz),
+                ..Airing::default()
+            };
             a.when(t, now)
         };
         assert_eq!(Clock::at(FRI, 0).weekday, 4);
         // UTC+1, now Friday 23:59.
         let now = FRI + 23 * H - 60;
         assert_eq!(at(H, now, now), "Today 23:59");
-        assert_eq!(at(H, now + 120, now), "Tomorrow 00:01", "two minutes on is the next day");
+        assert_eq!(
+            at(H, now + 120, now),
+            "Tomorrow 00:01",
+            "two minutes on is the next day"
+        );
         assert_eq!(at(H, now + 86_400, now), "Tomorrow 23:59");
         assert_eq!(at(H, now + 86_400 + 60, now), "Sun 00:00");
-        assert_eq!(at(H, now + 6 * 86_400 + 60, now), "Fri 00:00", "a week on: today's weekday");
+        assert_eq!(
+            at(H, now + 6 * 86_400 + 60, now),
+            "Fri 00:00",
+            "a week on: today's weekday"
+        );
         // Just after midnight: late tonight is still today.
         let now = FRI + 23 * H + 60; // Saturday 00:01 at UTC+1
         assert_eq!(at(H, now + 29 * 60, now), "Today 00:30");
@@ -1861,14 +2768,25 @@ mod tests {
         // The same two instants (22:59 and 23:01 UTC on Friday) in other zones.
         let (now, t) = (FRI + 23 * H - 60, FRI + 23 * H + 60);
         assert_eq!(at(0, t, now), "Today 23:01");
-        assert_eq!(at(9 * H, t, now), "Today 08:01", "Japan: both Saturday morning");
+        assert_eq!(
+            at(9 * H, t, now),
+            "Today 08:01",
+            "Japan: both Saturday morning"
+        );
         assert_eq!(at(-5 * H, t, now), "Today 18:01");
         // West of UTC, midnight falls at 05:00 UTC.
         let (now, t) = (FRI + 5 * H - 60, FRI + 5 * H + 60);
-        assert_eq!(at(-5 * H, t, now), "Tomorrow 00:01", "Thursday 23:59 -> Friday 00:01");
+        assert_eq!(
+            at(-5 * H, t, now),
+            "Tomorrow 00:01",
+            "Thursday 23:59 -> Friday 00:01"
+        );
         assert_eq!(at(0, t, now), "Today 05:01");
         // Half-hour zones (India, UTC+5:30).
-        assert_eq!(at(5 * H + 1800, FRI + 18 * H + 1800 + 60, FRI + 18 * H), "Tomorrow 00:01");
+        assert_eq!(
+            at(5 * H + 1800, FRI + 18 * H + 1800 + 60, FRI + 18 * H),
+            "Tomorrow 00:01"
+        );
     }
 
     #[test]
@@ -1887,33 +2805,72 @@ mod tests {
         assert_eq!((h.episode, h.time.as_str()), (4, "17:00"));
         // Mecha Bento Club (Fridays 23:00 JST, progress 4): episode 5 today at 15:00, in 6 h.
         let m = a.days[0].iter().find(|x| a.shows[x.show].id == 6).unwrap();
-        assert_eq!((m.episode, m.time.as_str(), m.note.as_str()), (5, "15:00", "in 6 h"));
+        assert_eq!(
+            (m.episode, m.time.as_str(), m.note.as_str()),
+            (5, "15:00", "in 6 h")
+        );
         // Earlier today: aired. Not on the list: no countdown.
-        let early = a.days[0].iter().find(|x| a.shows[x.show].id == 9320).unwrap();
-        assert_eq!((early.time.as_str(), early.note.as_str(), early.mine), ("04:00", "aired", false));
-        let later = a.days[2].iter().find(|x| a.shows[x.show].id == 9302).unwrap();
-        assert_eq!((later.time.as_str(), later.note.as_str(), later.mine), ("09:00", "", false));
+        let early = a.days[0]
+            .iter()
+            .find(|x| a.shows[x.show].id == 9320)
+            .unwrap();
+        assert_eq!(
+            (early.time.as_str(), early.note.as_str(), early.mine),
+            ("04:00", "aired", false)
+        );
+        let later = a.days[2]
+            .iter()
+            .find(|x| a.shows[x.show].id == 9302)
+            .unwrap();
+        assert_eq!(
+            (later.time.as_str(), later.note.as_str(), later.mine),
+            ("09:00", "", false)
+        );
         // Tidepool Radio, Tuesdays 00:30 JST: Monday 16:30 in Europe, episode 10 (9 aired).
         let mon = a.days[3].iter().find(|x| a.shows[x.show].id == 10).unwrap();
-        assert_eq!((mon.episode, mon.time.as_str(), mon.note.as_str()), (10, "16:30", "in 3 d 7 h"));
+        assert_eq!(
+            (mon.episode, mon.time.as_str(), mon.note.as_str()),
+            (10, "16:30", "in 3 d 7 h")
+        );
         // Yesterday's slots are next week's: Moonlit Harbor (Thursdays 16:00 CET) is day 6, ep 3.
-        let thu = a.days[6].iter().find(|x| a.shows[x.show].id == 9301).unwrap();
+        let thu = a.days[6]
+            .iter()
+            .find(|x| a.shows[x.show].id == 9301)
+            .unwrap();
         assert_eq!(thu.episode, 3);
         // Days are in time order.
         for d in &a.days {
             assert!(d.windows(2).all(|w| w[0].at <= w[1].at));
         }
         // No slot time: listed apart, with why.
-        assert!(a.untimed.iter().any(|(i, why)| a.shows[*i].id == 9308 && why.contains("Tuesdays")));
-        assert!(a.untimed.iter().any(|(i, why)| a.shows[*i].id == 9312 && why.contains("No broadcast")));
-        assert!(!a.untimed.iter().any(|(i, _)| a.shows[*i].id == 9305), "not yet aired: not in the week");
+        assert!(
+            a.untimed
+                .iter()
+                .any(|(i, why)| a.shows[*i].id == 9308 && why.contains("Tuesdays"))
+        );
+        assert!(
+            a.untimed
+                .iter()
+                .any(|(i, why)| a.shows[*i].id == 9312 && why.contains("No broadcast"))
+        );
+        assert!(
+            !a.untimed.iter().any(|(i, _)| a.shows[*i].id == 9305),
+            "not yet aired: not in the week"
+        );
     }
 
     #[test]
     fn progress_ahead_moves_the_week_forward() {
         let mut s = page();
         // Two episodes ahead of the estimate on Lanterns: episode 9 is next, on Saturday.
-        s.edit(0, kotora_core::Change { progress: Some(8), ..Default::default() }).unwrap();
+        s.edit(
+            0,
+            kotora_core::Change {
+                progress: Some(8),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         s.airing_rebuild();
         let a = &s.airing;
         let l = a.days[1].iter().find(|x| a.shows[x.show].id == 0).unwrap();
@@ -1926,11 +2883,23 @@ mod tests {
         let all = s.airing.cards.len();
         assert_eq!(all, 25);
         s.airing_kind(Kind::Movie);
-        assert!(s.airing.cards.iter().all(|c| s.airing.shows[c.show].format == "movie"));
+        assert!(
+            s.airing
+                .cards
+                .iter()
+                .all(|c| s.airing.shows[c.show].format == "movie")
+        );
         assert_eq!(s.airing.cards.len(), 2);
         s.airing_kind(Kind::All);
         s.airing_mine(Mine::On);
-        assert_eq!(s.airing.cards.iter().map(|c| s.airing.shows[c.show].id).collect::<Vec<_>>(), [0, 1, 3, 6, 10]);
+        assert_eq!(
+            s.airing
+                .cards
+                .iter()
+                .map(|c| s.airing.shows[c.show].id)
+                .collect::<Vec<_>>(),
+            [0, 1, 3, 6, 10]
+        );
         assert!(s.airing.days.iter().flatten().all(|x| x.mine));
         s.airing_mine(Mine::Off);
         assert_eq!(s.airing.cards.len(), all - 5);
@@ -1938,11 +2907,32 @@ mod tests {
         // Most members first; the lines.
         assert_eq!(s.airing.shows[s.airing.cards[0].show].id, 0);
         let c = &s.airing.cards[0];
-        assert_eq!((c.meta.as_str(), c.when.as_str(), c.status, c.lit), ("TV \u{b7} 12 eps \u{b7} \u{2605} 8.44", "Sat 15:30 \u{b7} ep 7 in 1 d 6 h", Some(Status::Watching), true));
-        let movie = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == 9305).unwrap();
+        assert_eq!(
+            (c.meta.as_str(), c.when.as_str(), c.status, c.lit),
+            (
+                "TV \u{b7} 12 eps \u{b7} \u{2605} 8.44",
+                "Sat 15:30 \u{b7} ep 7 in 1 d 6 h",
+                Some(Status::Watching),
+                true
+            )
+        );
+        let movie = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == 9305)
+            .unwrap();
         assert_eq!(movie.when, "Starts Feb 19, 2027");
-        let other = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == 9302).unwrap();
-        assert_eq!((other.when.as_str(), other.lit), ("Sun 09:00 \u{b7} ep 2", false));
+        let other = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == 9302)
+            .unwrap();
+        assert_eq!(
+            (other.when.as_str(), other.lit),
+            ("Sun 09:00 \u{b7} ep 2", false)
+        );
     }
 
     #[test]
@@ -1951,9 +2941,17 @@ mod tests {
         let queued = s.queue;
         s.airing_add(9302, Status::PlanToWatch);
         let e = s.entries.iter().find(|e| e.id == 9302).unwrap();
-        assert_eq!((e.status, e.waiting), (Status::PlanToWatch, Some("Waiting to sync")));
+        assert_eq!(
+            (e.status, e.waiting),
+            (Status::PlanToWatch, Some("Waiting to sync"))
+        );
         assert!(s.ops.len() >= queued as usize);
-        let c = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == 9302).unwrap();
+        let c = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == 9302)
+            .unwrap();
         assert_eq!(c.status, Some(Status::PlanToWatch));
         s.airing_details(9302);
         assert_eq!(s.page, Page::Details);
@@ -1964,32 +2962,88 @@ mod tests {
     fn kot_airing_lists_the_week_for_the_list() {
         let s = page();
         let v = s.ctl_airing();
-        assert_eq!(v.iter().map(|x| (x.title.as_str(), x.episode)).collect::<Vec<_>>()[..2], [("Mecha Bento Club", 5), ("Lanterns of Kirigaoka", 7)]);
+        assert_eq!(
+            v.iter()
+                .map(|x| (x.title.as_str(), x.episode))
+                .collect::<Vec<_>>()[..2],
+            [("Mecha Bento Club", 5), ("Lanterns of Kirigaoka", 7)]
+        );
         assert!(v.iter().all(|x| x.at > FAKE && x.at - FAKE <= WEEK));
         // Tidepool Radio: episode 9 aired Monday night, progress 8: one behind.
-        assert_eq!(v.iter().find(|x| x.title == "Tidepool Radio").map(|x| (x.episode, x.behind, x.estimate)), Some((10, 1, true)), "MyAnimeList: an estimate");
+        assert_eq!(
+            v.iter()
+                .find(|x| x.title == "Tidepool Radio")
+                .map(|x| (x.episode, x.behind, x.estimate)),
+            Some((10, 1, true)),
+            "MyAnimeList: an estimate"
+        );
     }
 
     #[test]
     fn the_week_and_cards_say_what_is_left_to_watch() {
         let mut s = page();
-        let tide = s.entries.iter().find(|e| e.title == "Tidepool Radio").unwrap().id;
-        let slot = s.airing.days.iter().flatten().find(|sl| s.airing.shows[sl.show].id == tide).cloned().unwrap();
-        assert_eq!(slot.to_watch.as_deref(), Some("~1 to watch"), "MyAnimeList's estimate is marked");
-        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).cloned().unwrap();
+        let tide = s
+            .entries
+            .iter()
+            .find(|e| e.title == "Tidepool Radio")
+            .unwrap()
+            .id;
+        let slot = s
+            .airing
+            .days
+            .iter()
+            .flatten()
+            .find(|sl| s.airing.shows[sl.show].id == tide)
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            slot.to_watch.as_deref(),
+            Some("~1 to watch"),
+            "MyAnimeList's estimate is marked"
+        );
+        let card = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == tide)
+            .cloned()
+            .unwrap();
         assert_eq!(card.to_watch, Some(("~1 to watch".to_string(), 1)));
         // Plan to watch and shows off the list: nothing.
-        assert!(s.airing.cards.iter().filter(|c| c.status.is_none() || c.status == Some(Status::PlanToWatch)).all(|c| c.to_watch.is_none()));
+        assert!(
+            s.airing
+                .cards
+                .iter()
+                .filter(|c| c.status.is_none() || c.status == Some(Status::PlanToWatch))
+                .all(|c| c.to_watch.is_none())
+        );
         // On hold counts too.
         let e = s.entries.iter_mut().find(|e| e.id == tide).unwrap();
         e.status = Status::OnHold;
         s.airing_rebuild();
-        assert!(s.airing.cards.iter().any(|c| s.airing.shows[c.show].id == tide && c.to_watch.is_some()));
+        assert!(
+            s.airing
+                .cards
+                .iter()
+                .any(|c| s.airing.shows[c.show].id == tide && c.to_watch.is_some())
+        );
         // Caught up after +1.
-        s.entries.iter_mut().find(|e| e.id == tide).unwrap().progress += 1;
+        s.entries
+            .iter_mut()
+            .find(|e| e.id == tide)
+            .unwrap()
+            .progress += 1;
         s.airing_rebuild();
-        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).unwrap();
-        assert_eq!(card.to_watch.as_ref().map(|w| w.0.as_str()), Some("Caught up"));
+        let card = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == tide)
+            .unwrap();
+        assert_eq!(
+            card.to_watch.as_ref().map(|w| w.0.as_str()),
+            Some("Caught up")
+        );
     }
 
     #[test]
@@ -1997,17 +3051,34 @@ mod tests {
         let mut s = page();
         s.airing_view(View::Season);
         // Two shows behind by different amounts.
-        let ids: Vec<u32> = s.entries.iter().filter(|e| e.status == Status::Watching && s.airing.shows.iter().any(|x| x.id == e.id)).map(|e| e.id).take(2).collect();
+        let ids: Vec<u32> = s
+            .entries
+            .iter()
+            .filter(|e| e.status == Status::Watching && s.airing.shows.iter().any(|x| x.id == e.id))
+            .map(|e| e.id)
+            .take(2)
+            .collect();
         assert_eq!(ids.len(), 2);
         for (k, id) in ids.iter().enumerate() {
             s.entries.iter_mut().find(|e| e.id == *id).unwrap().progress = k as u32;
         }
         s.airing_order(Order::ToWatch);
         let first = &s.airing.cards[0];
-        let max = s.airing.cards.iter().filter_map(|c| c.to_watch.as_ref().map(|w| w.1)).max().unwrap();
+        let max = s
+            .airing
+            .cards
+            .iter()
+            .filter_map(|c| c.to_watch.as_ref().map(|w| w.1))
+            .max()
+            .unwrap();
         assert_eq!(first.to_watch.as_ref().map(|w| w.1), Some(max));
         // Shows not watched come after every watched one.
-        let pos = s.airing.cards.iter().position(|c| c.to_watch.is_none()).unwrap();
+        let pos = s
+            .airing
+            .cards
+            .iter()
+            .position(|c| c.to_watch.is_none())
+            .unwrap();
         assert!(s.airing.cards[pos..].iter().all(|c| c.to_watch.is_none()));
         s.airing_order(Order::Popular);
         assert_ne!(s.airing.cards[0].show, usize::MAX);
@@ -2016,12 +3087,32 @@ mod tests {
     #[test]
     fn the_mirrors_anilist_copy_makes_it_exact_on_myanimelist() {
         let mut s = page();
-        let tide = s.entries.iter().find(|e| e.title == "Tidepool Radio").unwrap().id;
+        let tide = s
+            .entries
+            .iter()
+            .find(|e| e.title == "Tidepool Radio")
+            .unwrap()
+            .id;
         // AniList knows episode 12 airs tomorrow: 11 out (more than the estimate's 9).
-        s.mirror.next.insert(tide, kotora_core::airing::NextAiring { episode: 12, at: FAKE + 86_400 });
+        s.mirror.next.insert(
+            tide,
+            kotora_core::airing::NextAiring {
+                episode: 12,
+                at: FAKE + 86_400,
+            },
+        );
         s.airing_rebuild();
-        let card = s.airing.cards.iter().find(|c| s.airing.shows[c.show].id == tide).unwrap();
-        assert_eq!(card.to_watch, Some(("3 to watch".to_string(), 3)), "exact: no ~");
+        let card = s
+            .airing
+            .cards
+            .iter()
+            .find(|c| s.airing.shows[c.show].id == tide)
+            .unwrap();
+        assert_eq!(
+            card.to_watch,
+            Some(("3 to watch".to_string(), 3)),
+            "exact: no ~"
+        );
         let e = s.entries.iter().find(|e| e.id == tide).unwrap();
         assert_eq!(s.to_watch(e).map(|w| (w.out, w.exact)), Some((11, true)));
     }
@@ -2428,7 +3519,15 @@ mod fetch_tests {
     /// 100 anime a page: ids are the season's index, the page and the place, so no two collide.
     fn page_of(season: Season, page: u32, last: bool) -> (Vec<SeasonAnime>, bool) {
         let base = (season.index() as u32 % 100) * 10_000 + page * 100;
-        let v = (0..100).map(|i| SeasonAnime { id: base + i, title: format!("S{base} {i}"), members: Some(1_000_000 - (page * 100 + i)), air_status: "currently_airing".into(), ..Default::default() }).collect();
+        let v = (0..100)
+            .map(|i| SeasonAnime {
+                id: base + i,
+                title: format!("S{base} {i}"),
+                members: Some(1_000_000 - (page * 100 + i)),
+                air_status: "currently_airing".into(),
+                ..Default::default()
+            })
+            .collect();
         (v, !last)
     }
 
@@ -2441,7 +3540,11 @@ mod fetch_tests {
 
     impl Slow {
         fn new(latency_ms: u64) -> Slow {
-            Slow { latency: Duration::from_millis(latency_ms), calls: Cell::new(0), asked: RefCell::new(Vec::new()) }
+            Slow {
+                latency: Duration::from_millis(latency_ms),
+                calls: Cell::new(0),
+                asked: RefCell::new(Vec::new()),
+            }
         }
 
         fn get(&self, se: Season, page: u32) -> Result<(Vec<SeasonAnime>, bool), ServiceError> {
@@ -2465,10 +3568,22 @@ mod fetch_tests {
     fn run_current_with(src: &Slow, store: &Store, force: bool) -> Vec<Seen> {
         let t0 = Instant::now();
         let seen = RefCell::new(Vec::new());
-        let run = Run { store: Some(store), now: NOW, force, online: true };
+        let run = Run {
+            store: Some(store),
+            now: NOW,
+            force,
+            online: true,
+        };
         let mut get = |se, pg| src.get(se, pg);
         run_current(&run, &[], Some(&mut get), &|| true, &mut |a: Answer| {
-            seen.borrow_mut().push(Seen { calls: src.calls.get(), at: t0.elapsed(), shows: a.shows.len(), done: a.done, fetched: a.fetched_at, error: a.error });
+            seen.borrow_mut().push(Seen {
+                calls: src.calls.get(),
+                at: t0.elapsed(),
+                shows: a.shows.len(),
+                done: a.done,
+                fetched: a.fetched_at,
+                error: a.error,
+            });
         });
         seen.into_inner()
     }
@@ -2485,20 +3600,45 @@ mod fetch_tests {
         // The first rows: after page 1 of the current season, nothing else asked yet.
         let first = seen.first().expect("an answer");
         assert_eq!((first.calls, first.shows, first.done), (1, 100, false));
-        assert!(first.at < src.latency * 2, "page 1 is shown before page 2 is in ({:?})", first.at);
+        assert!(
+            first.at < src.latency * 2,
+            "page 1 is shown before page 2 is in ({:?})",
+            first.at
+        );
         // Then 200, 300 and the whole 400, each as its page comes in.
         let grown: Vec<(u32, usize)> = seen.iter().map(|x| (x.calls, x.shows)).collect();
         assert_eq!(grown[..4], [(1, 100), (2, 200), (3, 300), (4, 400)]);
         // The previous season comes after the current one is whole: only its airing shows merge in.
         let asked = src.asked.borrow();
-        assert_eq!(asked[..4].iter().map(|x| x.0).collect::<Vec<_>>(), [cur(); 4]);
-        assert_eq!(asked[4..].iter().map(|x| x.0).collect::<Vec<_>>(), [cur().previous(); 4]);
-        assert!(seen.iter().rev().skip(1).all(|x| !x.done), "only the last answer is final");
+        assert_eq!(
+            asked[..4].iter().map(|x| x.0).collect::<Vec<_>>(),
+            [cur(); 4]
+        );
+        assert_eq!(
+            asked[4..].iter().map(|x| x.0).collect::<Vec<_>>(),
+            [cur().previous(); 4]
+        );
+        assert!(
+            seen.iter().rev().skip(1).all(|x| !x.done),
+            "only the last answer is final"
+        );
         let last = seen.last().unwrap();
         assert!(last.done && last.error.is_none() && last.shows == 800);
         // Both seasons are saved whole.
-        assert_eq!(store.season("mal", cur()).unwrap().map(|(v, at)| (v.len(), at)), Some((400, NOW)));
-        assert_eq!(store.season("mal", cur().previous()).unwrap().map(|(v, _)| v.len()), Some(400));
+        assert_eq!(
+            store
+                .season("mal", cur())
+                .unwrap()
+                .map(|(v, at)| (v.len(), at)),
+            Some((400, NOW))
+        );
+        assert_eq!(
+            store
+                .season("mal", cur().previous())
+                .unwrap()
+                .map(|(v, _)| v.len()),
+            Some(400)
+        );
     }
 
     #[test]
@@ -2511,15 +3651,28 @@ mod fetch_tests {
         let src = Slow::new(40);
         let seen = run_current_with(&src, &store, false);
         let first = &seen[0];
-        assert_eq!((first.calls, first.shows, first.fetched), (0, 100, Some(old)), "the saved rows, before any request");
+        assert_eq!(
+            (first.calls, first.shows, first.fetched),
+            (0, 100, Some(old)),
+            "the saved rows, before any request"
+        );
         assert!(!first.done, "the refresh goes on");
         assert!(first.at < Duration::from_millis(30));
         // The old rows stay while the new list comes: no 100-row flicker down from the saved ones, no partials.
         assert!(seen[1..].iter().all(|x| x.shows >= 100));
-        assert_eq!(seen[1].calls, 4, "the next answer is the whole current season");
+        assert_eq!(
+            seen[1].calls, 4,
+            "the next answer is the whole current season"
+        );
         let last = seen.last().unwrap();
         assert_eq!((last.done, last.fetched), (true, Some(NOW)));
-        assert_eq!(store.season("mal", cur()).unwrap().map(|(v, at)| (v.len(), at)), Some((400, NOW)));
+        assert_eq!(
+            store
+                .season("mal", cur())
+                .unwrap()
+                .map(|(v, at)| (v.len(), at)),
+            Some((400, NOW))
+        );
     }
 
     #[test]
@@ -2527,7 +3680,9 @@ mod fetch_tests {
         let store = Store::open_memory().unwrap();
         let (a, _) = page_of(cur(), 0, true);
         store.save_season("mal", cur(), &a, NOW - 60, &[]).unwrap();
-        store.save_season("mal", cur().previous(), &a, NOW - 60, &[cur()]).unwrap();
+        store
+            .save_season("mal", cur().previous(), &a, NOW - 60, &[cur()])
+            .unwrap();
         let src = Slow::new(10);
         let seen = run_current_with(&src, &store, false);
         assert_eq!((seen.len(), src.calls.get(), seen[0].done), (1, 0, true));
@@ -2542,13 +3697,24 @@ mod fetch_tests {
         let store = Store::open_memory().unwrap();
         let src = Slow::new(1);
         let picked = Cell::new(false);
-        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        let run = Run {
+            store: Some(&store),
+            now: NOW,
+            force: false,
+            online: true,
+        };
         let mut get = |se, pg| src.get(se, pg);
         let mut last = None;
-        run_current(&run, &[], Some(&mut get), &|| !picked.get(), &mut |a: Answer| {
-            picked.set(a.shows.len() == 400);
-            last = Some(a);
-        });
+        run_current(
+            &run,
+            &[],
+            Some(&mut get),
+            &|| !picked.get(),
+            &mut |a: Answer| {
+                picked.set(a.shows.len() == 400);
+                last = Some(a);
+            },
+        );
         assert_eq!(src.calls.get(), 4, "only the current season was asked for");
         let last = last.unwrap();
         assert!(last.done && last.error.is_none() && last.shows.len() == 400);
@@ -2560,7 +3726,17 @@ mod fetch_tests {
         let mut s = State::fake();
         s.go(Page::Airing);
         let season = cur();
-        let rows = |n: u32, done| Answer { season, shows: page_of(season, 0, true).0.into_iter().take(n as usize).collect(), fetched_at: None, error: None, done };
+        let rows = |n: u32, done| Answer {
+            season,
+            shows: page_of(season, 0, true)
+                .0
+                .into_iter()
+                .take(n as usize)
+                .collect(),
+            fetched_at: None,
+            error: None,
+            done,
+        };
         // Nothing yet: the skeleton. Then the first page: rows, a small "Updating", the worker goes on.
         assert!(s.airing_answer(rows(100, false)));
         assert_eq!((s.airing.cards.len(), s.airing.is_loading()), (100, true));
@@ -2574,15 +3750,32 @@ mod fetch_tests {
         let mut n = 0;
         let mut get = |se, pg| {
             n += 1;
-            if n == 3 { Err(ServiceError::Offline("down".into())) } else { Ok(page_of(se, pg, false)) }
+            if n == 3 {
+                Err(ServiceError::Offline("down".into()))
+            } else {
+                Ok(page_of(se, pg, false))
+            }
         };
         let seen = RefCell::new(Vec::new());
-        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
-        run_current(&run, &[], Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((a.shows.len(), a.error, a.done)));
+        let run = Run {
+            store: Some(&store),
+            now: NOW,
+            force: false,
+            online: true,
+        };
+        run_current(&run, &[], Some(&mut get), &|| true, &mut |a: Answer| {
+            seen.borrow_mut().push((a.shows.len(), a.error, a.done))
+        });
         let seen = seen.into_inner();
-        assert_eq!(seen[..2].iter().map(|x| x.0).collect::<Vec<_>>(), [100, 200]);
+        assert_eq!(
+            seen[..2].iter().map(|x| x.0).collect::<Vec<_>>(),
+            [100, 200]
+        );
         assert_eq!(seen[2], (0, Some("Can't reach MyAnimeList.".into()), true));
-        assert!(store.season("mal", cur()).unwrap().is_none(), "a partial list is never saved");
+        assert!(
+            store.season("mal", cur()).unwrap().is_none(),
+            "a partial list is never saved"
+        );
     }
 
     #[test]
@@ -2591,19 +3784,49 @@ mod fetch_tests {
         let src = Slow::new(20);
         let season = cur().shift(-3);
         let seen = RefCell::new(Vec::new());
-        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        let run = Run {
+            store: Some(&store),
+            now: NOW,
+            force: false,
+            online: true,
+        };
         let mut get = |se, pg| src.get(se, pg);
-        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((src.calls.get(), a.shows.len(), a.done)));
-        assert_eq!(seen.into_inner(), [(1, 100, false), (2, 200, false), (3, 300, false), (4, 400, true)]);
+        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| {
+            seen.borrow_mut()
+                .push((src.calls.get(), a.shows.len(), a.done))
+        });
+        assert_eq!(
+            seen.into_inner(),
+            [
+                (1, 100, false),
+                (2, 200, false),
+                (3, 300, false),
+                (4, 400, true)
+            ]
+        );
         // Saved: the next visit shows it before any request, and asks nothing (14 days).
         let seen = RefCell::new(Vec::new());
         let before = src.calls.get();
-        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| seen.borrow_mut().push((a.shows.len(), a.done)));
-        assert_eq!((seen.into_inner(), src.calls.get() - before), (vec![(400, true)], 0));
+        run_browse(&run, season, Some(&mut get), &|| true, &mut |a: Answer| {
+            seen.borrow_mut().push((a.shows.len(), a.done))
+        });
+        assert_eq!(
+            (seen.into_inner(), src.calls.get() - before),
+            (vec![(400, true)], 0)
+        );
         // Another pick stops the worker between two requests.
         let other = cur().shift(-4);
         let n = Cell::new(0);
-        run_browse(&run, other, Some(&mut get), &|| { n.set(n.get() + 1); n.get() < 3 }, &mut |_| {});
+        run_browse(
+            &run,
+            other,
+            Some(&mut get),
+            &|| {
+                n.set(n.get() + 1);
+                n.get() < 3
+            },
+            &mut |_| {},
+        );
         assert!(store.season("mal", other).unwrap().is_none());
     }
 
@@ -2639,7 +3862,12 @@ mod fetch_tests {
         let t1 = Instant::now();
         let first = Cell::new(None);
         let whole = Cell::new(None);
-        let run = Run { store: Some(&store), now: NOW, force: false, online: true };
+        let run = Run {
+            store: Some(&store),
+            now: NOW,
+            force: false,
+            online: true,
+        };
         run_current(&run, &[], Some(&mut paced2), &|| true, &mut |a: Answer| {
             if first.get().is_none() && !a.shows.is_empty() {
                 first.set(Some(t1.elapsed()));
@@ -2648,6 +3876,11 @@ mod fetch_tests {
                 whole.set(Some(t1.elapsed()));
             }
         });
-        println!("first rows: before {before:?}, after {:?}; current season whole after {:?}; all done {:?}", first.get().unwrap(), whole.get().unwrap(), t1.elapsed());
+        println!(
+            "first rows: before {before:?}, after {:?}; current season whole after {:?}; all done {:?}",
+            first.get().unwrap(),
+            whole.get().unwrap(),
+            t1.elapsed()
+        );
     }
 }

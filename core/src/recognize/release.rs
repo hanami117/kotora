@@ -65,7 +65,10 @@ impl Release {
 }
 
 fn numbers(s: &str) -> Vec<u32> {
-    s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).collect()
+    s.split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.parse().ok())
+        .collect()
 }
 
 fn codec_of(term: &str) -> Option<Codec> {
@@ -93,15 +96,24 @@ pub fn parse_release(title: &str) -> Release {
     let name = title.trim();
     let name = name.strip_suffix(".torrent").unwrap_or(name);
     let els = anitomy_ng::parse(name, Options::default());
-    let all = |k: ElementKind| els.iter().filter(move |e| e.kind == k).map(|e| e.value.trim().to_string()).filter(|v| !v.is_empty());
+    let all = |k: ElementKind| {
+        els.iter()
+            .filter(move |e| e.kind == k)
+            .map(|e| e.value.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
     let first = |k: ElementKind| all(k).next();
 
-    let eps: Vec<u32> = all(ElementKind::Episode).flat_map(|v| numbers(&v)).collect();
+    let eps: Vec<u32> = all(ElementKind::Episode)
+        .flat_map(|v| numbers(&v))
+        .collect();
     let episodes = match (eps.first(), eps.last()) {
         (Some(&a), Some(&b)) => Some((a.min(b), a.max(b))),
         _ => None,
     };
-    let info: Vec<String> = all(ElementKind::ReleaseInformation).map(|v| v.to_lowercase()).collect();
+    let info: Vec<String> = all(ElementKind::ReleaseInformation)
+        .map(|v| v.to_lowercase())
+        .collect();
     let mut title_s = first(ElementKind::Title).unwrap_or_default();
     // "Title (Batch)" or "Title Complete" can stay in the title.
     let mut said_batch = info.iter().any(|i| BATCH_WORDS.contains(&i.as_str()));
@@ -110,7 +122,9 @@ pub fn parse_release(title: &str) -> Release {
         if let Some(cut) = lower.strip_suffix(w)
             && cut.ends_with([' ', '-', '('])
         {
-            title_s = title_s[..cut.len()].trim_end_matches([' ', '-', '(']).to_string();
+            title_s = title_s[..cut.len()]
+                .trim_end_matches([' ', '-', '('])
+                .to_string();
             said_batch = true;
             break;
         }
@@ -123,14 +137,23 @@ pub fn parse_release(title: &str) -> Release {
             break;
         }
     }
-    movie |= all(ElementKind::Type).any(|t| t.eq_ignore_ascii_case("movie") || t.eq_ignore_ascii_case("film"));
-    let words: Vec<String> = name.split(|c: char| !c.is_alphanumeric()).map(str::to_lowercase).collect();
-    let last = info.iter().any(|i| i == "end" || i == "final") || words.iter().any(|w| w == "end" || w == "final");
+    movie |= all(ElementKind::Type)
+        .any(|t| t.eq_ignore_ascii_case("movie") || t.eq_ignore_ascii_case("film"));
+    let words: Vec<String> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .collect();
+    let last = info.iter().any(|i| i == "end" || i == "final")
+        || words.iter().any(|w| w == "end" || w == "final");
     let season = first(ElementKind::Season).and_then(|s| last_number(&s));
-    let batch = said_batch || episodes.is_some_and(|(a, b)| a != b) || (episodes.is_none() && season.is_some());
+    let batch = said_batch
+        || episodes.is_some_and(|(a, b)| a != b)
+        || (episodes.is_none() && season.is_some());
 
     let terms: Vec<String> = all(ElementKind::VideoTerm).collect();
-    let version = first(ElementKind::ReleaseVersion).and_then(|v| last_number(&v)).filter(|v| *v > 1);
+    let version = first(ElementKind::ReleaseVersion)
+        .and_then(|v| last_number(&v))
+        .filter(|v| *v > 1);
     Release {
         parsed: Parsed {
             file_name: title.to_string(),

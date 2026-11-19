@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::recognize::{Found, normalize, similarity, UNSURE_AT};
+use crate::recognize::{Found, UNSURE_AT, normalize, similarity};
 use crate::service::AnimeHit;
 use crate::{ListItem, Status};
 
@@ -67,7 +67,11 @@ impl Read {
         let chapter = p.last_chapter().and_then(whole);
         let volume = p.volume.map(|v| v.last).and_then(whole);
         Read {
-            file_name: o.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| o.rel_path.clone()),
+            file_name: o
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| o.rel_path.clone()),
             path: o.path.clone(),
             series: o.series().to_string(),
             chapter,
@@ -166,21 +170,32 @@ fn other_series(series: &str, title: &str) -> bool {
 
 /// The main or English title is another series that starts like `series` ([`other_series`]).
 fn names_other_series(series: &str, main: &str, en: Option<&str>) -> bool {
-    std::iter::once(main).chain(en).any(|t| other_series(series, &normalize(t)))
+    std::iter::once(main)
+        .chain(en)
+        .any(|t| other_series(series, &normalize(t)))
 }
 
 /// How well an entry with these titles matches the normalised series. When its main or English
 /// title is the series with words missing at the end, it is another series ("Dragon Ball" is
 /// not "Dragon Ball Z"), even if a synonym is the very series: MyAnimeList lists "Dragon Ball Z"
 /// among Dragon Ball's other titles.
-fn entry_score<'a>(series: &str, main: &str, en: Option<&str>, all: impl Iterator<Item = &'a str>) -> f32 {
+fn entry_score<'a>(
+    series: &str,
+    main: &str,
+    en: Option<&str>,
+    all: impl Iterator<Item = &'a str>,
+) -> f32 {
     let best = all.map(|t| title_score(series, t)).fold(0.0f32, f32::max);
     let shorter = |t: &str| {
         let t = normalize(t);
         !t.is_empty() && series.starts_with(&format!("{t} "))
     };
     if shorter(main) || en.is_some_and(shorter) {
-        if best >= 1.0 { ALT_TITLE } else { best.min(OTHER_SERIES) }
+        if best >= 1.0 {
+            ALT_TITLE
+        } else {
+            best.min(OTHER_SERIES)
+        }
     } else {
         best
     }
@@ -189,11 +204,22 @@ fn entry_score<'a>(series: &str, main: &str, en: Option<&str>, all: impl Iterato
 /// A search hit's score: as [`entry_score`], but a title with words added to the series never
 /// counts (the movie manga "Dragon Ball Z: Fukkatsu no F" is not "Dragon Ball Z").
 fn hit_score(series: &str, h: &AnimeHit) -> f32 {
-    let all = || std::iter::once(h.title.as_str()).chain(h.title_en.as_deref()).chain(h.title_ja.as_deref()).chain(h.synonyms.iter().map(String::as_str)).filter(|t| !t.is_empty());
+    let all = || {
+        std::iter::once(h.title.as_str())
+            .chain(h.title_en.as_deref())
+            .chain(h.title_ja.as_deref())
+            .chain(h.synonyms.iter().map(String::as_str))
+            .filter(|t| !t.is_empty())
+    };
     if longer(series, &normalize(&h.title)) && all().all(|t| normalize(t) != series) {
         return 0.0;
     }
-    entry_score(series, &h.title, h.title_en.as_deref(), all().filter(|t| !longer(series, &normalize(t))))
+    entry_score(
+        series,
+        &h.title,
+        h.title_en.as_deref(),
+        all().filter(|t| !longer(series, &normalize(t))),
+    )
 }
 
 /// Every list entry scored against the series, best first (only those above 0.3). Equal
@@ -206,9 +232,21 @@ pub fn candidates(series: &str, items: &[ListItem]) -> Vec<Candidate> {
     let mut out: Vec<(Candidate, bool)> = items
         .iter()
         .map(|it| {
-            let score = entry_score(&s, &it.media.title, it.media.title_en.as_deref(), it.media.all_titles());
+            let score = entry_score(
+                &s,
+                &it.media.title,
+                it.media.title_en.as_deref(),
+                it.media.all_titles(),
+            );
             let reading = it.rewatching || it.status == Status::Watching;
-            (Candidate { media_id: it.media.id, title: it.media.title.clone(), score }, reading)
+            (
+                Candidate {
+                    media_id: it.media.id,
+                    title: it.media.title.clone(),
+                    score,
+                },
+                reading,
+            )
         })
         .filter(|(c, _)| c.score > 0.3)
         .collect();
@@ -218,11 +256,21 @@ pub fn candidates(series: &str, items: &[ListItem]) -> Vec<Candidate> {
 
 /// Steps 2 and 3. `None`: nothing on the list; the caller may search. `cached`: the cache's
 /// answer for [`key`] (media id, source, title).
-pub fn on_list(series: &str, items: &[ListItem], cached: &crate::recognize::Cached) -> Option<Found> {
+pub fn on_list(
+    series: &str,
+    items: &[ListItem],
+    cached: &crate::recognize::Cached,
+) -> Option<Found> {
     if let Some((id, source, _)) = cached {
         match source.as_str() {
             "ignore" => return Some(Found::Ignored),
-            "user" if items.iter().any(|it| it.media.id == *id) => return Some(Found::List { media_id: *id, sure: true, why: "you picked it".into() }),
+            "user" if items.iter().any(|it| it.media.id == *id) => {
+                return Some(Found::List {
+                    media_id: *id,
+                    sure: true,
+                    why: "you picked it".into(),
+                });
+            }
             _ => {}
         }
     }
@@ -231,20 +279,32 @@ pub fn on_list(series: &str, items: &[ListItem], cached: &crate::recognize::Cach
     let ties = c.iter().filter(|x| x.score >= best.score).count();
     let sure = best.score >= 1.0 && ties == 1;
     let why = match (sure, ties) {
-        _ if (best.score - ALT_TITLE).abs() < f32::EPSILON => format!("\u{201c}{series}\u{201d} is another title of {}", best.title),
+        _ if (best.score - ALT_TITLE).abs() < f32::EPSILON => format!(
+            "\u{201c}{series}\u{201d} is another title of {}",
+            best.title
+        ),
         (true, _) => "same title in your list".to_string(),
         (false, n) if n > 1 && best.score >= 1.0 => format!("{n} titles in your list match"),
-        (false, _) if best.score >= 0.9 => format!("a title in your list starts with \u{201c}{series}\u{201d}"),
+        (false, _) if best.score >= 0.9 => {
+            format!("a title in your list starts with \u{201c}{series}\u{201d}")
+        }
         (false, _) => format!("close to a title in your list ({:.0}%)", best.score * 100.0),
     };
-    Some(Found::List { media_id: best.media_id, sure, why })
+    Some(Found::List {
+        media_id: best.media_id,
+        sure,
+        why,
+    })
 }
 
 /// Whether a title (a cached search answer's) can stand for the series by today's rules: not
 /// with words added, not another series. A cache written before a rule changed is checked again.
 pub fn title_fits(series: &str, title: &str) -> bool {
     let s = normalize(series);
-    let h = AnimeHit { title: title.to_string(), ..Default::default() };
+    let h = AnimeHit {
+        title: title.to_string(),
+        ..Default::default()
+    };
     hit_score(&s, &h) >= UNSURE_AT
 }
 
@@ -263,12 +323,27 @@ pub fn from_search(series: &str, hits: &[AnimeHit], items: &[ListItem], service:
     }
     let on_list = |h: &AnimeHit| items.iter().any(|it| it.media.id == h.id);
     match best {
-        Some((h, _)) if on_list(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
-        Some((h, _)) => Found::NotOnList { media_id: h.id, title: h.title.clone() },
+        Some((h, _)) if on_list(h) => Found::List {
+            media_id: h.id,
+            sure: false,
+            why: format!("found by a {service} search"),
+        },
+        Some((h, _)) => Found::NotOnList {
+            media_id: h.id,
+            title: h.title.clone(),
+        },
         // Nothing close by its titles: a hit on the list still counts (the service may know a
         // title Kotora doesn't), unless it names another series or adds words to it.
-        None => match hits.iter().find(|h| on_list(h) && !names_other_series(&s, &h.title, h.title_en.as_deref()) && !longer(&s, &normalize(&h.title))) {
-            Some(h) => Found::List { media_id: h.id, sure: false, why: format!("found by a {service} search") },
+        None => match hits.iter().find(|h| {
+            on_list(h)
+                && !names_other_series(&s, &h.title, h.title_en.as_deref())
+                && !longer(&s, &normalize(&h.title))
+        }) {
+            Some(h) => Found::List {
+                media_id: h.id,
+                sure: false,
+                why: format!("found by a {service} search"),
+            },
             None => Found::Nothing,
         },
     }
@@ -286,16 +361,27 @@ pub struct Renumber {
     pub chapters: u32,
 }
 
-pub const RENUMBER: &[Renumber] = &[Renumber { alias: "dragon ball z", main: "dragon ball", volumes: 16, chapters: 194 }];
+pub const RENUMBER: &[Renumber] = &[Renumber {
+    alias: "dragon ball z",
+    main: "dragon ball",
+    volumes: 16,
+    chapters: 194,
+}];
 
 /// Moves `read`'s numbers to the entry's own when a known release numbers on its own, and says
 /// so: "Dragon Ball Z v11 = Dragon Ball vol 27".
 pub fn renumber(read: &mut Read, entry_main_title: &str) {
     let (alias, main) = (key(&read.series), normalize(entry_main_title));
-    let Some(r) = RENUMBER.iter().find(|r| r.alias == alias && r.main == main) else { return };
+    let Some(r) = RENUMBER.iter().find(|r| r.alias == alias && r.main == main) else {
+        return;
+    };
     let mut said = Vec::new();
     if let Some(v) = read.volume {
-        said.push(format!("{} v{v} = {entry_main_title} vol {}", read.series, v + r.volumes));
+        said.push(format!(
+            "{} v{v} = {entry_main_title} vol {}",
+            read.series,
+            v + r.volumes
+        ));
         read.volume = Some(v + r.volumes);
     }
     if let Some(c) = read.chapter {
@@ -328,7 +414,11 @@ impl Offer {
     /// Where a reread starts, said once: the chapter, else the volume ("Ch 21", "Vol 3"). The
     /// volume before a chapter's is only kept in the counts.
     pub fn start_label(&self) -> String {
-        Offer { volume: self.chapter.is_none().then_some(self.volume).flatten(), ..*self }.label()
+        Offer {
+            volume: self.chapter.is_none().then_some(self.volume).flatten(),
+            ..*self
+        }
+        .label()
     }
 }
 
@@ -336,17 +426,35 @@ impl Offer {
 /// the chapters read (and not past the known count), a volume above the volumes read (and not
 /// past its count). A whole-volume file gives its volume; a chapter in volume N gives N - 1 (the
 /// volumes before it are done). A one-shot (a count of 1 and no number in the name) is chapter 1.
-pub fn offer(chapters: u32, chapters_total: Option<u32>, volumes: u32, volumes_total: Option<u32>, read: &Read) -> Option<Offer> {
+pub fn offer(
+    chapters: u32,
+    chapters_total: Option<u32>,
+    volumes: u32,
+    volumes_total: Option<u32>,
+    read: &Read,
+) -> Option<Offer> {
     let one_shot = chapters_total == Some(1) && read.chapter.is_none() && read.volume.is_none();
-    let chapter = read.chapter.or(one_shot.then_some(1)).filter(|c| *c > chapters && chapters_total.is_none_or(|n| n == 0 || *c <= n));
-    let done_volume = if read.volume_file { read.volume } else { read.volume.and_then(|v| v.checked_sub(1)) };
-    let volume = done_volume.filter(|v| *v > 0 && *v > volumes && volumes_total.is_none_or(|n| n == 0 || *v <= n));
+    let chapter = read
+        .chapter
+        .or(one_shot.then_some(1))
+        .filter(|c| *c > chapters && chapters_total.is_none_or(|n| n == 0 || *c <= n));
+    let done_volume = if read.volume_file {
+        read.volume
+    } else {
+        read.volume.and_then(|v| v.checked_sub(1))
+    };
+    let volume = done_volume
+        .filter(|v| *v > 0 && *v > volumes && volumes_total.is_none_or(|n| n == 0 || *v <= n));
     (chapter.is_some() || volume.is_some()).then_some(Offer { chapter, volume })
 }
 
 /// What a reread of a Completed manga would start at: the file's chapter (or volume), wherever it
 /// is, as [`offer`] with nothing read yet. Asked about, never marked by itself.
-pub fn reread_offer(chapters_total: Option<u32>, volumes_total: Option<u32>, read: &Read) -> Option<Offer> {
+pub fn reread_offer(
+    chapters_total: Option<u32>,
+    volumes_total: Option<u32>,
+    read: &Read,
+) -> Option<Offer> {
     offer(0, chapters_total, 0, volumes_total, read)
 }
 
@@ -380,7 +488,10 @@ pub struct LibState {
 impl Watch {
     /// `now`: Unix seconds; the first look goes [`FIRST_LOOK_SECS`] back.
     pub fn new(libs: Vec<Library>, now: i64) -> Watch {
-        Watch { libs: libs.into_iter().map(|l| (l, None)).collect(), since: now - FIRST_LOOK_SECS }
+        Watch {
+            libs: libs.into_iter().map(|l| (l, None)).collect(),
+            since: now - FIRST_LOOK_SECS,
+        }
     }
 
     pub fn libraries(&self) -> impl Iterator<Item = &Library> {
@@ -410,7 +521,10 @@ impl Watch {
                     }
                 }
                 // Caught mid-write (`immutable=1` doesn't wait): the next poll tries again.
-                Err(e) => errors.push(LibState { path: lib.path.clone(), error: Some(e.0) }),
+                Err(e) => errors.push(LibState {
+                    path: lib.path.clone(),
+                    error: Some(e.0),
+                }),
             }
         }
         if !changed {
@@ -443,9 +557,23 @@ pub fn viewer_comic(library: &str, id: i64) -> Option<PathBuf> {
 /// A library from a path the user gave: the folder, or the database file inside it.
 pub fn library_at(p: &str) -> Library {
     let path = PathBuf::from(p);
-    let folder = if path.file_name().is_some_and(|n| n == "library.ydb") { path.parent().and_then(|d| d.parent()).map(PathBuf::from).unwrap_or(path.clone()) } else { path };
-    let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    Library { name, path: folder, id: None }
+    let folder = if path.file_name().is_some_and(|n| n == "library.ydb") {
+        path.parent()
+            .and_then(|d| d.parent())
+            .map(PathBuf::from)
+            .unwrap_or(path.clone())
+    } else {
+        path
+    };
+    let name = folder
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Library {
+        name,
+        path: folder,
+        id: None,
+    }
 }
 
 #[cfg(test)]

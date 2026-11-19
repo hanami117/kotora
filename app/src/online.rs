@@ -68,31 +68,66 @@ pub fn start(s: &mut State) {
     std::thread::spawn(move || {
         let store = match Store::open(&paths::db_file()) {
             Ok(st) => st,
-            Err(e) => return send(&h, Msg::SyncFailed(Fail::Other(format!("Can't open the saved list: {e}")))),
+            Err(e) => {
+                return send(
+                    &h,
+                    Msg::SyncFailed(Fail::Other(format!("Can't open the saved list: {e}"))),
+                );
+            }
         };
         // The saved list first, so the app is useful before (and without) the network.
         let now = now_unix();
         let svc = account::name();
         let _ = store.queue_start(svc, now);
-        if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (store.load_list(svc), store.account(svc), store.synced_at(svc), store.queue(svc, now)) {
+        if let (Ok(items), Ok(user), Ok(synced_at), Ok(ops)) = (
+            store.load_list(svc),
+            store.account(svc),
+            store.synced_at(svc),
+            store.queue(svc, now),
+        ) {
             let picture = store.picture(svc).ok().and_then(|(url, _)| url);
             let profile = store.profile(svc).ok().flatten().map(Box::new);
             // A switch meanwhile: this cache is the other service's.
             if svc == account::name() {
-                send(&h, Msg::Cache { items, user, picture, profile, synced_at, ops });
+                send(
+                    &h,
+                    Msg::Cache {
+                        items,
+                        user,
+                        picture,
+                        profile,
+                        synced_at,
+                        ops,
+                    },
+                );
             }
         }
         // The saved manga list of this service (empty while Manga is off).
         {
             let enabled = store.manga_enabled().unwrap_or(false);
             let scope = (svc, kotora_core::Kind::Manga);
-            let items = if enabled { store.load_list(scope).unwrap_or_default() } else { Vec::new() };
+            let items = if enabled {
+                store.load_list(scope).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let synced_at = store.synced_at(scope).ok().flatten();
             if svc == account::name() {
-                send(&h, Msg::Manga(crate::manga::MangaMsg::Cache { enabled, items, synced_at }));
+                send(
+                    &h,
+                    Msg::Manga(crate::manga::MangaMsg::Cache {
+                        enabled,
+                        items,
+                        synced_at,
+                    }),
+                );
             }
         }
-        if online { sync_now(&h, store) } else { send(&h, Msg::Idle) }
+        if online {
+            sync_now(&h, store)
+        } else {
+            send(&h, Msg::Idle)
+        }
     });
     crate::mirror::load(s);
 }
@@ -107,7 +142,10 @@ pub fn refresh(s: &mut State) {
     s.error = None;
     std::thread::spawn(move || match Store::open(&paths::db_file()) {
         Ok(store) => sync_now(&h, store),
-        Err(e) => send(&h, Msg::SyncFailed(Fail::Other(format!("Can't open the saved list: {e}")))),
+        Err(e) => send(
+            &h,
+            Msg::SyncFailed(Fail::Other(format!("Can't open the saved list: {e}"))),
+        ),
     });
 }
 
@@ -116,7 +154,9 @@ fn sync_now(h: &Handle, mut store: Store) {
     let Some(mut service) = account::open() else {
         let fail = match Config::load(&paths::config_file()) {
             Err(e) => Fail::Other(e),
-            Ok(c) if active == ServiceId::Mal && !c.has_client_id(ServiceId::Mal) => Fail::Other("No MyAnimeList Client ID in config.toml.".into()),
+            Ok(c) if active == ServiceId::Mal && !c.has_client_id(ServiceId::Mal) => {
+                Fail::Other("No MyAnimeList Client ID in config.toml.".into())
+            }
             Ok(_) => Fail::SignInAgain,
         };
         return send(h, Msg::SyncFailed(fail));
@@ -157,11 +197,16 @@ fn sync_now(h: &Handle, mut store: Store) {
 /// facts are saved; the image itself is a cover-cache file (`art.rs`).
 pub fn refresh_user(service: &mut dyn ListService, store: &Store, now: i64) -> Vec<Msg> {
     let name = service.name();
-    let Ok(user) = service.user() else { return Vec::new() };
+    let Ok(user) = service.user() else {
+        return Vec::new();
+    };
     let _ = store.set_account(name, &user.name);
     let _ = store.set_picture(name, user.picture.as_deref(), now);
     let _ = store.set_profile(name, &user.profile);
-    vec![Msg::Picture(user.picture), Msg::Profile(Box::new(user.profile))]
+    vec![
+        Msg::Picture(user.picture),
+        Msg::Profile(Box::new(user.profile)),
+    ]
 }
 
 /// Fetches the list, saves it, and says what happened. The list sent to the UI is the saved one,
@@ -171,8 +216,13 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     let fail = |e: ServiceError| {
         Msg::SyncFailed(match e {
             ServiceError::SignInAgain => Fail::SignInAgain,
-            ServiceError::Offline(_) => Fail::Offline(format!("Can't reach {}. Showing your saved list.", title)),
-            ServiceError::RateLimited => Fail::Other(format!("{} asked Kotora to slow down. Try again in a minute.", title)),
+            ServiceError::Offline(_) => {
+                Fail::Offline(format!("Can't reach {}. Showing your saved list.", title))
+            }
+            ServiceError::RateLimited => Fail::Other(format!(
+                "{} asked Kotora to slow down. Try again in a minute.",
+                title
+            )),
             ServiceError::Other(m) => Fail::Other(m),
         })
     };
@@ -190,7 +240,10 @@ pub fn sync_with(service: &mut dyn ListService, store: &mut Store, now: i64) -> 
     // Anime saved with only a title (an add still waiting, from Now Playing): filled in now.
     kotora_core::sync::complete_media(service, store, None, now);
     match store.load_list(name) {
-        Ok(items) => Msg::Synced { items, synced_at: now },
+        Ok(items) => Msg::Synced {
+            items,
+            synced_at: now,
+        },
         Err(e) => Msg::SyncFailed(Fail::Other(format!("Can't read the saved list: {e}"))),
     }
 }
@@ -201,7 +254,9 @@ pub fn error_text(e: ServiceError) -> String {
     match e {
         ServiceError::Offline(_) => format!("Can't reach {title}."),
         ServiceError::SignInAgain => format!("{title} needs you to sign in again."),
-        ServiceError::RateLimited => format!("{title} asked Kotora to slow down. Try again in a minute."),
+        ServiceError::RateLimited => {
+            format!("{title} asked Kotora to slow down. Try again in a minute.")
+        }
         ServiceError::Other(m) => m,
     }
 }
@@ -285,7 +340,10 @@ pub fn sign_in_with_token(s: &mut State) {
 
 /// Checks an AniList token, saves it and the account. The user name and picture.
 fn finish_anilist(token: &kotora_core::tokens::Token) -> Result<(String, Option<String>), String> {
-    let mut service = AniList::new(anilist::Client::new(UreqTransport::default()), TokenStore::new(paths::token_file()));
+    let mut service = AniList::new(
+        anilist::Client::new(UreqTransport::default()),
+        TokenStore::new(paths::token_file()),
+    );
     let user = service.complete_sign_in(token).map_err(|e| match e {
         ServiceError::SignInAgain => "AniList refused the token. Sign in again.".to_string(),
         other => other.to_string(),
@@ -295,7 +353,9 @@ fn finish_anilist(token: &kotora_core::tokens::Token) -> Result<(String, Option<
 
 fn save_account(id: ServiceId, user: &User) -> Result<(String, Option<String>), String> {
     let store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
-    store.set_account(id.name(), &user.name).map_err(|e| e.to_string())?;
+    store
+        .set_account(id.name(), &user.name)
+        .map_err(|e| e.to_string())?;
     let _ = store.set_picture(id.name(), user.picture.as_deref(), now_unix());
     let _ = store.set_profile(id.name(), &user.profile);
     Ok((user.name.clone(), user.picture.clone()))
@@ -304,8 +364,14 @@ fn save_account(id: ServiceId, user: &User) -> Result<(String, Option<String>), 
 /// AniList's implicit grant: AniList's page, then its redirect to the loopback page, which
 /// posts the token back. A client registered with AniList's PIN page instead shows the token
 /// there, to paste ([`sign_in_with_token`]).
-fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
-    let id = Config::load(&paths::config_file())?.effective_client_id(ServiceId::AniList).ok_or("No AniList Client ID.")?;
+fn anilist_flow(
+    h: &Handle,
+    seq: u64,
+    cancel: &AtomicBool,
+) -> Result<(String, Option<String>), String> {
+    let id = Config::load(&paths::config_file())?
+        .effective_client_id(ServiceId::AniList)
+        .ok_or("No AniList Client ID.")?;
     let url = anilist::authorize_url(&id);
     let listener = match loopback::bind() {
         Ok(l) => l,
@@ -318,7 +384,14 @@ fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Op
             while !cancel.load(Ordering::Relaxed) && std::time::Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            return Err(if cancel.load(Ordering::Relaxed) { "sign-in cancelled".to_string() } else { format!("Can't listen on port {} for AniList's reply: {e}", mal::PORT) });
+            return Err(if cancel.load(Ordering::Relaxed) {
+                "sign-in cancelled".to_string()
+            } else {
+                format!(
+                    "Can't listen on port {} for AniList's reply: {e}",
+                    mal::PORT
+                )
+            });
         }
     };
     let opened = open_browser(&url).is_ok();
@@ -329,10 +402,21 @@ fn anilist_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Op
     finish_anilist(&token)
 }
 
-fn sign_in_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Option<String>), String> {
-    let id = Config::load(&paths::config_file())?.effective_client_id(ServiceId::Mal).ok_or("No MyAnimeList Client ID in config.toml.")?;
+fn sign_in_flow(
+    h: &Handle,
+    seq: u64,
+    cancel: &AtomicBool,
+) -> Result<(String, Option<String>), String> {
+    let id = Config::load(&paths::config_file())?
+        .effective_client_id(ServiceId::Mal)
+        .ok_or("No MyAnimeList Client ID in config.toml.")?;
     // Bind first: if the port is busy there is no point in opening the browser.
-    let listener = loopback::bind().map_err(|e| format!("Can't listen on port {} for MyAnimeList's reply: {e}", mal::PORT))?;
+    let listener = loopback::bind().map_err(|e| {
+        format!(
+            "Can't listen on port {} for MyAnimeList's reply: {e}",
+            mal::PORT
+        )
+    })?;
     let pkce = Pkce::new().map_err(|e| format!("Can't make a sign-in code: {e}"))?;
     let url = mal::authorize_url(&id, &pkce);
     // The link shows while Kotora waits, for a browser that didn't open (or opened elsewhere).
@@ -340,12 +424,17 @@ fn sign_in_flow(h: &Handle, seq: u64, cancel: &AtomicBool) -> Result<(String, Op
     send_link(h, seq, url, opened);
     let code = loopback::wait_for_code(&listener, &pkce.state, SIGN_IN_TIMEOUT, cancel)?;
     drop(listener);
-    let mut service = Mal::new(Client::new(id, UreqTransport::default()), TokenStore::new(paths::token_file()));
+    let mut service = Mal::new(
+        Client::new(id, UreqTransport::default()),
+        TokenStore::new(paths::token_file()),
+    );
     let err = |e: ServiceError| match e {
         ServiceError::SignInAgain => "MyAnimeList refused the sign-in. Try again.".to_string(),
         other => other.to_string(),
     };
-    service.complete_sign_in(&code, &pkce.verifier).map_err(err)?;
+    service
+        .complete_sign_in(&code, &pkce.verifier)
+        .map_err(err)?;
     let user = service.user().map_err(err)?;
     save_account(ServiceId::Mal, &user)
 }
@@ -383,7 +472,11 @@ fn open_browser(url: &str) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn open_browser(url: &str) -> Result<(), String> {
-    let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
     let mut child = std::process::Command::new(program)
         .arg(url)
         .stdin(std::process::Stdio::null())
@@ -532,7 +625,14 @@ mod tests {
         }
         fn details(&mut self, id: u32) -> Result<kotora_core::service::Details, ServiceError> {
             self.1 += 1;
-            Ok(kotora_core::service::Details { id, title: format!("Show {id}"), episodes: Some(25), format: "tv".into(), cover_url: Some(format!("https://img.example/{id}.jpg")), ..Default::default() })
+            Ok(kotora_core::service::Details {
+                id,
+                title: format!("Show {id}"),
+                episodes: Some(25),
+                format: "tv".into(),
+                cover_url: Some(format!("https://img.example/{id}.jpg")),
+                ..Default::default()
+            })
         }
     }
 
@@ -541,12 +641,39 @@ mod tests {
     #[test]
     fn a_sync_fills_in_an_add_that_knew_only_the_title() {
         let mut store = Store::open_memory().unwrap();
-        store.add_to_list("mal", &Media { id: 7, title: "Seen playing".into(), ..Default::default() }, Status::Watching, Some(3), 400).unwrap();
+        store
+            .add_to_list(
+                "mal",
+                &Media {
+                    id: 7,
+                    title: "Seen playing".into(),
+                    ..Default::default()
+                },
+                Status::Watching,
+                Some(3),
+                400,
+            )
+            .unwrap();
         let mut svc = WithDetails(vec![item(1)], 0);
-        let Msg::Synced { items, .. } = sync_with(&mut svc, &mut store, 500) else { panic!("not synced") };
-        let added = items.iter().find(|i| i.media.id == 7).expect("the waiting add stays on the list");
-        assert_eq!((added.progress, added.media.episodes, added.media.format.as_str()), (3, Some(25), "tv"));
-        assert_eq!(added.media.cover_url.as_deref(), Some("https://img.example/7.jpg"));
+        let Msg::Synced { items, .. } = sync_with(&mut svc, &mut store, 500) else {
+            panic!("not synced")
+        };
+        let added = items
+            .iter()
+            .find(|i| i.media.id == 7)
+            .expect("the waiting add stays on the list");
+        assert_eq!(
+            (
+                added.progress,
+                added.media.episodes,
+                added.media.format.as_str()
+            ),
+            (3, Some(25), "tv")
+        );
+        assert_eq!(
+            added.media.cover_url.as_deref(),
+            Some("https://img.example/7.jpg")
+        );
         assert_eq!(svc.1, 1, "one request, for the bare one only");
         sync_with(&mut svc, &mut store, 600);
         assert_eq!(svc.1, 1, "nothing left to fill in");
@@ -565,7 +692,17 @@ mod tests {
     fn a_sync_shows_changes_that_still_wait() {
         let mut store = Store::open_memory().unwrap();
         store.replace_list("mal", &[item(1)], 1).unwrap();
-        store.enqueue("mal", 1, Change { progress: Some(4), ..Default::default() }, 2).unwrap();
+        store
+            .enqueue(
+                "mal",
+                1,
+                Change {
+                    progress: Some(4),
+                    ..Default::default()
+                },
+                2,
+            )
+            .unwrap();
         match sync_with(&mut Fake(Ok(vec![item(1)])), &mut store, 500) {
             Msg::Synced { items, .. } => assert_eq!(items[0].progress, 4),
             m => panic!("{m:?}"),
@@ -588,9 +725,20 @@ mod tests {
             }
             fn user(&mut self) -> Result<kotora_core::service::User, ServiceError> {
                 self.0 += 1;
-                let stats = kotora_core::service::AnimeStats { completed: self.0, ..Default::default() };
-                let profile = kotora_core::service::Profile { joined: Some("2019-03-02".into()), stats: Some(stats), ..Default::default() };
-                Ok(kotora_core::service::User { name: "demo_user".into(), picture: Some(format!("https://cdn.example.invalid/u.jpg?t={}", self.0)), profile })
+                let stats = kotora_core::service::AnimeStats {
+                    completed: self.0,
+                    ..Default::default()
+                };
+                let profile = kotora_core::service::Profile {
+                    joined: Some("2019-03-02".into()),
+                    stats: Some(stats),
+                    ..Default::default()
+                };
+                Ok(kotora_core::service::User {
+                    name: "demo_user".into(),
+                    picture: Some(format!("https://cdn.example.invalid/u.jpg?t={}", self.0)),
+                    profile,
+                })
             }
             fn fetch_list(&mut self) -> Result<Vec<ListItem>, ServiceError> {
                 unreachable!()
@@ -610,8 +758,21 @@ mod tests {
         let m = refresh_user(&mut who, &store, 1060);
         assert_eq!(who.0, 2, "one request per sync");
         assert!(matches!(&m[0], Msg::Picture(Some(u)) if u.ends_with("t=2")));
-        assert_eq!(store.picture("mal").unwrap(), (Some("https://cdn.example.invalid/u.jpg?t=2".into()), Some(1060)));
-        assert_eq!(store.profile("mal").unwrap().and_then(|p| p.stats).map(|s| s.completed), Some(2));
+        assert_eq!(
+            store.picture("mal").unwrap(),
+            (
+                Some("https://cdn.example.invalid/u.jpg?t=2".into()),
+                Some(1060)
+            )
+        );
+        assert_eq!(
+            store
+                .profile("mal")
+                .unwrap()
+                .and_then(|p| p.stats)
+                .map(|s| s.completed),
+            Some(2)
+        );
         assert_eq!(store.account("mal").unwrap().as_deref(), Some("demo_user"));
     }
 
@@ -642,14 +803,45 @@ mod tests {
     #[test]
     fn each_service_keeps_its_own_list() {
         let mut store = Store::open_memory().unwrap();
-        assert!(matches!(sync_with(&mut Named("mal", vec![item(1)]), &mut store, 100), Msg::Synced { .. }));
-        assert!(matches!(sync_with(&mut Named("anilist", vec![item(1), item(2)]), &mut store, 200), Msg::Synced { items, .. } if items.len() == 2));
-        assert_eq!((store.load_list("mal").unwrap().len(), store.load_list("anilist").unwrap().len()), (1, 2), "the same id on both, kept apart");
-        store.enqueue("anilist", 2, Change { progress: Some(5), ..Default::default() }, 300).unwrap();
-        assert!(store.queue("mal", 300).unwrap().is_empty(), "each service its own queue");
+        assert!(matches!(
+            sync_with(&mut Named("mal", vec![item(1)]), &mut store, 100),
+            Msg::Synced { .. }
+        ));
+        assert!(
+            matches!(sync_with(&mut Named("anilist", vec![item(1), item(2)]), &mut store, 200), Msg::Synced { items, .. } if items.len() == 2)
+        );
+        assert_eq!(
+            (
+                store.load_list("mal").unwrap().len(),
+                store.load_list("anilist").unwrap().len()
+            ),
+            (1, 2),
+            "the same id on both, kept apart"
+        );
+        store
+            .enqueue(
+                "anilist",
+                2,
+                Change {
+                    progress: Some(5),
+                    ..Default::default()
+                },
+                300,
+            )
+            .unwrap();
+        assert!(
+            store.queue("mal", 300).unwrap().is_empty(),
+            "each service its own queue"
+        );
         // Signing out of AniList keeps MyAnimeList's list.
         store.clear_service("anilist").unwrap();
-        assert_eq!((store.load_list("mal").unwrap().len(), store.load_list("anilist").unwrap().len()), (1, 0));
+        assert_eq!(
+            (
+                store.load_list("mal").unwrap().len(),
+                store.load_list("anilist").unwrap().len()
+            ),
+            (1, 0)
+        );
         assert_eq!(store.synced_at("mal").unwrap(), Some(100));
     }
 
@@ -661,9 +853,16 @@ mod tests {
         switch_service(&mut s, ServiceId::AniList);
         assert_eq!(s.service, ServiceId::AniList);
         assert!(s.entries.is_empty() && s.account.is_none() && s.ops.is_empty() && s.queue == 0);
-        assert!(s.sign_in_seq > seq, "an AniList sign-in under way would be dropped");
+        assert!(
+            s.sign_in_seq > seq,
+            "an AniList sign-in under way would be dropped"
+        );
         switch_service(&mut s, ServiceId::AniList);
-        assert_eq!(s.service, ServiceId::AniList, "the same service: nothing happens");
+        assert_eq!(
+            s.service,
+            ServiceId::AniList,
+            "the same service: nothing happens"
+        );
     }
 
     #[test]
@@ -671,16 +870,24 @@ mod tests {
         let mut store = Store::open_memory().unwrap();
         store.replace_list("mal", &[item(1)], 1).unwrap();
         for (err, want) in [
-            (ServiceError::Offline("x".into()), Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into())),
+            (
+                ServiceError::Offline("x".into()),
+                Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into()),
+            ),
             (ServiceError::SignInAgain, Fail::SignInAgain),
-            (ServiceError::Other("boom".into()), Fail::Other("boom".into())),
+            (
+                ServiceError::Other("boom".into()),
+                Fail::Other("boom".into()),
+            ),
         ] {
             match sync_with(&mut Fake(Err(err)), &mut store, 9) {
                 Msg::SyncFailed(f) => assert_eq!(f, want),
                 m => panic!("{m:?}"),
             }
         }
-        assert!(matches!(sync_with(&mut Fake(Err(ServiceError::RateLimited)), &mut store, 9), Msg::SyncFailed(Fail::Other(m)) if m.contains("slow down")));
+        assert!(
+            matches!(sync_with(&mut Fake(Err(ServiceError::RateLimited)), &mut store, 9), Msg::SyncFailed(Fail::Other(m)) if m.contains("slow down"))
+        );
         assert_eq!(store.load_list("mal").unwrap().len(), 1);
         assert_eq!(store.synced_at("mal").unwrap(), Some(1));
     }

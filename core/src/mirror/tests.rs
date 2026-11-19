@@ -4,9 +4,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
-use crate::score::ten;
 use crate::model::Remote;
 use crate::queue::{self, OpState, Outcome, Step};
+use crate::score::ten;
 
 const AL: u32 = 100_000;
 
@@ -27,14 +27,36 @@ struct Fake {
 
 impl Fake {
     fn new(id: ServiceId) -> Fake {
-        Fake { id, list: HashMap::new(), catalogue: HashMap::new(), manga: HashMap::new(), manga_catalogue: HashMap::new(), calls: Vec::new(), clock: 1_000, down: None }
+        Fake {
+            id,
+            list: HashMap::new(),
+            catalogue: HashMap::new(),
+            manga: HashMap::new(),
+            manga_catalogue: HashMap::new(),
+            calls: Vec::new(),
+            clock: 1_000,
+            down: None,
+        }
     }
 
     /// The service's media for MyAnimeList id `mal`.
     fn media(&self, mal: u32) -> Media {
         match self.id {
-            ServiceId::Mal => Media { id: mal, title: format!("Show {mal}"), episodes: Some(12), format: "tv".into(), ..Media::default() },
-            ServiceId::AniList => Media { id: mal + AL, title: format!("Show {mal}"), episodes: Some(12), format: "TV".into(), id_mal: Some(mal), ..Media::default() },
+            ServiceId::Mal => Media {
+                id: mal,
+                title: format!("Show {mal}"),
+                episodes: Some(12),
+                format: "tv".into(),
+                ..Media::default()
+            },
+            ServiceId::AniList => Media {
+                id: mal + AL,
+                title: format!("Show {mal}"),
+                episodes: Some(12),
+                format: "TV".into(),
+                id_mal: Some(mal),
+                ..Media::default()
+            },
         }
     }
 
@@ -43,26 +65,59 @@ impl Fake {
         let m = self.media(mal);
         self.clock += 1;
         let id = m.id;
-        self.list.insert(id, (m, Remote { values: v, updated_at: self.clock }));
+        self.list.insert(
+            id,
+            (
+                m,
+                Remote {
+                    values: v,
+                    updated_at: self.clock,
+                },
+            ),
+        );
         id
     }
 
     /// The service's manga for MyAnimeList manga id `mal` (40 chapters, 5 volumes).
     fn manga_media(&self, mal: u32) -> Media {
-        let id = if self.id == ServiceId::AniList { mal + AL } else { mal };
-        Media { kind: Kind::Manga, id, title: format!("Manga {mal}"), episodes: Some(40), volumes: Some(5), format: "manga".into(), id_mal: (self.id == ServiceId::AniList).then_some(mal), ..Media::default() }
+        let id = if self.id == ServiceId::AniList {
+            mal + AL
+        } else {
+            mal
+        };
+        Media {
+            kind: Kind::Manga,
+            id,
+            title: format!("Manga {mal}"),
+            episodes: Some(40),
+            volumes: Some(5),
+            format: "manga".into(),
+            id_mal: (self.id == ServiceId::AniList).then_some(mal),
+            ..Media::default()
+        }
     }
 
     fn put_manga(&mut self, mal: u32, v: Values) -> u32 {
         let m = self.manga_media(mal);
         self.clock += 1;
         let id = m.id;
-        self.manga.insert(id, (m, Remote { values: v, updated_at: self.clock }));
+        self.manga.insert(
+            id,
+            (
+                m,
+                Remote {
+                    values: v,
+                    updated_at: self.clock,
+                },
+            ),
+        );
         id
     }
 
     fn manga_values(&self, mal: u32) -> Option<Values> {
-        self.manga.get(&self.manga_media(mal).id).map(|(_, r)| r.values)
+        self.manga
+            .get(&self.manga_media(mal).id)
+            .map(|(_, r)| r.values)
     }
 
     fn values(&self, mal: u32) -> Option<Values> {
@@ -133,13 +188,27 @@ impl ListService for Fake {
         self.check(format!("get {id}"))?;
         Ok(self.list.get(&id).map(|(_, r)| *r))
     }
-    fn update_entry(&mut self, id: u32, change: &Change) -> std::result::Result<Remote, ServiceError> {
+    fn update_entry(
+        &mut self,
+        id: u32,
+        change: &Change,
+    ) -> std::result::Result<Remote, ServiceError> {
         self.check(format!("save {id}"))?;
         self.clock += 1;
-        let mal = if self.id == ServiceId::AniList { id - AL } else { id };
+        let mal = if self.id == ServiceId::AniList {
+            id - AL
+        } else {
+            id
+        };
         let m = self.media(mal);
-        let old = self.list.get(&id).map_or(Values::new(Status::PlanToWatch, 0, None), |(_, r)| r.values);
-        let r = Remote { values: change.apply(old), updated_at: self.clock };
+        let old = self
+            .list
+            .get(&id)
+            .map_or(Values::new(Status::PlanToWatch, 0, None), |(_, r)| r.values);
+        let r = Remote {
+            values: change.apply(old),
+            updated_at: self.clock,
+        };
         self.list.insert(id, (m, r));
         Ok(r)
     }
@@ -150,7 +219,10 @@ impl ListService for Fake {
     }
     fn media_by_mal_ids(&mut self, ids: &[u32]) -> std::result::Result<Vec<Media>, ServiceError> {
         self.check(format!("lookup {}", ids.len()))?;
-        Ok(ids.iter().filter_map(|id| self.catalogue.get(id).cloned()).collect())
+        Ok(ids
+            .iter()
+            .filter_map(|id| self.catalogue.get(id).cloned())
+            .collect())
     }
     fn fetch_manga_list(&mut self) -> std::result::Result<Vec<ListItem>, ServiceError> {
         self.check("manga list".into())?;
@@ -160,13 +232,27 @@ impl ListService for Fake {
         self.check(format!("get manga {id}"))?;
         Ok(self.manga.get(&id).map(|(_, r)| *r))
     }
-    fn update_manga_entry(&mut self, id: u32, change: &Change) -> std::result::Result<Remote, ServiceError> {
+    fn update_manga_entry(
+        &mut self,
+        id: u32,
+        change: &Change,
+    ) -> std::result::Result<Remote, ServiceError> {
         self.check(format!("save manga {id}"))?;
         self.clock += 1;
-        let mal = if self.id == ServiceId::AniList { id - AL } else { id };
+        let mal = if self.id == ServiceId::AniList {
+            id - AL
+        } else {
+            id
+        };
         let m = self.manga_media(mal);
-        let old = self.manga.get(&id).map_or(Values::new(Status::PlanToWatch, 0, None), |(_, r)| r.values);
-        let r = Remote { values: change.apply(old), updated_at: self.clock };
+        let old = self
+            .manga
+            .get(&id)
+            .map_or(Values::new(Status::PlanToWatch, 0, None), |(_, r)| r.values);
+        let r = Remote {
+            values: change.apply(old),
+            updated_at: self.clock,
+        };
         self.manga.insert(id, (m, r));
         Ok(r)
     }
@@ -177,7 +263,10 @@ impl ListService for Fake {
     }
     fn manga_by_mal_ids(&mut self, ids: &[u32]) -> std::result::Result<Vec<Media>, ServiceError> {
         self.check(format!("lookup manga {}", ids.len()))?;
-        Ok(ids.iter().filter_map(|id| self.manga_catalogue.get(id).cloned()).collect())
+        Ok(ids
+            .iter()
+            .filter_map(|id| self.manga_catalogue.get(id).cloned())
+            .collect())
     }
 }
 
@@ -196,8 +285,12 @@ fn anilist_knowing(mals: &[u32]) -> Fake {
 
 /// Both lists synced into the store, as Kotora holds them.
 fn synced(store: &mut Store, main: &mut Fake, mirror: &mut Fake, now: i64) {
-    store.replace_list(main.name(), &main.fetch_list().unwrap(), now).unwrap();
-    store.replace_list(mirror.name(), &mirror.fetch_list().unwrap(), now).unwrap();
+    store
+        .replace_list(main.name(), &main.fetch_list().unwrap(), now)
+        .unwrap();
+    store
+        .replace_list(mirror.name(), &mirror.fetch_list().unwrap(), now)
+        .unwrap();
 }
 
 /// Sends everything waiting in `svc`'s queue.
@@ -218,12 +311,22 @@ fn preview(store: &Store, link: Link, main: &mut Fake, mirror: &mut Fake) -> Pre
     let mut mirror_media = HashMap::new();
     if link.to == ServiceId::AniList {
         let ids = ids_only_on_main(link, &main_list, &mirror_list);
-        mirror_media = mirror.media_by_mal_ids(&ids).unwrap().into_iter().filter_map(|m| Some((m.id_mal?, m))).collect();
+        mirror_media = mirror
+            .media_by_mal_ids(&ids)
+            .unwrap()
+            .into_iter()
+            .filter_map(|m| Some((m.id_mal?, m)))
+            .collect();
     }
     let mut main_media = HashMap::new();
     if link.main == ServiceId::AniList {
         let ids = ids_only_on_mirror(link, &main_list, &mirror_list);
-        main_media = main.media_by_mal_ids(&ids).unwrap().into_iter().filter_map(|m| Some((m.id_mal?, m))).collect();
+        main_media = main
+            .media_by_mal_ids(&ids)
+            .unwrap()
+            .into_iter()
+            .filter_map(|m| Some((m.id_mal?, m)))
+            .collect();
     }
     compare(link, &main_list, &mirror_list, &mirror_media, &main_media)
 }
@@ -255,17 +358,42 @@ fn the_preview_sorts_both_lists_by_mal_id() {
     assert_eq!(link.to, ServiceId::AniList);
     let p = preview(&store, link, &mut mal, &mut al);
     let c = p.counts();
-    assert_eq!((c.only_main, c.only_mirror, c.different, c.same, c.unmatched, c.conflicts), (1, 1, 2, 1, 1, 1));
-    assert!(p.plan.rows.iter().any(|r| r.entry.mal_id == 9 && r.verdict == Verdict::Unknown("Not on AniList".into())));
+    assert_eq!(
+        (
+            c.only_main,
+            c.only_mirror,
+            c.different,
+            c.same,
+            c.unmatched,
+            c.conflicts
+        ),
+        (1, 1, 2, 1, 1, 1)
+    );
+    assert!(
+        p.plan
+            .rows
+            .iter()
+            .any(|r| r.entry.mal_id == 9 && r.verdict == Verdict::Unknown("Not on AniList".into()))
+    );
     assert_eq!(p.only_mirror[0].mal_id, 4);
-    assert_eq!(p.only_mirror[0].main_media.as_ref().map(|m| m.id), Some(4), "MyAnimeList: the id is the MAL id");
+    assert_eq!(
+        p.only_mirror[0].main_media.as_ref().map(|m| m.id),
+        Some(4),
+        "MyAnimeList: the id is the MAL id"
+    );
     // The lookup asked only for the ids not on AniList's list.
     assert_eq!(al.calls.last().map(String::as_str), Some("lookup 2"));
     // The merge keeps the further progress and fills the empty score; status pairs are asked.
     let r2 = p.merge.iter().find(|r| r.mal_id == 2).unwrap();
     assert_eq!(r2.merged(false), v(Status::Watching, 7, ten(8)));
     let r5 = p.merge.iter().find(|r| r.mal_id == 5).unwrap();
-    assert_eq!(r5.conflict, Some(StatusConflict { mine: Status::Dropped, file: Status::Completed }));
+    assert_eq!(
+        r5.conflict,
+        Some(StatusConflict {
+            mine: Status::Dropped,
+            file: Status::Completed
+        })
+    );
 }
 
 #[test]
@@ -278,12 +406,19 @@ fn main_wins_makes_the_mirror_a_copy_and_keeps_what_only_the_mirror_has() {
     let (a, b) = store.start_mirror(link, &to, &main, 20).unwrap();
     assert_eq!((a.len(), b.len()), (3, 0), "add 1, update 2 and 5");
     assert_eq!(store.mirror_link().unwrap(), Some(link));
-    assert!(mal.calls.iter().all(|c| c == "list"), "nothing sent to the main service");
+    assert!(
+        mal.calls.iter().all(|c| c == "list"),
+        "nothing sent to the main service"
+    );
     drain(&mut store, &mut al, 30);
     for m in [1, 2, 3, 5] {
         assert_eq!(al.values(m), mal.values(m), "anime {m}");
     }
-    assert_eq!(al.values(4), Some(v(Status::OnHold, 2, ten(6))), "only on AniList: kept");
+    assert_eq!(
+        al.values(4),
+        Some(v(Status::OnHold, 2, ten(6))),
+        "only on AniList: kept"
+    );
     assert_eq!(al.values(9), None);
 }
 
@@ -299,9 +434,17 @@ fn merge_fills_both_sides_and_asks_about_unclear_statuses() {
     drain(&mut store, &mut mal, 30);
     assert_eq!(mal.values(2), Some(v(Status::Watching, 7, ten(8))));
     assert_eq!(al.values(2), Some(v(Status::Watching, 7, ten(8))));
-    assert_eq!(mal.values(5), Some(v(Status::Completed, 12, ten(7))), "AniList's status, as picked");
+    assert_eq!(
+        mal.values(5),
+        Some(v(Status::Completed, 12, ten(7))),
+        "AniList's status, as picked"
+    );
     assert_eq!(al.values(5), mal.values(5));
-    assert_eq!(mal.values(4), Some(v(Status::OnHold, 2, ten(6))), "only on AniList: added to MAL");
+    assert_eq!(
+        mal.values(4),
+        Some(v(Status::OnHold, 2, ten(6))),
+        "only on AniList: added to MAL"
+    );
     assert_eq!(al.values(1), mal.values(1), "only on MAL: added to AniList");
     // Nothing more waits: the main list's merge changes needed nothing more on the mirror.
     assert_eq!(store.open_count("anilist").unwrap(), 0);
@@ -317,15 +460,41 @@ fn dont_align_mirrors_only_new_edits_and_only_what_they_change() {
     assert_eq!(store.open_count("anilist").unwrap(), 0, "nothing queued");
     // Anime 2: MAL has 5 / score 8, AniList 7 / no score. An edit of the progress only sends
     // the progress: AniList's missing score stays missing.
-    store.enqueue("mal", 2, Change { progress: Some(6), ..Change::default() }, 40).unwrap();
+    store
+        .enqueue(
+            "mal",
+            2,
+            Change {
+                progress: Some(6),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     let ops = store.queue("anilist", 40).unwrap();
     assert_eq!(ops.len(), 1);
-    assert_eq!(ops[0].change, Change { progress: Some(6), ..Change::default() });
+    assert_eq!(
+        ops[0].change,
+        Change {
+            progress: Some(6),
+            ..Change::default()
+        }
+    );
     drain(&mut store, &mut al, 50);
     assert_eq!(al.values(2), Some(v(Status::Watching, 6, None)));
     // Anime 1 is not on AniList: its first edit adds it there with all its values, once
     // AniList's id for it is looked up.
-    store.enqueue("mal", 1, Change { progress: Some(4), ..Change::default() }, 60).unwrap();
+    store
+        .enqueue(
+            "mal",
+            1,
+            Change {
+                progress: Some(4),
+                ..Change::default()
+            },
+            60,
+        )
+        .unwrap();
     assert_eq!(store.mirror_waits().unwrap()[0].mal_id, 1);
     assert_eq!(map_waits(&mut al, &mut store, 65).unwrap(), 1);
     drain(&mut store, &mut al, 70);
@@ -335,35 +504,104 @@ fn dont_align_mirrors_only_new_edits_and_only_what_they_change() {
 #[test]
 fn a_failure_on_one_side_never_blocks_the_other() {
     let (mut store, mut mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-    store.enqueue("mal", 3, Change { score: Some(ten(10)), ..Change::default() }, 40).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
+    store
+        .enqueue(
+            "mal",
+            3,
+            Change {
+                score: Some(ten(10)),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     al.down = Some(ServiceError::Offline("no network".into()));
-    assert!(matches!(drain(&mut store, &mut al, 50)[..], [Outcome::Retry(_)]));
-    assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent], "MAL goes on alone");
+    assert!(matches!(
+        drain(&mut store, &mut al, 50)[..],
+        [Outcome::Retry(_)]
+    ));
+    assert_eq!(
+        drain(&mut store, &mut mal, 50),
+        [Outcome::Sent],
+        "MAL goes on alone"
+    );
     assert_eq!(mal.values(3).unwrap().score, ten(10));
     // AniList back: its change goes out at its next try.
     al.down = None;
-    assert_eq!(drain(&mut store, &mut al, 50 + queue::MAX_BACKOFF), [Outcome::Sent]);
+    assert_eq!(
+        drain(&mut store, &mut al, 50 + queue::MAX_BACKOFF),
+        [Outcome::Sent]
+    );
     assert_eq!(al.values(3).unwrap().score, ten(10));
     // The other way round: AniList refusing doesn't stop MAL either.
-    store.enqueue("mal", 3, Change { score: Some(ten(9)), ..Change::default() }, 2_000).unwrap();
+    store
+        .enqueue(
+            "mal",
+            3,
+            Change {
+                score: Some(ten(9)),
+                ..Change::default()
+            },
+            2_000,
+        )
+        .unwrap();
     al.down = Some(ServiceError::Other("Validation error".into()));
-    assert!(matches!(drain(&mut store, &mut al, 2_010)[..], [Outcome::Failed(_)]));
+    assert!(matches!(
+        drain(&mut store, &mut al, 2_010)[..],
+        [Outcome::Failed(_)]
+    ));
     assert_eq!(drain(&mut store, &mut mal, 2_010), [Outcome::Sent]);
 }
 
 #[test]
 fn a_website_edit_on_the_mirror_is_a_conflict_never_overwritten() {
     let (mut store, mut mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     // Edited on anilist.co, then in Kotora before the mirror's next sync.
     let before = al.values(3).unwrap();
-    al.put(3, Values { score: ten(5), ..before });
-    store.enqueue("mal", 3, Change { progress: Some(11), ..Change::default() }, 40).unwrap();
+    al.put(
+        3,
+        Values {
+            score: ten(5),
+            ..before
+        },
+    );
+    store
+        .enqueue(
+            "mal",
+            3,
+            Change {
+                progress: Some(11),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Conflict]);
-    assert_eq!(al.values(3).unwrap(), Values { score: ten(5), ..before }, "untouched");
-    assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent], "the main list still gets it");
-    let op = store.queue("anilist", 50).unwrap().into_iter().find(|o| o.state == OpState::Conflict).unwrap();
+    assert_eq!(
+        al.values(3).unwrap(),
+        Values {
+            score: ten(5),
+            ..before
+        },
+        "untouched"
+    );
+    assert_eq!(
+        drain(&mut store, &mut mal, 50),
+        [Outcome::Sent],
+        "the main list still gets it"
+    );
+    let op = store
+        .queue("anilist", 50)
+        .unwrap()
+        .into_iter()
+        .find(|o| o.state == OpState::Conflict)
+        .unwrap();
     assert_eq!(op.remote.unwrap().values.score, ten(5));
 }
 
@@ -385,14 +623,36 @@ fn the_mirrors_sync_lists_website_edits_and_the_user_settles_them() {
     assert_eq!(r.web_edits, 3);
     let edits = store.web_edits().unwrap();
     let e2 = edits.iter().find(|e| e.mal_id == 2).unwrap();
-    assert_eq!((e2.main.as_ref().unwrap().progress, e2.mirror.as_ref().unwrap().progress), (5, 9));
-    assert!(edits.iter().any(|e| e.mal_id == 7 && e.main.is_none()), "added on AniList");
-    assert!(edits.iter().any(|e| e.mal_id == 1 && e.mirror.is_none()), "removed on AniList");
-    assert_eq!(store.open_count("anilist").unwrap() + store.open_count("mal").unwrap(), 0, "nothing queued by itself");
+    assert_eq!(
+        (
+            e2.main.as_ref().unwrap().progress,
+            e2.mirror.as_ref().unwrap().progress
+        ),
+        (5, 9)
+    );
+    assert!(
+        edits.iter().any(|e| e.mal_id == 7 && e.main.is_none()),
+        "added on AniList"
+    );
+    assert!(
+        edits.iter().any(|e| e.mal_id == 1 && e.mirror.is_none()),
+        "removed on AniList"
+    );
+    assert_eq!(
+        store.open_count("anilist").unwrap() + store.open_count("mal").unwrap(),
+        0,
+        "nothing queued by itself"
+    );
     // Settle: 2 takes AniList's progress on MAL, 7 is added to MAL, 1 goes back on AniList.
-    store.settle_web_edit(Kind::Anime, 2, Settle::UseMirror, None, 60).unwrap();
-    store.settle_web_edit(Kind::Anime, 7, Settle::UseMirror, None, 60).unwrap();
-    store.settle_web_edit(Kind::Anime, 1, Settle::UseMain, None, 60).unwrap();
+    store
+        .settle_web_edit(Kind::Anime, 2, Settle::UseMirror, None, 60)
+        .unwrap();
+    store
+        .settle_web_edit(Kind::Anime, 7, Settle::UseMirror, None, 60)
+        .unwrap();
+    store
+        .settle_web_edit(Kind::Anime, 1, Settle::UseMain, None, 60)
+        .unwrap();
     assert!(store.web_edits().unwrap().is_empty());
     // AniList's saved list no longer has 1: its id is looked up again.
     assert_eq!(map_waits(&mut al, &mut store, 65).unwrap(), 1);
@@ -404,28 +664,52 @@ fn the_mirrors_sync_lists_website_edits_and_the_user_settles_them() {
     // Leave: asked again only when AniList changes it again.
     al.put(3, v(Status::Completed, 12, ten(4)));
     sync_mirror(&mut al, &mut store, 80).unwrap();
-    store.settle_web_edit(Kind::Anime, 3, Settle::Leave, None, 90).unwrap();
+    store
+        .settle_web_edit(Kind::Anime, 3, Settle::Leave, None, 90)
+        .unwrap();
     assert_eq!(sync_mirror(&mut al, &mut store, 100).unwrap().web_edits, 0);
     assert_eq!(mal.values(3).unwrap().score, ten(9), "left as it was");
     // A difference that can't be settled that way says why.
     al.list.remove(&(3 + AL));
     sync_mirror(&mut al, &mut store, 110).unwrap();
-    assert!(store.settle_web_edit(Kind::Anime, 3, Settle::UseMirror, None, 120).is_err(), "Kotora can't remove from MAL");
+    assert!(
+        store
+            .settle_web_edit(Kind::Anime, 3, Settle::UseMirror, None, 120)
+            .is_err(),
+        "Kotora can't remove from MAL"
+    );
 }
 
 #[test]
 fn an_add_waits_for_its_anilist_id_then_goes() {
     let (mut store, mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     // Search and add on MAL: AniList's id of 6 isn't known yet.
     al.catalogue.insert(6, al.media(6));
-    store.add_to_list("mal", &mal.media(6), Status::Watching, Some(2), 30).unwrap();
-    store.add_to_list("mal", &mal.media(8), Status::PlanToWatch, None, 30).unwrap();
-    assert_eq!(store.mirror_waits().unwrap().iter().map(|w| w.mal_id).collect::<Vec<_>>(), [6, 8]);
+    store
+        .add_to_list("mal", &mal.media(6), Status::Watching, Some(2), 30)
+        .unwrap();
+    store
+        .add_to_list("mal", &mal.media(8), Status::PlanToWatch, None, 30)
+        .unwrap();
+    assert_eq!(
+        store
+            .mirror_waits()
+            .unwrap()
+            .iter()
+            .map(|w| w.mal_id)
+            .collect::<Vec<_>>(),
+        [6, 8]
+    );
     assert_eq!(store.open_count("anilist").unwrap(), 0);
     assert_eq!(map_waits(&mut al, &mut store, 40).unwrap(), 1);
     let waits = store.mirror_waits().unwrap();
-    assert_eq!((waits.len(), waits[0].mal_id, waits[0].error.as_deref()), (1, 8, Some("Not on AniList")));
+    assert_eq!(
+        (waits.len(), waits[0].mal_id, waits[0].error.as_deref()),
+        (1, 8, Some("Not on AniList"))
+    );
     // A failed lookup isn't asked again by itself.
     let n = al.calls.len();
     assert_eq!(map_waits(&mut al, &mut store, 41).unwrap(), 0);
@@ -433,38 +717,79 @@ fn an_add_waits_for_its_anilist_id_then_goes() {
     drain(&mut store, &mut al, 50);
     assert_eq!(al.values(6), Some(v(Status::Watching, 2, None)));
     // A discarded add on MAL takes its waiting mirror add with it.
-    store.add_to_list("mal", &mal.media(4), Status::Watching, Some(1), 60).unwrap();
-    assert_eq!(store.open_count("anilist").unwrap(), 1, "4 is on AniList already: a change");
-    let id = store.queue("mal", 60).unwrap().into_iter().find(|o| o.media_id == 4 && o.state.is_open()).unwrap().id;
+    store
+        .add_to_list("mal", &mal.media(4), Status::Watching, Some(1), 60)
+        .unwrap();
+    assert_eq!(
+        store.open_count("anilist").unwrap(),
+        1,
+        "4 is on AniList already: a change"
+    );
+    let id = store
+        .queue("mal", 60)
+        .unwrap()
+        .into_iter()
+        .find(|o| o.media_id == 4 && o.state.is_open())
+        .unwrap()
+        .id;
     store.discard("mal", id, 61).unwrap();
-    assert_eq!(store.open_count("anilist").unwrap(), 0, "back where AniList was");
+    assert_eq!(
+        store.open_count("anilist").unwrap(),
+        0,
+        "back where AniList was"
+    );
 }
 
 #[test]
 fn a_website_edit_on_the_main_list_is_mirrored_at_the_sync() {
     let (mut store, mut mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     let old = store.load_list("mal").unwrap();
     mal.put(2, v(Status::Watching, 6, ten(8)));
-    store.replace_list("mal", &mal.fetch_list().unwrap(), 30).unwrap();
+    store
+        .replace_list("mal", &mal.fetch_list().unwrap(), 30)
+        .unwrap();
     assert_eq!(after_main_sync(&mut store, "mal", &old, 30).unwrap(), 1);
     let ops = store.queue("anilist", 30).unwrap();
     assert_eq!(ops.len(), 1);
-    assert_eq!(ops[0].change, Change { progress: Some(6), ..Change::default() }, "only what changed on MAL");
+    assert_eq!(
+        ops[0].change,
+        Change {
+            progress: Some(6),
+            ..Change::default()
+        },
+        "only what changed on MAL"
+    );
     // Nothing changed: nothing more.
     let old = store.load_list("mal").unwrap();
-    store.replace_list("mal", &mal.fetch_list().unwrap(), 40).unwrap();
+    store
+        .replace_list("mal", &mal.fetch_list().unwrap(), 40)
+        .unwrap();
     assert_eq!(after_main_sync(&mut store, "mal", &old, 40).unwrap(), 0);
-    assert_eq!(after_main_sync(&mut store, "anilist", &old, 40).unwrap(), 0, "not the main list");
+    assert_eq!(
+        after_main_sync(&mut store, "anilist", &old, 40).unwrap(),
+        0,
+        "not the main list"
+    );
     drain(&mut store, &mut al, 50);
     assert_eq!(al.values(2).unwrap().progress, 6);
-    assert_eq!(after_main_sync(&mut store, "mal", &[], 40).unwrap(), 0, "no saved list before: never the whole list");
+    assert_eq!(
+        after_main_sync(&mut store, "mal", &[], 40).unwrap(),
+        0,
+        "no saved list before: never the whole list"
+    );
     // An edit made on MAL before the mirror was turned on is not mirrored.
     store.stop_mirror().unwrap();
     mal.put(3, v(Status::Completed, 12, ten(1)));
     let old = store.load_list("mal").unwrap();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], mal.clock + 10).unwrap();
-    store.replace_list("mal", &mal.fetch_list().unwrap(), 45).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], mal.clock + 10)
+        .unwrap();
+    store
+        .replace_list("mal", &mal.fetch_list().unwrap(), 45)
+        .unwrap();
     assert_eq!(after_main_sync(&mut store, "mal", &old, 45).unwrap(), 0);
 }
 
@@ -475,15 +800,37 @@ fn anilist_main_entries_without_a_mal_id_are_not_mirrored() {
     let mut mal = Fake::new(ServiceId::Mal);
     al.put(1, v(Status::Watching, 1, None));
     // An AniList-only anime: no idMal.
-    al.list.insert(555, (Media { id: 555, title: "Web Short".into(), ..Media::default() }, Remote { values: v(Status::Watching, 2, None), updated_at: 5 }));
+    al.list.insert(
+        555,
+        (
+            Media {
+                id: 555,
+                title: "Web Short".into(),
+                ..Media::default()
+            },
+            Remote {
+                values: v(Status::Watching, 2, None),
+                updated_at: 5,
+            },
+        ),
+    );
     mal.put(2, v(Status::Completed, 12, ten(8)));
     synced(&mut store, &mut al, &mut mal, 10);
     let link = Link::of(ServiceId::AniList);
     let p = preview(&store, link, &mut al, &mut mal);
     let c = p.counts();
     assert_eq!((c.only_main, c.only_mirror, c.unmatched), (1, 1, 1));
-    assert!(p.plan.rows.iter().any(|r| r.verdict == Verdict::Unknown("No MyAnimeList id".into())));
-    assert_eq!(p.only_mirror[0].main_media.as_ref().map(|m| m.id), Some(2 + AL), "looked up on AniList");
+    assert!(
+        p.plan
+            .rows
+            .iter()
+            .any(|r| r.verdict == Verdict::Unknown("No MyAnimeList id".into()))
+    );
+    assert_eq!(
+        p.only_mirror[0].main_media.as_ref().map(|m| m.id),
+        Some(2 + AL),
+        "looked up on AniList"
+    );
     let (to, main) = align_actions(&p, Align::Merge, &HashSet::new());
     store.start_mirror(link, &to, &main, 20).unwrap();
     drain(&mut store, &mut mal, 30);
@@ -491,7 +838,17 @@ fn anilist_main_entries_without_a_mal_id_are_not_mirrored() {
     assert_eq!(mal.values(1), Some(v(Status::Watching, 1, None)));
     assert_eq!(al.values(2), Some(v(Status::Completed, 12, ten(8))));
     // Edits of the anime with no MyAnimeList id stay on AniList.
-    store.enqueue("anilist", 555, Change { progress: Some(3), ..Change::default() }, 40).unwrap();
+    store
+        .enqueue(
+            "anilist",
+            555,
+            Change {
+                progress: Some(3),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     assert_eq!(store.open_count("mal").unwrap(), 0);
     assert!(store.mirror_waits().unwrap().is_empty());
 }
@@ -506,9 +863,27 @@ fn off_drops_what_waits_and_signing_out_turns_it_off() {
     assert_eq!(store.stop_mirror().unwrap(), 3);
     assert_eq!(store.open_count("anilist").unwrap(), 0);
     assert_eq!(store.mirror_link().unwrap(), None);
-    assert_eq!(store.load_item("anilist", 2 + AL).unwrap().unwrap().progress, 7, "AniList's saved entry back as it was");
+    assert_eq!(
+        store
+            .load_item("anilist", 2 + AL)
+            .unwrap()
+            .unwrap()
+            .progress,
+        7,
+        "AniList's saved entry back as it was"
+    );
     // Edits no longer go to AniList.
-    store.enqueue("mal", 3, Change { score: Some(ten(1)), ..Change::default() }, 30).unwrap();
+    store
+        .enqueue(
+            "mal",
+            3,
+            Change {
+                score: Some(ten(1)),
+                ..Change::default()
+            },
+            30,
+        )
+        .unwrap();
     assert_eq!(store.open_count("anilist").unwrap(), 0);
     // On again, then the mirror signs out: off.
     store.start_mirror(link, &[], &[], 40).unwrap();
@@ -523,25 +898,68 @@ fn off_drops_what_waits_and_signing_out_turns_it_off() {
 #[test]
 fn the_mirrors_own_edits_are_not_followed_and_manga_are_kept_apart() {
     let (mut store, _mal, _al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     // An edit on the mirror's list stays there.
-    store.enqueue("anilist", 2 + AL, Change { progress: Some(8), ..Change::default() }, 30).unwrap();
+    store
+        .enqueue(
+            "anilist",
+            2 + AL,
+            Change {
+                progress: Some(8),
+                ..Change::default()
+            },
+            30,
+        )
+        .unwrap();
     assert_eq!(store.open_count("mal").unwrap(), 0);
     // A manga with the same MyAnimeList id as anime 2 waits for its own AniList manga id.
-    let manga = Media { kind: Kind::Manga, id: 2, title: "Paper Lanterns".into(), ..Media::default() };
-    store.add_to_list("mal", &manga, Status::Watching, Some(3), 30).unwrap();
-    assert_eq!(store.open_count("anilist").unwrap(), 1, "only the AniList edit itself: the manga waits");
+    let manga = Media {
+        kind: Kind::Manga,
+        id: 2,
+        title: "Paper Lanterns".into(),
+        ..Media::default()
+    };
+    store
+        .add_to_list("mal", &manga, Status::Watching, Some(3), 30)
+        .unwrap();
+    assert_eq!(
+        store.open_count("anilist").unwrap(),
+        1,
+        "only the AniList edit itself: the manga waits"
+    );
     let waits = store.mirror_waits().unwrap();
-    assert_eq!(waits.iter().map(|w| (w.kind, w.mal_id)).collect::<Vec<_>>(), [(Kind::Manga, 2)]);
+    assert_eq!(
+        waits.iter().map(|w| (w.kind, w.mal_id)).collect::<Vec<_>>(),
+        [(Kind::Manga, 2)]
+    );
 }
 
 #[test]
 fn links_read_and_write() {
-    assert_eq!(Link::parse(&Link::of(ServiceId::AniList).text()), Some(Link { main: ServiceId::AniList, to: ServiceId::Mal }));
+    assert_eq!(
+        Link::parse(&Link::of(ServiceId::AniList).text()),
+        Some(Link {
+            main: ServiceId::AniList,
+            to: ServiceId::Mal
+        })
+    );
     assert_eq!(Link::parse("mal>mal"), None);
     assert_eq!(Link::parse("nope"), None);
-    let s = Saved::from(Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, ten(9)) });
-    assert_eq!(s.values(), Values { rewatching: true, times_rewatched: 2, ..v(Status::Completed, 3, ten(9)) });
+    let s = Saved::from(Values {
+        rewatching: true,
+        times_rewatched: 2,
+        ..v(Status::Completed, 3, ten(9))
+    });
+    assert_eq!(
+        s.values(),
+        Values {
+            rewatching: true,
+            times_rewatched: 2,
+            ..v(Status::Completed, 3, ten(9))
+        }
+    );
 }
 
 // ------------------------------------------------------------------- scores across services
@@ -563,20 +981,52 @@ fn a_mal_7_and_an_anilist_73_are_the_same_score() {
     let p = preview(&store, link, &mut mal, &mut al);
     let c = p.counts();
     assert_eq!((c.same, c.different), (1, 1), "73 is a 7, 75 an 8");
-    assert!(p.plan.rows.iter().any(|r| r.entry.mal_id == 1 && r.verdict == Verdict::Same));
+    assert!(
+        p.plan
+            .rows
+            .iter()
+            .any(|r| r.entry.mal_id == 1 && r.verdict == Verdict::Same)
+    );
     // Main wins: only 2's score goes, as MAL's 7 (70); 1's 73 is left alone.
     let (to, main) = align_actions(&p, Align::MainWins, &HashSet::new());
     assert!(main.is_empty());
     assert_eq!(to.len(), 1);
     store.start_mirror(link, &to, &main, 20).unwrap();
     drain(&mut store, &mut al, 30);
-    assert_eq!(al.values(1).unwrap().score, Score::from_points(73), "kept: the same on MAL's scale");
+    assert_eq!(
+        al.values(1).unwrap().score,
+        Score::from_points(73),
+        "kept: the same on MAL's scale"
+    );
     assert_eq!(al.values(2).unwrap().score, ten(7));
     // A later edit: the progress goes alone (AniList's 73 stays), a new score goes as MAL's.
-    store.enqueue("mal", 1, Change { progress: Some(4), ..Change::default() }, 40).unwrap();
+    store
+        .enqueue(
+            "mal",
+            1,
+            Change {
+                progress: Some(4),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     drain(&mut store, &mut al, 45);
-    assert_eq!(al.values(1), Some(v(Status::Watching, 4, Score::from_points(73))));
-    store.enqueue("mal", 1, Change { score: Some(ten(8)), ..Change::default() }, 50).unwrap();
+    assert_eq!(
+        al.values(1),
+        Some(v(Status::Watching, 4, Score::from_points(73)))
+    );
+    store
+        .enqueue(
+            "mal",
+            1,
+            Change {
+                score: Some(ten(8)),
+                ..Change::default()
+            },
+            50,
+        )
+        .unwrap();
     drain(&mut store, &mut al, 60);
     assert_eq!(al.values(1), Some(v(Status::Watching, 4, ten(8))));
 }
@@ -597,18 +1047,46 @@ fn an_anilist_73_goes_to_mal_as_7_and_stays_73_on_anilist() {
     let p = preview(&store, link, &mut al, &mut mal);
     assert_eq!((p.counts().same, p.counts().different), (1, 1));
     let (to, main) = align_actions(&p, Align::Merge, &HashSet::new());
-    assert!(main.is_empty(), "AniList keeps its 73 and its progress: {main:?}");
+    assert!(
+        main.is_empty(),
+        "AniList keeps its 73 and its progress: {main:?}"
+    );
     store.start_mirror(link, &to, &main, 20).unwrap();
     drain(&mut store, &mut mal, 30);
-    assert_eq!(mal.values(1), Some(v(Status::Watching, 5, Score::from_points(73))));
+    assert_eq!(
+        mal.values(1),
+        Some(v(Status::Watching, 5, Score::from_points(73)))
+    );
     assert_eq!(al.values(1).unwrap().score, Score::from_points(73));
     // The fake keeps what it is sent; MAL itself answers 7 (70), as a sync then saves it.
     mal.put(1, v(Status::Watching, 5, ten(7)));
-    store.replace_list("mal", &mal.fetch_list().unwrap(), 35).unwrap();
+    store
+        .replace_list("mal", &mal.fetch_list().unwrap(), 35)
+        .unwrap();
     // Fine-tuning on AniList (73 to 71) is still a 7 on MAL: nothing goes there.
-    store.enqueue("anilist", 1 + AL, Change { score: Some(Score::from_points(71)), ..Change::default() }, 40).unwrap();
+    store
+        .enqueue(
+            "anilist",
+            1 + AL,
+            Change {
+                score: Some(Score::from_points(71)),
+                ..Change::default()
+            },
+            40,
+        )
+        .unwrap();
     assert_eq!(store.open_count("mal").unwrap(), 0);
-    store.enqueue("anilist", 1 + AL, Change { score: Some(Score::from_points(76)), ..Change::default() }, 41).unwrap();
+    store
+        .enqueue(
+            "anilist",
+            1 + AL,
+            Change {
+                score: Some(Score::from_points(76)),
+                ..Change::default()
+            },
+            41,
+        )
+        .unwrap();
     drain(&mut store, &mut mal, 50);
     assert_eq!(mal.values(1).unwrap().score.map(Score::to_ten), Some(8));
 }
@@ -619,12 +1097,20 @@ fn an_anilist_73_goes_to_mal_as_7_and_stays_73_on_anilist() {
 #[test]
 fn a_removal_on_the_main_list_is_mirrored() {
     let (mut store, mut mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     store.remove_from_list("mal", 3, 40).unwrap();
     let ops = store.queue("anilist", 40).unwrap();
     assert_eq!(ops.len(), 1);
     assert!(ops[0].removed && ops[0].media_id == 3 + AL);
-    assert!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL).unwrap().map(|(v, _)| v).is_none(), "off the saved mirror list at once");
+    assert!(
+        entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL)
+            .unwrap()
+            .map(|(v, _)| v)
+            .is_none(),
+        "off the saved mirror list at once"
+    );
     assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent]);
     assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Sent]);
     assert_eq!((mal.values(3), al.values(3)), (None, None));
@@ -639,18 +1125,43 @@ fn a_removal_on_the_main_list_is_mirrored() {
 #[test]
 fn undo_or_add_again_takes_back_the_mirrors_removal() {
     let (mut store, _mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     let id = store.remove_from_list("mal", 3, 40).unwrap();
     store.discard("mal", id, 41).unwrap();
-    assert_eq!(store.open_count("anilist").unwrap(), 0, "nothing left for AniList");
-    assert_eq!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL).unwrap().map(|(v, _)| v), Some(v(Status::Completed, 12, ten(9))), "back on the mirror's saved list");
+    assert_eq!(
+        store.open_count("anilist").unwrap(),
+        0,
+        "nothing left for AniList"
+    );
+    assert_eq!(
+        entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 3 + AL)
+            .unwrap()
+            .map(|(v, _)| v),
+        Some(v(Status::Completed, 12, ten(9))),
+        "back on the mirror's saved list"
+    );
     // Remove again, then add it again from Search.
     store.remove_from_list("mal", 3, 50).unwrap();
     let media = Fake::new(ServiceId::Mal).media(3);
-    store.add_to_list("mal", &media, Status::Completed, None, 51).unwrap();
-    assert!(store.queue("anilist", 51).unwrap().iter().all(|o| !o.removed), "the mirror's removal is gone");
+    store
+        .add_to_list("mal", &media, Status::Completed, None, 51)
+        .unwrap();
+    assert!(
+        store
+            .queue("anilist", 51)
+            .unwrap()
+            .iter()
+            .all(|o| !o.removed),
+        "the mirror's removal is gone"
+    );
     drain(&mut store, &mut al, 60);
-    assert_eq!(al.values(3), Some(v(Status::Completed, 12, ten(9))), "never removed on AniList");
+    assert_eq!(
+        al.values(3),
+        Some(v(Status::Completed, 12, ten(9))),
+        "never removed on AniList"
+    );
     assert!(!al.calls.iter().any(|c| c.starts_with("delete")));
 }
 
@@ -659,13 +1170,21 @@ fn undo_or_add_again_takes_back_the_mirrors_removal() {
 #[test]
 fn a_mirrored_removal_stops_when_the_mirror_changed() {
     let (mut store, _mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     al.put(3, v(Status::Completed, 12, ten(10)));
     al.put(2, v(Status::Watching, 8, None));
     store.remove_from_list("mal", 3, 40).unwrap();
     store.remove_from_list("mal", 2, 40).unwrap();
-    assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Conflict, Outcome::Conflict]);
-    assert!(al.values(3).is_some() && al.values(2).is_some(), "nothing removed on AniList");
+    assert_eq!(
+        drain(&mut store, &mut al, 50),
+        [Outcome::Conflict, Outcome::Conflict]
+    );
+    assert!(
+        al.values(3).is_some() && al.values(2).is_some(),
+        "nothing removed on AniList"
+    );
     let ops = store.queue("anilist", 50).unwrap();
     let c3 = ops.iter().find(|o| o.media_id == 3 + AL).unwrap();
     let c2 = ops.iter().find(|o| o.media_id == 2 + AL).unwrap();
@@ -676,9 +1195,23 @@ fn a_mirrored_removal_stops_when_the_mirror_changed() {
     store.take_theirs("anilist", c2.id, 55).unwrap();
     assert_eq!(drain(&mut store, &mut al, 60), [Outcome::Sent]);
     assert_eq!(al.values(3), None);
-    assert_eq!(entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 2 + AL).unwrap().map(|(v, _)| v), Some(v(Status::Watching, 8, None)));
-    assert!(entry_values(&store.conn, Scope::new("mal", Kind::Anime), 2).unwrap().map(|(v, _)| v).is_none());
-    assert_eq!(store.open_count("mal").unwrap(), 2, "the main removals still go");
+    assert_eq!(
+        entry_values(&store.conn, Scope::new("anilist", Kind::Anime), 2 + AL)
+            .unwrap()
+            .map(|(v, _)| v),
+        Some(v(Status::Watching, 8, None))
+    );
+    assert!(
+        entry_values(&store.conn, Scope::new("mal", Kind::Anime), 2)
+            .unwrap()
+            .map(|(v, _)| v)
+            .is_none()
+    );
+    assert_eq!(
+        store.open_count("mal").unwrap(),
+        2,
+        "the main removals still go"
+    );
 }
 
 /// Not on the mirror: nothing to remove there, and an add that waited for its AniList id is
@@ -686,8 +1219,20 @@ fn a_mirrored_removal_stops_when_the_mirror_changed() {
 #[test]
 fn a_removal_not_on_the_mirror_only_drops_what_waits() {
     let (mut store, _mal, mut al) = two_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-    store.enqueue("mal", 1, Change { progress: Some(4), ..Change::default() }, 30).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
+    store
+        .enqueue(
+            "mal",
+            1,
+            Change {
+                progress: Some(4),
+                ..Change::default()
+            },
+            30,
+        )
+        .unwrap();
     assert_eq!(store.mirror_waits().unwrap().len(), 1);
     store.remove_from_list("mal", 1, 40).unwrap();
     assert!(store.mirror_waits().unwrap().is_empty());
@@ -695,7 +1240,14 @@ fn a_removal_not_on_the_mirror_only_drops_what_waits() {
     assert_eq!(map_waits(&mut al, &mut store, 50).unwrap(), 0);
     // The mirror's own removal (from its queue page, say) goes nowhere else.
     store.remove_from_list("anilist", 4 + AL, 60).unwrap();
-    assert!(store.queue("mal", 60).unwrap().iter().all(|o| o.media_id == 1), "only the main list's own changes of 1");
+    assert!(
+        store
+            .queue("mal", 60)
+            .unwrap()
+            .iter()
+            .all(|o| o.media_id == 1),
+        "only the main list's own changes of 1"
+    );
 }
 
 // ------------------------------------------------------------------------------------ manga
@@ -704,7 +1256,10 @@ const MAL_MANGA: Scope = Scope::new("mal", Kind::Manga);
 const AL_MANGA: Scope = Scope::new("anilist", Kind::Manga);
 
 fn read(status: Status, chapters: u32, volumes: u32, score: Option<Score>) -> Values {
-    Values { volumes, ..Values::new(status, chapters, score) }
+    Values {
+        volumes,
+        ..Values::new(status, chapters, score)
+    }
 }
 
 /// MyAnimeList main and AniList mirror with manga (Manga on), the anime lists of [`two_lists`]
@@ -725,8 +1280,12 @@ fn manga_lists() -> (Store, Fake, Fake) {
     al.put_manga(4, read(Status::OnHold, 6, 1, ten(6)));
     al.put_manga(5, read(Status::Completed, 40, 5, ten(7)));
     store.set_manga_enabled(true).unwrap();
-    store.replace_list(MAL_MANGA, &mal.fetch_manga_list().unwrap(), 10).unwrap();
-    store.replace_list(AL_MANGA, &al.fetch_manga_list().unwrap(), 10).unwrap();
+    store
+        .replace_list(MAL_MANGA, &mal.fetch_manga_list().unwrap(), 10)
+        .unwrap();
+    store
+        .replace_list(AL_MANGA, &al.fetch_manga_list().unwrap(), 10)
+        .unwrap();
     (store, mal, al)
 }
 
@@ -734,7 +1293,12 @@ fn manga_preview(store: &Store, link: Link, mirror: &mut Fake) -> Preview {
     let main = store.load_list(MAL_MANGA).unwrap();
     let theirs = store.load_list(AL_MANGA).unwrap();
     let ids = ids_only_on_main_of(link, Kind::Manga, &main, &theirs);
-    let media = mirror.manga_by_mal_ids(&ids).unwrap().into_iter().filter_map(|m| Some((m.id_mal?, m))).collect();
+    let media = mirror
+        .manga_by_mal_ids(&ids)
+        .unwrap()
+        .into_iter()
+        .filter_map(|m| Some((m.id_mal?, m)))
+        .collect();
     compare_of(link, Kind::Manga, &main, &theirs, &media, &HashMap::new())
 }
 
@@ -747,14 +1311,34 @@ fn the_manga_preview_compares_chapters_and_volumes() {
     let p = manga_preview(&store, link, &mut al);
     assert_eq!(p.kind, Kind::Manga);
     let c = p.counts();
-    assert_eq!((c.only_main, c.only_mirror, c.different, c.same, c.conflicts), (1, 1, 2, 1, 1));
-    assert_eq!(al.calls.last().map(String::as_str), Some("lookup manga 1"), "only manga 1 is looked up, as a manga");
+    assert_eq!(
+        (c.only_main, c.only_mirror, c.different, c.same, c.conflicts),
+        (1, 1, 2, 1, 1)
+    );
+    assert_eq!(
+        al.calls.last().map(String::as_str),
+        Some("lookup manga 1"),
+        "only manga 1 is looked up, as a manga"
+    );
     let r2 = p.merge.iter().find(|r| r.mal_id == 2).unwrap();
-    assert_eq!(r2.merged(false), read(Status::Watching, 20, 4, ten(8)), "more chapters from MAL, more volumes from AniList, the score fills");
+    assert_eq!(
+        r2.merged(false),
+        read(Status::Watching, 20, 4, ten(8)),
+        "more chapters from MAL, more volumes from AniList, the score fills"
+    );
     let r5 = p.merge.iter().find(|r| r.mal_id == 5).unwrap();
-    assert_eq!(r5.conflict, Some(StatusConflict { mine: Status::Dropped, file: Status::Completed }));
+    assert_eq!(
+        r5.conflict,
+        Some(StatusConflict {
+            mine: Status::Dropped,
+            file: Status::Completed
+        })
+    );
     // Only on AniList: MAL's manga media for it (a merge adds it there).
-    assert_eq!(p.only_mirror[0].main_media.as_ref().map(|m| (m.id, m.kind)), Some((4, Kind::Manga)));
+    assert_eq!(
+        p.only_mirror[0].main_media.as_ref().map(|m| (m.id, m.kind)),
+        Some((4, Kind::Manga))
+    );
 }
 
 /// Main wins and Merge, sent through each service's own queue, as manga.
@@ -774,10 +1358,24 @@ fn aligning_manga_copies_or_merges_with_volumes() {
     for m in [1, 2, 3, 4, 5] {
         assert_eq!(al.manga_values(m), mal.manga_values(m), "manga {m}");
     }
-    assert_eq!(mal.manga_values(2), Some(read(Status::Watching, 20, 4, ten(8))));
-    assert_eq!(mal.manga_values(5).map(|v| v.status), Some(Status::Completed), "AniList's status, as picked");
-    assert_eq!(al.values(1), None, "the anime lists untouched by a manga alignment");
-    assert_eq!(store.open_count("anilist").unwrap() + store.open_count("mal").unwrap(), 0);
+    assert_eq!(
+        mal.manga_values(2),
+        Some(read(Status::Watching, 20, 4, ten(8)))
+    );
+    assert_eq!(
+        mal.manga_values(5).map(|v| v.status),
+        Some(Status::Completed),
+        "AniList's status, as picked"
+    );
+    assert_eq!(
+        al.values(1),
+        None,
+        "the anime lists untouched by a manga alignment"
+    );
+    assert_eq!(
+        store.open_count("anilist").unwrap() + store.open_count("mal").unwrap(),
+        0
+    );
 }
 
 /// After that, a manga edit on MAL goes to AniList: only what moved, volumes and the reread
@@ -785,33 +1383,98 @@ fn aligning_manga_copies_or_merges_with_volumes() {
 #[test]
 fn manga_edits_are_mirrored_with_volumes_and_rereads() {
     let (mut store, _mal, mut al) = manga_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-    store.enqueue(MAL_MANGA, 3, Change { progress: Some(0), rewatching: Some(true), ..Change::default() }, 30).unwrap();
-    store.enqueue(MAL_MANGA, 2, Change { progress: Some(21), volumes: Some(4), ..Change::default() }, 30).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
+    store
+        .enqueue(
+            MAL_MANGA,
+            3,
+            Change {
+                progress: Some(0),
+                rewatching: Some(true),
+                ..Change::default()
+            },
+            30,
+        )
+        .unwrap();
+    store
+        .enqueue(
+            MAL_MANGA,
+            2,
+            Change {
+                progress: Some(21),
+                volumes: Some(4),
+                ..Change::default()
+            },
+            30,
+        )
+        .unwrap();
     let ops = store.queue("anilist", 30).unwrap();
     assert!(ops.iter().all(|o| o.kind == Kind::Manga));
-    assert_eq!(ops.iter().find(|o| o.media_id == 3 + AL).unwrap().change, Change { progress: Some(0), rewatching: Some(true), ..Change::default() });
-    assert_eq!(ops.iter().find(|o| o.media_id == 2 + AL).unwrap().change, Change { progress: Some(21), ..Change::default() }, "AniList has volume 4 already");
+    assert_eq!(
+        ops.iter().find(|o| o.media_id == 3 + AL).unwrap().change,
+        Change {
+            progress: Some(0),
+            rewatching: Some(true),
+            ..Change::default()
+        }
+    );
+    assert_eq!(
+        ops.iter().find(|o| o.media_id == 2 + AL).unwrap().change,
+        Change {
+            progress: Some(21),
+            ..Change::default()
+        },
+        "AniList has volume 4 already"
+    );
     drain(&mut store, &mut al, 40);
-    assert_eq!(al.manga_values(3).map(|v| (v.rewatching, v.progress)), Some((true, 0)), "rereading on AniList");
-    assert_eq!(al.manga_values(2).map(|v| (v.progress, v.volumes)), Some((21, 4)));
-    assert!(al.calls.iter().any(|c| c == &format!("save manga {}", 2 + AL)) && !al.calls.iter().any(|c| c.starts_with("save 2")), "the manga call, never the anime one");
+    assert_eq!(
+        al.manga_values(3).map(|v| (v.rewatching, v.progress)),
+        Some((true, 0)),
+        "rereading on AniList"
+    );
+    assert_eq!(
+        al.manga_values(2).map(|v| (v.progress, v.volumes)),
+        Some((21, 4))
+    );
+    assert!(
+        al.calls
+            .iter()
+            .any(|c| c == &format!("save manga {}", 2 + AL))
+            && !al.calls.iter().any(|c| c.starts_with("save 2")),
+        "the manga call, never the anime one"
+    );
 }
 
 /// A manga not on AniList waits for its AniList manga id, looked up as a manga, then goes.
 #[test]
 fn a_manga_add_waits_for_its_anilist_id() {
     let (mut store, mal, mut al) = manga_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
-    store.add_to_list("mal", &mal.manga_media(6), Status::Watching, Some(2), 30).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
+    store
+        .add_to_list("mal", &mal.manga_media(6), Status::Watching, Some(2), 30)
+        .unwrap();
     // An anime with the same MyAnimeList id, added too: two waits, one per kind.
-    store.add_to_list("mal", &mal.media(6), Status::PlanToWatch, None, 30).unwrap();
-    let mut waits: Vec<(Kind, u32)> = store.mirror_waits().unwrap().iter().map(|w| (w.kind, w.mal_id)).collect();
+    store
+        .add_to_list("mal", &mal.media(6), Status::PlanToWatch, None, 30)
+        .unwrap();
+    let mut waits: Vec<(Kind, u32)> = store
+        .mirror_waits()
+        .unwrap()
+        .iter()
+        .map(|w| (w.kind, w.mal_id))
+        .collect();
     waits.sort_by_key(|w| w.0.name());
     assert_eq!(waits, [(Kind::Anime, 6), (Kind::Manga, 6)]);
     al.catalogue.insert(6, al.media(6));
     assert_eq!(map_waits(&mut al, &mut store, 40).unwrap(), 2);
-    assert!(al.calls.contains(&"lookup manga 1".to_string()) && al.calls.contains(&"lookup 1".to_string()));
+    assert!(
+        al.calls.contains(&"lookup manga 1".to_string())
+            && al.calls.contains(&"lookup 1".to_string())
+    );
     drain(&mut store, &mut al, 50);
     assert_eq!(al.manga_values(6), Some(read(Status::Watching, 2, 0, None)));
     assert_eq!(al.values(6), Some(v(Status::PlanToWatch, 0, None)));
@@ -822,10 +1485,14 @@ fn a_manga_add_waits_for_its_anilist_id() {
 #[test]
 fn a_manga_removal_is_mirrored_with_its_conflict_check() {
     let (mut store, mut mal, mut al) = manga_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     store.remove_from_list(MAL_MANGA, 3, 40).unwrap();
     let ops = store.queue("anilist", 40).unwrap();
-    assert!(ops.len() == 1 && ops[0].removed && ops[0].kind == Kind::Manga && ops[0].media_id == 3 + AL);
+    assert!(
+        ops.len() == 1 && ops[0].removed && ops[0].kind == Kind::Manga && ops[0].media_id == 3 + AL
+    );
     assert_eq!(drain(&mut store, &mut mal, 50), [Outcome::Sent]);
     assert_eq!(drain(&mut store, &mut al, 50), [Outcome::Sent]);
     assert_eq!((mal.manga_values(3), al.manga_values(3)), (None, None));
@@ -838,7 +1505,13 @@ fn a_manga_removal_is_mirrored_with_its_conflict_check() {
     // Undo of a removal takes the mirror's waiting one back.
     let id = store.remove_from_list(MAL_MANGA, 1, 80).unwrap();
     store.discard("mal", id, 81).unwrap();
-    assert!(!store.queue("anilist", 81).unwrap().iter().any(|o| o.media_id == 1 + AL && o.state.is_open()));
+    assert!(
+        !store
+            .queue("anilist", 81)
+            .unwrap()
+            .iter()
+            .any(|o| o.media_id == 1 + AL && o.state.is_open())
+    );
 }
 
 /// The mirror's sync reads its manga list with Manga on, finds manga edited on its website
@@ -849,17 +1522,32 @@ fn the_mirrors_sync_finds_manga_website_edits() {
     let link = Link::of(ServiceId::Mal);
     store.start_mirror(link, &[], &[], 20).unwrap();
     assert_eq!(sync_mirror(&mut al, &mut store, 30).unwrap().web_edits, 0);
-    assert!(al.calls.contains(&"manga list".to_string()), "Manga on: its manga list too");
+    assert!(
+        al.calls.contains(&"manga list".to_string()),
+        "Manga on: its manga list too"
+    );
     // On anilist.co: manga 3 read further, anime 3 rescored (same MyAnimeList id).
     al.put_manga(3, read(Status::Completed, 40, 5, ten(10)));
     al.put(3, v(Status::Completed, 12, ten(2)));
     assert_eq!(sync_mirror(&mut al, &mut store, 40).unwrap().web_edits, 2);
     let edits = store.web_edits().unwrap();
-    assert!(edits.iter().any(|e| e.kind == Kind::Manga && e.mal_id == 3 && e.mirror.as_ref().unwrap().score == ten(10)));
+    assert!(edits.iter().any(|e| e.kind == Kind::Manga
+        && e.mal_id == 3
+        && e.mirror.as_ref().unwrap().score == ten(10)));
     assert!(edits.iter().any(|e| e.kind == Kind::Anime && e.mal_id == 3));
     // Settling the manga leaves the anime's.
-    store.settle_web_edit(Kind::Manga, 3, Settle::UseMirror, None, 50).unwrap();
-    assert_eq!(store.web_edits().unwrap().iter().map(|e| e.kind).collect::<Vec<_>>(), [Kind::Anime]);
+    store
+        .settle_web_edit(Kind::Manga, 3, Settle::UseMirror, None, 50)
+        .unwrap();
+    assert_eq!(
+        store
+            .web_edits()
+            .unwrap()
+            .iter()
+            .map(|e| e.kind)
+            .collect::<Vec<_>>(),
+        [Kind::Anime]
+    );
     drain(&mut store, &mut mal, 60);
     assert_eq!(mal.manga_values(3).unwrap().score, ten(10));
     assert_eq!(mal.values(3).unwrap().score, ten(9), "the anime untouched");
@@ -874,12 +1562,27 @@ fn the_mirrors_sync_finds_manga_website_edits() {
 #[test]
 fn a_manga_website_edit_on_the_main_list_is_mirrored_at_the_sync() {
     let (mut store, mut mal, _al) = manga_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     mal.put_manga(2, read(Status::Watching, 25, 3, ten(8)));
-    assert!(matches!(crate::sync::sync_manga(&mut mal, &mut store, 30), crate::sync::MangaSync::Synced { .. }));
+    assert!(matches!(
+        crate::sync::sync_manga(&mut mal, &mut store, 30),
+        crate::sync::MangaSync::Synced { .. }
+    ));
     let ops = store.queue("anilist", 30).unwrap();
     assert_eq!(ops.len(), 1);
-    assert_eq!((ops[0].kind, ops[0].change), (Kind::Manga, Change { progress: Some(25), ..Change::default() }), "only what moved on MAL (its volumes stayed 3)");
+    assert_eq!(
+        (ops[0].kind, ops[0].change),
+        (
+            Kind::Manga,
+            Change {
+                progress: Some(25),
+                ..Change::default()
+            }
+        ),
+        "only what moved on MAL (its volumes stayed 3)"
+    );
 }
 
 /// Manga turned on after the mirror: "Align manga" queues the manga alignment and keeps the
@@ -889,7 +1592,9 @@ fn manga_lists_can_be_aligned_later() {
     let (mut store, mal, mut al) = manga_lists();
     let link = Link::of(ServiceId::Mal);
     store.start_mirror(link, &[], &[], 20).unwrap();
-    store.add_to_list("mal", &mal.media(8), Status::PlanToWatch, None, 25).unwrap();
+    store
+        .add_to_list("mal", &mal.media(8), Status::PlanToWatch, None, 25)
+        .unwrap();
     assert!(!store.mirror_manga_aligned().unwrap());
     let p = manga_preview(&store, link, &mut al);
     let (to, main) = align_actions(&p, Align::MainWins, &HashSet::new());
@@ -897,7 +1602,11 @@ fn manga_lists_can_be_aligned_later() {
     assert_eq!((a.len(), b.len()), (3, 0), "add 1, update 2 and 5");
     assert!(store.mirror_manga_aligned().unwrap());
     assert_eq!(store.mirror_link().unwrap(), Some(link));
-    assert_eq!(store.mirror_waits().unwrap().len(), 1, "the anime 8 still waits");
+    assert_eq!(
+        store.mirror_waits().unwrap().len(),
+        1,
+        "the anime 8 still waits"
+    );
     drain(&mut store, &mut al, 40);
     assert_eq!(al.manga_values(1), mal.manga_values(1));
     // Off clears it; a mirror never on can't be extended.
@@ -911,24 +1620,61 @@ fn manga_lists_can_be_aligned_later() {
 #[test]
 fn a_volumes_fill_is_mirrored() {
     let (mut store, mut mal, mut al) = manga_lists();
-    store.start_mirror(Link::of(ServiceId::Mal), &[], &[], 20).unwrap();
+    store
+        .start_mirror(Link::of(ServiceId::Mal), &[], &[], 20)
+        .unwrap();
     // Manga 3: MAL and AniList at volume 5; manga 2: MAL 3, AniList 4; manga 1: not on AniList.
-    let fill = |id: u32, vol: u32| Action::Update { kind: Kind::Manga, media_id: id, change: Change { volumes: Some(vol), ..Change::default() } };
+    let fill = |id: u32, vol: u32| Action::Update {
+        kind: Kind::Manga,
+        media_id: id,
+        change: Change {
+            volumes: Some(vol),
+            ..Change::default()
+        },
+    };
     let ids = store.import("mal", &[fill(2, 5), fill(1, 3)], 30).unwrap();
     assert_eq!(ids.len(), 2);
     let ops = store.queue("anilist", 30).unwrap();
-    assert_eq!(ops.len(), 1, "manga 2 now; manga 1 waits for its AniList id");
-    assert_eq!((ops[0].kind, ops[0].media_id, ops[0].change), (Kind::Manga, 2 + AL, Change { volumes: Some(5), ..Change::default() }));
-    assert!(store.mirror_waits().unwrap().iter().any(|w| w.kind == Kind::Manga && w.mal_id == 1));
+    assert_eq!(
+        ops.len(),
+        1,
+        "manga 2 now; manga 1 waits for its AniList id"
+    );
+    assert_eq!(
+        (ops[0].kind, ops[0].media_id, ops[0].change),
+        (
+            Kind::Manga,
+            2 + AL,
+            Change {
+                volumes: Some(5),
+                ..Change::default()
+            }
+        )
+    );
+    assert!(
+        store
+            .mirror_waits()
+            .unwrap()
+            .iter()
+            .any(|w| w.kind == Kind::Manga && w.mal_id == 1)
+    );
     assert_eq!(map_waits(&mut al, &mut store, 35).unwrap(), 1);
     drain(&mut store, &mut mal, 40);
     drain(&mut store, &mut al, 40);
     assert_eq!(mal.manga_values(2).map(|v| v.volumes), Some(5));
     assert_eq!(al.manga_values(2).map(|v| v.volumes), Some(5), "mirrored");
-    assert_eq!(al.manga_values(1).map(|v| (v.volumes, v.progress)), Some((3, 12)), "added on AniList with its chapters and volumes");
+    assert_eq!(
+        al.manga_values(1).map(|v| (v.volumes, v.progress)),
+        Some((3, 12)),
+        "added on AniList with its chapters and volumes"
+    );
     // Undo before anything is sent takes back the mirror's change too.
     let ids = store.import("mal", &[fill(3, 5), fill(2, 6)], 50).unwrap();
-    assert_eq!(store.open_count("anilist").unwrap(), 1, "manga 3 already at 5 on AniList: nothing for it");
+    assert_eq!(
+        store.open_count("anilist").unwrap(),
+        1,
+        "manga 3 already at 5 on AniList: nothing for it"
+    );
     store.undo_import("mal", &ids, 51).unwrap();
     assert_eq!(store.open_count("anilist").unwrap(), 0);
 }

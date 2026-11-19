@@ -87,7 +87,13 @@ impl Key {
 /// (volume 10.5 counts as 10). 0 when no volume is finished.
 pub fn volumes_for(table: &Table, chapters: u32) -> u32 {
     let read = f64::from(chapters);
-    table.volumes.iter().filter(|v| v.last_chapter <= read).map(|v| v.volume.floor().max(0.0) as u32).max().unwrap_or(0)
+    table
+        .volumes
+        .iter()
+        .filter(|v| v.last_chapter <= read)
+        .map(|v| v.volume.floor().max(0.0) as u32)
+        .max()
+        .unwrap_or(0)
 }
 
 // ------------------------------------------------------------------------------- JSON shapes
@@ -127,14 +133,26 @@ pub fn parse_search(body: &str) -> Result<Vec<Hit>, String> {
         title: std::collections::BTreeMap<String, String>,
         links: Option<Links>,
     }
-    let a: Answer = serde_json::from_str(body).map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s search answer: {e}"))?;
+    let a: Answer = serde_json::from_str(body)
+        .map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s search answer: {e}"))?;
     Ok(a.data
         .into_iter()
         .map(|it| {
             let links = it.attributes.links.unwrap_or_default();
             let num = |s: &Option<String>| s.as_deref().and_then(|v| v.trim().parse::<u32>().ok());
-            let title = it.attributes.title.get("en").or_else(|| it.attributes.title.values().next()).cloned().unwrap_or_default();
-            Hit { mal: num(&links.mal), al: num(&links.al), id: it.id, title }
+            let title = it
+                .attributes
+                .title
+                .get("en")
+                .or_else(|| it.attributes.title.values().next())
+                .cloned()
+                .unwrap_or_default();
+            Hit {
+                mal: num(&links.mal),
+                al: num(&links.al),
+                id: it.id,
+                title,
+            }
         })
         .collect())
 }
@@ -143,7 +161,8 @@ pub fn parse_search(body: &str) -> Result<Vec<Hit>, String> {
 /// ("none" for chapters with no volume), or an empty array; each volume's `chapters` likewise.
 /// Volumes and chapters that aren't numbers ("none", "Extra", "1-2") are left out.
 pub fn parse_aggregate(body: &str) -> Result<Vec<Vol>, String> {
-    let v: Value = serde_json::from_str(body).map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s volume table: {e}"))?;
+    let v: Value = serde_json::from_str(body)
+        .map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s volume table: {e}"))?;
     let entries = |x: &Value| -> Vec<Value> {
         match x {
             Value::Object(m) => m.values().cloned().collect(),
@@ -151,13 +170,25 @@ pub fn parse_aggregate(body: &str) -> Result<Vec<Vol>, String> {
             _ => Vec::new(),
         }
     };
-    let num = |x: Option<&Value>| x.and_then(Value::as_str).and_then(|s| s.trim().parse::<f64>().ok()).filter(|n| n.is_finite() && *n >= 0.0);
+    let num = |x: Option<&Value>| {
+        x.and_then(Value::as_str)
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|n| n.is_finite() && *n >= 0.0)
+    };
     let mut out: Vec<Vol> = Vec::new();
     for vol in entries(v.get("volumes").unwrap_or(&Value::Null)) {
-        let Some(volume) = num(vol.get("volume")) else { continue };
-        let last = entries(vol.get("chapters").unwrap_or(&Value::Null)).iter().filter_map(|c| num(c.get("chapter"))).fold(None, |m: Option<f64>, c| Some(m.map_or(c, |m| m.max(c))));
+        let Some(volume) = num(vol.get("volume")) else {
+            continue;
+        };
+        let last = entries(vol.get("chapters").unwrap_or(&Value::Null))
+            .iter()
+            .filter_map(|c| num(c.get("chapter")))
+            .fold(None, |m: Option<f64>, c| Some(m.map_or(c, |m| m.max(c))));
         if let Some(last_chapter) = last {
-            out.push(Vol { volume, last_chapter });
+            out.push(Vol {
+                volume,
+                last_chapter,
+            });
         }
     }
     out.sort_by(|a, b| a.volume.total_cmp(&b.volume));
@@ -176,12 +207,19 @@ pub struct Client<T: Transport> {
 
 impl<T: Transport> Client<T> {
     pub fn new(transport: T) -> Self {
-        Client { transport, limiter: Limiter::new(120, Duration::from_millis(350)), sleep: std::thread::sleep }
+        Client {
+            transport,
+            limiter: Limiter::new(120, Duration::from_millis(350)),
+            sleep: std::thread::sleep,
+        }
     }
 
     /// Tests: no real waiting.
     pub fn without_sleep(transport: T) -> Self {
-        Client { sleep: |_| {}, ..Client::new(transport) }
+        Client {
+            sleep: |_| {},
+            ..Client::new(transport)
+        }
     }
 
     fn get(&mut self, url: String) -> Result<String, ServiceError> {
@@ -190,7 +228,13 @@ impl<T: Transport> Client<T> {
             (self.sleep)(wait);
             let r = self
                 .transport
-                .send(&Request { method: "GET", url: url.clone(), bearer: None, form: None, json: None })
+                .send(&Request {
+                    method: "GET",
+                    url: url.clone(),
+                    bearer: None,
+                    form: None,
+                    json: None,
+                })
                 .map_err(|e| ServiceError::Offline(format!("can\u{2019}t reach MangaDex: {e}")))?;
             match r.status {
                 200..=299 => return Ok(r.body),
@@ -212,16 +256,26 @@ impl<T: Transport> Client<T> {
         if q.is_empty() {
             return Ok(Vec::new());
         }
-        let ratings = ["safe", "suggestive", "erotica", "pornographic"].iter().map(|r| format!("&contentRating%5B%5D={r}")).collect::<String>();
-        let url = format!("{API}/manga?title={}&limit=10{ratings}&order%5Brelevance%5D=desc", crate::mal::pct_encode(&q));
+        let ratings = ["safe", "suggestive", "erotica", "pornographic"]
+            .iter()
+            .map(|r| format!("&contentRating%5B%5D={r}"))
+            .collect::<String>();
+        let url = format!(
+            "{API}/manga?title={}&limit=10{ratings}&order%5Brelevance%5D=desc",
+            crate::mal::pct_encode(&q)
+        );
         parse_search(&self.get(url)?).map_err(ServiceError::Other)
     }
 
     /// The volume table of MangaDex series `md_id` (every language: volume numbers are the
     /// publisher's whichever translation listed the chapter).
     pub fn aggregate(&mut self, md_id: &str) -> Result<Vec<Vol>, ServiceError> {
-        let id: String = md_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-        parse_aggregate(&self.get(format!("{API}/manga/{id}/aggregate"))?).map_err(ServiceError::Other)
+        let id: String = md_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        parse_aggregate(&self.get(format!("{API}/manga/{id}/aggregate"))?)
+            .map_err(ServiceError::Other)
     }
 
     /// The series linking to `key`, searched by each of `titles` in turn (until one links), and
@@ -233,12 +287,23 @@ impl<T: Transport> Client<T> {
                 continue;
             }
             let hits = self.search(t)?;
-            let Some(hit) = hits.into_iter().find(|h| key.matches(&Links { mal: h.mal.map(|n| n.to_string()), al: h.al.map(|n| n.to_string()) })) else { continue };
+            let Some(hit) = hits.into_iter().find(|h| {
+                key.matches(&Links {
+                    mal: h.mal.map(|n| n.to_string()),
+                    al: h.al.map(|n| n.to_string()),
+                })
+            }) else {
+                continue;
+            };
             let volumes = self.aggregate(&hit.id)?;
             if volumes.is_empty() {
                 return Ok(Lookup::NotFound);
             }
-            return Ok(Lookup::Found(Table { md_id: hit.id, title: hit.title, volumes }));
+            return Ok(Lookup::Found(Table {
+                md_id: hit.id,
+                title: hit.title,
+                volumes,
+            }));
         }
         Ok(Lookup::NotFound)
     }
@@ -247,13 +312,27 @@ impl<T: Transport> Client<T> {
 impl<T: Transport> Client<T> {
     /// The series linking to `key` (its `links.mal` / `links.al`), searched by each of `titles`;
     /// no title guessing: a series without the link is never taken.
-    pub fn find_linked(&mut self, key: Key, titles: &[String]) -> Result<Option<Hit>, ServiceError> {
+    pub fn find_linked(
+        &mut self,
+        key: Key,
+        titles: &[String],
+    ) -> Result<Option<Hit>, ServiceError> {
         let mut seen = std::collections::HashSet::new();
-        for t in titles.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).take(3) {
+        for t in titles
+            .iter()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .take(3)
+        {
             if !seen.insert(t.to_lowercase()) {
                 continue;
             }
-            if let Some(h) = self.search(t)?.into_iter().find(|h| key.matches(&Links { mal: h.mal.map(|n| n.to_string()), al: h.al.map(|n| n.to_string()) })) {
+            if let Some(h) = self.search(t)?.into_iter().find(|h| {
+                key.matches(&Links {
+                    mal: h.mal.map(|n| n.to_string()),
+                    al: h.al.map(|n| n.to_string()),
+                })
+            }) {
                 return Ok(Some(h));
             }
         }
@@ -263,21 +342,49 @@ impl<T: Transport> Client<T> {
     /// The newest chapters of series `md_id`, every language, external ones too (official
     /// releases MangaDex links to, e.g. MANGA Plus), by the time they became readable.
     pub fn feed(&mut self, md_id: &str) -> Result<Vec<FeedChapter>, ServiceError> {
-        let id: String = md_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-        let ratings = ["safe", "suggestive", "erotica", "pornographic"].iter().map(|r| format!("&contentRating%5B%5D={r}")).collect::<String>();
-        let url = format!("{API}/manga/{id}/feed?limit=100&order%5BreadableAt%5D=desc&includeExternalUrl=1&includeEmptyPages=1&includeFuturePublishAt=0{ratings}");
+        let id: String = md_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        let ratings = ["safe", "suggestive", "erotica", "pornographic"]
+            .iter()
+            .map(|r| format!("&contentRating%5B%5D={r}"))
+            .collect::<String>();
+        let url = format!(
+            "{API}/manga/{id}/feed?limit=100&order%5BreadableAt%5D=desc&includeExternalUrl=1&includeEmptyPages=1&includeFuturePublishAt=0{ratings}"
+        );
         parse_feed(&self.get(url)?).map_err(ServiceError::Other)
     }
 
     /// Series `md_id`'s title (checks a pasted link).
     pub fn title_of(&mut self, md_id: &str) -> Result<(String, String), ServiceError> {
-        let id: String = md_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let id: String = md_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
         let body = self.get(format!("{API}/manga/{id}"))?;
-        let v: Value = serde_json::from_str(&body).map_err(|e| ServiceError::Other(format!("can\u{2019}t read MangaDex\u{2019}s series: {e}")))?;
-        let data = v.get("data").ok_or_else(|| ServiceError::Other("MangaDex has no such series".into()))?;
-        let titles = data.get("attributes").and_then(|a| a.get("title")).and_then(Value::as_object);
-        let title = titles.and_then(|m| m.get("en").or_else(|| m.values().next())).and_then(Value::as_str).unwrap_or_default().to_string();
-        Ok((data.get("id").and_then(Value::as_str).unwrap_or(&id).to_string(), title))
+        let v: Value = serde_json::from_str(&body).map_err(|e| {
+            ServiceError::Other(format!("can\u{2019}t read MangaDex\u{2019}s series: {e}"))
+        })?;
+        let data = v
+            .get("data")
+            .ok_or_else(|| ServiceError::Other("MangaDex has no such series".into()))?;
+        let titles = data
+            .get("attributes")
+            .and_then(|a| a.get("title"))
+            .and_then(Value::as_object);
+        let title = titles
+            .and_then(|m| m.get("en").or_else(|| m.values().next()))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok((
+            data.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(&id)
+                .to_string(),
+            title,
+        ))
     }
 }
 
@@ -296,9 +403,17 @@ pub struct FeedChapter {
 
 /// `/manga/{id}/feed`'s answer. Chapters not readable yet or unavailable are left out.
 pub fn parse_feed(body: &str) -> Result<Vec<FeedChapter>, String> {
-    let v: Value = serde_json::from_str(body).map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s chapters: {e}"))?;
-    let Some(data) = v.get("data").and_then(Value::as_array) else { return Err("MangaDex\u{2019}s chapters answer has no data".into()) };
-    let s = |a: &Value, k: &str| a.get(k).and_then(Value::as_str).map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
+    let v: Value = serde_json::from_str(body)
+        .map_err(|e| format!("can\u{2019}t read MangaDex\u{2019}s chapters: {e}"))?;
+    let Some(data) = v.get("data").and_then(Value::as_array) else {
+        return Err("MangaDex\u{2019}s chapters answer has no data".into());
+    };
+    let s = |a: &Value, k: &str| {
+        a.get(k)
+            .and_then(Value::as_str)
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+    };
     Ok(data
         .iter()
         .filter_map(|c| {
@@ -306,8 +421,16 @@ pub fn parse_feed(body: &str) -> Result<Vec<FeedChapter>, String> {
             if a.get("isUnavailable").and_then(Value::as_bool) == Some(true) {
                 return None;
             }
-            let at = s(a, "readableAt").or_else(|| s(a, "publishAt")).and_then(|t| crate::time::parse_rfc3339(&t))?;
-            Some(FeedChapter { chapter: s(a, "chapter").unwrap_or_default(), volume: s(a, "volume"), lang: s(a, "translatedLanguage").unwrap_or_default(), at, external: s(a, "externalUrl").is_some() })
+            let at = s(a, "readableAt")
+                .or_else(|| s(a, "publishAt"))
+                .and_then(|t| crate::time::parse_rfc3339(&t))?;
+            Some(FeedChapter {
+                chapter: s(a, "chapter").unwrap_or_default(),
+                volume: s(a, "volume"),
+                lang: s(a, "translatedLanguage").unwrap_or_default(),
+                at,
+                external: s(a, "externalUrl").is_some(),
+            })
         })
         .collect())
 }
@@ -318,7 +441,12 @@ pub fn feed_releases(feed: &[FeedChapter]) -> Vec<crate::mangaupdates::Release> 
     let en = feed.iter().filter(|c| c.lang == "en").count() >= 3;
     feed.iter()
         .filter(|c| !en || c.lang == "en")
-        .map(|c| crate::mangaupdates::Release { chapter: c.chapter.clone(), volume: c.volume.clone(), day: c.at.div_euclid(86_400) * 86_400, added: c.at })
+        .map(|c| crate::mangaupdates::Release {
+            chapter: c.chapter.clone(),
+            volume: c.volume.clone(),
+            day: c.at.div_euclid(86_400) * 86_400,
+            added: c.at,
+        })
         .collect()
 }
 
@@ -326,10 +454,15 @@ pub fn feed_releases(feed: &[FeedChapter]) -> Vec<crate::mangaupdates::Release> 
 pub fn md_id_from_link(s: &str) -> Option<String> {
     let s = s.trim().to_ascii_lowercase();
     let rest = match s.split_once("mangadex.org/") {
-        Some((_, r)) => r.strip_prefix("title/").or_else(|| r.strip_prefix("manga/"))?,
+        Some((_, r)) => r
+            .strip_prefix("title/")
+            .or_else(|| r.strip_prefix("manga/"))?,
         None => s.as_str(),
     };
-    let id: String = rest.chars().take_while(|c| c.is_ascii_hexdigit() || *c == '-').collect();
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
+        .collect();
     let parts: Vec<usize> = id.split('-').map(str::len).collect();
     (parts == [8, 4, 4, 4, 12]).then_some(id)
 }
@@ -373,7 +506,11 @@ impl Cache {
     pub fn get(&self, key: Key, now: i64) -> Option<Lookup> {
         let text = std::fs::read_to_string(self.dir.join(key.file_name())).ok()?;
         let c: Cached = serde_json::from_str(&text).ok()?;
-        let ttl = if matches!(c.lookup, Lookup::Found(_)) { FOUND_TTL } else { MISSING_TTL };
+        let ttl = if matches!(c.lookup, Lookup::Found(_)) {
+            FOUND_TTL
+        } else {
+            MISSING_TTL
+        };
         (now - c.at < ttl).then_some(c.lookup)
     }
 
@@ -381,7 +518,10 @@ impl Cache {
         if std::fs::create_dir_all(&self.dir).is_err() {
             return;
         }
-        if let Ok(text) = serde_json::to_string(&Cached { at: now, lookup: lookup.clone() }) {
+        if let Ok(text) = serde_json::to_string(&Cached {
+            at: now,
+            lookup: lookup.clone(),
+        }) {
             let tmp = self.dir.join(format!("{}.tmp", key.file_name()));
             if std::fs::write(&tmp, text).is_ok() {
                 let _ = std::fs::rename(&tmp, self.dir.join(key.file_name()));
@@ -393,7 +533,14 @@ impl Cache {
 /// A lookup through the cache: a fresh saved answer, else MangaDex (then saved). `refresh`:
 /// ask MangaDex even when a saved answer is fresh. Returns the lookup and whether MangaDex was
 /// asked.
-pub fn find<T: Transport>(client: &mut Client<T>, cache: &Cache, key: Key, titles: &[String], now: i64, refresh: bool) -> Result<(Lookup, bool), ServiceError> {
+pub fn find<T: Transport>(
+    client: &mut Client<T>,
+    cache: &Cache,
+    key: Key,
+    titles: &[String],
+    now: i64,
+    refresh: bool,
+) -> Result<(Lookup, bool), ServiceError> {
     if !refresh && let Some(l) = cache.get(key, now) {
         return Ok((l, false));
     }
@@ -416,7 +563,10 @@ pub fn key_of(service: crate::service::ServiceId, m: &crate::Media) -> Key {
 
 /// The titles searched for an entry: the main one, then the English one.
 pub fn titles_of(m: &crate::Media) -> Vec<String> {
-    std::iter::once(m.title.clone()).chain(m.title_en.clone()).filter(|t| !t.trim().is_empty()).collect()
+    std::iter::once(m.title.clone())
+        .chain(m.title_en.clone())
+        .filter(|t| !t.trim().is_empty())
+        .collect()
 }
 
 /// Whether an entry is worth a lookup: chapters read, and volumes not at the known total.
@@ -462,7 +612,13 @@ pub fn plan_fill(rows: &[(crate::ListItem, Option<Lookup>)]) -> FillPlan {
         if let Some(n) = it.media.volumes.filter(|n| *n > 0) {
             to = to.min(n);
         }
-        let row = FillRow { media_id: it.media.id, title: it.media.title.clone(), chapters: it.progress, from: it.volumes, to };
+        let row = FillRow {
+            media_id: it.media.id,
+            title: it.media.title.clone(),
+            chapters: it.progress,
+            from: it.volumes,
+            to,
+        };
         match to.cmp(&it.volumes) {
             std::cmp::Ordering::Greater => p.fill.push(row),
             std::cmp::Ordering::Equal => p.same.push(row),
@@ -480,7 +636,14 @@ pub fn plan_fill(rows: &[(crate::ListItem, Option<Lookup>)]) -> FillPlan {
 pub fn fill_actions(p: &FillPlan) -> Vec<crate::listxml::Action> {
     p.fill
         .iter()
-        .map(|r| crate::listxml::Action::Update { kind: crate::Kind::Manga, media_id: r.media_id, change: crate::Change { volumes: Some(r.to), ..Default::default() } })
+        .map(|r| crate::listxml::Action::Update {
+            kind: crate::Kind::Manga,
+            media_id: r.media_id,
+            change: crate::Change {
+                volumes: Some(r.to),
+                ..Default::default()
+            },
+        })
         .collect()
 }
 

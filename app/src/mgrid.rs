@@ -6,7 +6,9 @@
 
 use kotora_core::Status;
 use kotora_core::config::ListView;
-use rune::{El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text};
+use rune::{
+    El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, el, icon, row, spacer, text,
+};
 
 use crate::grid::{DENSE, LARGE, badge, fit, row_key, size};
 use crate::icons;
@@ -35,12 +37,20 @@ fn has_next(s: &State, e: &MEntry) -> bool {
 }
 
 fn status_color(e: &MEntry) -> rune::Color {
-    if e.rereading { PAL.st_completed } else { PAL.status(e.status) }
+    if e.rereading {
+        PAL.st_completed
+    } else {
+        PAL.status(e.status)
+    }
 }
 
 /// The badges at a poster's top-left: reread or the run, a change waiting.
 fn badges(e: &MEntry) -> El {
-    let mut c = col().key("badges").absolute(6.0, 6.0).gap(4.0).items_start();
+    let mut c = col()
+        .key("badges")
+        .absolute(6.0, 6.0)
+        .gap(4.0)
+        .items_start();
     if e.rereading {
         c = c.child(badge("Rereading", Some(PAL.st_completed)));
     } else if e.run == Run::Publishing {
@@ -65,7 +75,11 @@ fn score(s: &State, e: &MEntry) -> El {
 fn plus_on_poster(id: u32, u: Unit) -> El {
     el().key("plus")
         .role("button")
-        .label(if u == Unit::Chapters { "One more chapter" } else { "One more volume" })
+        .label(if u == Unit::Chapters {
+            "One more chapter"
+        } else {
+            "One more volume"
+        })
         .focusable(true)
         .h(28.0)
         .px(11.0)
@@ -82,7 +96,12 @@ fn plus_on_poster(id: u32, u: Unit) -> El {
                 s.error = Some(m);
             }
         })
-        .child(text("+1").font(TextStyle::new(13.0, 600.0)).color(PAL.text).group_color(PAL.on_accent))
+        .child(
+            text("+1")
+                .font(TextStyle::new(13.0, 600.0))
+                .color(PAL.text)
+                .group_color(PAL.on_accent),
+        )
 }
 
 /// Edit: the details page with the editor open.
@@ -115,11 +134,29 @@ fn hover_layer(s: &State, e: &MEntry, plus: bool) -> El {
     col()
         .key("hover")
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .linear_gradient(std::f32::consts::PI, [(0.0, shade.alpha(0.0)), (0.55, shade.alpha(0.0)), (1.0, shade.alpha(0.75))])
+        .linear_gradient(
+            std::f32::consts::PI,
+            [
+                (0.0, shade.alpha(0.0)),
+                (0.55, shade.alpha(0.0)),
+                (1.0, shade.alpha(0.75)),
+            ],
+        )
         .group_opacity(0.0, 1.0)
         .padding(8.0)
         .child(spacer())
-        .child(row().gap(6.0).center_y().child(edit_on_poster(e.id)).child(spacer()).child(if plus && has_next(s, e) { plus_on_poster(e.id, e.plus_unit()) } else { el() }))
+        .child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(edit_on_poster(e.id))
+                .child(spacer())
+                .child(if plus && has_next(s, e) {
+                    plus_on_poster(e.id, e.plus_unit())
+                } else {
+                    el()
+                }),
+        )
 }
 
 /// A card's press (the details page) and right-click (the menu).
@@ -145,13 +182,26 @@ impl State {
     /// Enter opens its page, Escape drops it, + and - step its chapter (or volume, when only
     /// volumes show). Returns whether the key was used.
     pub fn manga_grid_key(&mut self, k: &KeyEvent, tx: &mut Tx) -> bool {
-        let Page::Manga(st) = self.page else { return false };
-        if self.manga_view_of(st) == ListView::List || !self.manga.query.text.trim().is_empty() || self.manga.rows.is_empty() || k.mods.cmd || k.mods.alt || k.mods.ctrl {
+        let Page::Manga(st) = self.page else {
+            return false;
+        };
+        if self.manga_view_of(st) == ListView::List
+            || !self.manga.query.text.trim().is_empty()
+            || self.manga.rows.is_empty()
+            || k.mods.cmd
+            || k.mods.alt
+            || k.mods.ctrl
+        {
             return false;
         }
         let per = self.grid.per_row.get().max(1);
         let n = self.manga.rows.len();
-        let at = self.manga.grid_sel.and_then(|id| self.manga.rows.iter().position(|&k| self.manga.entries[k].id == id));
+        let at = self.manga.grid_sel.and_then(|id| {
+            self.manga
+                .rows
+                .iter()
+                .position(|&k| self.manga.entries[k].id == id)
+        });
         let next = match (&k.key, at) {
             (Key::Escape, Some(_)) => {
                 self.manga.grid_sel = None;
@@ -169,8 +219,14 @@ impl State {
                 let id = e.id;
                 let r = if t.as_str() == "-" {
                     let change = match e.plus_unit() {
-                        Unit::Chapters if e.chapters > 0 => Some(kotora_core::Change { progress: Some(e.chapters - 1), ..Default::default() }),
-                        Unit::Volumes if e.volumes > 0 => Some(kotora_core::Change { volumes: Some(e.volumes - 1), ..Default::default() }),
+                        Unit::Chapters if e.chapters > 0 => Some(kotora_core::Change {
+                            progress: Some(e.chapters - 1),
+                            ..Default::default()
+                        }),
+                        Unit::Volumes if e.volumes > 0 => Some(kotora_core::Change {
+                            volumes: Some(e.volumes - 1),
+                            ..Default::default()
+                        }),
                         _ => None,
                     };
                     change.map_or(Ok(()), |c| self.manga_edit(id, c).map(|_| ()))
@@ -197,36 +253,96 @@ impl State {
 
 /// The selection's outline (on a wrapper: the poster clips its own children).
 fn outlined(s: &State, e: &MEntry, c: El, r: f32) -> El {
-    if s.manga.grid_sel == Some(e.id) { el().key(format!("msel/{}", e.id)).radius(r).outline(2.0, 2.0, PAL.accent).child(c) } else { c }
+    if s.manga.grid_sel == Some(e.id) {
+        el().key(format!("msel/{}", e.id))
+            .radius(r)
+            .outline(2.0, 2.0, PAL.accent)
+            .child(c)
+    } else {
+        c
+    }
 }
 
 /// Grid: the poster with its badges and a progress strip, the title and the progress under it.
 fn card_dense(s: &State, e: &MEntry, st: Status) -> El {
     let z = DENSE;
     let always = st == Status::Watching && has_next(s, e);
-    let mut p = look::poster(s, cover_id(e.id), &e.title, e.cover_url.as_deref(), z.w, z.poster_h, theme::R_MD)
-        .clip_rounded(theme::R_MD)
-        .child(badges(e))
-        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(4.0).fill(PAL.bg.alpha(0.7)).child(el().w(z.w * e.fraction()).h_full().fill(status_color(e))))
-        .child(hover_layer(s, e, !always));
+    let mut p = look::poster(
+        s,
+        cover_id(e.id),
+        &e.title,
+        e.cover_url.as_deref(),
+        z.w,
+        z.poster_h,
+        theme::R_MD,
+    )
+    .clip_rounded(theme::R_MD)
+    .child(badges(e))
+    .child(
+        el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+            .h(4.0)
+            .fill(PAL.bg.alpha(0.7))
+            .child(el().w(z.w * e.fraction()).h_full().fill(status_color(e))),
+    )
+    .child(hover_layer(s, e, !always));
     if always {
-        p = p.child(el().absolute(z.w - 8.0 - 44.0, z.poster_h - 8.0 - 28.0 - 2.0).w(44.0).child(plus_on_poster(e.id, e.plus_unit())));
+        p = p.child(
+            el().absolute(z.w - 8.0 - 44.0, z.poster_h - 8.0 - 28.0 - 2.0)
+                .w(44.0)
+                .child(plus_on_poster(e.id, e.plus_unit())),
+        );
     }
     let c = col()
         .key(format!("card/m{}", e.id))
         .w(z.w)
         .gap(6.0)
         .child(p)
-        .child(col().h(34.0).child(text(e.title.clone()).font(TextStyle::new(13.0, 500.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
-        .child(row().h(16.0).center_y().child(text(progress_text(e)).font(theme::LABEL_NUM).color(PAL.dim).truncate().min_w(0.0)).child(spacer()).child(score(s, e)));
+        .child(
+            col().h(34.0).child(
+                text(e.title.clone())
+                    .font(TextStyle::new(13.0, 500.0))
+                    .color(PAL.text)
+                    .group_color(PAL.accent_hi)
+                    .wrap()
+                    .max_lines(2),
+            ),
+        )
+        .child(
+            row()
+                .h(16.0)
+                .center_y()
+                .child(
+                    text(progress_text(e))
+                        .font(theme::LABEL_NUM)
+                        .color(PAL.dim)
+                        .truncate()
+                        .min_w(0.0),
+                )
+                .child(spacer())
+                .child(score(s, e)),
+        );
     outlined(s, e, pressable(c, e), theme::R_MD)
 }
 
 /// Large: the poster, two lines of title, a bar, the progress, the score and `+1`.
 fn card_large(s: &State, e: &MEntry) -> El {
     let z = LARGE;
-    let p = look::poster(s, cover_id(e.id), &e.title, e.cover_url.as_deref(), z.w, z.poster_h, 0.0).child(badges(e)).child(hover_layer(s, e, false));
-    let plus = if has_next(s, e) { plus_on_poster(e.id, e.plus_unit()).h(26.0).px(10.0) } else { el() };
+    let p = look::poster(
+        s,
+        cover_id(e.id),
+        &e.title,
+        e.cover_url.as_deref(),
+        z.w,
+        z.poster_h,
+        0.0,
+    )
+    .child(badges(e))
+    .child(hover_layer(s, e, false));
+    let plus = if has_next(s, e) {
+        plus_on_poster(e.id, e.plus_unit()).h(26.0).px(10.0)
+    } else {
+        el()
+    };
     let c = col()
         .key(format!("card/m{}", e.id))
         .w(z.w)
@@ -239,10 +355,45 @@ fn card_large(s: &State, e: &MEntry) -> El {
             col()
                 .padding(12.0)
                 .gap(10.0)
-                .child(col().h(38.0).child(text(e.title.clone()).font(TextStyle::new(14.0, 600.0)).color(PAL.text).group_color(PAL.accent_hi).wrap().max_lines(2)))
+                .child(
+                    col().h(38.0).child(
+                        text(e.title.clone())
+                            .font(TextStyle::new(14.0, 600.0))
+                            .color(PAL.text)
+                            .group_color(PAL.accent_hi)
+                            .wrap()
+                            .max_lines(2),
+                    ),
+                )
                 // The score beside the bar, so the counts ("Ch 119 · Vol 11") keep their line.
-                .child(row().h(16.0).gap(8.0).center_y().child(col().grow(1.0).child(look::bar(e.fraction(), status_color(e), 5.0, PAL.border))).child(score(s, e)))
-                .child(row().h(26.0).center_y().gap(8.0).child(text(progress_text(e)).font(theme::NUM_MED).color(PAL.dim).truncate().min_w(0.0)).child(spacer()).child(plus)),
+                .child(
+                    row()
+                        .h(16.0)
+                        .gap(8.0)
+                        .center_y()
+                        .child(col().grow(1.0).child(look::bar(
+                            e.fraction(),
+                            status_color(e),
+                            5.0,
+                            PAL.border,
+                        )))
+                        .child(score(s, e)),
+                )
+                .child(
+                    row()
+                        .h(26.0)
+                        .center_y()
+                        .gap(8.0)
+                        .child(
+                            text(progress_text(e))
+                                .font(theme::NUM_MED)
+                                .color(PAL.dim)
+                                .truncate()
+                                .min_w(0.0),
+                        )
+                        .child(spacer())
+                        .child(plus),
+                ),
         );
     outlined(s, e, pressable(c, e), theme::R_LG)
 }
@@ -255,21 +406,41 @@ pub fn cards(s: &State, st: Status, width: f32) -> El {
     // The arrow keys need it (the anime grid sets it the same way).
     s.grid.per_row.set(per);
     let rows = s.manga.rows.len().div_ceil(per);
-    col().key(format!("manga-grid-scroll/{}", st.slug())).scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(
-        col().key("grid").growth(GrowthSpec::default()).virtual_rows(
-            rows,
-            z.row_h,
-            move |_: &State, r| row_key(r).into(),
-            move |s: &State, r| {
-                let mut line = row().w_full().h(z.row_h).px(theme::PAGE_PAD).pt(if r == 0 { 4.0 } else { 0.0 }).gap(gap).items_start();
-                for &k in s.manga.rows.iter().skip(r * per).take(per) {
-                    let e = &s.manga.entries[k];
-                    line = line.child(if v == ListView::Large { card_large(s, e) } else { card_dense(s, e, st) });
-                }
-                line
-            },
-        ),
-    )
+    col()
+        .key(format!("manga-grid-scroll/{}", st.slug()))
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .key("grid")
+                .growth(GrowthSpec::default())
+                .virtual_rows(
+                    rows,
+                    z.row_h,
+                    move |_: &State, r| row_key(r).into(),
+                    move |s: &State, r| {
+                        let mut line = row()
+                            .w_full()
+                            .h(z.row_h)
+                            .px(theme::PAGE_PAD)
+                            .pt(if r == 0 { 4.0 } else { 0.0 })
+                            .gap(gap)
+                            .items_start();
+                        for &k in s.manga.rows.iter().skip(r * per).take(per) {
+                            let e = &s.manga.entries[k];
+                            line = line.child(if v == ListView::Large {
+                                card_large(s, e)
+                            } else {
+                                card_dense(s, e, st)
+                            });
+                        }
+                        line
+                    },
+                ),
+        )
 }
 
 #[cfg(test)]

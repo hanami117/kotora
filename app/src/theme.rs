@@ -4,8 +4,8 @@
 use std::cell::Cell;
 use std::sync::LazyLock;
 
-use rune::{Color, TextStyle};
 use kotora_core::Status;
+use rune::{Color, TextStyle};
 
 fn hx(s: &str) -> Color {
     rune::color::hex(s).expect("bad hex")
@@ -160,10 +160,18 @@ impl Pal {
         c.alpha(if self.light { a } else { a * 2.0 / 3.0 })
     }
     pub fn hover(&self) -> Color {
-        if self.light { Color::BLACK.alpha(0.04) } else { Color::WHITE.alpha(0.05) }
+        if self.light {
+            Color::BLACK.alpha(0.04)
+        } else {
+            Color::WHITE.alpha(0.05)
+        }
     }
     pub fn press(&self) -> Color {
-        if self.light { Color::BLACK.alpha(0.08) } else { Color::WHITE.alpha(0.09) }
+        if self.light {
+            Color::BLACK.alpha(0.08)
+        } else {
+            Color::WHITE.alpha(0.09)
+        }
     }
 }
 
@@ -224,7 +232,12 @@ mod tests {
     /// `fg` (with its own alpha) over `bg`, blended the way Rune draws: on the linear values.
     fn over(fg: Color, bg: Color) -> Color {
         let a = fg.a;
-        Color { r: fg.r * a + bg.r * (1.0 - a), g: fg.g * a + bg.g * (1.0 - a), b: fg.b * a + bg.b * (1.0 - a), a: 1.0 }
+        Color {
+            r: fg.r * a + bg.r * (1.0 - a),
+            g: fg.g * a + bg.g * (1.0 - a),
+            b: fg.b * a + bg.b * (1.0 - a),
+            a: 1.0,
+        }
     }
 
     /// design-spec §1 "Contrast": text roles pass AA (4.5) on every surface, in both themes,
@@ -233,7 +246,13 @@ mod tests {
     fn both_palettes_meet_the_contrast_budget() {
         for (i, p) in palettes().into_iter().enumerate() {
             let name = ["dark", "light"][i];
-            let grounds = [("bg", p.bg), ("side", p.side), ("surface", p.surface), ("raised", p.raised), ("field", p.field)];
+            let grounds = [
+                ("bg", p.bg),
+                ("side", p.side),
+                ("surface", p.surface),
+                ("raised", p.raised),
+                ("field", p.field),
+            ];
             let strict = [("text", p.text), ("dim", p.dim)];
             let soft = [
                 ("faint", p.faint),
@@ -248,15 +267,29 @@ mod tests {
             ];
             for (g, gc) in grounds {
                 for (t, tc) in strict {
-                    assert!(ratio(tc, gc) >= 4.5, "{name}: {t} on {g} is {:.2}", ratio(tc, gc));
+                    assert!(
+                        ratio(tc, gc) >= 4.5,
+                        "{name}: {t} on {g} is {:.2}",
+                        ratio(tc, gc)
+                    );
                 }
                 let floor = if g == "raised" { 4.0 } else { 4.5 };
                 for (t, tc) in soft {
-                    assert!(ratio(tc, gc) >= floor, "{name}: {t} on {g} is {:.2}", ratio(tc, gc));
+                    assert!(
+                        ratio(tc, gc) >= floor,
+                        "{name}: {t} on {g} is {:.2}",
+                        ratio(tc, gc)
+                    );
                 }
             }
-            assert!(ratio(p.on_accent, p.accent) >= 7.0, "{name}: on_accent on accent");
-            assert!(ratio(p.on_accent, p.accent_lo) >= 4.5, "{name}: on_accent on accent_lo");
+            assert!(
+                ratio(p.on_accent, p.accent) >= 7.0,
+                "{name}: on_accent on accent"
+            );
+            assert!(
+                ratio(p.on_accent, p.accent_lo) >= 4.5,
+                "{name}: on_accent on accent_lo"
+            );
             // Tags and pills: the colour as text on its own tint (`Pal::tint`, at the alphas the
             // views use: 0.12 tags, 0.10 pills, 0.14 the orange "Ep n out" tag) over `bg` and
             // `surface`. `over` blends the linear `Color`s, which is how Rune draws them. Both
@@ -283,9 +316,17 @@ mod tests {
             let banner = over(p.accent.alpha(0.18), p.bg);
             assert!(ratio(p.cream, banner) >= 4.5, "{name}: the banner question");
             assert!(ratio(p.text, banner) >= 4.5, "{name}: text on the banner");
-            assert!(ratio(p.dim, banner) >= 4.5, "{name}: dim on the banner is {:.2}", ratio(p.dim, banner));
+            assert!(
+                ratio(p.dim, banner) >= 4.5,
+                "{name}: dim on the banner is {:.2}",
+                ratio(p.dim, banner)
+            );
             // Surfaces step the same way: text darkest-to-lightest is reversed, not mixed up.
-            assert_eq!(lum(p.text) > lum(p.bg), !p.light, "{name}: text and ground in the right order");
+            assert_eq!(
+                lum(p.text) > lum(p.bg),
+                !p.light,
+                "{name}: text and ground in the right order"
+            );
         }
     }
 

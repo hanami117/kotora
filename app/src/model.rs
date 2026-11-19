@@ -62,7 +62,12 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub const ALL: [Filter; 4] = [Filter::All, Filter::Airing, Filter::Finished, Filter::NewEpisode];
+    pub const ALL: [Filter; 4] = [
+        Filter::All,
+        Filter::Airing,
+        Filter::Finished,
+        Filter::NewEpisode,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -221,7 +226,11 @@ pub fn kind_label(format: &str) -> &'static str {
 impl Entry {
     pub fn from_item(it: &ListItem, lang: TitleLang) -> Entry {
         let m = &it.media;
-        let search = m.all_titles().map(str::to_lowercase).collect::<Vec<_>>().join("\n");
+        let search = m
+            .all_titles()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+            .join("\n");
         Entry {
             id: m.id,
             title: m.display_title(lang).to_string(),
@@ -256,7 +265,11 @@ impl Entry {
     /// Shows the title in `lang` (romaji when that one is missing). Only on a change of the
     /// setting or of the data, never per frame.
     pub fn retitle(&mut self, lang: TitleLang) {
-        let t = lang.pick(&self.main_title, self.title_en.as_deref(), self.title_ja.as_deref());
+        let t = lang.pick(
+            &self.main_title,
+            self.title_en.as_deref(),
+            self.title_ja.as_deref(),
+        );
         if t != self.title {
             self.title = t.to_string();
         }
@@ -271,15 +284,25 @@ impl Entry {
     /// The grey line after the tags.
     pub fn note(&self) -> &'static str {
         // The tag already says "Waiting to sync"; the note says more only for a conflict or a failure.
-        self.waiting.filter(|w| *w != waiting_label(OpState::Queued)).or(self.airing_note).unwrap_or(match self.air {
-            Air::Finished => "Finished airing",
-            Air::Upcoming => "Not yet aired",
-            _ => "",
-        })
+        self.waiting
+            .filter(|w| *w != waiting_label(OpState::Queued))
+            .or(self.airing_note)
+            .unwrap_or(match self.air {
+                Air::Finished => "Finished airing",
+                Air::Upcoming => "Not yet aired",
+                _ => "",
+            })
     }
 
     pub fn values(&self) -> Values {
-        Values { status: self.status, progress: self.progress, score: self.score, rewatching: self.rewatching, times_rewatched: self.times_rewatched, volumes: 0 }
+        Values {
+            status: self.status,
+            progress: self.progress,
+            score: self.score,
+            rewatching: self.rewatching,
+            times_rewatched: self.times_rewatched,
+            volumes: 0,
+        }
     }
 
     /// The entry as `kot` prints it, the score in `fmt`.
@@ -346,31 +369,55 @@ pub enum Msg {
     /// Reading detection (`reading.rs`).
     Reading(crate::reading::ReadingMsg),
     /// The saved list and the queue from the database, at start.
-    Cache { items: Vec<ListItem>, user: Option<String>, picture: Option<String>, profile: Option<Box<kotora_core::service::Profile>>, synced_at: Option<i64>, ops: Vec<Op> },
+    Cache {
+        items: Vec<ListItem>,
+        user: Option<String>,
+        picture: Option<String>,
+        profile: Option<Box<kotora_core::service::Profile>>,
+        synced_at: Option<i64>,
+        ops: Vec<Op>,
+    },
     /// The Profile page's facts, fresh after a sync.
     Profile(Box<kotora_core::service::Profile>),
     /// The queue changed: all of it, the entries it touched, and those that left the list.
     /// `offline`: a send failed for lack of network (true) or went through (false).
-    Queue { ops: Vec<Op>, items: Vec<ListItem>, gone: Vec<u32>, offline: Option<bool> },
+    Queue {
+        ops: Vec<Op>,
+        items: Vec<ListItem>,
+        gone: Vec<u32>,
+        offline: Option<bool>,
+    },
     /// The queue couldn't do something (database trouble, an action on a change that's gone).
     QueueError(String),
     /// A fresh list from the service, already saved.
-    Synced { items: Vec<ListItem>, synced_at: i64 },
+    Synced {
+        items: Vec<ListItem>,
+        synced_at: i64,
+    },
     /// The sync failed; the saved list stays.
     SyncFailed(Fail),
     /// Nothing to sync (signed out, no Client ID, `KOTORA_OFFLINE`): stop the loading state.
     Idle,
-    SignedIn { user: String, picture: Option<String> },
+    SignedIn {
+        user: String,
+        picture: Option<String>,
+    },
     /// The profile picture was asked for again (at most daily, after a sync).
     Picture(Option<String>),
     SignInFailed(String),
     /// The sign-in page's address, and whether the browser was started with it.
-    SignInUrl { url: String, opened: bool },
+    SignInUrl {
+        url: String,
+        opened: bool,
+    },
     SignedOut,
     /// The followed player and what recognition made of its file (`None`: nothing plays).
     Now(Option<Box<Seen>>),
     /// A file passed the threshold.
-    Reached { key: String, file: String },
+    Reached {
+        key: String,
+        file: String,
+    },
     /// The players' states.
     Players(Vec<SourceStatus>),
     /// The Client ID was written (its last four characters and the sign-in state now), or not.
@@ -586,7 +633,10 @@ impl State {
             startup_detail: None,
             online: Default::default(),
             airing: Default::default(),
-            client_id: crate::clientid::ClientIdForm { hint: Some("8f3a".into()), ..Default::default() },
+            client_id: crate::clientid::ClientIdForm {
+                hint: Some("8f3a".into()),
+                ..Default::default()
+            },
             handle: None,
             notes: Default::default(),
             tray: None,
@@ -653,17 +703,31 @@ impl State {
 
     /// [`State::to_watch`], with the season list's data of the show to fill in what the saved
     /// list lacks (its slot, its exact next airing, its status).
-    pub fn to_watch_in(&self, e: &Entry, show: Option<&kotora_core::airing::SeasonAnime>) -> Option<kotora_core::airing::ToWatch> {
+    pub fn to_watch_in(
+        &self,
+        e: &Entry,
+        show: Option<&kotora_core::airing::SeasonAnime>,
+    ) -> Option<kotora_core::airing::ToWatch> {
         if !(matches!(e.status, Status::Watching | Status::OnHold) || e.rewatching) {
             return None;
         }
-        let next = e.next_airing.or_else(|| self.mirror.next.get(&e.id).copied()).or_else(|| show.and_then(|s| s.next_airing));
+        let next = e
+            .next_airing
+            .or_else(|| self.mirror.next.get(&e.id).copied())
+            .or_else(|| show.and_then(|s| s.next_airing));
         let estimate = e.timetable.or_else(|| show.and_then(Timetable::of));
         let air = match (e.air, show) {
             (Air::Unknown, Some(s)) => s.air_status.as_str(),
             (a, _) => a.mal_name(),
         };
-        kotora_core::airing::to_watch(air, e.episodes.or_else(|| show.and_then(|s| s.episodes)), next, estimate, e.progress, self.clock())
+        kotora_core::airing::to_watch(
+            air,
+            e.episodes.or_else(|| show.and_then(|s| s.episodes)),
+            next,
+            estimate,
+            e.progress,
+            self.clock(),
+        )
     }
 
     /// Entries with this status on MAL (the sidebar's count).
@@ -673,7 +737,10 @@ impl State {
 
     /// Completed entries being rewatched (the Watching page shows them too).
     pub fn rewatch_count(&self) -> usize {
-        self.entries.iter().filter(|e| e.rewatching && e.status != Status::Watching).count()
+        self.entries
+            .iter()
+            .filter(|e| e.rewatching && e.status != Status::Watching)
+            .count()
     }
 
     /// Whether the list pages show a list (rather than the sign-in screen).
@@ -683,7 +750,11 @@ impl State {
 
     /// What the page's search box holds: the search page's field, else the list's filter.
     pub fn search_text(&self) -> &str {
-        if self.page == Page::Search { &self.find.text } else { &self.query.text }
+        if self.page == Page::Search {
+            &self.find.text
+        } else {
+            &self.query.text
+        }
     }
 
     /// Whether a search box holds a query: the list page shows the matches of the whole list
@@ -701,7 +772,9 @@ impl State {
         let st = match self.page {
             Page::List(st) => st,
             // Manga mode: the search page's matches are manga (`refresh_manga`).
-            Page::Search if self.searching() && self.search_kind() == kotora_core::Kind::Anime => Status::ALL[0],
+            Page::Search if self.searching() && self.search_kind() == kotora_core::Kind::Anime => {
+                Status::ALL[0]
+            }
             _ => {
                 self.rows.clear();
                 return;
@@ -711,7 +784,11 @@ impl State {
         let mut rows: Vec<usize> = (0..self.entries.len())
             .filter(|&i| {
                 let e = &self.entries[i];
-                if q.is_empty() { e.on_page(st) && self.filter.keeps(e) } else { e.search.contains(&q) }
+                if q.is_empty() {
+                    e.on_page(st) && self.filter.keeps(e)
+                } else {
+                    e.search.contains(&q)
+                }
             })
             .collect();
         let e = &self.entries;
@@ -727,7 +804,16 @@ impl State {
         }
         if !q.is_empty() {
             // The page's status first, then the sidebar's order (stable: the sort stays within).
-            rows.sort_by_key(|&i| if e[i].status == st { 0 } else { 1 + Status::ALL.iter().position(|x| *x == e[i].status).unwrap_or(0) });
+            rows.sort_by_key(|&i| {
+                if e[i].status == st {
+                    0
+                } else {
+                    1 + Status::ALL
+                        .iter()
+                        .position(|x| *x == e[i].status)
+                        .unwrap_or(0)
+                }
+            });
         }
         self.rows = rows;
     }
@@ -773,12 +859,20 @@ impl State {
             return Err("Not signed in.".into());
         }
         let now = self.clock();
-        let i = self.entries.iter().position(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let i = self
+            .entries
+            .iter()
+            .position(|e| e.id == id)
+            .ok_or("That anime is not on your list.")?;
         let e = &mut self.entries[i];
         if let (Some(p), Some(n)) = (change.progress, e.episodes)
             && p > n
         {
-            return Err(format!("{} has {n} episode{}.", e.title, if n == 1 { "" } else { "s" }));
+            return Err(format!(
+                "{} has {n} episode{}.",
+                e.title,
+                if n == 1 { "" } else { "s" }
+            ));
         }
         // Like the MAL website: the last episode completes the entry, or ends a rewatch (one more
         // in the count), when the total is known and the change doesn't pick it itself.
@@ -797,7 +891,11 @@ impl State {
             e.new_episode = None;
         }
         // Back to where the entry's only waiting change started: the queue drops it.
-        let open: Vec<&Op> = self.ops.iter().filter(|o| o.kind == kotora_core::Kind::Anime && o.media_id == id && o.state.is_open()).collect();
+        let open: Vec<&Op> = self
+            .ops
+            .iter()
+            .filter(|o| o.kind == kotora_core::Kind::Anime && o.media_id == id && o.state.is_open())
+            .collect();
         let e = &mut self.entries[i];
         if let [op] = open.as_slice()
             && op.state != OpState::Sending
@@ -807,7 +905,14 @@ impl State {
         } else if e.waiting.is_none() {
             e.waiting = Some(waiting_label(OpState::Queued));
         }
-        crate::queue::send(self, Cmd::Edit { kind: kotora_core::Kind::Anime, media_id: id, change });
+        crate::queue::send(
+            self,
+            Cmd::Edit {
+                kind: kotora_core::Kind::Anime,
+                media_id: id,
+                change,
+            },
+        );
         self.recheck_now();
         self.refresh();
         Ok(i)
@@ -816,11 +921,20 @@ impl State {
     /// "Rewatch" (the row editor, the details page, `kot rewatch`): a completed anime is watched
     /// again from episode 0; it stays Completed on MAL, and the last episode ends the rewatch.
     pub fn start_rewatch(&mut self, id: u32) -> Result<usize, String> {
-        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let e = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or("That anime is not on your list.")?;
         if e.rewatching {
             return Err(format!("{} is being rewatched already.", e.title));
         }
-        let change = Change::start_rewatch(&e.values()).ok_or_else(|| format!("{} is not completed: only a completed anime can be rewatched.", e.title))?;
+        let change = Change::start_rewatch(&e.values()).ok_or_else(|| {
+            format!(
+                "{} is not completed: only a completed anime can be rewatched.",
+                e.title
+            )
+        })?;
         self.editor = None;
         self.edit(id, change)
     }
@@ -828,13 +942,24 @@ impl State {
     /// "Stop rewatching": the rewatch ends without counting; the progress goes back to the last
     /// episode (the entry is still Completed).
     pub fn stop_rewatch(&mut self, id: u32) -> Result<usize, String> {
-        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let e = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or("That anime is not on your list.")?;
         if !e.rewatching {
             return Err(format!("{} is not being rewatched.", e.title));
         }
         let progress = e.episodes.unwrap_or(e.progress);
         self.editor = None;
-        self.edit(id, Change { rewatching: Some(false), progress: Some(progress), ..Default::default() })
+        self.edit(
+            id,
+            Change {
+                rewatching: Some(false),
+                progress: Some(progress),
+                ..Default::default()
+            },
+        )
     }
 
     /// Search and add, the details page, Now Playing: puts an anime on the list with `status`
@@ -846,12 +971,24 @@ impl State {
 
     /// [`State::add_media`] at an episode: added and recorded in one change ("Add as Watching at
     /// episode N").
-    pub fn add_media_at(&mut self, media: Media, status: Status, episode: Option<u32>) -> Result<usize, String> {
+    pub fn add_media_at(
+        &mut self,
+        media: Media,
+        status: Status,
+        episode: Option<u32>,
+    ) -> Result<usize, String> {
         if !self.has_list() {
             return Err("Not signed in.".into());
         }
         if self.entries.iter().any(|e| e.id == media.id) {
-            return self.edit(media.id, Change { status: Some(status), progress: episode, ..Default::default() });
+            return self.edit(
+                media.id,
+                Change {
+                    status: Some(status),
+                    progress: episode,
+                    ..Default::default()
+                },
+            );
         }
         let progress = match (status, media.episodes, episode) {
             (Status::Completed, Some(n), _) => n,
@@ -859,11 +996,27 @@ impl State {
             (_, None, Some(p)) => p,
             _ => 0,
         };
-        let item = ListItem { media: media.clone(), status, progress, score: None, rewatching: false, times_rewatched: 0, updated_at: self.clock(), volumes: 0 };
+        let item = ListItem {
+            media: media.clone(),
+            status,
+            progress,
+            score: None,
+            rewatching: false,
+            times_rewatched: 0,
+            updated_at: self.clock(),
+            volumes: 0,
+        };
         let mut e = Entry::from_item(&item, self.prefs.titles);
         e.waiting = Some(waiting_label(OpState::Queued));
         self.entries.push(e);
-        crate::queue::send(self, Cmd::Add { media: Box::new(media), status, progress: episode });
+        crate::queue::send(
+            self,
+            Cmd::Add {
+                media: Box::new(media),
+                status,
+                progress: episode,
+            },
+        );
         self.refresh();
         Ok(self.entries.len() - 1)
     }
@@ -883,11 +1036,18 @@ impl State {
     }
 
     fn plus_one_change(&self, id: u32) -> Result<Change, String> {
-        let e = self.entries.iter().find(|e| e.id == id).ok_or("That anime is not on your list.")?;
+        let e = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or("That anime is not on your list.")?;
         if e.episodes.is_some_and(|n| e.progress >= n) {
             return Err(format!("{} is at its last episode.", e.title));
         }
-        Ok(Change { progress: Some(e.progress + 1), ..Default::default() })
+        Ok(Change {
+            progress: Some(e.progress + 1),
+            ..Default::default()
+        })
     }
 
     /// The row's `+1`: an episode that hasn't aired yet by the estimate asks first ("Mark
@@ -913,17 +1073,29 @@ impl State {
     pub fn not_aired_text(&self, id: u32, change: &Change) -> Option<String> {
         let na = self.not_aired(id, change)?;
         let title = &self.entries.iter().find(|e| e.id == id)?.title;
-        Some(format!("Episode {} of {title} hasn't aired yet{}.", na.episode, self.expected_text(na.expected)))
+        Some(format!(
+            "Episode {} of {title} hasn't aired yet{}.",
+            na.episode,
+            self.expected_text(na.expected)
+        ))
     }
 
     /// " (expected Sat Nov 21, 15:30)" in the user's zone, or nothing.
     pub fn expected_text(&self, at: Option<i64>) -> String {
         match at {
             Some(t) => {
-                const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                const MONTHS: [&str; 12] = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+                    "Dec",
+                ];
                 let c = self.airing.clock(t);
                 let day = kotora_core::airing::DAY_SHORT[usize::from(c.weekday % 7)];
-                format!(" (expected {day} {} {}, {})", MONTHS[(c.month as usize).clamp(1, 12) - 1], c.date, c.hhmm())
+                format!(
+                    " (expected {day} {} {}, {})",
+                    MONTHS[(c.month as usize).clamp(1, 12) - 1],
+                    c.date,
+                    c.hhmm()
+                )
             }
             None => String::new(),
         }
@@ -934,7 +1106,12 @@ impl State {
     pub fn edit_or_ask(&mut self, id: u32, change: Change, editor: bool) -> Result<(), String> {
         match self.not_aired_text(id, &change) {
             Some(question) => {
-                self.ask = Some(Ask { id, change, question, editor });
+                self.ask = Some(Ask {
+                    id,
+                    change,
+                    question,
+                    editor,
+                });
                 Ok(())
             }
             None => {
@@ -950,7 +1127,9 @@ impl State {
 
     /// "Mark anyway": the held edit goes through.
     pub fn mark_anyway(&mut self) -> Result<(), String> {
-        let Some(a) = self.ask.take() else { return Ok(()) };
+        let Some(a) = self.ask.take() else {
+            return Ok(());
+        };
         self.edit(a.id, a.change)?;
         if a.editor {
             self.editor = None;
@@ -966,7 +1145,12 @@ impl State {
         if self.editor.is_some_and(|ed| ed.id == id) {
             self.editor = None;
         } else if let Some(e) = self.entries.iter().find(|e| e.id == id) {
-            self.editor = Some(Editor { id, status: e.status, progress: e.progress, score: e.score });
+            self.editor = Some(Editor {
+                id,
+                status: e.status,
+                progress: e.progress,
+                score: e.score,
+            });
         }
     }
 
@@ -977,14 +1161,21 @@ impl State {
 
     pub fn editor_step(&mut self, delta: i32) {
         let max = self.editor_episodes();
-        let was = self.editor.and_then(|ed| self.entries.iter().find(|e| e.id == ed.id)).map(|e| e.status);
+        let was = self
+            .editor
+            .and_then(|ed| self.entries.iter().find(|e| e.id == ed.id))
+            .map(|e| e.status);
         if let Some(ed) = &mut self.editor {
             let p = ed.progress.saturating_add_signed(delta);
             ed.progress = max.map_or(p, |n| p.min(n));
             // The last episode completes the entry, as on the MAL website.
             if delta > 0 && max.is_some_and(|n| n > 0 && ed.progress == n) {
                 ed.status = Status::Completed;
-            } else if delta < 0 && ed.status == Status::Completed && max.is_some_and(|n| ed.progress < n) && was.is_some_and(|w| w != Status::Completed) {
+            } else if delta < 0
+                && ed.status == Status::Completed
+                && max.is_some_and(|n| ed.progress < n)
+                && was.is_some_and(|w| w != Status::Completed)
+            {
                 // Stepping back off the last episode undoes that.
                 ed.status = was.unwrap_or(ed.status);
             }
@@ -1010,14 +1201,22 @@ impl State {
         // The manga editor: the same rule, against the manga's saved score.
         if let Some(med) = self.manga.editor {
             let fmt = self.score_format();
-            let saved = self.manga.entries.iter().find(|e| e.id == med.id).map(|e| e.score);
+            let saved = self
+                .manga
+                .entries
+                .iter()
+                .find(|e| e.id == med.id)
+                .map(|e| e.score);
             if let Some(ed) = &mut self.manga.editor {
                 ed.score = saved.map_or(score, |cur| fmt.pick(cur, score));
             }
             return;
         }
         let fmt = self.score_format();
-        let saved = self.editor.and_then(|ed| self.entries.iter().find(|e| e.id == ed.id)).map(|e| e.score);
+        let saved = self
+            .editor
+            .and_then(|ed| self.entries.iter().find(|e| e.id == ed.id))
+            .map(|e| e.score);
         if let Some(ed) = &mut self.editor {
             ed.score = saved.map_or(score, |cur| fmt.pick(cur, score));
         }
@@ -1040,7 +1239,11 @@ impl State {
     pub fn score_format(&self) -> ScoreFormat {
         match self.service {
             kotora_core::service::ServiceId::Mal => ScoreFormat::Point10,
-            kotora_core::service::ServiceId::AniList => self.profile.as_ref().map(|p| p.score_format).unwrap_or_default(),
+            kotora_core::service::ServiceId::AniList => self
+                .profile
+                .as_ref()
+                .map(|p| p.score_format)
+                .unwrap_or_default(),
         }
     }
 
@@ -1051,7 +1254,13 @@ impl State {
             self.editor = None;
             return Ok(());
         };
-        let change = Change { status: Some(ed.status), progress: Some(ed.progress), score: Some(ed.score), ..Default::default() }.without_same(&e.values());
+        let change = Change {
+            status: Some(ed.status),
+            progress: Some(ed.progress),
+            score: Some(ed.score),
+            ..Default::default()
+        }
+        .without_same(&e.values());
         self.edit_or_ask(ed.id, change, true)
     }
 
@@ -1063,7 +1272,11 @@ impl State {
         for e in &mut self.entries {
             e.waiting = None;
         }
-        for op in self.ops.iter().filter(|o| o.kind == kotora_core::Kind::Anime && o.state.is_open()) {
+        for op in self
+            .ops
+            .iter()
+            .filter(|o| o.kind == kotora_core::Kind::Anime && o.state.is_open())
+        {
             if let Some(e) = self.entries.iter_mut().find(|e| e.id == op.media_id) {
                 // A conflict or a failure says more than "waiting".
                 if e.waiting.is_none() || op.state != OpState::Queued {
@@ -1102,7 +1315,12 @@ impl State {
             e.retitle(lang);
         }
         self.refresh();
-        crate::detect::save_setting(self, "display", "titles", kotora_core::config::quote(lang.key()));
+        crate::detect::save_setting(
+            self,
+            "display",
+            "titles",
+            kotora_core::config::quote(lang.key()),
+        );
     }
 
     /// Settings → Appearance: the next frame paints in the new palette (`ui::view`), and
@@ -1116,7 +1334,12 @@ impl State {
         self.prefs.page_keys = keys;
         #[cfg(target_os = "macos")]
         crate::menu_bar::set_page_keys(self.handle.as_ref(), keys);
-        crate::detect::save_setting(self, "keys", "pages", kotora_core::config::quote(keys.key()));
+        crate::detect::save_setting(
+            self,
+            "keys",
+            "pages",
+            kotora_core::config::quote(keys.key()),
+        );
     }
 
     pub fn set_theme(&mut self, theme: kotora_core::config::Theme) {
@@ -1125,7 +1348,12 @@ impl State {
         }
         self.prefs.theme = theme;
         crate::chrome::follow(theme);
-        crate::detect::save_setting(self, "display", "theme", kotora_core::config::quote(theme.key()));
+        crate::detect::save_setting(
+            self,
+            "display",
+            "theme",
+            kotora_core::config::quote(theme.key()),
+        );
     }
 
     /// The title a queued change shows: the entry's, in the chosen language, else the saved one.
@@ -1133,7 +1361,10 @@ impl State {
         if op.kind == kotora_core::Kind::Manga {
             return self.manga_title(op.media_id).unwrap_or(op.title.as_str());
         }
-        self.entries.iter().find(|e| e.id == op.media_id).map_or(op.title.as_str(), |e| e.title.as_str())
+        self.entries
+            .iter()
+            .find(|e| e.id == op.media_id)
+            .map_or(op.title.as_str(), |e| e.title.as_str())
     }
 
     /// The queue as `kot queue` prints it.
@@ -1147,7 +1378,10 @@ impl State {
                 state: o.state.label().into(),
                 note: match o.state {
                     OpState::Conflict => Some(match &o.remote {
-                        Some(r) => format!("{service} has {}", remote_text_of(o.kind, r, o.episodes, self.score_format())),
+                        Some(r) => format!(
+                            "{service} has {}",
+                            remote_text_of(o.kind, r, o.episodes, self.score_format())
+                        ),
                         None => format!("removed from your list on {service}"),
                     }),
                     OpState::Done => None,
@@ -1194,7 +1428,14 @@ impl State {
             _ => {}
         }
         // The list changed: the Statistics page, when open, counts again.
-        let list_changed = matches!(&msg, Msg::Cache { .. } | Msg::Synced { .. } | Msg::Queue { .. } | Msg::Manga(_) | Msg::SignedIn { .. });
+        let list_changed = matches!(
+            &msg,
+            Msg::Cache { .. }
+                | Msg::Synced { .. }
+                | Msg::Queue { .. }
+                | Msg::Manga(_)
+                | Msg::SignedIn { .. }
+        );
         let changed = self.apply_msg(msg);
         if list_changed {
             self.stats_list_changed();
@@ -1217,7 +1458,14 @@ impl State {
                 r
             }
             Msg::Reading(m) => self.apply_reading(m),
-            Msg::Cache { items, user, picture, profile, synced_at, ops } => {
+            Msg::Cache {
+                items,
+                user,
+                picture,
+                profile,
+                synced_at,
+                ops,
+            } => {
                 self.ops = ops;
                 // A sync's answer is newer than the saved one.
                 if self.profile.is_none() {
@@ -1231,7 +1479,9 @@ impl State {
                     self.queue_changed();
                 }
                 // Changes left from the last run go out now.
-                if self.auth == Auth::SignedIn && self.ops.iter().any(|o| o.state == OpState::Queued) {
+                if self.auth == Auth::SignedIn
+                    && self.ops.iter().any(|o| o.state == OpState::Queued)
+                {
                     self.queue_cmd(Cmd::Kick { refresh: false });
                 }
                 if let Some(u) = user {
@@ -1274,7 +1524,12 @@ impl State {
                 self.settle_start_detail(true);
                 true
             }
-            Msg::Queue { ops, items, gone, offline } => {
+            Msg::Queue {
+                ops,
+                items,
+                gone,
+                offline,
+            } => {
                 let before = self.entry_ids();
                 for it in &items {
                     let e = Entry::from_item(it, self.prefs.titles);
@@ -1292,7 +1547,12 @@ impl State {
                 self.recheck_now();
                 if let Some(off) = offline {
                     self.offline = off;
-                    if !off && self.error.as_deref().is_some_and(|e| e.starts_with("Can't reach")) {
+                    if !off
+                        && self
+                            .error
+                            .as_deref()
+                            .is_some_and(|e| e.starts_with("Can't reach"))
+                    {
                         self.error = None;
                     }
                 }
@@ -1338,7 +1598,11 @@ impl State {
             }
             Msg::SignInFailed(m) => {
                 // Keep the saved list when the user was only signing in again.
-                self.auth = if self.entries.is_empty() { Auth::SignedOut } else { Auth::Expired };
+                self.auth = if self.entries.is_empty() {
+                    Auth::SignedOut
+                } else {
+                    Auth::Expired
+                };
                 self.cancel = None;
                 self.sign_in_link = None;
                 self.error = Some(m);
@@ -1378,7 +1642,10 @@ impl State {
     /// the list, the queue, the user, and the service's answers (search results, the open page,
     /// the seasons). Nothing on disk is touched here.
     pub fn forget_account(&mut self) {
-        self.mirror = crate::mirror::MirrorUi { worker: self.mirror.worker.clone(), ..Default::default() };
+        self.mirror = crate::mirror::MirrorUi {
+            worker: self.mirror.worker.clone(),
+            ..Default::default()
+        };
         self.covers.clear();
         self.online = Default::default();
         self.airing.cancel();
@@ -1415,7 +1682,11 @@ impl State {
         kotora_ctl::Status {
             version: kotora_ctl::version_line(),
             account: self.account.as_ref().map(|(n, _)| n.clone()),
-            service: self.account.as_ref().map(|(_, s)| s.to_string()).unwrap_or_default(),
+            service: self
+                .account
+                .as_ref()
+                .map(|(_, s)| s.to_string())
+                .unwrap_or_default(),
             entries: self.entries.len() as u32,
             queue: self.queue,
             offline: self.offline,
@@ -1441,9 +1712,17 @@ pub fn fake_now() -> Now {
         playing: true,
         reached: false,
         parsed: kotora_core::recognize::parse(file),
-        found: Found::List { media_id: 0, sure: true, why: "same title in your list".into() },
+        found: Found::List {
+            media_id: 0,
+            sure: true,
+            why: "same title in your list".into(),
+        },
         recognizing: false,
-        candidates: vec![(0, "Lanterns of Kirigaoka".into()), (3, "Slow Life on Hoshizora Island".into()), (9, "Kumo to Kaze no Ryokan".into())],
+        candidates: vec![
+            (0, "Lanterns of Kirigaoka".into()),
+            (3, "Slow Life on Hoshizora Island".into()),
+            (9, "Kumo to Kaze no Ryokan".into()),
+        ],
         cover_url: None,
         alt_titles: Default::default(),
         relation: None,
@@ -1460,14 +1739,44 @@ pub fn fake_now() -> Now {
 
 /// The fake players of this system (Settings → Players).
 pub fn fake_players() -> Vec<PlayerState> {
-    let st = |switch, via, line: &str, led| PlayerState::from(SourceStatus { switch, via, line: line.into(), led });
+    let st = |switch, via, line: &str, led| {
+        PlayerState::from(SourceStatus {
+            switch,
+            via,
+            line: line.into(),
+            led,
+        })
+    };
     if cfg!(target_os = "macos") {
-        vec![st(Switch::Mpv, Via::MpvIpc, "/tmp/mpv.sock: playing", Led::Playing), st(Switch::Iina, Via::MpvIpc, "/tmp/iina.sock: not running", Led::Off)]
+        vec![
+            st(
+                Switch::Mpv,
+                Via::MpvIpc,
+                "/tmp/mpv.sock: playing",
+                Led::Playing,
+            ),
+            st(
+                Switch::Iina,
+                Via::MpvIpc,
+                "/tmp/iina.sock: not running",
+                Led::Off,
+            ),
+        ]
     } else {
         vec![
-            st(Switch::Mpv, Via::MpvIpc, "$XDG_RUNTIME_DIR/mpv.sock: playing", Led::Playing),
+            st(
+                Switch::Mpv,
+                Via::MpvIpc,
+                "$XDG_RUNTIME_DIR/mpv.sock: playing",
+                Led::Playing,
+            ),
             st(Switch::Vlc, Via::Mpris, "not running", Led::Off),
-            st(Switch::MpcQt, Via::Mpris, "running, nothing playing", Led::Idle),
+            st(
+                Switch::MpcQt,
+                Via::Mpris,
+                "running, nothing playing",
+                Led::Idle,
+            ),
             st(Switch::OtherMpris, Via::Mpris, "not running", Led::Off),
         ]
     }
@@ -1475,13 +1784,29 @@ pub fn fake_players() -> Vec<PlayerState> {
 
 /// The service's side of a conflict: "Progress 8 / 24, Watching, score 7", the score in `fmt`.
 /// A manga's says chapters, volumes and Reading ("Ch 70 / 88, vol 9, Reading, score 8").
-pub fn remote_text_of(kind: kotora_core::Kind, r: &Remote, episodes: Option<u32>, fmt: ScoreFormat) -> String {
+pub fn remote_text_of(
+    kind: kotora_core::Kind,
+    r: &Remote,
+    episodes: Option<u32>,
+    fmt: ScoreFormat,
+) -> String {
     let total = episodes.map_or("?".to_string(), |n| n.to_string());
-    let score = r.values.score.map_or("no score".to_string(), |n| format!("score {}", fmt.words(n)));
+    let score = r.values.score.map_or("no score".to_string(), |n| {
+        format!("score {}", fmt.words(n))
+    });
     if kind == kotora_core::Kind::Manga {
-        return format!("Ch {} / {total}, vol {}, {}, {score}", r.values.progress, r.values.volumes, r.values.status.label_in(kind));
+        return format!(
+            "Ch {} / {total}, vol {}, {}, {score}",
+            r.values.progress,
+            r.values.volumes,
+            r.values.status.label_in(kind)
+        );
     }
-    format!("{} / {total}, {}, {score}", r.values.progress, r.values.status.label())
+    format!(
+        "{} / {total}, {}, {score}",
+        r.values.progress,
+        r.values.status.label()
+    )
 }
 
 /// The mockup's queue: a conflict, two waiting, one failed, two sent. Media ids are the fake
@@ -1509,20 +1834,52 @@ fn fake_ops() -> Vec<Op> {
         removed: false,
     };
     let w = |progress, score| Values::new(Status::Watching, progress, score);
-    let progress = |p| Change { progress: Some(p), ..Default::default() };
+    let progress = |p| Change {
+        progress: Some(p),
+        ..Default::default()
+    };
     vec![
         Op {
-            remote: Some(Remote { values: w(8, None), updated_at: FAKE_NOW - 3_000 }),
+            remote: Some(Remote {
+                values: w(8, None),
+                updated_at: FAKE_NOW - 3_000,
+            }),
             ..op(1, 2, progress(7), w(6, None), OpState::Conflict, 4_500)
         },
-        Op { edits: 2, ..op(2, 0, progress(5), w(3, ten(8)), OpState::Queued, 900) },
-        op(3, 8, Change { progress: Some(1), score: Some(ten(8)), ..Default::default() }, w(0, None), OpState::Queued, 1_900),
         Op {
-            error: Some("MyAnimeList answered HTTP 400 (invalid_content: num_watched_episodes)".into()),
+            edits: 2,
+            ..op(2, 0, progress(5), w(3, ten(8)), OpState::Queued, 900)
+        },
+        op(
+            3,
+            8,
+            Change {
+                progress: Some(1),
+                score: Some(ten(8)),
+                ..Default::default()
+            },
+            w(0, None),
+            OpState::Queued,
+            1_900,
+        ),
+        Op {
+            error: Some(
+                "MyAnimeList answered HTTP 400 (invalid_content: num_watched_episodes)".into(),
+            ),
             ..op(4, 7, progress(11), w(10, ten(7)), OpState::Failed, 6_000)
         },
         op(5, 1, progress(8), w(7, ten(9)), OpState::Done, 7_200),
-        op(6, 3, Change { score: Some(ten(7)), ..Default::default() }, w(3, ten(6)), OpState::Done, 12_600),
+        op(
+            6,
+            3,
+            Change {
+                score: Some(ten(7)),
+                ..Default::default()
+            },
+            w(3, ten(6)),
+            OpState::Done,
+            12_600,
+        ),
     ]
 }
 
@@ -1552,31 +1909,115 @@ fn fake_age(label: &str) -> i64 {
     }
 }
 
-const fn fk(title: &'static str, progress: u32, episodes: u32, score: Option<u8>, updated: &'static str, airing: Option<&'static str>) -> Fake {
-    Fake { title, progress, episodes, score, kind: "TV", updated, airing, new_episode: None, rewatching: false }
+const fn fk(
+    title: &'static str,
+    progress: u32,
+    episodes: u32,
+    score: Option<u8>,
+    updated: &'static str,
+    airing: Option<&'static str>,
+) -> Fake {
+    Fake {
+        title,
+        progress,
+        episodes,
+        score,
+        kind: "TV",
+        updated,
+        airing,
+        new_episode: None,
+        rewatching: false,
+    }
 }
 
 /// The Watching page of the mockup, in "Last updated" order, plus two more off screen.
 const WATCHING: [Fake; 12] = [
-    Fake { new_episode: Some(6), ..fk("Lanterns of Kirigaoka", 5, 12, Some(8), "now", Some("Ep 7 on Sat")) },
-    fk("Starfall Delivery Service", 8, 13, Some(9), "2 h", Some("Ep 9 on Wed")),
+    Fake {
+        new_episode: Some(6),
+        ..fk(
+            "Lanterns of Kirigaoka",
+            5,
+            12,
+            Some(8),
+            "now",
+            Some("Ep 7 on Sat"),
+        )
+    },
+    fk(
+        "Starfall Delivery Service",
+        8,
+        13,
+        Some(9),
+        "2 h",
+        Some("Ep 9 on Wed"),
+    ),
     // A conflict in the fake queue (`fake_ops`).
     fk("Mikan Street Detectives", 7, 24, None, "1 day", None),
-    fk("Slow Life on Hoshizora Island", 3, 12, Some(7), "2 days", Some("Ep 4 on Sun")),
+    fk(
+        "Slow Life on Hoshizora Island",
+        3,
+        12,
+        Some(7),
+        "2 days",
+        Some("Ep 4 on Sun"),
+    ),
     fk("Neon Ronin 2099", 22, 26, Some(8), "3 days", None),
-    Fake { rewatching: true, ..fk("The Ninth Shrine Maiden", 6, 12, Some(10), "5 days", None) },
-    fk("Mecha Bento Club", 4, 10, None, "1 week", Some("Ep 11 on Fri")),
-    fk("Ghost of the Library Stacks", 11, 12, Some(7), "2 weeks", None),
-    fk("Paper Crane Racing: Second Lap", 1, 12, Some(8), "1 month", None),
-    Fake { kind: "Movie", ..fk("Kumo to Kaze no Ryokan", 0, 1, None, "2 months", None) },
-    Fake { new_episode: Some(9), ..fk("Tidepool Radio", 8, 12, Some(6), "3 months", Some("Ep 10 on Tue")) },
-    Fake { new_episode: Some(3), ..fk("Clockwork Bakery Wars", 2, 12, None, "4 months", None) },
+    Fake {
+        rewatching: true,
+        ..fk("The Ninth Shrine Maiden", 6, 12, Some(10), "5 days", None)
+    },
+    fk(
+        "Mecha Bento Club",
+        4,
+        10,
+        None,
+        "1 week",
+        Some("Ep 11 on Fri"),
+    ),
+    fk(
+        "Ghost of the Library Stacks",
+        11,
+        12,
+        Some(7),
+        "2 weeks",
+        None,
+    ),
+    fk(
+        "Paper Crane Racing: Second Lap",
+        1,
+        12,
+        Some(8),
+        "1 month",
+        None,
+    ),
+    Fake {
+        kind: "Movie",
+        ..fk("Kumo to Kaze no Ryokan", 0, 1, None, "2 months", None)
+    },
+    Fake {
+        new_episode: Some(9),
+        ..fk(
+            "Tidepool Radio",
+            8,
+            12,
+            Some(6),
+            "3 months",
+            Some("Ep 10 on Tue"),
+        )
+    },
+    Fake {
+        new_episode: Some(3),
+        ..fk("Clockwork Bakery Wars", 2, 12, None, "4 months", None)
+    },
 ];
 
 /// Made-up English and Japanese titles of the first fake entries (Settings → Titles); the rest
 /// have none, so they show the main title.
 const FAKE_ALT: [(Option<&str>, Option<&str>); 5] = [
-    (Some("The Lanterns on Kirigaoka Hill"), Some("霧ヶ丘のランタン")),
+    (
+        Some("The Lanterns on Kirigaoka Hill"),
+        Some("霧ヶ丘のランタン"),
+    ),
     (Some("Starfall Express"), Some("星降る配達便")),
     (None, Some("みかん通り探偵団")),
     (Some("Island Under the Stars"), Some("星空島スローライフ")),
@@ -1584,14 +2025,37 @@ const FAKE_ALT: [(Option<&str>, Option<&str>); 5] = [
 ];
 
 const WORDS_A: [&str; 16] = [
-    "Moonlit", "Paper", "Crimson", "Quiet", "Silver", "Hidden", "Northern", "Electric", "Gentle", "Lost", "Velvet", "Second",
-    "Endless", "Hollow", "Bright", "Winter",
+    "Moonlit", "Paper", "Crimson", "Quiet", "Silver", "Hidden", "Northern", "Electric", "Gentle",
+    "Lost", "Velvet", "Second", "Endless", "Hollow", "Bright", "Winter",
 ];
 const WORDS_B: [&str; 16] = [
-    "Harbor", "Lantern", "Garden", "Signal", "Orchard", "Station", "Archive", "Comet", "Festival", "Lighthouse", "Workshop",
-    "Valley", "Market", "Bridge", "Theatre", "Academy",
+    "Harbor",
+    "Lantern",
+    "Garden",
+    "Signal",
+    "Orchard",
+    "Station",
+    "Archive",
+    "Comet",
+    "Festival",
+    "Lighthouse",
+    "Workshop",
+    "Valley",
+    "Market",
+    "Bridge",
+    "Theatre",
+    "Academy",
 ];
-const WORDS_C: [&str; 8] = ["", " Season 2", " Rebirth", ": Side Stories", " Final Act", " Zero", "", " Movie"];
+const WORDS_C: [&str; 8] = [
+    "",
+    " Season 2",
+    " Rebirth",
+    ": Side Stories",
+    " Final Act",
+    " Zero",
+    "",
+    " Movie",
+];
 
 /// Made-up entries for the other statuses: the counts of the mockup's sidebar (48, 236, 7, 0).
 fn fake_entries() -> Vec<Entry> {
@@ -1605,19 +2069,31 @@ fn fake_entries() -> Vec<Entry> {
             title_en: FAKE_ALT.get(i).and_then(|a| a.0).map(Into::into),
             title_ja: FAKE_ALT.get(i).and_then(|a| a.1).map(Into::into),
             // A rewatch is Completed on MAL; the Watching page shows it too.
-            status: if f.rewatching { Status::Completed } else { Status::Watching },
+            status: if f.rewatching {
+                Status::Completed
+            } else {
+                Status::Watching
+            },
             progress: f.progress,
             episodes: Some(f.episodes),
             score: f.score.and_then(|n| Score::from_ten(n.into())),
-            search: [Some(f.title), FAKE_ALT.get(i).and_then(|a| a.0), FAKE_ALT.get(i).and_then(|a| a.1)]
-                .into_iter()
-                .flatten()
-                .map(str::to_lowercase)
-                .collect::<Vec<_>>()
-                .join("\n"),
+            search: [
+                Some(f.title),
+                FAKE_ALT.get(i).and_then(|a| a.0),
+                FAKE_ALT.get(i).and_then(|a| a.1),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+            .join("\n"),
             kind: f.kind,
             updated_at: FAKE_NOW - fake_age(f.updated),
-            air: if f.airing.is_some() { Air::Airing } else { Air::Finished },
+            air: if f.airing.is_some() {
+                Air::Airing
+            } else {
+                Air::Finished
+            },
             airing_note: f.airing,
             new_episode: f.new_episode,
             rewatching: f.rewatching,
@@ -1629,16 +2105,31 @@ fn fake_entries() -> Vec<Entry> {
             next_airing: None,
         })
         .collect();
-    const UPDATED: [&str; 6] = ["3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year"];
+    const UPDATED: [&str; 6] = [
+        "3 days", "1 week", "2 weeks", "1 month", "6 months", "1 year",
+    ];
     let mut id = out.len() as u32;
     // Completed: 235 here and the one rewatched above make the mockup's 236.
-    for (status, n) in [(Status::PlanToWatch, 48), (Status::Completed, 235), (Status::OnHold, 7)] {
+    for (status, n) in [
+        (Status::PlanToWatch, 48),
+        (Status::Completed, 235),
+        (Status::OnHold, 7),
+    ] {
         for k in 0..n {
             let h = id.wrapping_mul(2_654_435_761);
             let c = WORDS_C[(h >> 8) as usize % WORDS_C.len()];
-            let title = format!("{} {}{}", WORDS_A[(h >> 16) as usize % 16], WORDS_B[(h >> 24) as usize % 16], c);
+            let title = format!(
+                "{} {}{}",
+                WORDS_A[(h >> 16) as usize % 16],
+                WORDS_B[(h >> 24) as usize % 16],
+                c
+            );
             let movie = c == " Movie";
-            let episodes = if movie { 1 } else { [12, 13, 24, 25, 10, 26][h as usize % 6] };
+            let episodes = if movie {
+                1
+            } else {
+                [12, 13, 24, 25, 10, 26][h as usize % 6]
+            };
             let progress = match status {
                 Status::PlanToWatch => 0,
                 Status::Completed => episodes,
@@ -1654,7 +2145,8 @@ fn fake_entries() -> Vec<Entry> {
                 status,
                 progress,
                 episodes: Some(episodes),
-                score: Score::from_ten(5 + (h % 6)).filter(|_| status == Status::Completed && k % 5 != 4),
+                score: Score::from_ten(5 + (h % 6))
+                    .filter(|_| status == Status::Completed && k % 5 != 4),
                 search,
                 kind: if movie { "Movie" } else { "TV" },
                 updated_at: FAKE_NOW - fake_age(UPDATED[(k as usize * 6 / n as usize).min(5)]),
@@ -1682,9 +2174,22 @@ pub(crate) fn airing_entry(s: &mut State, id: u32, aired: u32) {
     let now = s.clock();
     let e = s.entries.iter_mut().find(|e| e.id == id).expect("entry");
     // `aired` 0: not yet aired, the first in an hour.
-    let first = if aired == 0 { now + 3600 } else { now - i64::from(aired - 1) * WEEK - 3600 };
-    e.air = if aired == 0 { Air::Upcoming } else { Air::Airing };
-    e.timetable = Some(Timetable { first, episodes: e.episodes, shift: 0, until: None });
+    let first = if aired == 0 {
+        now + 3600
+    } else {
+        now - i64::from(aired - 1) * WEEK - 3600
+    };
+    e.air = if aired == 0 {
+        Air::Upcoming
+    } else {
+        Air::Airing
+    };
+    e.timetable = Some(Timetable {
+        first,
+        episodes: e.episodes,
+        shift: 0,
+        until: None,
+    });
 }
 
 /// What the command that names an anime does with it: it decides which matches win.
@@ -1700,34 +2205,65 @@ pub enum Want {
 
 /// The matches of `q` in `entries`: a title that is exactly `q` (any title, any case) beats a part
 /// of a title; several are narrowed by `want` (never to none), and one left is the answer.
-fn find_in(entries: &[Entry], q: &str, want: Want, has_next: &dyn Fn(&Entry) -> bool) -> Result<usize, String> {
+fn find_in(
+    entries: &[Entry],
+    q: &str,
+    want: Want,
+    has_next: &dyn Fn(&Entry) -> bool,
+) -> Result<usize, String> {
     let q = q.trim().to_lowercase();
     if q.is_empty() {
         return Err("Which anime? Give a part of its title.".into());
     }
-    let mut part: Vec<usize> = (0..entries.len()).filter(|&i| entries[i].search.lines().any(|t| t == q)).collect();
+    let mut part: Vec<usize> = (0..entries.len())
+        .filter(|&i| entries[i].search.lines().any(|t| t == q))
+        .collect();
     if part.is_empty() {
-        part = (0..entries.len()).filter(|&i| entries[i].search.contains(&q)).collect();
+        part = (0..entries.len())
+            .filter(|&i| entries[i].search.contains(&q))
+            .collect();
     }
     if part.len() > 1 && want != Want::Any {
-        let watching: Vec<usize> = part.iter().copied().filter(|&i| entries[i].status == Status::Watching || entries[i].rewatching).collect();
+        let watching: Vec<usize> = part
+            .iter()
+            .copied()
+            .filter(|&i| entries[i].status == Status::Watching || entries[i].rewatching)
+            .collect();
         if !watching.is_empty() {
             part = watching;
         }
     }
     if part.len() > 1 && want == Want::Next {
-        let ready: Vec<usize> = part.iter().copied().filter(|&i| has_next(&entries[i])).collect();
+        let ready: Vec<usize> = part
+            .iter()
+            .copied()
+            .filter(|&i| has_next(&entries[i]))
+            .collect();
         if !ready.is_empty() {
             part = ready;
         }
     }
     match part.as_slice() {
-        [] => Err(format!("No anime on your list matches \u{201c}{q}\u{201d}.")),
+        [] => Err(format!(
+            "No anime on your list matches \u{201c}{q}\u{201d}."
+        )),
         [i] => Ok(*i),
         many => {
-            let names: Vec<&str> = many.iter().take(5).map(|&i| entries[i].title.as_str()).collect();
-            let more = if many.len() > 5 { format!(" and {} more", many.len() - 5) } else { String::new() };
-            Err(format!("{} anime match \u{201c}{q}\u{201d}: {}{more}. Give more of the title.", many.len(), names.join(", ")))
+            let names: Vec<&str> = many
+                .iter()
+                .take(5)
+                .map(|&i| entries[i].title.as_str())
+                .collect();
+            let more = if many.len() > 5 {
+                format!(" and {} more", many.len() - 5)
+            } else {
+                String::new()
+            };
+            Err(format!(
+                "{} anime match \u{201c}{q}\u{201d}: {}{more}. Give more of the title.",
+                many.len(),
+                names.join(", ")
+            ))
         }
     }
 }
@@ -1738,7 +2274,14 @@ mod tests {
 
     use super::*;
 
-    fn item(id: u32, title: &str, status: Status, progress: u32, score: Option<Score>, updated_at: i64) -> ListItem {
+    fn item(
+        id: u32,
+        title: &str,
+        status: Status,
+        progress: u32,
+        score: Option<Score>,
+        updated_at: i64,
+    ) -> ListItem {
         ListItem {
             media: Media {
                 id,
@@ -1788,31 +2331,51 @@ mod tests {
     fn the_editor_keeps_a_precise_score_and_steps_finely() {
         let mut s = loaded();
         s.service = kotora_core::service::ServiceId::AniList;
-        s.profile = Some(kotora_core::service::Profile { score_format: ScoreFormat::Point5, ..Default::default() });
+        s.profile = Some(kotora_core::service::Profile {
+            score_format: ScoreFormat::Point5,
+            ..Default::default()
+        });
         s.entries.iter_mut().find(|e| e.id == 1).unwrap().score = Score::from_points(73);
         let before = s.entries.iter().find(|e| e.id == 1).unwrap().updated_at;
         s.toggle_editor(1);
         s.editor_score(ScoreFormat::Point5.score_of(4));
-        assert_eq!(s.editor.unwrap().score, Score::from_points(73), "4 stars is what 73 shows");
+        assert_eq!(
+            s.editor.unwrap().score,
+            Score::from_points(73),
+            "4 stars is what 73 shows"
+        );
         s.save_editor().unwrap();
-        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().updated_at, before, "nothing changed, nothing to send");
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 1).unwrap().updated_at,
+            before,
+            "nothing changed, nothing to send"
+        );
         s.toggle_editor(1);
         s.editor_score(ScoreFormat::Point5.score_of(2));
         assert_eq!(s.editor.unwrap().score, Score::from_points(40));
-        s.profile = Some(kotora_core::service::Profile { score_format: ScoreFormat::Point100, ..Default::default() });
+        s.profile = Some(kotora_core::service::Profile {
+            score_format: ScoreFormat::Point100,
+            ..Default::default()
+        });
         s.toggle_editor(1);
         s.toggle_editor(1);
         s.editor_score_step(1);
         assert_eq!(s.editor.unwrap().score, Score::from_points(74));
         s.save_editor().unwrap();
-        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().score, Score::from_points(74));
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 1).unwrap().score,
+            Score::from_points(74)
+        );
         // MyAnimeList is 1-10 whatever the saved profile says.
         s.service = kotora_core::service::ServiceId::Mal;
         assert_eq!(s.score_format(), ScoreFormat::Point10);
     }
 
     fn titles(s: &State) -> Vec<&str> {
-        s.rows.iter().map(|&i| s.entries[i].title.as_str()).collect()
+        s.rows
+            .iter()
+            .map(|&i| s.entries[i].title.as_str())
+            .collect()
     }
 
     #[test]
@@ -1827,44 +2390,120 @@ mod tests {
     fn edits_show_at_once_and_check_their_values() {
         let mut s = loaded();
         let i = s.plus_one(1).unwrap();
-        assert_eq!((s.entries[i].progress, s.entries[i].waiting), (4, Some("Waiting to sync")));
+        assert_eq!(
+            (s.entries[i].progress, s.entries[i].waiting),
+            (4, Some("Waiting to sync"))
+        );
         assert_eq!(s.entries[i].updated_at, FAKE_NOW);
-        assert_eq!(titles(&s)[0], "Bravo", "the edited row moves to the top of Last updated");
-        assert!(s.edit(1, Change { progress: Some(13), ..Default::default() }).unwrap_err().contains("12 episodes"));
+        assert_eq!(
+            titles(&s)[0],
+            "Bravo",
+            "the edited row moves to the top of Last updated"
+        );
+        assert!(
+            s.edit(
+                1,
+                Change {
+                    progress: Some(13),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .contains("12 episodes")
+        );
         assert!(s.edit(99, Change::default()).is_err());
-        s.edit(4, Change { progress: Some(12), ..Default::default() }).unwrap();
+        s.edit(
+            4,
+            Change {
+                progress: Some(12),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(s.plus_one(4).unwrap_err().contains("last episode"));
         let mut out = State::start(Auth::SignedOut);
-        assert_eq!(out.edit(1, Change::default()).unwrap_err(), "Not signed in.");
+        assert_eq!(
+            out.edit(1, Change::default()).unwrap_err(),
+            "Not signed in."
+        );
     }
 
     #[test]
     fn the_app_starts_on_home() {
         assert_eq!(State::start(Auth::SignedIn).page, Page::Home);
         let out = State::start(Auth::SignedOut);
-        assert_eq!(out.page, Page::Home, "signed out: Home shows the welcome screen");
-        assert_eq!(State::start(Auth::NoClientId).page, Page::Setup, "first run: the wizard");
+        assert_eq!(
+            out.page,
+            Page::Home,
+            "signed out: Home shows the welcome screen"
+        );
+        assert_eq!(
+            State::start(Auth::NoClientId).page,
+            Page::Setup,
+            "first run: the wizard"
+        );
     }
 
     #[test]
     fn the_last_episode_completes_the_entry() {
         let mut s = loaded();
         // +1 to the last episode.
-        s.edit(2, Change { progress: Some(11), ..Default::default() }).unwrap();
+        s.edit(
+            2,
+            Change {
+                progress: Some(11),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let i = s.plus_one(2).unwrap();
-        assert_eq!((s.entries[i].progress, s.entries[i].status), (12, Status::Completed));
+        assert_eq!(
+            (s.entries[i].progress, s.entries[i].status),
+            (12, Status::Completed)
+        );
         // An explicit status wins (`kot set --status watching`).
-        s.edit(3, Change { progress: Some(12), status: Some(Status::Watching), ..Default::default() }).unwrap();
-        assert_eq!(s.entries.iter().find(|e| e.id == 3).unwrap().status, Status::Watching);
+        s.edit(
+            3,
+            Change {
+                progress: Some(12),
+                status: Some(Status::Watching),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 3).unwrap().status,
+            Status::Watching
+        );
         // Unknown total: nothing happens.
         let e = s.entries.iter_mut().find(|e| e.id == 1).unwrap();
         e.episodes = None;
-        s.edit(1, Change { progress: Some(40), ..Default::default() }).unwrap();
-        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().status, Status::Watching);
+        s.edit(
+            1,
+            Change {
+                progress: Some(40),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 1).unwrap().status,
+            Status::Watching
+        );
         // Not the last episode: no change of status.
         let mut s = loaded();
-        s.edit(1, Change { progress: Some(11), ..Default::default() }).unwrap();
-        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().status, Status::Watching);
+        s.edit(
+            1,
+            Change {
+                progress: Some(11),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 1).unwrap().status,
+            Status::Watching
+        );
     }
 
     #[test]
@@ -1892,14 +2531,22 @@ mod tests {
         assert_eq!(s.editor.unwrap().progress, 12, "capped at the count");
         s.editor_step(-9);
         s.editor_score(None);
-        assert_eq!(s.entries.iter().find(|e| e.id == 1).unwrap().progress, 3, "nothing changes before Save");
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 1).unwrap().progress,
+            3,
+            "nothing changes before Save"
+        );
         s.save_editor().unwrap();
         assert!(s.editor.is_none());
         let e = s.entries.iter().find(|e| e.id == 1).unwrap();
         assert_eq!((e.progress, e.score), (3, None));
         s.toggle_editor(2);
         s.editor_status(Status::Completed);
-        assert_eq!(s.editor.unwrap().progress, 12, "Completed fills the progress");
+        assert_eq!(
+            s.editor.unwrap().progress,
+            12,
+            "Completed fills the progress"
+        );
         s.toggle_editor(2);
         assert!(s.editor.is_none(), "a second press closes it");
     }
@@ -1914,11 +2561,41 @@ mod tests {
             Entry::from_item(&it, TitleLang::default())
         };
         vec![
-            mk(1, "Re:Zero kara Hajimeru Isekai Seikatsu", &["Re:Zero"], Status::Completed, false),
-            mk(2, "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season", &[], Status::Completed, false),
-            mk(3, "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season Part 2", &[], Status::Watching, false),
-            mk(4, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", &[], Status::Watching, false),
-            mk(5, "Re:Zero kara Hajimeru Isekai Seikatsu: Hyouketsu no Kizuna", &[], Status::Completed, true),
+            mk(
+                1,
+                "Re:Zero kara Hajimeru Isekai Seikatsu",
+                &["Re:Zero"],
+                Status::Completed,
+                false,
+            ),
+            mk(
+                2,
+                "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season",
+                &[],
+                Status::Completed,
+                false,
+            ),
+            mk(
+                3,
+                "Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season Part 2",
+                &[],
+                Status::Watching,
+                false,
+            ),
+            mk(
+                4,
+                "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season",
+                &[],
+                Status::Watching,
+                false,
+            ),
+            mk(
+                5,
+                "Re:Zero kara Hajimeru Isekai Seikatsu: Hyouketsu no Kizuna",
+                &[],
+                Status::Completed,
+                true,
+            ),
         ]
     }
 
@@ -1932,9 +2609,24 @@ mod tests {
         let none = |_: &Entry| false;
         // "Re:Zero" is a whole alternative title of S1 and a part of all five.
         for want in [Want::Any, Want::Watching, Want::Next] {
-            assert_eq!(id_of(&e, find_in(&e, "  RE:zero ", want, &none)), Ok(1), "{want:?}");
+            assert_eq!(
+                id_of(&e, find_in(&e, "  RE:zero ", want, &none)),
+                Ok(1),
+                "{want:?}"
+            );
         }
-        assert_eq!(id_of(&e, find_in(&e, "re:zero kara hajimeru isekai seikatsu 2nd season", Want::Any, &none)), Ok(2));
+        assert_eq!(
+            id_of(
+                &e,
+                find_in(
+                    &e,
+                    "re:zero kara hajimeru isekai seikatsu 2nd season",
+                    Want::Any,
+                    &none
+                )
+            ),
+            Ok(2)
+        );
     }
 
     #[test]
@@ -1945,28 +2637,65 @@ mod tests {
         assert!(err.starts_with("5 anime match"), "{err}");
         // Watching 3 and 4, and the rewatch 5: three left.
         let err = find_in(&e, "isekai seikatsu", Want::Watching, &none).unwrap_err();
-        assert!(err.starts_with("3 anime match") && !err.contains("Seikatsu, ") && err.contains("Part 2"), "{err}");
-        assert_eq!(id_of(&e, find_in(&e, "part 2", Want::Watching, &none)), Ok(3));
-        assert_eq!(id_of(&e, find_in(&e, "hyouketsu", Want::Watching, &none)), Ok(5), "a rewatch counts");
-        assert_eq!(id_of(&e, find_in(&e, "3rd season", Want::Watching, &none)), Ok(4));
+        assert!(
+            err.starts_with("3 anime match")
+                && !err.contains("Seikatsu, ")
+                && err.contains("Part 2"),
+            "{err}"
+        );
+        assert_eq!(
+            id_of(&e, find_in(&e, "part 2", Want::Watching, &none)),
+            Ok(3)
+        );
+        assert_eq!(
+            id_of(&e, find_in(&e, "hyouketsu", Want::Watching, &none)),
+            Ok(5),
+            "a rewatch counts"
+        );
+        assert_eq!(
+            id_of(&e, find_in(&e, "3rd season", Want::Watching, &none)),
+            Ok(4)
+        );
         // Nothing watching: the whole set stays.
-        assert!(find_in(&e[..2], "isekai", Want::Watching, &none).unwrap_err().starts_with("2 anime match"));
+        assert!(
+            find_in(&e[..2], "isekai", Want::Watching, &none)
+                .unwrap_err()
+                .starts_with("2 anime match")
+        );
     }
 
     #[test]
     fn next_then_prefers_a_file_in_the_library() {
         let e = rezero();
         let only = |id: u32| move |x: &Entry| x.id == id;
-        assert_eq!(id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(4))), Ok(4));
-        assert_eq!(id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(5))), Ok(5));
+        assert_eq!(
+            id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(4))),
+            Ok(4)
+        );
+        assert_eq!(
+            id_of(&e, find_in(&e, "isekai seikatsu", Want::Next, &only(5))),
+            Ok(5)
+        );
         // A file for one that is not being watched doesn't count: the three watching stay.
         let err = find_in(&e, "isekai seikatsu", Want::Next, &only(2)).unwrap_err();
         assert!(err.starts_with("3 anime match"), "{err}");
         let both = |x: &Entry| x.id == 3 || x.id == 4;
-        assert!(find_in(&e, "isekai seikatsu", Want::Next, &both).unwrap_err().starts_with("2 anime match"));
-        assert!(find_in(&e, "isekai seikatsu", Want::Next, &|_: &Entry| false).unwrap_err().starts_with("3 anime match"));
+        assert!(
+            find_in(&e, "isekai seikatsu", Want::Next, &both)
+                .unwrap_err()
+                .starts_with("2 anime match")
+        );
+        assert!(
+            find_in(&e, "isekai seikatsu", Want::Next, &|_: &Entry| false)
+                .unwrap_err()
+                .starts_with("3 anime match")
+        );
         // Rewatch and the rest keep today's rules.
-        assert!(find_in(&e, "isekai seikatsu", Want::Any, &only(4)).unwrap_err().starts_with("5 anime match"));
+        assert!(
+            find_in(&e, "isekai seikatsu", Want::Any, &only(4))
+                .unwrap_err()
+                .starts_with("5 anime match")
+        );
     }
 
     #[test]
@@ -1985,20 +2714,46 @@ mod tests {
     fn the_queue_snapshot_moves_rows_badge_and_tags() {
         let mut s = State::fake();
         assert_eq!(s.queue, 4, "conflict, two waiting, one failed");
-        let mikan = s.entries.iter().find(|e| e.title == "Mikan Street Detectives").unwrap();
-        assert_eq!((mikan.waiting, mikan.note()), (Some("Conflict in queue"), "Conflict in queue"));
+        let mikan = s
+            .entries
+            .iter()
+            .find(|e| e.title == "Mikan Street Detectives")
+            .unwrap();
+        assert_eq!(
+            (mikan.waiting, mikan.note()),
+            (Some("Conflict in queue"), "Conflict in queue")
+        );
         let lanterns = s.entries.iter().find(|e| e.id == 0).unwrap();
-        assert_eq!(lanterns.note(), "Ep 7 on Sat", "a plain wait says so in the tag only");
+        assert_eq!(
+            lanterns.note(),
+            "Ep 7 on Sat",
+            "a plain wait says so in the tag only"
+        );
         // The worker reports: everything sent, one entry updated, one removed.
         let mut it = item(0, "Lanterns of Kirigaoka", Status::Watching, 6, ten(8), 5);
         it.media.episodes = Some(12);
-        let done: Vec<Op> = s.ops.iter().filter(|o| o.state == OpState::Done).cloned().collect();
-        assert!(s.apply(Msg::Queue { ops: done, items: vec![it], gone: vec![2], offline: Some(false) }));
+        let done: Vec<Op> = s
+            .ops
+            .iter()
+            .filter(|o| o.state == OpState::Done)
+            .cloned()
+            .collect();
+        assert!(s.apply(Msg::Queue {
+            ops: done,
+            items: vec![it],
+            gone: vec![2],
+            offline: Some(false)
+        }));
         assert_eq!(s.queue, 0);
         assert!(s.entries.iter().all(|e| e.waiting.is_none()));
         assert_eq!(s.entries.iter().find(|e| e.id == 0).unwrap().progress, 6);
         assert!(!s.entries.iter().any(|e| e.id == 2));
-        s.apply(Msg::Queue { ops: vec![], items: vec![], gone: vec![], offline: Some(true) });
+        s.apply(Msg::Queue {
+            ops: vec![],
+            items: vec![],
+            gone: vec![],
+            offline: Some(true),
+        });
         assert!(s.offline);
     }
 
@@ -2007,15 +2762,26 @@ mod tests {
         let mut s = State::fake();
         s.apply(Msg::SyncFailed(Fail::SignInAgain));
         assert!(s.worker.hold.load(Ordering::Relaxed));
-        s.apply(Msg::SignedIn { user: "demo_user".into(), picture: Some("https://cdn.example.invalid/u.jpg".into()) });
-        assert_eq!(s.avatar.as_deref(), Some("https://cdn.example.invalid/u.jpg"));
+        s.apply(Msg::SignedIn {
+            user: "demo_user".into(),
+            picture: Some("https://cdn.example.invalid/u.jpg".into()),
+        });
+        assert_eq!(
+            s.avatar.as_deref(),
+            Some("https://cdn.example.invalid/u.jpg")
+        );
         assert!(!s.worker.hold.load(Ordering::Relaxed));
         s.open_details(crate::details::Stub::bare(9001, "x"));
         s.online.show("x", crate::search::fake_hits());
         s.apply(Msg::SignedOut);
         assert!(s.ops.is_empty() && s.queue == 0);
         assert!(s.avatar.is_none(), "the picture goes with the account");
-        assert!(!s.apply(Msg::Picture(Some("https://cdn.example.invalid/late.jpg".into()))), "a late answer after sign out is dropped");
+        assert!(
+            !s.apply(Msg::Picture(Some(
+                "https://cdn.example.invalid/late.jpg".into()
+            ))),
+            "a late answer after sign out is dropped"
+        );
         assert!(s.avatar.is_none());
         assert!(s.detail.is_none() && s.page != Page::Details && s.online.hits.is_empty());
     }
@@ -2046,19 +2812,41 @@ mod tests {
         let mut s = State::fake();
         let watching = s.count(Status::Watching);
         assert!(s.start_rewatch(0).unwrap_err().contains("not completed"));
-        let id = s.entries.iter().find(|e| e.status == Status::Completed && !e.rewatching).unwrap().id;
+        let id = s
+            .entries
+            .iter()
+            .find(|e| e.status == Status::Completed && !e.rewatching)
+            .unwrap()
+            .id;
         s.start_rewatch(id).unwrap();
         let e = s.entries.iter().find(|e| e.id == id).unwrap();
-        assert_eq!((e.status, e.progress, e.rewatching, e.waiting), (Status::Completed, 0, true, Some("Waiting to sync")));
+        assert_eq!(
+            (e.status, e.progress, e.rewatching, e.waiting),
+            (Status::Completed, 0, true, Some("Waiting to sync"))
+        );
         assert!(s.start_rewatch(id).is_err(), "once");
-        assert_eq!(s.count(Status::Watching), watching, "the sidebar counts MAL's status");
+        assert_eq!(
+            s.count(Status::Watching),
+            watching,
+            "the sidebar counts MAL's status"
+        );
         s.go(Page::List(Status::Watching));
-        assert!(s.rows.iter().any(|&i| s.entries[i].id == id), "the Watching page shows it");
+        assert!(
+            s.rows.iter().any(|&i| s.entries[i].id == id),
+            "the Watching page shows it"
+        );
         s.go(Page::List(Status::Completed));
-        assert!(s.rows.iter().any(|&i| s.entries[i].id == id), "and the Completed page still does");
+        assert!(
+            s.rows.iter().any(|&i| s.entries[i].id == id),
+            "and the Completed page still does"
+        );
         s.stop_rewatch(id).unwrap();
         let e = s.entries.iter().find(|e| e.id == id).unwrap();
-        assert_eq!((Some(e.progress), e.rewatching, e.times_rewatched), (e.episodes, false, 0), "back at the last episode, not counted");
+        assert_eq!(
+            (Some(e.progress), e.rewatching, e.times_rewatched),
+            (e.episodes, false, 0),
+            "back at the last episode, not counted"
+        );
         assert!(s.stop_rewatch(id).is_err());
     }
 
@@ -2073,7 +2861,11 @@ mod tests {
         assert_eq!(titles(&s), ["Charlie"]);
         s.query.replace_text("hidden alias");
         s.refresh();
-        assert_eq!(titles(&s), ["alpha", "Charlie", "Bravo", "Delta"], "every status, the page's own first");
+        assert_eq!(
+            titles(&s),
+            ["alpha", "Charlie", "Bravo", "Delta"],
+            "every status, the page's own first"
+        );
         s.query.replace_text("zzz");
         s.refresh();
         assert!(s.rows.is_empty());
@@ -2086,17 +2878,55 @@ mod tests {
     #[test]
     fn an_added_anime_shows_at_once_and_waits() {
         let mut s = loaded();
-        let m = Media { id: 77, title: "Echo".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: Some(10), format: "tv".into(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() };
+        let m = Media {
+            id: 77,
+            title: "Echo".into(),
+            title_en: None,
+            title_ja: None,
+            synonyms: vec![],
+            episodes: Some(10),
+            format: "tv".into(),
+            air_status: String::new(),
+            cover_url: None,
+            start_date: None,
+            broadcast: None,
+            ..Default::default()
+        };
         let i = s.add_media(m.clone(), Status::Completed).unwrap();
         let e = &s.entries[i];
-        assert_eq!((e.status, e.progress, e.waiting), (Status::Completed, 10, Some("Waiting to sync")));
+        assert_eq!(
+            (e.status, e.progress, e.waiting),
+            (Status::Completed, 10, Some("Waiting to sync"))
+        );
         assert_eq!(s.count(Status::Completed), 2);
         // Again: a status change, not a second entry.
         s.add_media(m, Status::OnHold).unwrap();
         assert_eq!(s.entries.iter().filter(|e| e.id == 77).count(), 1);
-        assert_eq!(s.entries.iter().find(|e| e.id == 77).unwrap().status, Status::OnHold);
+        assert_eq!(
+            s.entries.iter().find(|e| e.id == 77).unwrap().status,
+            Status::OnHold
+        );
         let mut out = State::start(Auth::SignedOut);
-        assert!(out.add_media(Media { id: 1, title: "x".into(), title_en: None, title_ja: None, synonyms: vec![], episodes: None, format: String::new(), air_status: String::new(), cover_url: None, start_date: None, broadcast: None, ..Default::default() }, Status::Watching).is_err());
+        assert!(
+            out.add_media(
+                Media {
+                    id: 1,
+                    title: "x".into(),
+                    title_en: None,
+                    title_ja: None,
+                    synonyms: vec![],
+                    episodes: None,
+                    format: String::new(),
+                    air_status: String::new(),
+                    cover_url: None,
+                    start_date: None,
+                    broadcast: None,
+                    ..Default::default()
+                },
+                Status::Watching
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2112,20 +2942,31 @@ mod tests {
     #[test]
     fn messages_move_the_state() {
         let mut s = State::fake();
-        assert!(s.apply(Msg::SyncFailed(Fail::Offline("Can't reach MyAnimeList. Showing your saved list.".into()))));
+        assert!(s.apply(Msg::SyncFailed(Fail::Offline(
+            "Can't reach MyAnimeList. Showing your saved list.".into()
+        ))));
         assert!(s.offline && s.error.is_some() && !s.syncing);
         assert_eq!(s.entries.len(), 302, "the saved list stays");
         assert_eq!(s.queue, 4);
         s.apply(Msg::SyncFailed(Fail::SignInAgain));
         assert_eq!(s.auth, Auth::Expired);
         assert!(s.has_list());
-        s.apply(Msg::Synced { items: vec![], synced_at: 5 });
-        assert_eq!((s.auth, s.offline, s.error.is_none(), s.synced_at), (Auth::SignedIn, false, true, Some(5)));
+        s.apply(Msg::Synced {
+            items: vec![],
+            synced_at: 5,
+        });
+        assert_eq!(
+            (s.auth, s.offline, s.error.is_none(), s.synced_at),
+            (Auth::SignedIn, false, true, Some(5))
+        );
         s.apply(Msg::SignedOut);
         assert_eq!(s.auth, Auth::SignedOut);
         assert!(s.entries.is_empty() && s.account.is_none() && !s.has_list());
         s.apply(Msg::SignInFailed("busy".into()));
-        assert_eq!((s.auth, s.error.as_deref()), (Auth::SignedOut, Some("busy")));
+        assert_eq!(
+            (s.auth, s.error.as_deref()),
+            (Auth::SignedOut, Some("busy"))
+        );
     }
 
     /// The live report: the file matched season 3 on the list, then season 3 was removed on the
@@ -2133,22 +2974,69 @@ mod tests {
     #[test]
     fn a_match_that_left_the_list_is_looked_up_again() {
         use kotora_core::recognize::Found;
-        let s1 = || item(1, "Re:Zero kara Hajimeru Isekai Seikatsu", Status::Completed, 12, None, 1);
-        let s3 = || item(3, "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season", Status::Watching, 0, None, 1);
+        let s1 = || {
+            item(
+                1,
+                "Re:Zero kara Hajimeru Isekai Seikatsu",
+                Status::Completed,
+                12,
+                None,
+                1,
+            )
+        };
+        let s3 = || {
+            item(
+                3,
+                "Re:Zero kara Hajimeru Isekai Seikatsu 3rd Season",
+                Status::Watching,
+                0,
+                None,
+                1,
+            )
+        };
         let mut s = State::start(Auth::SignedIn);
-        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 10 });
+        s.apply(Msg::Synced {
+            items: vec![s1(), s3()],
+            synced_at: 10,
+        });
         s.now = State::fake().now;
-        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
-        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 15 });
-        assert_eq!(s.now.as_ref().unwrap().media_id(), Some(3), "still on the list: kept");
-        s.apply(Msg::Synced { items: vec![s1()], synced_at: 20 });
+        s.now.as_mut().unwrap().found = Found::List {
+            media_id: 3,
+            sure: true,
+            why: "same title in your list".into(),
+        };
+        s.apply(Msg::Synced {
+            items: vec![s1(), s3()],
+            synced_at: 15,
+        });
+        assert_eq!(
+            s.now.as_ref().unwrap().media_id(),
+            Some(3),
+            "still on the list: kept"
+        );
+        s.apply(Msg::Synced {
+            items: vec![s1()],
+            synced_at: 20,
+        });
         let n = s.now.as_ref().unwrap();
         assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
         // The same when the queue says it left (removed in Kotora).
-        s.apply(Msg::Synced { items: vec![s1(), s3()], synced_at: 30 });
-        s.now.as_mut().unwrap().found = Found::List { media_id: 3, sure: true, why: "same title in your list".into() };
+        s.apply(Msg::Synced {
+            items: vec![s1(), s3()],
+            synced_at: 30,
+        });
+        s.now.as_mut().unwrap().found = Found::List {
+            media_id: 3,
+            sure: true,
+            why: "same title in your list".into(),
+        };
         s.now.as_mut().unwrap().recognizing = false;
-        s.apply(Msg::Queue { ops: vec![], items: vec![], gone: vec![3], offline: None });
+        s.apply(Msg::Queue {
+            ops: vec![],
+            items: vec![],
+            gone: vec![3],
+            offline: None,
+        });
         let n = s.now.as_ref().unwrap();
         assert_eq!((&n.found, n.recognizing), (&Found::Nothing, true));
     }
@@ -2156,8 +3044,18 @@ mod tests {
     #[test]
     fn an_old_cache_never_replaces_a_newer_sync() {
         let mut s = State::start(Auth::SignedIn);
-        s.apply(Msg::Synced { items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)], synced_at: 10 });
-        s.apply(Msg::Cache { items: vec![item(2, "Stale", Status::Watching, 1, None, 1)], user: Some("demo_user".into()), picture: None, profile: None, synced_at: Some(5), ops: vec![] });
+        s.apply(Msg::Synced {
+            items: vec![item(1, "Fresh", Status::Watching, 1, None, 1)],
+            synced_at: 10,
+        });
+        s.apply(Msg::Cache {
+            items: vec![item(2, "Stale", Status::Watching, 1, None, 1)],
+            user: Some("demo_user".into()),
+            picture: None,
+            profile: None,
+            synced_at: Some(5),
+            ops: vec![],
+        });
         assert_eq!(s.entries.len(), 1);
         assert_eq!(s.entries[0].title, "Fresh");
         assert_eq!(s.account.as_ref().map(|a| a.0.as_str()), Some("demo_user"));
@@ -2170,9 +3068,23 @@ mod tests {
         s.entries.clear();
         s.loading = true;
         s.syncing = true;
-        s.apply(Msg::Cache { items: vec![], user: None, picture: None, profile: None, synced_at: None, ops: vec![] });
+        s.apply(Msg::Cache {
+            items: vec![],
+            user: None,
+            picture: None,
+            profile: None,
+            synced_at: None,
+            ops: vec![],
+        });
         assert!(s.loading, "nothing saved yet: keep the skeleton");
-        s.apply(Msg::Cache { items: vec![item(1, "A", Status::Watching, 1, None, 1)], user: None, picture: None, profile: None, synced_at: Some(1), ops: vec![] });
+        s.apply(Msg::Cache {
+            items: vec![item(1, "A", Status::Watching, 1, None, 1)],
+            user: None,
+            picture: None,
+            profile: None,
+            synced_at: Some(1),
+            ops: vec![],
+        });
         assert!(!s.loading);
     }
 
@@ -2186,7 +3098,12 @@ mod tests {
         let p = |s: &State| s.entries.iter().find(|e| e.id == 0).unwrap().progress;
         s.plus_one_or_ask(0).unwrap();
         let a = s.ask.clone().expect("asks");
-        assert!(a.question.starts_with("Episode 6 of Lanterns of Kirigaoka hasn't aired yet (expected "), "{}", a.question);
+        assert!(
+            a.question
+                .starts_with("Episode 6 of Lanterns of Kirigaoka hasn't aired yet (expected "),
+            "{}",
+            a.question
+        );
         assert_eq!(p(&s), 5, "nothing changes yet");
         s.ask = None;
         assert_eq!(p(&s), 5, "Cancel: nothing");
@@ -2197,7 +3114,11 @@ mod tests {
         s.toggle_editor(0);
         s.editor_step(2);
         s.save_editor().unwrap();
-        assert!(s.ask.as_ref().is_some_and(|a| a.editor && a.question.starts_with("Episode 8 ")));
+        assert!(
+            s.ask
+                .as_ref()
+                .is_some_and(|a| a.editor && a.question.starts_with("Episode 8 "))
+        );
         assert!(s.editor.is_some() && p(&s) == 6);
         s.mark_anyway().unwrap();
         assert!(s.editor.is_none() && p(&s) == 8);
@@ -2207,7 +3128,18 @@ mod tests {
         s.save_editor().unwrap();
         assert!(s.ask.is_none() && s.editor.is_none());
         // Past the count: refused, not asked.
-        assert!(s.edit_or_ask(0, Change { progress: Some(13), ..Default::default() }, false).unwrap_err().contains("12 episodes"));
+        assert!(
+            s.edit_or_ask(
+                0,
+                Change {
+                    progress: Some(13),
+                    ..Default::default()
+                },
+                false
+            )
+            .unwrap_err()
+            .contains("12 episodes")
+        );
         assert!(s.ask.is_none());
     }
 
@@ -2228,9 +3160,20 @@ mod tests {
         assert!(s.ask.is_none());
         // Not yet aired at all: episode 1 asks.
         let mut s = State::fake();
-        s.edit(0, Change { progress: Some(0), ..Default::default() }).unwrap();
+        s.edit(
+            0,
+            Change {
+                progress: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         airing_entry(&mut s, 0, 0);
         s.plus_one_or_ask(0).unwrap();
-        assert!(s.ask.as_ref().is_some_and(|a| a.question.starts_with("Episode 1 ")));
+        assert!(
+            s.ask
+                .as_ref()
+                .is_some_and(|a| a.question.starts_with("Episode 1 "))
+        );
     }
 }

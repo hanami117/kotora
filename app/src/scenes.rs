@@ -1,9 +1,9 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
 //! `--list-scenes` lists them. Every view and state gets one.
 
-use kotora_core::{Kind, Score, ScoreFormat, Status};
 use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
+use kotora_core::{Kind, Score, ScoreFormat, Status};
 
 use kotora_core::queue::OpState;
 use kotora_core::recognize::Found;
@@ -34,12 +34,16 @@ pub const SCENES: &[Scene] = &[
         s.prefs.views.set(Status::Watching, ListView::Large);
     }),
     // The list views (the toolbar's switch): posters with +1 always on Watching, large cards.
-    ("list-grid", |s| s.prefs.views.set(Status::Watching, ListView::Grid)),
+    ("list-grid", |s| {
+        s.prefs.views.set(Status::Watching, ListView::Grid)
+    }),
     ("list-grid-covers", |s| {
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Grid);
     }),
-    ("list-large", |s| s.prefs.views.set(Status::Watching, ListView::Large)),
+    ("list-large", |s| {
+        s.prefs.views.set(Status::Watching, ListView::Large)
+    }),
     ("list-large-covers", |s| {
         fake_covers(s);
         s.prefs.views.set(Status::Watching, ListView::Large);
@@ -165,7 +169,13 @@ pub const SCENES: &[Scene] = &[
         d.air_status = "finished".into();
         d.episodes = Some(64);
         d.volumes = Some(8);
-        s.details_answer(crate::details::Answer { id: 501, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
+        s.details_answer(crate::details::Answer {
+            id: 501,
+            kind: kotora_core::Kind::Manga,
+            result: Ok(d),
+            item: None,
+            done: true,
+        });
     }),
     // Remove from list: asks first, then a toast with Undo; the right-click menu.
     ("manga-remove-confirm", |s| {
@@ -214,13 +224,25 @@ pub const SCENES: &[Scene] = &[
         op.episodes = Some(88);
         op.removed = true;
         op.change = kotora_core::Change::default();
-        op.old = kotora_core::Values { volumes: 0, ..kotora_core::Values::new(Status::Watching, 64, kotora_core::score::ten(8)) };
+        op.old = kotora_core::Values {
+            volumes: 0,
+            ..kotora_core::Values::new(Status::Watching, 64, kotora_core::score::ten(8))
+        };
         op.state = OpState::Conflict;
-        op.remote = Some(kotora_core::Remote { values: kotora_core::Values { volumes: 9, ..kotora_core::Values::new(Status::Watching, 70, kotora_core::score::ten(8)) }, updated_at: crate::model::FAKE_NOW - 1800 });
+        op.remote = Some(kotora_core::Remote {
+            values: kotora_core::Values {
+                volumes: 9,
+                ..kotora_core::Values::new(Status::Watching, 70, kotora_core::score::ten(8))
+            },
+            updated_at: crate::model::FAKE_NOW - 1800,
+        });
         s.ops.retain(|o| o.state != OpState::Conflict);
         s.ops.insert(0, op);
         s.toast = None;
-        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items {
+            items: vec![],
+            gone: vec![],
+        }));
         s.go(Page::Queue);
     }),
     // A manga's page: the information, the "Your list" card with chapters and volumes.
@@ -272,7 +294,9 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::NowPlaying);
     }),
     // Read to the end: the banner asks on top of every page, Now Playing shows Mark read.
-    ("now-reading-offer", |s| reading(s, "Inkwell Cartographers v12 c120.cbz", 40)),
+    ("now-reading-offer", |s| {
+        reading(s, "Inkwell Cartographers v12 c120.cbz", 40)
+    }),
     ("now-reading-offer-page", |s| {
         reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
         s.go(Page::NowPlaying);
@@ -284,7 +308,9 @@ pub const SCENES: &[Scene] = &[
         s.go(Page::NowPlaying);
     }),
     // A completed manga read again: the banner asks "Reading it again?", Now Playing offers the reread.
-    ("now-reading-reread-offer", |s| reading(s, "Cobalt Postman v04 c031.cbz", 40)),
+    ("now-reading-reread-offer", |s| {
+        reading(s, "Cobalt Postman v04 c031.cbz", 40)
+    }),
     ("now-reading-reread-offer-page", |s| {
         reading(s, "Cobalt Postman v04 c031.cbz", 40);
         s.go(Page::NowPlaying);
@@ -318,7 +344,10 @@ pub const SCENES: &[Scene] = &[
     ("now-reading-not-on-list", |s| {
         reading(s, "Tidepool Couriers c007.cbz", 40);
         if let Some(r) = &mut s.reading.current {
-            r.found = Found::NotOnList { media_id: 501, title: "Tidepool Couriers".into() };
+            r.found = Found::NotOnList {
+                media_id: 501,
+                title: "Tidepool Couriers".into(),
+            };
         }
         s.go(Page::NowPlaying);
     }),
@@ -332,9 +361,17 @@ pub const SCENES: &[Scene] = &[
     // written yet), not on the list: Now Reading in the sidebar, Add as Reading.
     ("now-reading-yacreader-open", |s| {
         crate::manga::fake(s);
-        crate::reading::fake_open(s, "YACReader", "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz", None);
+        crate::reading::fake_open(
+            s,
+            "YACReader",
+            "/media/comics/Dragon Ball Z v11 (2003) (Digital) (LuCaZ).cbz",
+            None,
+        );
         if let Some(r) = &mut s.reading.current {
-            r.found = Found::NotOnList { media_id: 502, title: "Dragon Ball Z".into() };
+            r.found = Found::NotOnList {
+                media_id: 502,
+                title: "Dragon Ball Z".into(),
+            };
         }
         s.go(Page::NowPlaying);
     }),
@@ -342,7 +379,12 @@ pub const SCENES: &[Scene] = &[
     // Manga mode).
     ("now-reading-sidebar", |s| {
         crate::manga::fake(s);
-        crate::reading::fake_open(s, "YACReader", "/media/comics/Inkwell Cartographers/Inkwell Cartographers v12 c120.cbz", None);
+        crate::reading::fake_open(
+            s,
+            "YACReader",
+            "/media/comics/Inkwell Cartographers/Inkwell Cartographers v12 c120.cbz",
+            None,
+        );
     }),
     // The viewer closed a comic read to the end: the question stays (banner, card "Closed"),
     // Now Reading's sidebar card is gone.
@@ -389,7 +431,12 @@ pub const SCENES: &[Scene] = &[
     ("now-reading-open-file", |s| {
         crate::manga::fake(s);
         s.now = None;
-        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", None);
+        crate::reading::fake_open(
+            s,
+            "Simple Comic",
+            "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz",
+            None,
+        );
         s.go(Page::NowPlaying);
     }),
     // The next chapter opened: chapter 120 counts, and it asks (also with auto on).
@@ -397,7 +444,12 @@ pub const SCENES: &[Scene] = &[
         crate::manga::fake(s);
         s.now = None;
         s.prefs.auto = true;
-        crate::reading::fake_open(s, "Simple Comic", "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz", Some("Ch 121 opened next"));
+        crate::reading::fake_open(
+            s,
+            "Simple Comic",
+            "/media/manga/Inkwell Cartographers/Inkwell Cartographers c120.cbz",
+            Some("Ch 121 opened next"),
+        );
         s.go(Page::NowPlaying);
     }),
     // A chapter inside volume 14: chapter 120 and volume 13 together.
@@ -431,15 +483,22 @@ pub const SCENES: &[Scene] = &[
     ("settings-reading-error", |s| {
         crate::manga::fake(s);
         s.reading.watched = vec!["/media/comics/Manga".into()];
-        s.reading.error = Some("No YACReader library at /media/comics/Other (it has no .yacreaderlibrary folder).".into());
+        s.reading.error = Some(
+            "No YACReader library at /media/comics/Other (it has no .yacreaderlibrary folder)."
+                .into(),
+        );
         crate::settings::open(s, Section::Manga);
     }),
     // Manga off: the switch is greyed and says why.
-    ("settings-reading-manga-off", |s| crate::settings::open(s, Section::Manga)),
+    ("settings-reading-manga-off", |s| {
+        crate::settings::open(s, Section::Manga)
+    }),
     // Settings → Manga → Release data.
     // Settings → Feeds: off (the first look), on with two feeds (one keyed, masked), a nyaa.si
     // address typed.
-    ("feeds-settings-off", |s| crate::settings::open(s, Section::Feeds)),
+    ("feeds-settings-off", |s| {
+        crate::settings::open(s, Section::Feeds)
+    }),
     ("feeds-settings", |s| {
         crate::feeds::fake(s);
         crate::settings::open(s, Section::Feeds);
@@ -472,13 +531,22 @@ pub const SCENES: &[Scene] = &[
     }),
     ("feeds-open", |s| {
         crate::feeds::fake(s);
-        s.feeds.open_row = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).map(|e| e.item.key());
+        s.feeds.open_row = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| crate::feeds::is_new(e))
+            .map(|e| e.item.key());
         s.open_feeds();
     }),
     // Search releases (Taiga's "Search for torrents"): made-up results for one show.
     ("feeds-search", |s| {
         crate::feeds::fake(s);
-        let e = s.entries.iter().find(|e| e.status == kotora_core::Status::Watching).unwrap();
+        let e = s
+            .entries
+            .iter()
+            .find(|e| e.status == kotora_core::Status::Watching)
+            .unwrap();
         let (id, title, ep) = (e.id, e.main_title.clone(), e.progress + 1);
         s.feeds_search(id);
         let items = (0..3)
@@ -494,7 +562,13 @@ pub const SCENES: &[Scene] = &[
     }),
     ("feeds-history", |s| {
         crate::feeds::fake(s);
-        let t: Vec<String> = s.feeds.items.iter().take(3).map(|(_, i)| i.title.clone()).collect();
+        let t: Vec<String> = s
+            .feeds
+            .items
+            .iter()
+            .take(3)
+            .map(|(_, i)| i.title.clone())
+            .collect();
         s.feeds.archive = Some(kotora_core::feeds::taiga::Archive { titles: t });
         s.feeds.history = true;
         s.open_feeds();
@@ -507,7 +581,13 @@ pub const SCENES: &[Scene] = &[
     ("feeds-list-badge", |s| crate::feeds::fake(s)),
     ("feeds-details", |s| {
         crate::feeds::fake(s);
-        let id = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).and_then(|e| e.anime_id).unwrap_or(0);
+        let id = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| crate::feeds::is_new(e))
+            .and_then(|e| e.anime_id)
+            .unwrap_or(0);
         details(s, id, true);
     }),
     ("settings-manga", |s| {
@@ -535,7 +615,10 @@ pub const SCENES: &[Scene] = &[
     ("publishing-panel-picked", |s| {
         publishing(s);
         s.publishing_toggle(4);
-        s.publishing.link_note = Some((false, "Now matched with \u{201c}Moth Orchestra\u{201d}.".into()));
+        s.publishing.link_note = Some((
+            false,
+            "Now matched with \u{201c}Moth Orchestra\u{201d}.".into(),
+        ));
     }),
     // The first look: most rows still looking, the count in the top bar.
     ("publishing-loading", |s| {
@@ -572,7 +655,12 @@ pub const SCENES: &[Scene] = &[
     }),
     ("publishing-empty", |s| {
         manga(s);
-        for e in s.manga.entries.iter_mut().filter(|e| e.status == Status::Watching) {
+        for e in s
+            .manga
+            .entries
+            .iter_mut()
+            .filter(|e| e.status == Status::Watching)
+        {
             e.status = Status::OnHold;
         }
         s.go(Page::Publishing);
@@ -597,11 +685,21 @@ pub const SCENES: &[Scene] = &[
         op.media_id = 2;
         op.title = "Salt & Gears".into();
         op.episodes = Some(88);
-        op.change = kotora_core::Change { progress: Some(65), volumes: Some(8), ..Default::default() };
-        op.old = kotora_core::Values { volumes: 7, ..kotora_core::Values::new(Status::Watching, 64, None) };
+        op.change = kotora_core::Change {
+            progress: Some(65),
+            volumes: Some(8),
+            ..Default::default()
+        };
+        op.old = kotora_core::Values {
+            volumes: 7,
+            ..kotora_core::Values::new(Status::Watching, 64, None)
+        };
         op.state = OpState::Queued;
         s.ops.insert(0, op);
-        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items { items: vec![], gone: vec![] }));
+        s.apply(crate::model::Msg::Manga(crate::manga::MangaMsg::Items {
+            items: vec![],
+            gone: vec![],
+        }));
         s.go(Page::Queue);
     }),
     // Back on Anime: the anime list, Airing back in the sidebar.
@@ -700,14 +798,20 @@ pub const SCENES: &[Scene] = &[
     }),
     // No match on the list: the filter searches the service right there (0.2.1): waiting for
     // the pause, its results (open the details page, + Watching), too short, offline, nothing.
-    ("list-filter-online-searching", |s| filter_online(s, "orchid", None)),
-    ("list-filter-online", |s| filter_online(s, "orchid", Some(crate::search::fake_hits()))),
+    ("list-filter-online-searching", |s| {
+        filter_online(s, "orchid", None)
+    }),
+    ("list-filter-online", |s| {
+        filter_online(s, "orchid", Some(crate::search::fake_hits()))
+    }),
     ("list-filter-online-short", |s| filter_online(s, "fz", None)),
     ("list-filter-online-offline", |s| {
         s.offline = true;
         filter_online(s, "orchid", None);
     }),
-    ("list-filter-online-none", |s| filter_online(s, "zzzz", Some(Vec::new()))),
+    ("list-filter-online-none", |s| {
+        filter_online(s, "zzzz", Some(Vec::new()))
+    }),
     ("list-filter-online-anilist", |s| {
         anilist(s);
         filter_online(s, "orchid", Some(crate::search::fake_hits()));
@@ -815,7 +919,8 @@ pub const SCENES: &[Scene] = &[
         setup(s, Step::SignIn);
         s.service = kotora_core::service::ServiceId::AniList;
         s.auth = Auth::SignedOut;
-        s.error = Some("Can't listen on port 47321 for AniList's reply: Address already in use".into());
+        s.error =
+            Some("Can't listen on port 47321 for AniList's reply: Address already in use".into());
     }),
     ("setup-signing-in-no-browser", |s| {
         signing_in(s, false);
@@ -973,7 +1078,10 @@ pub const SCENES: &[Scene] = &[
         s.covers.fake();
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
         if let Some(n) = &mut s.now {
-            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+            n.found = Found::NotOnList {
+                media_id: 9001,
+                title: "Velvet Orchard Chronicle".into(),
+            };
             n.cover_url = Some("https://cdn.example.invalid/9001l.jpg".into());
         }
         s.go(Page::NowPlaying);
@@ -982,7 +1090,10 @@ pub const SCENES: &[Scene] = &[
     ("now-playing-not-on-list", |s| {
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
         if let Some(n) = &mut s.now {
-            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+            n.found = Found::NotOnList {
+                media_id: 9001,
+                title: "Velvet Orchard Chronicle".into(),
+            };
         }
         s.go(Page::NowPlaying);
     }),
@@ -990,7 +1101,10 @@ pub const SCENES: &[Scene] = &[
     ("now-playing-not-on-list-added", |s| {
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle - 02 (1080p).mkv");
         if let Some(n) = &mut s.now {
-            n.found = Found::NotOnList { media_id: 9001, title: "Velvet Orchard Chronicle".into() };
+            n.found = Found::NotOnList {
+                media_id: 9001,
+                title: "Velvet Orchard Chronicle".into(),
+            };
         }
         s.add_playing();
         s.go(Page::NowPlaying);
@@ -999,8 +1113,16 @@ pub const SCENES: &[Scene] = &[
     ("now-playing-relation-not-on-list", |s| {
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle S2 - 15 (1080p).mkv");
         if let Some(n) = &mut s.now {
-            n.found = Found::NotOnList { media_id: 9002, title: "Velvet Orchard Chronicle 2nd Season Part 2".into() };
-            n.relation = Some(crate::now::Relation { file_ep: 15, from_id: 9003, from_title: Some("Velvet Orchard Chronicle 2nd Season".into()), ep: 2 });
+            n.found = Found::NotOnList {
+                media_id: 9002,
+                title: "Velvet Orchard Chronicle 2nd Season Part 2".into(),
+            };
+            n.relation = Some(crate::now::Relation {
+                file_ep: 15,
+                from_id: 9003,
+                from_title: Some("Velvet Orchard Chronicle 2nd Season".into()),
+                ep: 2,
+            });
             if let Some(p) = &mut n.parsed {
                 p.episode = Some(2);
             }
@@ -1246,12 +1368,24 @@ pub const SCENES: &[Scene] = &[
     ("airing-error", |s| {
         let (season, _) = crate::airing::fake_season();
         s.go(Page::Airing);
-        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+        s.airing_answer(crate::airing::Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at: None,
+            error: Some("Can't reach MyAnimeList.".into()),
+            done: true,
+        });
     }),
     ("airing-error-saved", |s| {
         airing(s, crate::airing::View::Week);
         let (season, _) = crate::airing::fake_season();
-        s.airing_answer(crate::airing::Answer { season, shows: Vec::new(), fetched_at: None, error: Some("Can't reach MyAnimeList.".into()), done: true });
+        s.airing_answer(crate::airing::Answer {
+            season,
+            shows: Vec::new(),
+            fetched_at: None,
+            error: Some("Can't reach MyAnimeList.".into()),
+            done: true,
+        });
     }),
     ("airing-signed-out", |s| {
         s.auth = Auth::SignedOut;
@@ -1337,7 +1471,9 @@ pub const SCENES: &[Scene] = &[
     }),
     ("settings-page", |s| s.go(Page::Settings)),
     // Settings, one scene per section (fake library folders for Library).
-    ("settings-general", |s| crate::settings::open(s, Section::General)),
+    ("settings-general", |s| {
+        crate::settings::open(s, Section::General)
+    }),
     // Settings → General → Keyboard with Alt picked for the list pages.
     ("settings-keys-alt", |s| {
         s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
@@ -1356,8 +1492,12 @@ pub const SCENES: &[Scene] = &[
         s.prefs.discord.hide_paused = true;
         crate::settings::open(s, Section::General)
     }),
-    ("settings-appearance", |s| crate::settings::open(s, Section::Appearance)),
-    ("settings-account", |s| crate::settings::open(s, Section::Account)),
+    ("settings-appearance", |s| {
+        crate::settings::open(s, Section::Appearance)
+    }),
+    ("settings-account", |s| {
+        crate::settings::open(s, Section::Account)
+    }),
     // AniList is the active service: its row is signed in, MyAnimeList's offers "Use MyAnimeList".
     ("settings-account-anilist", |s| {
         anilist(s);
@@ -1426,12 +1566,20 @@ pub const SCENES: &[Scene] = &[
         crate::settings::set_query(s, "import");
     }),
     ("settings-import-done", |s| {
-        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: None });
+        s.transfer.done = Some(crate::transfer::Done {
+            queued: 17,
+            ids: (1..=17).collect(),
+            undone: None,
+        });
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
     ("settings-import-undone", |s| {
-        s.transfer.done = Some(crate::transfer::Done { queued: 17, ids: (1..=17).collect(), undone: Some(15) });
+        s.transfer.done = Some(crate::transfer::Done {
+            queued: 17,
+            ids: (1..=17).collect(),
+            undone: Some(15),
+        });
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
@@ -1443,7 +1591,8 @@ pub const SCENES: &[Scene] = &[
     }),
     ("settings-manga-export-done", |s| {
         s.manga.enabled = true;
-        s.transfer.manga_export_note = Some(Ok("Exported 12 manga to mangalist-2027-01-15.xml.".into()));
+        s.transfer.manga_export_note =
+            Some(Ok("Exported 12 manga to mangalist-2027-01-15.xml.".into()));
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "xml");
     }),
@@ -1464,14 +1613,24 @@ pub const SCENES: &[Scene] = &[
     ("settings-manga-import-error", |s| {
         s.manga.enabled = true;
         s.transfer.import_kind = kotora_core::Kind::Manga;
-        s.transfer.error = Some(kotora_core::listxml::parse_kind(b"<myanimelist><anime/></myanimelist>", kotora_core::Kind::Manga).unwrap_err());
+        s.transfer.error = Some(
+            kotora_core::listxml::parse_kind(
+                b"<myanimelist><anime/></myanimelist>",
+                kotora_core::Kind::Manga,
+            )
+            .unwrap_err(),
+        );
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
     ("settings-manga-import-done", |s| {
         s.manga.enabled = true;
         s.transfer.import_kind = kotora_core::Kind::Manga;
-        s.transfer.done = Some(crate::transfer::Done { queued: 9, ids: (1..=9).collect(), undone: None });
+        s.transfer.done = Some(crate::transfer::Done {
+            queued: 9,
+            ids: (1..=9).collect(),
+            undone: None,
+        });
         crate::settings::open(s, Section::Account);
         crate::settings::set_query(s, "import");
     }),
@@ -1506,8 +1665,12 @@ pub const SCENES: &[Scene] = &[
     }),
     // Fill volumes from chapters (MangaDex): the row, looking up, the preview, done, offline.
     ("settings-fill-volumes", |s| fill_volumes(s, |_| {})),
-    ("settings-fill-volumes-busy", |s| fill_volumes(s, |s| s.volfill.busy = Some((7, 18)))),
-    ("settings-fill-volumes-preview", |s| fill_volumes(s, crate::volfill::fake_preview)),
+    ("settings-fill-volumes-busy", |s| {
+        fill_volumes(s, |s| s.volfill.busy = Some((7, 18)))
+    }),
+    ("settings-fill-volumes-preview", |s| {
+        fill_volumes(s, crate::volfill::fake_preview)
+    }),
     // Nothing goes up: "Nothing to change." and Close only (one already right, one higher).
     ("settings-fill-volumes-nothing", |s| {
         fill_volumes(s, |s| {
@@ -1518,15 +1681,24 @@ pub const SCENES: &[Scene] = &[
             }
         })
     }),
-    ("settings-fill-volumes-done", |s| fill_volumes(s, |s| s.volfill.done = Some((4, vec![1, 2, 3, 4])))),
+    ("settings-fill-volumes-done", |s| {
+        fill_volumes(s, |s| s.volfill.done = Some((4, vec![1, 2, 3, 4])))
+    }),
     ("settings-fill-volumes-offline", |s| {
-        fill_volumes(s, |s| s.volfill.error = Some("Can\u{2019}t reach MangaDex: volumes from chapters need the network. Nothing was changed.".into()))
+        fill_volumes(s, |s| {
+            s.volfill.error = Some("Can\u{2019}t reach MangaDex: volumes from chapters need the network. Nothing was changed.".into())
+        })
     }),
     // The manga editor's "Vol from chapters": ready, looking up, and not on MangaDex (hover note).
     ("manga-editor-vol-fill", |s| {
         manga(s);
         s.manga_toggle_editor(2);
-        s.volfill.tables.insert(2, Some(kotora_core::mangadex::Lookup::Found(crate::volfill::fake_table())));
+        s.volfill.tables.insert(
+            2,
+            Some(kotora_core::mangadex::Lookup::Found(
+                crate::volfill::fake_table(),
+            )),
+        );
         crate::volfill::fill_editor(s);
         s.toast = None;
     }),
@@ -1538,7 +1710,9 @@ pub const SCENES: &[Scene] = &[
     ("manga-editor-vol-fill-missing", |s| {
         manga(s);
         s.manga_toggle_editor(4);
-        s.volfill.tables.insert(4, Some(kotora_core::mangadex::Lookup::NotFound));
+        s.volfill
+            .tables
+            .insert(4, Some(kotora_core::mangadex::Lookup::NotFound));
         s.volfill.tip = true;
     }),
     // A status conflict settled for AniList's status.
@@ -1564,7 +1738,8 @@ pub const SCENES: &[Scene] = &[
     }),
     ("settings-mirror-error", |s| {
         s.mirror.other_signed_in = true;
-        s.mirror.error = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        s.mirror.error =
+            Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
         mirror_settings(s);
     }),
     // The Queue page with the mirror's part: website edits, a conflict, waiting, failed, sent.
@@ -1624,7 +1799,12 @@ pub const SCENES: &[Scene] = &[
     ("queue-mirror-removal-conflict", |s| {
         queue_covers(s);
         crate::mirror::fake_on(s);
-        if let Some(op) = s.mirror.ops.iter_mut().find(|o| o.state == OpState::Conflict) {
+        if let Some(op) = s
+            .mirror
+            .ops
+            .iter_mut()
+            .find(|o| o.state == OpState::Conflict)
+        {
             op.removed = true;
             op.change = kotora_core::Change::default();
         }
@@ -1635,15 +1815,20 @@ pub const SCENES: &[Scene] = &[
         s.ops.clear();
         s.queue = 0;
         crate::mirror::fake_on(s);
-        s.mirror.trouble = Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
+        s.mirror.trouble =
+            Some("Can\u{2019}t reach AniList. Its changes wait and go out when it answers.".into());
         s.go(Page::Queue);
     }),
-    ("settings-detection", |s| crate::settings::open(s, Section::Detection)),
+    ("settings-detection", |s| {
+        crate::settings::open(s, Section::Detection)
+    }),
     ("settings-library", |s| {
         crate::library::fake(s);
         crate::settings::open(s, Section::Library);
     }),
-    ("settings-about", |s| crate::settings::open(s, Section::About)),
+    ("settings-about", |s| {
+        crate::settings::open(s, Section::About)
+    }),
     // The search: results from several sections, then none.
     ("settings-search", |s| {
         crate::settings::open(s, Section::General);
@@ -1684,7 +1869,9 @@ pub const SCENES: &[Scene] = &[
     // Scores in each AniList score format (0.2.1): list rows, posters, the row editor (the 100-
     // point and decimal ones with a fine − / +), the details page and the Score menu.
     ("list-score-100", |s| scores_in(s, ScoreFormat::Point100)),
-    ("list-score-decimal", |s| scores_in(s, ScoreFormat::Point10Decimal)),
+    ("list-score-decimal", |s| {
+        scores_in(s, ScoreFormat::Point10Decimal)
+    }),
     ("list-score-stars", |s| scores_in(s, ScoreFormat::Point5)),
     ("list-score-smileys", |s| scores_in(s, ScoreFormat::Point3)),
     ("list-grid-score-stars", |s| {
@@ -1739,7 +1926,9 @@ pub const SCENES: &[Scene] = &[
     }),
     // The right-click menu of an entry: on a list row, with each submenu, on a poster (opened
     // with the Menu key, under it) and on a Home card; and the toast with Undo after a move.
-    ("ctx-menu", |s| s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0))),
+    ("ctx-menu", |s| {
+        s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0))
+    }),
     ("ctx-menu-move", |s| {
         s.open_ctx(2, crate::ctxmenu::At::Point(470.0, 210.0));
         if let Some(c) = &mut s.ctx {
@@ -1823,14 +2012,28 @@ pub const SCENES: &[Scene] = &[
     }),
     // Settings → Titles: English or Japanese where the anime has one, romaji where not.
     // A newer Kotora is out (`update.rs`): the banner as each kind of install sees it.
-    ("update-available", |s| update_scene(s, kotora_core::update::Install::Direct, None)),
-    ("update-available-aur", |s| update_scene(s, kotora_core::update::Install::Aur, None)),
-    ("update-available-homebrew", |s| update_scene(s, kotora_core::update::Install::Homebrew, None)),
-    ("update-available-install-sh", |s| update_scene(s, kotora_core::update::Install::Script, None)),
+    ("update-available", |s| {
+        update_scene(s, kotora_core::update::Install::Direct, None)
+    }),
+    ("update-available-aur", |s| {
+        update_scene(s, kotora_core::update::Install::Aur, None)
+    }),
+    ("update-available-homebrew", |s| {
+        update_scene(s, kotora_core::update::Install::Homebrew, None)
+    }),
+    ("update-available-install-sh", |s| {
+        update_scene(s, kotora_core::update::Install::Script, None)
+    }),
     // Windows: Download gets the installer, from an installed copy or an unpacked one.
-    ("update-available-windows", |s| update_scene(s, kotora_core::update::Install::WinSetup, None)),
-    ("update-required", |s| update_scene(s, kotora_core::update::Install::Direct, Some("99.0.0"))),
-    ("update-required-aur", |s| update_scene(s, kotora_core::update::Install::Aur, Some("99.0.0"))),
+    ("update-available-windows", |s| {
+        update_scene(s, kotora_core::update::Install::WinSetup, None)
+    }),
+    ("update-required", |s| {
+        update_scene(s, kotora_core::update::Install::Direct, Some("99.0.0"))
+    }),
+    ("update-required-aur", |s| {
+        update_scene(s, kotora_core::update::Install::Aur, Some("99.0.0"))
+    }),
     // With the Now Playing banner above it.
     ("update-with-offer", |s| {
         update_scene(s, kotora_core::update::Install::Direct, None);
@@ -1839,7 +2042,11 @@ pub const SCENES: &[Scene] = &[
     }),
     // Settings → About Kotora: the switch and Check now, after a manual check.
     ("settings-updates", |s| {
-        s.update.check = kotora_core::update::CheckStatus { running: false, last_check: Some(s.clock() as u64 - 3600), result: Some(kotora_core::update::UP_TO_DATE.into()) };
+        s.update.check = kotora_core::update::CheckStatus {
+            running: false,
+            last_check: Some(s.clock() as u64 - 3600),
+            result: Some(kotora_core::update::UP_TO_DATE.into()),
+        };
         crate::settings::open(s, Section::General);
     }),
     ("settings-updates-off", |s| {
@@ -1851,7 +2058,9 @@ pub const SCENES: &[Scene] = &[
         crate::settings::open(s, Section::Appearance);
     }),
     ("list-titles-english", |s| s.set_titles(TitleLang::English)),
-    ("list-titles-japanese", |s| s.set_titles(TitleLang::Japanese)),
+    ("list-titles-japanese", |s| {
+        s.set_titles(TitleLang::Japanese)
+    }),
     ("queue-titles-english", |s| {
         s.set_titles(TitleLang::English);
         s.go(Page::Queue);
@@ -1865,9 +2074,20 @@ pub const SCENES: &[Scene] = &[
     ("now-playing-not-on-list-japanese", |s| {
         playing_file(s, "[Hoshi] Velvet Orchard Chronicle S2 - 15 (1080p).mkv");
         if let Some(n) = &mut s.now {
-            n.found = Found::NotOnList { media_id: 9002, title: "Velvet Orchard Chronicle 2nd Season Part 2".into() };
-            n.alt_titles = crate::now::AltTitles { en: Some("Velvet Orchard Chronicle Season 2 Part 2".into()), ja: Some("ベルベット果樹園年代記 第2期 後半".into()) };
-            n.relation = Some(crate::now::Relation { file_ep: 15, from_id: 9003, from_title: Some("Velvet Orchard Chronicle 2nd Season".into()), ep: 2 });
+            n.found = Found::NotOnList {
+                media_id: 9002,
+                title: "Velvet Orchard Chronicle 2nd Season Part 2".into(),
+            };
+            n.alt_titles = crate::now::AltTitles {
+                en: Some("Velvet Orchard Chronicle Season 2 Part 2".into()),
+                ja: Some("ベルベット果樹園年代記 第2期 後半".into()),
+            };
+            n.relation = Some(crate::now::Relation {
+                file_ep: 15,
+                from_id: 9003,
+                from_title: Some("Velvet Orchard Chronicle 2nd Season".into()),
+                ep: 2,
+            });
             if let Some(p) = &mut n.parsed {
                 p.episode = Some(2);
             }
@@ -1886,20 +2106,38 @@ pub const SCENES: &[Scene] = &[
     // Settings → Appearance with Light picked (light whatever the desktop says).
     // The startup intro (`intro.rs`), held at a share of its run: the orange layer, the three
     // claw marks ripping across, the strips sliding away.
-    ("intro-0", |s| s.intro = Some(crate::intro::Intro::frozen(0.0, false))),
-    ("intro-15", |s| s.intro = Some(crate::intro::Intro::frozen(0.15, false))),
-    ("intro-25", |s| s.intro = Some(crate::intro::Intro::frozen(0.25, false))),
-    ("intro-35", |s| s.intro = Some(crate::intro::Intro::frozen(0.35, false))),
-    ("intro-50", |s| s.intro = Some(crate::intro::Intro::frozen(0.5, false))),
-    ("intro-62", |s| s.intro = Some(crate::intro::Intro::frozen(0.62, false))),
-    ("intro-75", |s| s.intro = Some(crate::intro::Intro::frozen(0.75, false))),
-    ("intro-90", |s| s.intro = Some(crate::intro::Intro::frozen(0.9, false))),
+    ("intro-0", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.0, false))
+    }),
+    ("intro-15", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.15, false))
+    }),
+    ("intro-25", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.25, false))
+    }),
+    ("intro-35", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.35, false))
+    }),
+    ("intro-50", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.5, false))
+    }),
+    ("intro-62", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.62, false))
+    }),
+    ("intro-75", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.75, false))
+    }),
+    ("intro-90", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.9, false))
+    }),
     ("intro-40-light", |s| {
         s.set_theme(Theme::Light);
         s.intro = Some(crate::intro::Intro::frozen(0.4, false));
     }),
     // Reduce Motion: only the fade, held halfway.
-    ("intro-reduced-50", |s| s.intro = Some(crate::intro::Intro::frozen(0.5, true))),
+    ("intro-reduced-50", |s| {
+        s.intro = Some(crate::intro::Intro::frozen(0.5, true))
+    }),
     // Running: `--video` or `--frames` record it (`--duration 1.2`).
     ("intro-live", |s| {
         s.window = true;
@@ -1937,18 +2175,27 @@ pub const SCENES: &[Scene] = &[
     }),
     // Settings → Startup with both switches on.
     ("settings-startup-on", |s| {
-        s.prefs.login = crate::autostart::Login { on: true, ..Default::default() };
+        s.prefs.login = crate::autostart::Login {
+            on: true,
+            ..Default::default()
+        };
         s.prefs.background = true;
         crate::settings::open(s, Section::General);
     }),
     // Settings → Startup in a copy that can't be a login item (macOS, run from a build folder).
     ("settings-startup-unavailable", |s| {
-        s.prefs.login = crate::autostart::Login::unavailable("Only in the app (Kotora.app). This copy runs from a build folder.");
+        s.prefs.login = crate::autostart::Login::unavailable(
+            "Only in the app (Kotora.app). This copy runs from a build folder.",
+        );
         crate::settings::open(s, Section::General);
     }),
     // Settings → Startup with the login item waiting for the user's OK in System Settings.
     ("settings-startup-approval", |s| {
-        s.prefs.login = crate::autostart::Login { on: true, needs_approval: true, ..Default::default() };
+        s.prefs.login = crate::autostart::Login {
+            on: true,
+            needs_approval: true,
+            ..Default::default()
+        };
         crate::settings::open(s, Section::General);
     }),
     // Two players switched off, one with a problem.
@@ -1994,11 +2241,17 @@ pub const SCENES: &[Scene] = &[
     }),
     ("precise-already-set", |s| {
         process_only(s);
-        s.precise_written(crate::precise::Precise::AlreadySet { file: "~/.config/mpv/mpv.conf".into(), socket: "/tmp/mpvsocket".into(), watched: false });
+        s.precise_written(crate::precise::Precise::AlreadySet {
+            file: "~/.config/mpv/mpv.conf".into(),
+            socket: "/tmp/mpvsocket".into(),
+            watched: false,
+        });
     }),
     ("precise-failed", |s| {
         process_only(s);
-        s.precise_written(crate::precise::Precise::Failed("Can't write mpv.conf: permission denied".into()));
+        s.precise_written(crate::precise::Precise::Failed(
+            "Can't write mpv.conf: permission denied".into(),
+        ));
     }),
     // Settings → Players with sources seen by their process: the honest lines and Turn on.
     ("settings-players-process", |s| {
@@ -2076,7 +2329,9 @@ pub const SCENES: &[Scene] = &[
     ("precise-prompt-iina", |s| {
         now_by_process(s, kotora_detect::Switch::Iina);
         s.players = crate::iina::fake_process_players();
-        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir { file: "~/.config/iina/mpv.conf".into() });
+        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir {
+            file: "~/.config/iina/mpv.conf".into(),
+        });
     }),
     // Settings → Notifications as they come (Episode detected off).
     // Manga on: the New chapter switch can be turned on.
@@ -2091,7 +2346,11 @@ pub const SCENES: &[Scene] = &[
     // All on, and the system shows no buttons (Linux: the server; macOS: outside Kotora.app).
     ("settings-notifications-no-buttons", |s| {
         s.prefs.notify.detected = true;
-        s.notes.support = if cfg!(target_os = "macos") { crate::notes::Support::Outside } else { crate::notes::Support::NoButtons };
+        s.notes.support = if cfg!(target_os = "macos") {
+            crate::notes::Support::Outside
+        } else {
+            crate::notes::Support::NoButtons
+        };
         crate::settings::open(s, Section::Notifications);
     }),
     // macOS: notifications turned off for Kotora in System Settings.
@@ -2113,7 +2372,9 @@ pub const SCENES: &[Scene] = &[
     #[cfg(target_os = "macos")]
     ("settings-iina-confdir", |s| {
         iina_by_process(s);
-        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir { file: "~/.config/iina/mpv.conf".into() });
+        s.iina.setup = Some(kotora_detect::iinaconf::Setup::ConfDir {
+            file: "~/.config/iina/mpv.conf".into(),
+        });
     }),
     // macOS: after Turn on.
     #[cfg(target_os = "macos")]
@@ -2210,7 +2471,10 @@ fn airing_other(s: &mut State, quarter: u8, year: u16) {
 /// The details page of `id` (the fake list's, or a made-up search result), answered.
 fn details(s: &mut State, id: u32, on_list: bool) {
     s.covers.fake();
-    let title = s.entries.iter().find(|e| e.id == id).map_or_else(|| "Lanterns of Kirigaoka 2nd Season".to_string(), |e| e.title.clone());
+    let title = s.entries.iter().find(|e| e.id == id).map_or_else(
+        || "Lanterns of Kirigaoka 2nd Season".to_string(),
+        |e| e.title.clone(),
+    );
     s.open_details(crate::details::Stub::bare(id, &title));
     let mut d = crate::details::fake_details(id, &title, on_list);
     d.cover_url = Some(format!("https://cdn.example.invalid/{id}l.jpg"));
@@ -2220,7 +2484,13 @@ fn details(s: &mut State, id: u32, on_list: bool) {
         d.mean = Some(8.05);
         d.rank = None;
     }
-    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Anime, result: Ok(d), item: None, done: true });
+    s.details_answer(crate::details::Answer {
+        id,
+        kind: kotora_core::Kind::Anime,
+        result: Ok(d),
+        item: None,
+        done: true,
+    });
 }
 
 /// The fake manga list with covers (two keep their tiles), on Reading.
@@ -2266,7 +2536,9 @@ fn manga_search(s: &mut State, q: &str, answered: bool) {
 /// The details page of the fake manga `id`, answered.
 fn manga_details(s: &mut State, id: u32) {
     manga(s);
-    let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else { return };
+    let Some(e) = s.manga.entries.iter().find(|e| e.id == id) else {
+        return;
+    };
     let (stub, title) = (crate::manga::stub(e), e.title.clone());
     let finished = e.run == crate::manga::Run::Finished;
     s.open_details(stub);
@@ -2281,21 +2553,41 @@ fn manga_details(s: &mut State, id: u32) {
         d.title_ja = None;
         d.synonyms.clear();
     }
-    s.details_answer(crate::details::Answer { id, kind: kotora_core::Kind::Manga, result: Ok(d), item: None, done: true });
+    s.details_answer(crate::details::Answer {
+        id,
+        kind: kotora_core::Kind::Manga,
+        result: Ok(d),
+        item: None,
+        done: true,
+    });
 }
 
 /// A completed anime on the list (not rewatched now), the first by id.
 fn completed_id(s: &State) -> u32 {
-    s.entries.iter().filter(|e| e.status == Status::Completed && !e.rewatching && e.episodes == Some(12)).map(|e| e.id).min().unwrap_or(0)
+    s.entries
+        .iter()
+        .filter(|e| e.status == Status::Completed && !e.rewatching && e.episodes == Some(12))
+        .map(|e| e.id)
+        .min()
+        .unwrap_or(0)
 }
 
 /// The fake player shows episode 3 of a completed anime.
 fn rewatch_playing(s: &mut State) {
     let id = completed_id(s);
-    let title = s.entries.iter().find(|e| e.id == id).map(|e| e.title.clone()).unwrap_or_default();
+    let title = s
+        .entries
+        .iter()
+        .find(|e| e.id == id)
+        .map(|e| e.title.clone())
+        .unwrap_or_default();
     playing_file(s, &format!("[Hoshi] {title} - 03 (1080p).mkv"));
     if let Some(n) = &mut s.now {
-        n.found = Found::List { media_id: id, sure: true, why: "same title in your list".into() };
+        n.found = Found::List {
+            media_id: id,
+            sure: true,
+            why: "same title in your list".into(),
+        };
     }
 }
 
@@ -2304,15 +2596,50 @@ fn win_players(s: &mut State) {
     use crate::precise::{PlayerState, VIA_IPC, VIA_PROCESS};
     use crate::winsetup::VIA_WEB;
     use kotora_detect::{Led, Switch};
-    let p = |switch, via, line: &str, led| PlayerState { switch, via, line: line.into(), led };
+    let p = |switch, via, line: &str, led| PlayerState {
+        switch,
+        via,
+        line: line.into(),
+        led,
+    };
     s.now = s.now.take().filter(|n| n.via == VIA_PROCESS);
     s.players = vec![
-        p(Switch::Mpv, VIA_PROCESS, "mpv.net: video file open", Led::Playing),
-        p(Switch::Mpv, VIA_IPC, "\\\\.\\pipe\\mpvsocket: not running", Led::Off),
-        p(Switch::Mpc, VIA_PROCESS, "MPC-HC: video file open", Led::Playing),
-        p(Switch::Mpc, VIA_WEB, "web interface is off in MPC-HC", Led::Off),
-        p(Switch::Vlc, VIA_PROCESS, "running, no video open", Led::Idle),
-        p(Switch::Vlc, VIA_WEB, "web interface not set up (needs VLC's password)", Led::Problem),
+        p(
+            Switch::Mpv,
+            VIA_PROCESS,
+            "mpv.net: video file open",
+            Led::Playing,
+        ),
+        p(
+            Switch::Mpv,
+            VIA_IPC,
+            "\\\\.\\pipe\\mpvsocket: not running",
+            Led::Off,
+        ),
+        p(
+            Switch::Mpc,
+            VIA_PROCESS,
+            "MPC-HC: video file open",
+            Led::Playing,
+        ),
+        p(
+            Switch::Mpc,
+            VIA_WEB,
+            "web interface is off in MPC-HC",
+            Led::Off,
+        ),
+        p(
+            Switch::Vlc,
+            VIA_PROCESS,
+            "running, no video open",
+            Led::Idle,
+        ),
+        p(
+            Switch::Vlc,
+            VIA_WEB,
+            "web interface not set up (needs VLC's password)",
+            Led::Problem,
+        ),
         p(Switch::PotPlayer, VIA_PROCESS, "not running", Led::Off),
     ];
 }
@@ -2345,7 +2672,11 @@ fn reading(s: &mut State, file: &str, page: i64) {
 fn unsure(s: &mut State) {
     playing_file(s, "Lantern of Kirigaoka - 06.mkv");
     if let Some(n) = &mut s.now {
-        n.found = Found::List { media_id: 0, sure: false, why: "close to a title in your list (95%)".into() };
+        n.found = Found::List {
+            media_id: 0,
+            sure: false,
+            why: "close to a title in your list (95%)".into(),
+        };
     }
 }
 
@@ -2364,11 +2695,31 @@ fn stats(s: &mut State, kind: Kind, empty: bool) {
         Kind::Anime => {
             fake_covers(s);
             let on = s.entries.iter().filter(|e| e.status == Status::Watching);
-            on.map(|e| Title { media_id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), progress: e.progress, total: e.episodes, units: 0 }).collect()
+            on.map(|e| Title {
+                media_id: e.id,
+                title: e.title.clone(),
+                cover_url: e.cover_url.clone(),
+                progress: e.progress,
+                total: e.episodes,
+                units: 0,
+            })
+            .collect()
         }
         Kind::Manga => {
-            let on = s.manga.entries.iter().filter(|e| e.status == Status::Watching);
-            on.map(|e| Title { media_id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), progress: e.chapters, total: e.chapters_total, units: 0 }).collect()
+            let on = s
+                .manga
+                .entries
+                .iter()
+                .filter(|e| e.status == Status::Watching);
+            on.map(|e| Title {
+                media_id: e.id,
+                title: e.title.clone(),
+                cover_url: e.cover_url.clone(),
+                progress: e.chapters,
+                total: e.chapters_total,
+                units: 0,
+            })
+            .collect()
         }
     };
     let st = crate::stats::fake(kind, &titles, s.clock().div_euclid(86_400), empty);
@@ -2390,7 +2741,12 @@ fn home(s: &mut State) {
     for (id, hours) in [(0u32, 5i64), (1, 30), (3, 52), (6, 100), (10, 140)] {
         if let Some(e) = s.entries.iter_mut().find(|e| e.id == id) {
             let first = now + hours * 3600 - i64::from(e.progress) * kotora_core::airing::WEEK;
-            e.timetable = Some(kotora_core::airing::Timetable { first, episodes: e.episodes, shift: 0, until: None });
+            e.timetable = Some(kotora_core::airing::Timetable {
+                first,
+                episodes: e.episodes,
+                shift: 0,
+                until: None,
+            });
         }
     }
     s.go(Page::Home);
@@ -2430,9 +2786,17 @@ fn anilist(s: &mut State) {
 /// 41, …) so each format's rounding shows.
 fn scores_in(s: &mut State, fmt: ScoreFormat) {
     anilist(s);
-    s.profile = Some(kotora_core::service::Profile { score_format: fmt, ..crate::profile::fake() });
+    s.profile = Some(kotora_core::service::Profile {
+        score_format: fmt,
+        ..crate::profile::fake()
+    });
     const FINE: [u32; 8] = [73, 88, 41, 100, 56, 7, 65, 92];
-    for (i, e) in s.entries.iter_mut().filter(|e| e.score.is_some()).enumerate() {
+    for (i, e) in s
+        .entries
+        .iter_mut()
+        .filter(|e| e.score.is_some())
+        .enumerate()
+    {
         e.score = Score::from_points(FINE[i % FINE.len()]);
     }
     s.refresh();
@@ -2441,9 +2805,13 @@ fn scores_in(s: &mut State, fmt: ScoreFormat) {
 /// A removal of the second fake entry in the queue, the entry gone from the list. A conflict has
 /// the service's newer entry beside it.
 fn removal(s: &mut State, state: OpState) {
-    let Some(i) = s.entries.iter().position(|e| e.id == 2) else { return };
+    let Some(i) = s.entries.iter().position(|e| e.id == 2) else {
+        return;
+    };
     let e = s.entries.remove(i);
-    let Some(mut op) = s.ops.first().cloned() else { return };
+    let Some(mut op) = s.ops.first().cloned() else {
+        return;
+    };
     op.id = 90;
     op.media_id = e.id;
     op.title = e.title.clone();
@@ -2456,7 +2824,10 @@ fn removal(s: &mut State, state: OpState) {
     op.state = state;
     op.error = None;
     op.remote = (state == OpState::Conflict).then(|| kotora_core::Remote {
-        values: kotora_core::Values { progress: e.progress + 2, ..e.values() },
+        values: kotora_core::Values {
+            progress: e.progress + 2,
+            ..e.values()
+        },
         updated_at: s.clock() - 600,
     });
     s.ops.retain(|o| o.media_id != e.id);
@@ -2477,7 +2848,10 @@ fn signing_in(s: &mut State, opened: bool) {
     s.client_id.hint = Some("8f3a".into());
     s.auth = Auth::SigningIn;
     let url = "https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=0123456789abcdef0123456789abcdef&code_challenge=made-up&code_challenge_method=plain&state=made-up&redirect_uri=http%3A%2F%2F127.0.0.1%3A47321%2Fcallback";
-    s.apply(crate::model::Msg::SignInUrl { url: url.into(), opened });
+    s.apply(crate::model::Msg::SignInUrl {
+        url: url.into(),
+        opened,
+    });
 }
 
 /// Nobody is signed in: no account, no list, no queue.
@@ -2516,18 +2890,26 @@ fn update_scene(s: &mut State, install: kotora_core::update::Install, minimum: O
 #[cfg(test)]
 mod tests {
     use super::SCENES;
+    use crate::model::State;
     use crate::model::{Page, Sort};
     use crate::setup::Step;
-    use kotora_core::service::ServiceId;
     use kotora_core::Status;
     use kotora_core::config::{Theme, TitleLang};
-    use crate::model::State;
+    use kotora_core::service::ServiceId;
     use rune::{Env, Runtime};
 
     fn render(name: &str, size: (f32, f32)) -> Runtime<State> {
         let mut s = State::fake();
         (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
-        let mut rt = Runtime::new(s, crate::ui::view, size, Env { system_dark: true, scale: 1.0 });
+        let mut rt = Runtime::new(
+            s,
+            crate::ui::view,
+            size,
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
@@ -2535,12 +2917,19 @@ mod tests {
     }
 
     fn key(rt: &mut Runtime<State>, key: rune::Key) {
-        rt.key(rune::KeyEvent { key, mods: rune::Mods::default() });
+        rt.key(rune::KeyEvent {
+            key,
+            mods: rune::Mods::default(),
+        });
         rt.frame(1.0 / 60.0);
     }
 
     fn focused(rt: &Runtime<State>) -> Vec<String> {
-        rt.elements().into_iter().filter(|e| e.focused).filter_map(|e| e.key).collect()
+        rt.elements()
+            .into_iter()
+            .filter(|e| e.focused)
+            .filter_map(|e| e.key)
+            .collect()
     }
 
     fn click(rt: &mut Runtime<State>, k: &str) {
@@ -2558,11 +2947,24 @@ mod tests {
         let rt = render("setup-service", (1280.0, 800.0));
         let (mx, my) = rt.find("setup/service-mal").expect("MyAnimeList card");
         let (ax, ay) = rt.find("setup/service-anilist").expect("AniList card");
-        assert!(rt.find("setup/service").is_some() && rt.find("setup/indicator").is_none(), "unnumbered");
-        assert!(rt.find("setup/next").is_none() && rt.find("setup/back").is_none() && rt.find("setup/close").is_none());
-        assert!((my - ay).abs() < 1.0 && mx < ax, "wide: side by side, MyAnimeList first");
+        assert!(
+            rt.find("setup/service").is_some() && rt.find("setup/indicator").is_none(),
+            "unnumbered"
+        );
+        assert!(
+            rt.find("setup/next").is_none()
+                && rt.find("setup/back").is_none()
+                && rt.find("setup/close").is_none()
+        );
+        assert!(
+            (my - ay).abs() < 1.0 && mx < ax,
+            "wide: side by side, MyAnimeList first"
+        );
         let rt = render("setup-service", (700.0, 900.0));
-        let ((_, my), (_, ay)) = (rt.find("setup/service-mal").unwrap(), rt.find("setup/service-anilist").unwrap());
+        let ((_, my), (_, ay)) = (
+            rt.find("setup/service-mal").unwrap(),
+            rt.find("setup/service-anilist").unwrap(),
+        );
         assert!(my < ay, "narrow: stacked");
 
         // Tab walks the sidebar, then reaches MyAnimeList; the arrow goes on to AniList.
@@ -2575,26 +2977,42 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(seen.last().map(String::as_str), Some("setup/service-mal"), "Tab reaches MyAnimeList: {seen:?}");
+        assert_eq!(
+            seen.last().map(String::as_str),
+            Some("setup/service-mal"),
+            "Tab reaches MyAnimeList: {seen:?}"
+        );
         key(&mut rt, rune::Key::Right);
         assert_eq!(focused(&rt), ["setup/service-anilist"]);
         key(&mut rt, rune::Key::Left);
         assert_eq!(focused(&rt), ["setup/service-mal"]);
         key(&mut rt, rune::Key::Enter);
-        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
-        assert!(rt.find("setup/back").is_some(), "Back returns to the choice");
+        assert_eq!(
+            (rt.state.setup, rt.state.service),
+            (Step::Welcome, ServiceId::Mal)
+        );
+        assert!(
+            rt.find("setup/back").is_some(),
+            "Back returns to the choice"
+        );
         click(&mut rt, "setup/back");
         assert_eq!(rt.state.setup, Step::Service);
 
         // Return with nothing focused also continues with MyAnimeList (the default button).
         let mut rt = render("setup-service", (1280.0, 800.0));
         key(&mut rt, rune::Key::Enter);
-        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::Mal));
+        assert_eq!(
+            (rt.state.setup, rt.state.service),
+            (Step::Welcome, ServiceId::Mal)
+        );
 
         // A click on AniList sets up AniList.
         let mut rt = render("setup-service", (1280.0, 800.0));
         click(&mut rt, "setup/service-anilist");
-        assert_eq!((rt.state.setup, rt.state.service), (Step::Welcome, ServiceId::AniList));
+        assert_eq!(
+            (rt.state.setup, rt.state.service),
+            (Step::Welcome, ServiceId::AniList)
+        );
     }
 
     #[test]
@@ -2602,16 +3020,29 @@ mod tests {
         // Welcome, Sign in, Done: no form to fill and no Client ID to paste.
         let rt = render("setup-anilist-sign-in", (1280.0, 800.0));
         assert!(rt.find("setup/sign-in").is_some());
-        for gone in ["setup/form", "setup/cid/input", "setup/copy-redirect", "setup/open-api"] {
+        for gone in [
+            "setup/form",
+            "setup/cid/input",
+            "setup/copy-redirect",
+            "setup/open-api",
+        ] {
             assert!(rt.find(gone).is_none(), "{gone}");
         }
-        assert!(rt.find("setup/token/input").is_none(), "the token field waits for a failed or running sign-in");
+        assert!(
+            rt.find("setup/token/input").is_none(),
+            "the token field waits for a failed or running sign-in"
+        );
         // The fallbacks: while waiting, and after the loopback failed.
         for name in ["setup-anilist-signing-in", "setup-anilist-loopback-failed"] {
             let rt = render(name, (1280.0, 800.0));
             assert!(rt.find("setup/token/input").is_some(), "{name}");
         }
-        assert!(render("setup-anilist-loopback-failed", (1280.0, 800.0)).find("setup/sign-in").is_some(), "Try again");
+        assert!(
+            render("setup-anilist-loopback-failed", (1280.0, 800.0))
+                .find("setup/sign-in")
+                .is_some(),
+            "Try again"
+        );
         // Settings: the built-in ID needs nothing, and the advanced link opens the field.
         let rt = render("settings-account-anilist-built-in", (1280.0, 800.0));
         assert!(rt.find("set/cid-built-in").is_some() && rt.find("set/cid-change").is_some());
@@ -2642,25 +3073,73 @@ mod tests {
         ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
-        assert!(render("settings-mirror-preview-picked", (1280.0, 1800.0)).find("set/mirror-conflicts").is_some());
-        assert!(render("settings-mirror-preview-anilist", (1280.0, 1800.0)).find("set/mirror-main-wins").is_some());
-        assert!(render("settings-mirror-busy", (1280.0, 800.0)).find("set/mirror-preview").is_none());
-        assert!(render("settings-mirror-error", (1280.0, 800.0)).find("set/mirror-error").is_some());
-        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-note").is_some());
-        assert!(render("settings-mirror-sign-in", (1280.0, 800.0)).find("set/mirror-switch").is_some());
+        assert!(
+            render("settings-mirror-preview-picked", (1280.0, 1800.0))
+                .find("set/mirror-conflicts")
+                .is_some()
+        );
+        assert!(
+            render("settings-mirror-preview-anilist", (1280.0, 1800.0))
+                .find("set/mirror-main-wins")
+                .is_some()
+        );
+        assert!(
+            render("settings-mirror-busy", (1280.0, 800.0))
+                .find("set/mirror-preview")
+                .is_none()
+        );
+        assert!(
+            render("settings-mirror-error", (1280.0, 800.0))
+                .find("set/mirror-error")
+                .is_some()
+        );
+        assert!(
+            render("settings-mirror-on", (1280.0, 800.0))
+                .find("set/mirror-note")
+                .is_some()
+        );
+        assert!(
+            render("settings-mirror-sign-in", (1280.0, 800.0))
+                .find("set/mirror-switch")
+                .is_some()
+        );
         // No Beta label any more, off or on.
-        assert!(render("settings-mirror", (1280.0, 800.0)).find("set/mirror-beta").is_none());
-        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-beta").is_none());
+        assert!(
+            render("settings-mirror", (1280.0, 800.0))
+                .find("set/mirror-beta")
+                .is_none()
+        );
+        assert!(
+            render("settings-mirror-on", (1280.0, 800.0))
+                .find("set/mirror-beta")
+                .is_none()
+        );
         // The Queue page: website edits, the conflict, the mirror's list, and the badge.
         let rt = render("queue-mirror", (1280.0, 1400.0));
-        for k in ["queue-mirror", "mirror-edit/9101/use-mirror", "mirror-edit/9101/leave", "queue-mirror-list", "qmh/waiting", "qmh/failed", "qmh/sent", "qmh/waits"] {
+        for k in [
+            "queue-mirror",
+            "mirror-edit/9101/use-mirror",
+            "mirror-edit/9101/leave",
+            "queue-mirror-list",
+            "qmh/waiting",
+            "qmh/failed",
+            "qmh/sent",
+            "qmh/waits",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
-        assert!(rt.find("mirror-conflict/900/keep").is_some() && rt.find("mirror-conflict/900/take").is_some());
+        assert!(
+            rt.find("mirror-conflict/900/keep").is_some()
+                && rt.find("mirror-conflict/900/take").is_some()
+        );
         let rt = render("queue-mirror-only", (1280.0, 1400.0));
         assert!(rt.find("queue-empty").is_none() && rt.find("queue-mirror/trouble").is_some());
         // Off: no mirror part.
-        assert!(render("queue-page", (1280.0, 800.0)).find("queue-mirror").is_none());
+        assert!(
+            render("queue-page", (1280.0, 800.0))
+                .find("queue-mirror")
+                .is_none()
+        );
     }
 
     /// The account chip with the mirror on: both services on its second line, the dot only while
@@ -2671,11 +3150,25 @@ mod tests {
         let mut s = State::fake();
         let plain = crate::ui::account_line(&s, "MyAnimeList");
         assert_eq!(plain, "MyAnimeList");
-        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
-        assert_eq!(crate::ui::account_line(&s, "MyAnimeList"), "MyAnimeList \u{21c4} AniList");
-        assert_eq!(crate::ui::account_tip_text(&s, "AniList"), "Changes also go to AniList.");
+        (SCENES
+            .iter()
+            .find(|(n, _)| *n == "sidebar-mirror")
+            .unwrap()
+            .1)(&mut s);
+        assert_eq!(
+            crate::ui::account_line(&s, "MyAnimeList"),
+            "MyAnimeList \u{21c4} AniList"
+        );
+        assert_eq!(
+            crate::ui::account_tip_text(&s, "AniList"),
+            "Changes also go to AniList."
+        );
         let mut rt = render("sidebar-mirror", (1280.0, 800.0));
-        assert!(rt.find("account/service").is_some() && rt.find("account/dot").is_none() && rt.find("account-tip").is_none());
+        assert!(
+            rt.find("account/service").is_some()
+                && rt.find("account/dot").is_none()
+                && rt.find("account-tip").is_none()
+        );
         // Resting on the chip shows the tooltip; leaving hides it.
         let (x, y) = rt.find("account").unwrap();
         rt.pointer_move(x, y);
@@ -2690,21 +3183,44 @@ mod tests {
         assert!(rt.find("account-tip").is_none());
         // Something waits for the mirror: the dot, and the badge counts it.
         let mut s = State::fake();
-        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-dot").unwrap().1)(&mut s);
+        (SCENES
+            .iter()
+            .find(|(n, _)| *n == "sidebar-mirror-dot")
+            .unwrap()
+            .1)(&mut s);
         assert!(s.mirror.badge() > 0);
-        assert!(crate::ui::account_tip_text(&s, "AniList").contains("in the Sync queue for AniList"));
+        assert!(
+            crate::ui::account_tip_text(&s, "AniList").contains("in the Sync queue for AniList")
+        );
         let rt = render("sidebar-mirror-dot", (1280.0, 800.0));
         assert!(rt.find("account/dot").is_some() && rt.find("account-tip").is_some());
         // AniList main: the other way round.
         let mut s = State::fake();
-        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror-anilist").unwrap().1)(&mut s);
-        assert_eq!(crate::ui::account_line(&s, "AniList"), "AniList \u{21c4} MyAnimeList");
+        (SCENES
+            .iter()
+            .find(|(n, _)| *n == "sidebar-mirror-anilist")
+            .unwrap()
+            .1)(&mut s);
+        assert_eq!(
+            crate::ui::account_line(&s, "AniList"),
+            "AniList \u{21c4} MyAnimeList"
+        );
         // Off: the plain chip, and no dot even with old mirror changes around.
         let mut s = State::fake();
         crate::mirror::fake_on(&mut s);
         s.mirror.link = None;
-        assert_eq!((crate::ui::account_line(&s, "MyAnimeList").as_str(), s.mirror.badge()), ("MyAnimeList", 0));
-        assert!(render("home", (1280.0, 800.0)).find("account/dot").is_none());
+        assert_eq!(
+            (
+                crate::ui::account_line(&s, "MyAnimeList").as_str(),
+                s.mirror.badge()
+            ),
+            ("MyAnimeList", 0)
+        );
+        assert!(
+            render("home", (1280.0, 800.0))
+                .find("account/dot")
+                .is_none()
+        );
     }
 
     /// `kot status` names the mirror and splits the chip's badge by state; nothing while it is off.
@@ -2712,13 +3228,24 @@ mod tests {
     fn kot_status_shows_the_mirror() {
         let mut s = State::fake();
         assert_eq!(s.ctl_status().mirror, None);
-        (SCENES.iter().find(|(n, _)| *n == "sidebar-mirror").unwrap().1)(&mut s);
+        (SCENES
+            .iter()
+            .find(|(n, _)| *n == "sidebar-mirror")
+            .unwrap()
+            .1)(&mut s);
         let m = s.ctl_status().mirror.expect("the mirror is on");
-        assert_eq!((m.to.as_str(), m.waiting, m.conflicts, m.failed, m.web_edits), ("AniList", 0, 0, 0, 0));
+        assert_eq!(
+            (m.to.as_str(), m.waiting, m.conflicts, m.failed, m.web_edits),
+            ("AniList", 0, 0, 0, 0)
+        );
         let mut s = State::fake();
         crate::mirror::fake_on(&mut s);
         let m = s.ctl_status().mirror.expect("the mirror is on");
-        assert_eq!(m.waiting + m.conflicts + m.failed + m.web_edits, s.mirror.badge(), "the same count as the chip's dot");
+        assert_eq!(
+            m.waiting + m.conflicts + m.failed + m.web_edits,
+            s.mirror.badge(),
+            "the same count as the chip's dot"
+        );
         s.mirror.link = None;
         assert_eq!(s.ctl_status().mirror, None);
     }
@@ -2731,17 +3258,39 @@ mod tests {
         assert!(rt.find("set/import-preview").is_none());
         // The preview: counts, the lists, a conflict to pick and the three buttons.
         let rt = render("settings-import-preview", (1280.0, 1600.0));
-        for k in ["set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update", "set/import-cancel"] {
+        for k in [
+            "set/import-preview",
+            "set/import-counts",
+            "set/import-list-new",
+            "set/import-list-different",
+            "set/import-conflicts",
+            "set/import-list-unknown",
+            "set/import-add-new",
+            "set/import-add-update",
+            "set/import-cancel",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         let mut s = State::fake();
         crate::transfer::fake_preview(&mut s);
         let p = s.transfer.preview.as_ref().unwrap();
         let c = p.plan.counts();
-        assert_eq!((c.new, c.unknown), (4, 2), "four new ids, no id and an unknown status");
+        assert_eq!(
+            (c.new, c.unknown),
+            (4, 2),
+            "four new ids, no id and an unknown status"
+        );
         assert!(c.conflicts > 1 && c.different > 0 && c.same > 0);
-        assert_eq!(c.new + c.different + c.same + c.unknown, 40 + 6, "40 of the fake list, six more");
-        assert!(render("settings-import-preview", (1280.0, 1600.0)).find("set/import-conflicts-all").is_some());
+        assert_eq!(
+            c.new + c.different + c.same + c.unknown,
+            40 + 6,
+            "40 of the fake list, six more"
+        );
+        assert!(
+            render("settings-import-preview", (1280.0, 1600.0))
+                .find("set/import-conflicts-all")
+                .is_some()
+        );
         assert_eq!((p.plan.other, p.plan.kind), (1, kotora_core::Kind::Anime));
         // AniList: the id it doesn't know is left out, the one it maps is new.
         let mut s = State::fake();
@@ -2749,10 +3298,22 @@ mod tests {
         crate::transfer::fake_preview(&mut s);
         let c = s.transfer.preview.as_ref().unwrap().plan.counts();
         assert_eq!((c.new, c.unknown), (1, 5));
-        assert!(render("settings-import-preview-anilist", (1280.0, 1600.0)).find("set/import-list-unknown").is_some());
+        assert!(
+            render("settings-import-preview-anilist", (1280.0, 1600.0))
+                .find("set/import-list-unknown")
+                .is_some()
+        );
         // While matching, after an error, after the import, after Undo.
-        assert!(render("settings-import-busy", (1280.0, 800.0)).find("set/import-preview").is_none());
-        assert!(render("settings-import-error", (1280.0, 800.0)).find("set/import-error").is_some());
+        assert!(
+            render("settings-import-busy", (1280.0, 800.0))
+                .find("set/import-preview")
+                .is_none()
+        );
+        assert!(
+            render("settings-import-error", (1280.0, 800.0))
+                .find("set/import-error")
+                .is_some()
+        );
         let rt = render("settings-import-done", (1280.0, 800.0));
         assert!(rt.find("set/import-undo").is_some() && rt.find("set/import-queue").is_some());
         let rt = render("settings-import-undone", (1280.0, 800.0));
@@ -2761,7 +3322,11 @@ mod tests {
         let mut s = State::fake();
         super::anilist(&mut s);
         assert!(crate::transfer::refusal(&s).is_some_and(|w| w.contains("terms")));
-        assert!(render("settings-export-anilist", (1280.0, 800.0)).find("set/import-button").is_some());
+        assert!(
+            render("settings-export-anilist", (1280.0, 800.0))
+                .find("set/import-button")
+                .is_some()
+        );
     }
 
     #[test]
@@ -2769,16 +3334,38 @@ mod tests {
         use kotora_core::Kind;
         // Manga off: the anime rows only.
         let rt = render("settings-transfer", (1280.0, 800.0));
-        assert!(rt.find("set/export-manga-button").is_none() && rt.find("set/import-manga-button").is_none());
+        assert!(
+            rt.find("set/export-manga-button").is_none()
+                && rt.find("set/import-manga-button").is_none()
+        );
         // Manga on: the manga rows beside them.
         let rt = render("settings-transfer-manga", (1280.0, 900.0));
-        for k in ["set/export-button", "set/export-manga-button", "set/import-button", "set/import-manga-button"] {
+        for k in [
+            "set/export-button",
+            "set/export-manga-button",
+            "set/import-button",
+            "set/import-manga-button",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
-        assert!(render("settings-manga-export-done", (1280.0, 900.0)).find("set/export-manga").is_some());
+        assert!(
+            render("settings-manga-export-done", (1280.0, 900.0))
+                .find("set/export-manga")
+                .is_some()
+        );
         // The preview sits under the manga row and counts chapters and volumes.
         let rt = render("settings-manga-import-preview", (1280.0, 1700.0));
-        for k in ["set/import-manga", "set/import-preview", "set/import-counts", "set/import-list-new", "set/import-list-different", "set/import-conflicts", "set/import-list-unknown", "set/import-add-new", "set/import-add-update"] {
+        for k in [
+            "set/import-manga",
+            "set/import-preview",
+            "set/import-counts",
+            "set/import-list-new",
+            "set/import-list-different",
+            "set/import-conflicts",
+            "set/import-list-unknown",
+            "set/import-add-new",
+            "set/import-add-update",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         let mut s = State::fake();
@@ -2786,27 +3373,63 @@ mod tests {
         let p = s.transfer.preview.as_ref().unwrap();
         assert_eq!((p.plan.kind, p.plan.other), (Kind::Manga, 1));
         let c = p.plan.counts();
-        assert_eq!((c.new, c.unknown), (3, 2), "three new ids, no id and an unknown status");
+        assert_eq!(
+            (c.new, c.unknown),
+            (3, 2),
+            "three new ids, no id and an unknown status"
+        );
         assert!(c.conflicts >= 2 && c.different > 0 && c.same > 0);
-        assert!(p.plan.rows.iter().any(|r| r.verdict == kotora_core::listxml::Verdict::New && r.media.as_ref().is_some_and(|m| m.kind == Kind::Manga)));
+        assert!(
+            p.plan
+                .rows
+                .iter()
+                .any(|r| r.verdict == kotora_core::listxml::Verdict::New
+                    && r.media.as_ref().is_some_and(|m| m.kind == Kind::Manga))
+        );
         // An anime file given to the manga import says so.
         let rt = render("settings-manga-import-error", (1280.0, 900.0));
         assert!(rt.find("set/import-error").is_some());
         assert!(rt.find("set/import-manga").is_some());
-        assert!(render("settings-manga-import-done", (1280.0, 900.0)).find("set/import-undo").is_some());
+        assert!(
+            render("settings-manga-import-done", (1280.0, 900.0))
+                .find("set/import-undo")
+                .is_some()
+        );
         // AniList: no export (terms); the manga import is offered as on MyAnimeList.
         let mut s = State::fake();
         super::anilist(&mut s);
         assert!(crate::transfer::refusal(&s).is_some());
-        assert!(render("settings-manga-anilist", (1280.0, 900.0)).find("set/import-manga").is_some());
+        assert!(
+            render("settings-manga-anilist", (1280.0, 900.0))
+                .find("set/import-manga")
+                .is_some()
+        );
     }
 
     #[test]
     fn context_menu_scenes_show_the_menu_and_submenus() {
         for (name, keys) in [
-            ("ctx-menu", &["ctx-menu", "ctx/move", "ctx/score", "ctx/plus", "ctx/play", "ctx/edit", "ctx/details", "ctx/mal"][..]),
-            ("ctx-menu-move", &["ctx-sub/move", "ctx/move/completed", "ctx/move/watching"][..]),
-            ("ctx-menu-score", &["ctx-sub/score", "ctx/score/10", "ctx/score/none"][..]),
+            (
+                "ctx-menu",
+                &[
+                    "ctx-menu",
+                    "ctx/move",
+                    "ctx/score",
+                    "ctx/plus",
+                    "ctx/play",
+                    "ctx/edit",
+                    "ctx/details",
+                    "ctx/mal",
+                ][..],
+            ),
+            (
+                "ctx-menu-move",
+                &["ctx-sub/move", "ctx/move/completed", "ctx/move/watching"][..],
+            ),
+            (
+                "ctx-menu-score",
+                &["ctx-sub/score", "ctx/score/10", "ctx/score/none"][..],
+            ),
             ("ctx-menu-grid", &["ctx-menu", "card/1"][..]),
             ("ctx-menu-home", &["ctx-menu", "page/home"][..]),
             ("ctx-undo", &["toast", "toast/undo"][..]),
@@ -2823,15 +3446,34 @@ mod tests {
     /// word too long to wrap, at the big and the small window size, dark and light.
     #[test]
     fn the_undo_toast_keeps_its_button_inside_the_toast_and_the_window() {
-        for name in ["ctx-undo", "ctx-undo-light", "ctx-undo-long", "ctx-undo-long-light", "ctx-undo-word"] {
+        for name in [
+            "ctx-undo",
+            "ctx-undo-light",
+            "ctx-undo-long",
+            "ctx-undo-long-light",
+            "ctx-undo-word",
+        ] {
             for size in [(1360.0, 900.0), (960.0, 600.0)] {
                 let rt = render(name, size);
-                let ([tx, ty, tw, th], _) = rt.presented("toast").unwrap_or_else(|| panic!("{name}: toast"));
-                let ([bx, by, bw, bh], _) = rt.presented("toast/undo").unwrap_or_else(|| panic!("{name}: undo"));
+                let ([tx, ty, tw, th], _) = rt
+                    .presented("toast")
+                    .unwrap_or_else(|| panic!("{name}: toast"));
+                let ([bx, by, bw, bh], _) = rt
+                    .presented("toast/undo")
+                    .unwrap_or_else(|| panic!("{name}: undo"));
                 let tag = format!("{name} {size:?}");
-                assert!(bw >= 40.0 && bh >= 24.0, "{tag}: the button keeps its size ({bw}x{bh})");
-                assert!(bx >= tx && by >= ty && bx + bw <= tx + tw && by + bh <= ty + th, "{tag}: Undo inside the toast");
-                assert!(tx >= 0.0 && ty >= 0.0 && tx + tw <= size.0 - 16.0 && ty + th <= size.1 - 16.0, "{tag}: the toast keeps a margin inside the window");
+                assert!(
+                    bw >= 40.0 && bh >= 24.0,
+                    "{tag}: the button keeps its size ({bw}x{bh})"
+                );
+                assert!(
+                    bx >= tx && by >= ty && bx + bw <= tx + tw && by + bh <= ty + th,
+                    "{tag}: Undo inside the toast"
+                );
+                assert!(
+                    tx >= 0.0 && ty >= 0.0 && tx + tw <= size.0 - 16.0 && ty + th <= size.1 - 16.0,
+                    "{tag}: the toast keeps a margin inside the window"
+                );
                 assert!(tw <= 460.0 + 0.5, "{tag}: width {tw}");
             }
         }
@@ -2847,20 +3489,30 @@ mod tests {
         assert!(!t.warn && t.text.contains("episode 6"), "{t:?}");
         s.play_entry(7);
         let t = s.toast.clone().unwrap();
-        assert!(t.warn && t.text == "Episode 12 not in your folders", "{t:?}");
+        assert!(
+            t.warn && t.text == "Episode 12 not in your folders",
+            "{t:?}"
+        );
         // P: the grid's selection, else nothing on a list page.
-        s.prefs.views.set(Status::Watching, kotora_core::config::ListView::Grid);
+        s.prefs
+            .views
+            .set(Status::Watching, kotora_core::config::ListView::Grid);
         s.grid.sel = None;
         assert_eq!(s.play_target(), None);
         s.grid.sel = Some(3);
         assert_eq!(s.play_target(), Some(3));
         // The table: the row whose editor is open.
-        s.prefs.views.set(Status::Watching, kotora_core::config::ListView::List);
+        s.prefs
+            .views
+            .set(Status::Watching, kotora_core::config::ListView::List);
         assert_eq!(s.play_target(), None);
         s.toggle_editor(1);
         assert_eq!(s.play_target(), Some(1));
         for name in ["toast-play", "toast-missing"] {
-            assert!(render(name, (1280.0, 800.0)).find("toast").is_some(), "{name}");
+            assert!(
+                render(name, (1280.0, 800.0)).find("toast").is_some(),
+                "{name}"
+            );
         }
         // No library folders: the toast says where to add one.
         let mut s = State::fake();
@@ -2873,7 +3525,12 @@ mod tests {
     /// cards sliding in). Narrowing 1280 to 900 pt in steps, as a live drag does.
     #[test]
     fn a_resize_lands_at_once() {
-        for name in ["list-grid-covers", "list-large-covers", "list-covers", "home-covers"] {
+        for name in [
+            "list-grid-covers",
+            "list-large-covers",
+            "list-covers",
+            "home-covers",
+        ] {
             let mut rt = render(name, (1280.0, 800.0));
             for w in (900..=1240).rev().step_by(20) {
                 rt.set_viewport((w as f32, 800.0), 1.0);
@@ -2881,10 +3538,22 @@ mod tests {
             }
             rt.frame(1.0 / 60.0);
             // A card that changed rows leaves no fading copy behind.
-            let ghosts: Vec<String> = rt.elements().into_iter().filter(|e| e.exiting).filter_map(|e| e.key).filter(|k| k.starts_with("card/") || k.starts_with("cont/") || k.starts_with("cards/")).collect();
+            let ghosts: Vec<String> = rt
+                .elements()
+                .into_iter()
+                .filter(|e| e.exiting)
+                .filter_map(|e| e.key)
+                .filter(|k| {
+                    k.starts_with("card/") || k.starts_with("cont/") || k.starts_with("cards/")
+                })
+                .collect();
             assert!(ghosts.is_empty(), "{name}: fading copies {ghosts:?}");
             rt.frame(1.0 / 60.0);
-            let keys: Vec<String> = (0..12).map(|i| format!("card/{i}")).chain((0..12).map(|i| format!("cont/{i}"))).chain(["np-mini".to_string(), "rows".to_string()]).collect();
+            let keys: Vec<String> = (0..12)
+                .map(|i| format!("card/{i}"))
+                .chain((0..12).map(|i| format!("cont/{i}")))
+                .chain(["np-mini".to_string(), "rows".to_string()])
+                .collect();
             let now: Vec<_> = keys.iter().map(|k| rt.presented(k)).collect();
             for _ in 0..40 {
                 rt.frame(1.0 / 60.0);
@@ -2892,8 +3561,14 @@ mod tests {
             for (k, before) in keys.iter().zip(now) {
                 let Some((r, o)) = before else { continue };
                 let (r2, o2) = rt.presented(k).unwrap();
-                assert!(o >= 0.999 && o2 >= 0.999, "{name}: {k} half drawn ({o}, then {o2}) after the resize");
-                assert!(r.iter().zip(r2).all(|(a, b)| (a - b).abs() < 0.5), "{name}: {k} still moving: {r:?} -> {r2:?}");
+                assert!(
+                    o >= 0.999 && o2 >= 0.999,
+                    "{name}: {k} half drawn ({o}, then {o2}) after the resize"
+                );
+                assert!(
+                    r.iter().zip(r2).all(|(a, b)| (a - b).abs() < 0.5),
+                    "{name}: {k} still moving: {r:?} -> {r2:?}"
+                );
             }
         }
     }
@@ -2912,7 +3587,10 @@ mod tests {
                 assert!(rt.find("main").is_some(), "{name}: main");
                 // The sign-in screen and the wizard have no top bar; Now Playing's hero is its title.
                 assert!(
-                    rt.find("top").is_some() || rt.find("welcome").is_some() || rt.find("page/setup").is_some() || rt.find("np-card").is_some(),
+                    rt.find("top").is_some()
+                        || rt.find("welcome").is_some()
+                        || rt.find("page/setup").is_some()
+                        || rt.find("np-card").is_some(),
                     "{name}: page title"
                 );
             }
@@ -2923,13 +3601,28 @@ mod tests {
     /// picking one closes it.
     #[test]
     fn sort_menu_lists_the_orders() {
-        for name in ["list-sort-menu", "list-grid-sort-menu", "list-large-sort-menu"] {
+        for name in [
+            "list-sort-menu",
+            "list-grid-sort-menu",
+            "list-large-sort-menu",
+        ] {
             let rt = render(name, (1280.0, 800.0));
-            for key in ["sort-menu", "sort/updated", "sort/title", "sort/score", "sort/progress", "sort/dir/0", "sort/dir/1"] {
+            for key in [
+                "sort-menu",
+                "sort/updated",
+                "sort/title",
+                "sort/score",
+                "sort/progress",
+                "sort/dir/0",
+                "sort/dir/1",
+            ] {
                 assert!(rt.find(key).is_some(), "{name}: {key}");
             }
         }
-        assert!(render("list", (1280.0, 800.0)).find("sort-menu").is_none(), "closed by default");
+        assert!(
+            render("list", (1280.0, 800.0)).find("sort-menu").is_none(),
+            "closed by default"
+        );
         let mut s = State::fake();
         s.sort_menu = true;
         s.set_sort(Sort::Score);
@@ -2948,10 +3641,26 @@ mod tests {
     fn profile_page_shows_the_numbers() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("profile", size);
-            for key in ["page/profile", "profile/avatar", "profile/name", "profile/joined", "profile/open-mal", "profile/days", "profile/bar", "profile/bar/completed", "profile/chart", "profile/score/8", "profile/sign-out"] {
+            for key in [
+                "page/profile",
+                "profile/avatar",
+                "profile/name",
+                "profile/joined",
+                "profile/open-mal",
+                "profile/days",
+                "profile/bar",
+                "profile/bar/completed",
+                "profile/chart",
+                "profile/score/8",
+                "profile/sign-out",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
-            assert!(render("profile-pending", size).find("profile/pending").is_some());
+            assert!(
+                render("profile-pending", size)
+                    .find("profile/pending")
+                    .is_some()
+            );
         }
         let mut s = State::fake();
         s.go(Page::List(Status::Watching));
@@ -2964,37 +3673,105 @@ mod tests {
     fn feeds_scenes_show_their_parts() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("feeds-settings-off", size);
-            assert!(rt.find("set/feeds").is_some() && rt.find("nav/feeds").is_none(), "off at {size:?}");
+            assert!(
+                rt.find("set/feeds").is_some() && rt.find("nav/feeds").is_none(),
+                "off at {size:?}"
+            );
             let rt = render("feeds", size);
-            for key in ["page/feeds", "feeds/table", "feeds/head", "feeds/sources", "nav/feeds", "feeds/download", "feeds/select-new"] {
+            for key in [
+                "page/feeds",
+                "feeds/table",
+                "feeds/head",
+                "feeds/sources",
+                "nav/feeds",
+                "feeds/download",
+                "feeds/select-new",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(render("feeds-empty", size).find("feeds/empty").is_some());
             let rt = render("feeds-search", size);
-            assert!(rt.find("feeds/search").is_some() && rt.find("feeds/search/loading").is_none(), "search at {size:?}");
-            assert!(render("feeds-settings-nyaa", size).find("set/feeds/note").is_some());
-            assert!(render("feeds-history", size).find("feeds/history/0").is_some());
+            assert!(
+                rt.find("feeds/search").is_some() && rt.find("feeds/search/loading").is_none(),
+                "search at {size:?}"
+            );
+            assert!(
+                render("feeds-settings-nyaa", size)
+                    .find("set/feeds/note")
+                    .is_some()
+            );
+            assert!(
+                render("feeds-history", size)
+                    .find("feeds/history/0")
+                    .is_some()
+            );
             let rt = render("feeds-filter-presets", size);
-            assert!(rt.find("set/feeds/preset/0").is_some() && rt.find("set/feeds/preset/9").is_some());
+            assert!(
+                rt.find("set/feeds/preset/0").is_some() && rt.find("set/feeds/preset/9").is_some()
+            );
             let rt = render("feeds-filter-edit", size);
-            assert!(rt.find("set/feeds/editor/cond/0/elements").is_some() && rt.find("set/feeds/editor/save").is_some());
-            assert!(render("feeds-open", size).find("feeds/act/download/fake-1").is_some() || render("feeds-open", size).find("page/feeds").is_some());
+            assert!(
+                rt.find("set/feeds/editor/cond/0/elements").is_some()
+                    && rt.find("set/feeds/editor/save").is_some()
+            );
+            assert!(
+                render("feeds-open", size)
+                    .find("feeds/act/download/fake-1")
+                    .is_some()
+                    || render("feeds-open", size).find("page/feeds").is_some()
+            );
         }
         let mut s = State::fake();
         crate::feeds::fake(&mut s);
         // Taiga's default filters: the Watching items selected, the not-in-list ones discarded.
-        let watching: Vec<u32> = s.entries.iter().filter(|e| e.status == Status::Watching).map(|e| e.id).collect();
-        assert!(s.feeds.entries.iter().any(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected));
-        assert!(s.feeds.entries.iter().filter(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected).all(|e| e.anime_id.is_some_and(|id| watching.contains(&id)) || e.anime_id.is_some()));
-        let e = s.feeds.entries.iter().find(|e| crate::feeds::is_new(e)).unwrap().clone();
+        let watching: Vec<u32> = s
+            .entries
+            .iter()
+            .filter(|e| e.status == Status::Watching)
+            .map(|e| e.id)
+            .collect();
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .any(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected)
+        );
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .filter(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected)
+                .all(
+                    |e| e.anime_id.is_some_and(|id| watching.contains(&id)) || e.anime_id.is_some()
+                )
+        );
+        let e = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| crate::feeds::is_new(e))
+            .unwrap()
+            .clone();
         let id = e.anime_id.unwrap();
         assert!(s.feeds_badge(id).is_some());
-        assert!(render("feeds-settings", (1280.0, 800.0)).find("set/feeds/list").is_some());
+        assert!(
+            render("feeds-settings", (1280.0, 800.0))
+                .find("set/feeds/list")
+                .is_some()
+        );
         // Check box, Discard marked, Select all new.
         let k = e.item.key();
         s.feeds_mark(vec![k.clone()], kotora_core::feeds::taiga::ItemState::Blank);
         s.feeds_toggle(&k);
-        assert_eq!(s.feeds.entries.iter().find(|x| x.item.key() == k).unwrap().state, kotora_core::feeds::taiga::ItemState::Selected);
+        assert_eq!(
+            s.feeds
+                .entries
+                .iter()
+                .find(|x| x.item.key() == k)
+                .unwrap()
+                .state,
+            kotora_core::feeds::taiga::ItemState::Selected
+        );
         s.feeds_discard_marked();
         assert!(s.feeds_checked().is_empty());
         s.feeds.manual.clear();
@@ -3008,13 +3785,30 @@ mod tests {
         let eps = e.release.episodes.unwrap();
         s.feeds_download(vec![k.clone()]);
         assert!(s.feeds.archive.as_ref().unwrap().contains(&e.item.title));
-        assert!(s.feeds.entries.iter().find(|x| x.item.key() == k).unwrap().state.is_discarded());
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .find(|x| x.item.key() == k)
+                .unwrap()
+                .state
+                .is_discarded()
+        );
         assert!(s.feeds.marks.got.contains_key(&(id, eps.0, eps.1)));
         // Per-anime: prefer a group, then discard the anime.
         s.feeds_prefer_group(id, "Tsuki");
-        assert_eq!(kotora_core::feeds::taiga::fansub_groups(&s.feeds.filters, id), vec!["Tsuki".to_string()]);
+        assert_eq!(
+            kotora_core::feeds::taiga::fansub_groups(&s.feeds.filters, id),
+            vec!["Tsuki".to_string()]
+        );
         s.feeds_discard_anime(id);
-        assert!(s.feeds.entries.iter().filter(|x| x.anime_id == Some(id)).all(|x| x.state.is_discarded()));
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .filter(|x| x.anime_id == Some(id))
+                .all(|x| x.state.is_discarded())
+        );
         // The editor: a preset, a condition, saved.
         let n = s.feeds.filters.len();
         s.feeds_filter_new();
@@ -3031,14 +3825,40 @@ mod tests {
     fn stats_page_shows_its_parts() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("stats", size);
-            for key in ["page/stats", "stats/tile/units", "stats/tile/time", "stats/tile/streak", "stats/calendar", "stats/since", "stats/cal-total", "stats/when", "stats/lately", "stats/list", "stats/tags", "stats/genres", "stats/makers", "stats/airing", "sb-nav"] {
+            for key in [
+                "page/stats",
+                "stats/tile/units",
+                "stats/tile/time",
+                "stats/tile/streak",
+                "stats/calendar",
+                "stats/since",
+                "stats/cal-total",
+                "stats/when",
+                "stats/lately",
+                "stats/list",
+                "stats/tags",
+                "stats/genres",
+                "stats/makers",
+                "stats/airing",
+                "sb-nav",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             let rt = render("stats-empty", size);
-            assert!(rt.find("stats/empty").is_some() && rt.find("stats/lately-empty").is_some(), "empty at {size:?}");
+            assert!(
+                rt.find("stats/empty").is_some() && rt.find("stats/lately-empty").is_some(),
+                "empty at {size:?}"
+            );
             let rt = render("stats-manga", size);
-            assert!(rt.find("stats/tile/volumes").is_some() && rt.find("stats/airing").is_none(), "manga at {size:?}");
-            assert!(render("stats-loading", size).find("stats/loading").is_some());
+            assert!(
+                rt.find("stats/tile/volumes").is_some() && rt.find("stats/airing").is_none(),
+                "manga at {size:?}"
+            );
+            assert!(
+                render("stats-loading", size)
+                    .find("stats/loading")
+                    .is_some()
+            );
         }
     }
 
@@ -3048,14 +3868,28 @@ mod tests {
     fn grid_views_show_cards() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("list-grid-covers", size);
-            for key in ["views", "view/list", "view/grid", "view/large", "grid", "card/0", "plus"] {
+            for key in [
+                "views",
+                "view/list",
+                "view/grid",
+                "view/large",
+                "grid",
+                "card/0",
+                "plus",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
-            assert!(rt.find("thead").is_none() && rt.find("rows").is_none(), "no table at {size:?}");
+            assert!(
+                rt.find("thead").is_none() && rt.find("rows").is_none(),
+                "no table at {size:?}"
+            );
             let rt = render("list-large-covers", size);
             assert!(rt.find("grid").is_some() && rt.find("card/0").is_some());
         }
-        assert!(render("list", (1280.0, 800.0)).find("views").is_some(), "the switch on the table too");
+        assert!(
+            render("list", (1280.0, 800.0)).find("views").is_some(),
+            "the switch on the table too"
+        );
         // 320 entries: only the rows near the screen are built.
         let rt = render("list-many-grid", (1280.0, 800.0));
         assert!(rt.find("card/1000").is_some() && rt.find("card/1319").is_none());
@@ -3065,18 +3899,35 @@ mod tests {
     fn home_shows_its_shelves() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("home-covers", size);
-            for key in ["page/home", "nav/home", "home/continue", "home/airing", "home/plan", "home/continue/all", "cont/0", "sc/0"] {
+            for key in [
+                "page/home",
+                "nav/home",
+                "home/continue",
+                "home/airing",
+                "home/plan",
+                "home/continue/all",
+                "cont/0",
+                "sc/0",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
         // Airing this week: the episode on the poster, the day and time under the title.
         let rt = render("home-covers", (1280.0, 800.0));
-        let texts: Vec<String> = rt.elements().into_iter().filter(|e| e.path.contains("home/airing/scroll/")).filter_map(|e| e.text).collect();
+        let texts: Vec<String> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.path.contains("home/airing/scroll/"))
+            .filter_map(|e| e.text)
+            .collect();
         for want in ["Ep 6", "Today 14:00", "Tomorrow 15:00", "Sun 13:00"] {
             assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
         }
         let rt = render("home-library", (1280.0, 800.0));
-        assert!(rt.find("play").is_some(), "Play when the next file is there");
+        assert!(
+            rt.find("play").is_some(),
+            "Play when the next file is there"
+        );
         let rt = render("home-quiet", (1280.0, 800.0));
         assert!(rt.find("home/airing/scroll").is_none() && rt.find("home/plan/scroll").is_none());
     }
@@ -3091,13 +3942,29 @@ mod tests {
                 let els = rt.elements();
                 for shelf in ["continue", "reading", "airing", "plan"] {
                     let scroll = format!("home/{shelf}/scroll");
-                    let Some(area) = els.iter().find(|e| e.key.as_deref() == Some(scroll.as_str())) else { continue };
+                    let Some(area) = els
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some(scroll.as_str()))
+                    else {
+                        continue;
+                    };
                     let bottom = area.rect[1] + area.rect[3];
-                    let inside: Vec<_> = els.iter().filter(|e| e.path.contains(&format!("{scroll}/")) && e.rect[3] > 0.0).collect();
-                    assert!(inside.iter().any(|e| e.text.is_some()), "{scene} {shelf}: texts");
+                    let inside: Vec<_> = els
+                        .iter()
+                        .filter(|e| e.path.contains(&format!("{scroll}/")) && e.rect[3] > 0.0)
+                        .collect();
+                    assert!(
+                        inside.iter().any(|e| e.text.is_some()),
+                        "{scene} {shelf}: texts"
+                    );
                     for e in inside {
                         let b = e.rect[1] + e.rect[3];
-                        assert!(b <= bottom + 0.01, "{scene} {size:?} {shelf}: {} ({:?}) ends at {b}, the shelf at {bottom}", e.path, e.text);
+                        assert!(
+                            b <= bottom + 0.01,
+                            "{scene} {size:?} {shelf}: {} ({:?}) ends at {b}, the shelf at {bottom}",
+                            e.path,
+                            e.text
+                        );
                     }
                 }
             }
@@ -3109,10 +3976,22 @@ mod tests {
     #[test]
     fn heroes_and_banners() {
         let rt = render("now-playing-covers", (1280.0, 800.0));
-        assert!(rt.find("np-card").is_some() && rt.find("backdrop").is_some() && rt.find("np-recog").is_some());
+        assert!(
+            rt.find("np-card").is_some()
+                && rt.find("backdrop").is_some()
+                && rt.find("np-recog").is_some()
+        );
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("details-on-list", size);
-            for key in ["det-banner", "det-title", "det-cover", "det-stats", "det-mine", "det/back", "det/open-mal"] {
+            for key in [
+                "det-banner",
+                "det-title",
+                "det-cover",
+                "det-stats",
+                "det-mine",
+                "det/back",
+                "det/open-mal",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(render("now-playing-page", size).find("np-mini").is_some());
@@ -3122,57 +4001,141 @@ mod tests {
     #[test]
     fn list_shows_rows_and_states_show_theirs() {
         let rt = render("list", (1280.0, 800.0));
-        assert!(rt.find("rows").is_some() && rt.find("thead").is_some() && rt.find("chips").is_some());
-        assert!(rt.find("0").is_some(), "the first row (media id 0) is built");
+        assert!(
+            rt.find("rows").is_some() && rt.find("thead").is_some() && rt.find("chips").is_some()
+        );
+        assert!(
+            rt.find("0").is_some(),
+            "the first row (media id 0) is built"
+        );
         assert!(rt.find("np-mini").is_some());
         let rt = render("list-dropped", (1280.0, 800.0));
         assert!(rt.find("empty").is_some() && rt.find("rows").is_none());
         let rt = render("loading", (1280.0, 800.0));
-        assert!(rt.find("loading").is_some() && rt.find("skel/3").is_some() && rt.find("rows").is_none());
+        assert!(
+            rt.find("loading").is_some()
+                && rt.find("skel/3").is_some()
+                && rt.find("rows").is_none()
+        );
     }
 
     #[test]
     fn sign_in_screens_show_their_parts() {
         let rt = render("no-client-id", (1280.0, 800.0));
-        assert!(rt.find("page/setup").is_some() && rt.find("setup/indicator").is_some() && rt.find("setup/next").is_some());
-        assert!(rt.find("setup/back").is_none() && rt.find("setup/close").is_none(), "first run: step 1, no way around it");
-        assert!(rt.find("setup/cid/input").is_none() && rt.find("setup/open-api").is_none(), "no Client ID to make or paste");
-        assert!(render("setup-sign-in", (1280.0, 800.0)).find("setup/sign-in").is_some());
+        assert!(
+            rt.find("page/setup").is_some()
+                && rt.find("setup/indicator").is_some()
+                && rt.find("setup/next").is_some()
+        );
+        assert!(
+            rt.find("setup/back").is_none() && rt.find("setup/close").is_none(),
+            "first run: step 1, no way around it"
+        );
+        assert!(
+            rt.find("setup/cid/input").is_none() && rt.find("setup/open-api").is_none(),
+            "no Client ID to make or paste"
+        );
+        assert!(
+            render("setup-sign-in", (1280.0, 800.0))
+                .find("setup/sign-in")
+                .is_some()
+        );
         let rt = render("setup-signing-in-no-browser", (960.0, 600.0));
-        assert!(rt.find("setup/waiting").is_some() && rt.find("setup/link").is_some() && rt.find("setup/copy-link").is_some() && rt.find("setup/cancel").is_some());
+        assert!(
+            rt.find("setup/waiting").is_some()
+                && rt.find("setup/link").is_some()
+                && rt.find("setup/copy-link").is_some()
+                && rt.find("setup/cancel").is_some()
+        );
         for name in ["setup-sign-in-denied", "setup-sign-in-timeout"] {
             let rt = render(name, (1280.0, 800.0));
-            assert!(rt.find("setup/sign-in-error").is_some() && rt.find("setup/sign-in").is_some(), "{name}");
+            assert!(
+                rt.find("setup/sign-in-error").is_some() && rt.find("setup/sign-in").is_some(),
+                "{name}"
+            );
         }
-        assert!(render("setup-signed-in", (1280.0, 800.0)).find("setup/signed-in").is_some());
+        assert!(
+            render("setup-signed-in", (1280.0, 800.0))
+                .find("setup/signed-in")
+                .is_some()
+        );
         let rt = render("setup-done", (1280.0, 800.0));
-        assert!(rt.find("setup/loaded").is_some() && rt.find("setup/to-players").is_some() && rt.find("setup/close").is_none());
-        assert!(render("setup-again", (1280.0, 800.0)).find("setup/close").is_some());
+        assert!(
+            rt.find("setup/loaded").is_some()
+                && rt.find("setup/to-players").is_some()
+                && rt.find("setup/close").is_none()
+        );
+        assert!(
+            render("setup-again", (1280.0, 800.0))
+                .find("setup/close")
+                .is_some()
+        );
         let rt = render("client-id-saved", (1280.0, 800.0));
         assert!(rt.find("cid-saved").is_some() && rt.find("page/setup").is_none());
         let rt = render("settings-account", (1280.0, 800.0));
-        assert!(rt.find("set/cid-masked").is_some() && rt.find("set/cid-change").is_some() && rt.find("set/cid/input").is_none());
+        assert!(
+            rt.find("set/cid-masked").is_some()
+                && rt.find("set/cid-change").is_some()
+                && rt.find("set/cid/input").is_none()
+        );
         assert!(rt.find("set/setup-again").is_some());
         let rt = render("settings-client-id-change", (1280.0, 800.0));
-        assert!(rt.find("set/cid/input").is_some() && rt.find("set/cid/error").is_some() && rt.find("set/cid-cancel").is_some());
+        assert!(
+            rt.find("set/cid/input").is_some()
+                && rt.find("set/cid/error").is_some()
+                && rt.find("set/cid-cancel").is_some()
+        );
         let rt = render("settings-no-client-id", (1280.0, 800.0));
-        assert!(rt.find("set/cid-change").is_some() && rt.find("set/cid-built-in").is_some() && rt.find("set/cid-built-in-use").is_none());
-        assert!(render("settings-account", (1280.0, 800.0)).find("set/cid-built-in-use").is_some(), "an own ID has a way back");
+        assert!(
+            rt.find("set/cid-change").is_some()
+                && rt.find("set/cid-built-in").is_some()
+                && rt.find("set/cid-built-in-use").is_none()
+        );
+        assert!(
+            render("settings-account", (1280.0, 800.0))
+                .find("set/cid-built-in-use")
+                .is_some(),
+            "an own ID has a way back"
+        );
         let rt = render("no-client-id", (1280.0, 800.0));
         assert!(rt.find("rows").is_none() && rt.find("account").is_none());
         let rt = render("signed-out", (1280.0, 800.0));
-        assert!(rt.find("welcome").is_some() && rt.find("sign-in").is_some() && rt.find("page/setup").is_none());
-        assert!(render("signing-in", (1280.0, 800.0)).find("cancel").is_some());
-        assert!(render("sign-in-failed", (1280.0, 800.0)).find("welcome").is_some());
+        assert!(
+            rt.find("welcome").is_some()
+                && rt.find("sign-in").is_some()
+                && rt.find("page/setup").is_none()
+        );
+        assert!(
+            render("signing-in", (1280.0, 800.0))
+                .find("cancel")
+                .is_some()
+        );
+        assert!(
+            render("sign-in-failed", (1280.0, 800.0))
+                .find("welcome")
+                .is_some()
+        );
     }
 
     #[test]
     fn alerts_show_over_the_saved_list() {
         let rt = render("list-sign-in-again", (1280.0, 800.0));
-        assert!(rt.find("alert/expired").is_some() && rt.find("alert/sign-in").is_some() && rt.find("rows").is_some());
+        assert!(
+            rt.find("alert/expired").is_some()
+                && rt.find("alert/sign-in").is_some()
+                && rt.find("rows").is_some()
+        );
         let rt = render("list-offline", (1280.0, 800.0));
-        assert!(rt.find("alert/error").is_some() && rt.find("alert/retry").is_some() && rt.find("rows").is_some());
-        assert!(render("list", (1280.0, 800.0)).find("alert/error").is_none());
+        assert!(
+            rt.find("alert/error").is_some()
+                && rt.find("alert/retry").is_some()
+                && rt.find("rows").is_some()
+        );
+        assert!(
+            render("list", (1280.0, 800.0))
+                .find("alert/error")
+                .is_none()
+        );
     }
 
     #[test]
@@ -3180,14 +4143,38 @@ mod tests {
         // A query searches the whole list: nothing there says so in the line to the service,
         // whose results show under it.
         let rt = render("list-search-none", (1280.0, 800.0));
-        assert!(rt.find("sr/find").is_some() && rt.find("sr/online-head").is_some() && rt.find("sr/list-none").is_none());
-        assert!(render("list-search", (1280.0, 800.0)).find("rows").is_some());
+        assert!(
+            rt.find("sr/find").is_some()
+                && rt.find("sr/online-head").is_some()
+                && rt.find("sr/list-none").is_none()
+        );
+        assert!(
+            render("list-search", (1280.0, 800.0))
+                .find("rows")
+                .is_some()
+        );
         let rt = render("list-filter-online", (1280.0, 800.0));
-        assert!(rt.find("hit/9101").is_some() && rt.find("hit/0").is_none(), "results, not the ones on the list");
+        assert!(
+            rt.find("hit/9101").is_some() && rt.find("hit/0").is_none(),
+            "results, not the ones on the list"
+        );
         assert!(rt.find("add").is_some());
-        assert!(render("list-filter-online", (960.0, 600.0)).find("add").is_some(), "fits a small window");
-        assert!(render("list-filter-online-searching", (1280.0, 800.0)).find("sr/note").is_some());
-        assert!(render("list-filter-online-short", (1280.0, 800.0)).find("sr/note").is_some());
+        assert!(
+            render("list-filter-online", (960.0, 600.0))
+                .find("add")
+                .is_some(),
+            "fits a small window"
+        );
+        assert!(
+            render("list-filter-online-searching", (1280.0, 800.0))
+                .find("sr/note")
+                .is_some()
+        );
+        assert!(
+            render("list-filter-online-short", (1280.0, 800.0))
+                .find("sr/note")
+                .is_some()
+        );
     }
 
     /// Airing: both views, the filters and the states find their parts, wide and narrow.
@@ -3195,31 +4182,88 @@ mod tests {
     fn airing_shows_its_parts() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("airing-week", size);
-            for key in ["nav/airing", "page/airing", "airing/views", "airing/filters", "day/0", "airing/today", "airing/estimated", "airing/week"] {
+            for key in [
+                "nav/airing",
+                "page/airing",
+                "airing/views",
+                "airing/filters",
+                "day/0",
+                "airing/today",
+                "airing/estimated",
+                "airing/week",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             let rt = render("airing-season", size);
-            for key in ["airing/grid", "card/0", "airing/add/9301", "airing/plan/9301"] {
+            for key in [
+                "airing/grid",
+                "card/0",
+                "airing/add/9301",
+                "airing/plan/9301",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
-            assert!(rt.find("airing/add/0").is_none(), "on the list: its status, no add");
+            assert!(
+                rt.find("airing/add/0").is_none(),
+                "on the list: its status, no add"
+            );
         }
-        assert!(render("airing-loading", (1280.0, 800.0)).find("airing/loading").is_some());
-        assert!(render("airing-empty", (1280.0, 800.0)).find("airing/empty").is_some());
+        assert!(
+            render("airing-loading", (1280.0, 800.0))
+                .find("airing/loading")
+                .is_some()
+        );
+        assert!(
+            render("airing-empty", (1280.0, 800.0))
+                .find("airing/empty")
+                .is_some()
+        );
         let rt = render("airing-error", (1280.0, 800.0));
-        assert!(rt.find("airing/error").is_some() && rt.find("airing/retry").is_some() && rt.find("airing/empty").is_some());
+        assert!(
+            rt.find("airing/error").is_some()
+                && rt.find("airing/retry").is_some()
+                && rt.find("airing/empty").is_some()
+        );
         let rt = render("airing-error-saved", (1280.0, 800.0));
-        assert!(rt.find("airing/error").is_some() && rt.find("airing/week").is_some(), "the saved season stays under the error");
-        assert!(render("airing-signed-out", (1280.0, 800.0)).find("welcome").is_some());
+        assert!(
+            rt.find("airing/error").is_some() && rt.find("airing/week").is_some(),
+            "the saved season stays under the error"
+        );
+        assert!(
+            render("airing-signed-out", (1280.0, 800.0))
+                .find("welcome")
+                .is_some()
+        );
         // The picker is on every state of the page: arrows, title.
-        for name in ["airing-week", "airing-season", "airing-prev-season", "airing-next-season", "airing-season-loading", "airing-season-offline", "airing-empty", "airing-error"] {
+        for name in [
+            "airing-week",
+            "airing-season",
+            "airing-prev-season",
+            "airing-next-season",
+            "airing-season-loading",
+            "airing-season-offline",
+            "airing-empty",
+            "airing-error",
+        ] {
             let rt = render(name, (1280.0, 800.0));
-            for key in ["airing/picker", "airing/prev", "airing/season", "airing/next"] {
+            for key in [
+                "airing/picker",
+                "airing/prev",
+                "airing/season",
+                "airing/next",
+            ] {
                 assert!(rt.find(key).is_some(), "{name}: {key}");
             }
-            assert!(rt.find("season-menu").is_none(), "{name}: closed by default");
+            assert!(
+                rt.find("season-menu").is_none(),
+                "{name}: closed by default"
+            );
         }
-        assert!(render("airing-details", (1280.0, 800.0)).find("det-title").is_some());
+        assert!(
+            render("airing-details", (1280.0, 800.0))
+                .find("det-title")
+                .is_some()
+        );
     }
 
     /// Settings → Appearance: System follows the desktop live, Light and Dark ignore it.
@@ -3233,7 +4277,15 @@ mod tests {
         render("settings-theme-dark", (1280.0, 800.0));
         assert!(!crate::theme::is_light(), "Dark");
         // System (the default): the desktop turns light, then dark again, while running.
-        let mut rt = Runtime::new(State::fake(), crate::ui::view, (1280.0, 800.0), Env { system_dark: false, scale: 1.0 });
+        let mut rt = Runtime::new(
+            State::fake(),
+            crate::ui::view,
+            (1280.0, 800.0),
+            Env {
+                system_dark: false,
+                scale: 1.0,
+            },
+        );
         rt.frame(1.0 / 60.0);
         assert!(crate::theme::is_light(), "a light desktop");
         rt.set_system_dark(true);
@@ -3251,32 +4303,81 @@ mod tests {
     fn alt_digits_go_to_the_list_pages_even_from_a_field() {
         use kotora_core::Status;
         let rt = render("settings-keys-alt", (1280.0, 800.0));
-        let primary = format!("set/page-keys/{}", kotora_core::config::PageKeys::Primary.key());
+        let primary = format!(
+            "set/page-keys/{}",
+            kotora_core::config::PageKeys::Primary.key()
+        );
         for key in ["set/row/page-keys", primary.as_str(), "set/page-keys/alt"] {
             assert!(rt.find(key).is_some(), "{key}");
         }
         let mut s = State::fake();
         s.prefs.page_keys = kotora_core::config::PageKeys::Alt;
         s.go(Page::List(Status::Watching));
-        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        let mut rt = Runtime::new(
+            s,
+            crate::ui::view,
+            (1280.0, 800.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         rt.on_key = Some(crate::ui::on_key);
         rt.frame(1.0 / 60.0);
         click(&mut rt, "search-input");
         assert_eq!(focused(&rt), ["search-input"]);
-        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods::default() });
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("2".into()),
+            mods: rune::Mods::default(),
+        });
         rt.frame(1.0 / 60.0);
         assert_eq!(rt.state.query.text, "2", "a plain digit types");
         assert_eq!(rt.state.page, Page::List(Status::Watching));
-        let ctrl = if cfg!(target_os = "macos") { rune::Mods { cmd: true, logo: true, ..Default::default() } } else { rune::Mods { cmd: true, ctrl: true, ..Default::default() } };
-        rt.key(rune::KeyEvent { key: rune::Key::Command('3'), mods: ctrl });
+        let ctrl = if cfg!(target_os = "macos") {
+            rune::Mods {
+                cmd: true,
+                logo: true,
+                ..Default::default()
+            }
+        } else {
+            rune::Mods {
+                cmd: true,
+                ctrl: true,
+                ..Default::default()
+            }
+        };
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Command('3'),
+            mods: ctrl,
+        });
         rt.frame(1.0 / 60.0);
-        assert_eq!(rt.state.page, Page::List(Status::Watching), "Ctrl 3 is not the page key now");
-        rt.key(rune::KeyEvent { key: rune::Key::Text("2".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        assert_eq!(
+            rt.state.page,
+            Page::List(Status::Watching),
+            "Ctrl 3 is not the page key now"
+        );
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("2".into()),
+            mods: rune::Mods {
+                alt: true,
+                ..Default::default()
+            },
+        });
         rt.frame(1.0 / 60.0);
-        assert_eq!(rt.state.page, Page::List(Status::PlanToWatch), "Alt 2 from the field");
+        assert_eq!(
+            rt.state.page,
+            Page::List(Status::PlanToWatch),
+            "Alt 2 from the field"
+        );
         assert_eq!(rt.state.query.text, "2", "Alt 2 typed nothing");
         // Nothing focused: Alt 5 through on_key.
-        rt.key(rune::KeyEvent { key: rune::Key::Text("5".into()), mods: rune::Mods { alt: true, ..Default::default() } });
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text("5".into()),
+            mods: rune::Mods {
+                alt: true,
+                ..Default::default()
+            },
+        });
         rt.frame(1.0 / 60.0);
         assert_eq!(rt.state.page, Page::List(Status::Dropped));
     }
@@ -3285,20 +4386,43 @@ mod tests {
     #[test]
     fn titles_follow_the_setting() {
         let rt = render("settings-titles-japanese", (1280.0, 800.0));
-        assert!(rt.find("set/row/titles").is_some() && rt.find("set/titles/japanese").is_some() && rt.find("set/titles/romaji").is_some());
+        assert!(
+            rt.find("set/row/titles").is_some()
+                && rt.find("set/titles/japanese").is_some()
+                && rt.find("set/titles/romaji").is_some()
+        );
         let mut s = State::fake();
-        let title = |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().title.clone();
+        let title =
+            |s: &State, id: u32| s.entries.iter().find(|e| e.id == id).unwrap().title.clone();
         s.set_titles(TitleLang::English);
         assert_eq!(title(&s, 0), "The Lanterns on Kirigaoka Hill");
-        assert_eq!(title(&s, 2), "Mikan Street Detectives", "no English title: romaji");
-        assert_eq!(s.ctl_queue().iter().find(|q| q.title.contains("Hill")).map(|q| q.state.as_str()), Some("Waiting"), "the queue and kot follow");
+        assert_eq!(
+            title(&s, 2),
+            "Mikan Street Detectives",
+            "no English title: romaji"
+        );
+        assert_eq!(
+            s.ctl_queue()
+                .iter()
+                .find(|q| q.title.contains("Hill"))
+                .map(|q| q.state.as_str()),
+            Some("Waiting"),
+            "the queue and kot follow"
+        );
         s.set_titles(TitleLang::Japanese);
         assert_eq!(title(&s, 0), "霧ヶ丘のランタン");
-        assert_eq!(s.find("lanterns of kirigaoka").map(|i| s.entries[i].id), Ok(0), "kot still finds it by its other titles");
+        assert_eq!(
+            s.find("lanterns of kirigaoka").map(|i| s.entries[i].id),
+            Ok(0),
+            "kot still finds it by its other titles"
+        );
         s.set_sort(Sort::Title);
         s.set_titles(TitleLang::Romaji);
         assert_eq!(title(&s, 0), "Lanterns of Kirigaoka");
-        assert_eq!(s.entries[s.rows[0]].title, "Clockwork Bakery Wars", "the title sort follows the shown titles");
+        assert_eq!(
+            s.entries[s.rows[0]].title, "Clockwork Bakery Wars",
+            "the title sort follows the shown titles"
+        );
     }
 
     /// Settings → Account and About, wide (section list) and narrow (tabs).
@@ -3306,12 +4430,25 @@ mod tests {
     fn settings_has_accounts_and_about() {
         for size in [(1360.0, 860.0), (960.0, 600.0)] {
             let rt = render("settings-account", size);
-            for key in ["set/page/account", "acct/mal", "acct/anilist", "token-note", "sign-out", "set/cid"] {
+            for key in [
+                "set/page/account",
+                "acct/mal",
+                "acct/anilist",
+                "token-note",
+                "sign-out",
+                "set/cid",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(rt.find("about-card").is_none(), "one section at a time");
             let rt = render("settings-about", size);
-            for key in ["about-card", "about-copyright", "set/licences", "link/source", "link/site"] {
+            for key in [
+                "about-card",
+                "about-copyright",
+                "set/licences",
+                "link/source",
+                "link/site",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
@@ -3322,113 +4459,258 @@ mod tests {
     #[test]
     fn the_editor_opens_under_its_row() {
         let rt = render("list-editor", (1280.0, 800.0));
-        for key in ["editor", "ed/status/completed", "ed/progress", "ed/plus", "ed/score/none", "ed/score/10", "ed/save", "ed/cancel"] {
+        for key in [
+            "editor",
+            "ed/status/completed",
+            "ed/progress",
+            "ed/plus",
+            "ed/score/none",
+            "ed/score/10",
+            "ed/save",
+            "ed/cancel",
+        ] {
             assert!(rt.find(key).is_some(), "{key}");
         }
         assert!(render("list", (1280.0, 800.0)).find("editor").is_none());
         // Narrow window: the editor still fits.
-        assert!(render("list-editor", (960.0, 600.0)).find("ed/save").is_some());
+        assert!(
+            render("list-editor", (960.0, 600.0))
+                .find("ed/save")
+                .is_some()
+        );
     }
 
     #[test]
     fn the_queue_page_shows_each_kind_of_change() {
         let rt = render("queue-page", (1280.0, 800.0));
-        for key in ["page/queue", "conflict/1", "conflict/1/keep", "conflict/1/take", "qh/waiting", "qh/failed", "qh/sent", "q/2", "q/4/edit", "q/4/discard", "q/5", "queue/sync-now"] {
+        for key in [
+            "page/queue",
+            "conflict/1",
+            "conflict/1/keep",
+            "conflict/1/take",
+            "qh/waiting",
+            "qh/failed",
+            "qh/sent",
+            "q/2",
+            "q/4/edit",
+            "q/4/discard",
+            "q/5",
+            "queue/sync-now",
+        ] {
             assert!(rt.find(key).is_some(), "{key}");
         }
         assert!(rt.find("queue/offline").is_none() && rt.find("queue/expired").is_none());
-        assert!(render("queue-empty", (1280.0, 800.0)).find("queue-empty").is_some());
-        assert!(render("queue-offline", (1280.0, 800.0)).find("queue/try-now").is_some());
+        assert!(
+            render("queue-empty", (1280.0, 800.0))
+                .find("queue-empty")
+                .is_some()
+        );
+        assert!(
+            render("queue-offline", (1280.0, 800.0))
+                .find("queue/try-now")
+                .is_some()
+        );
         let rt = render("queue-sign-in-again", (1280.0, 800.0));
-        assert!(rt.find("queue/expired").is_some() && rt.find("queue/sign-in").is_some() && rt.find("conflict/1").is_some());
-        assert!(render("queue-conflict-removed", (1280.0, 800.0)).find("conflict/1/take").is_some());
+        assert!(
+            rt.find("queue/expired").is_some()
+                && rt.find("queue/sign-in").is_some()
+                && rt.find("conflict/1").is_some()
+        );
+        assert!(
+            render("queue-conflict-removed", (1280.0, 800.0))
+                .find("conflict/1/take")
+                .is_some()
+        );
     }
 
     #[test]
     fn now_playing_shows_its_parts() {
         let rt = render("now-playing-page", (1280.0, 800.0));
-        for key in ["page/now", "np-card", "np-bar", "np-file", "np-match", "np/update", "np/wrong", "np-players", "player/mpv", "np-mini"] {
+        for key in [
+            "page/now",
+            "np-card",
+            "np-bar",
+            "np-file",
+            "np-match",
+            "np/update",
+            "np/wrong",
+            "np-players",
+            "player/mpv",
+            "np-mini",
+        ] {
             assert!(rt.find(key).is_some(), "{key}");
         }
-        assert!(rt.find("banner").is_none(), "no banner before the threshold");
-        for name in ["now-playing-offer", "now-playing-offer-page", "now-playing-unsure-offer"] {
+        assert!(
+            rt.find("banner").is_none(),
+            "no banner before the threshold"
+        );
+        for name in [
+            "now-playing-offer",
+            "now-playing-offer-page",
+            "now-playing-unsure-offer",
+        ] {
             let rt = render(name, (1280.0, 800.0));
             for key in ["banner", "banner/update", "banner/not-now", "banner/wrong"] {
                 assert!(rt.find(key).is_some(), "{name}: {key}");
             }
         }
         // The banner fits a narrow window too.
-        assert!(render("now-playing-offer", (960.0, 600.0)).find("banner/update").is_some());
+        assert!(
+            render("now-playing-offer", (960.0, 600.0))
+                .find("banner/update")
+                .is_some()
+        );
         let rt = render("now-playing-recorded", (1280.0, 800.0));
         assert!(rt.find("banner/undo").is_some() && rt.find("banner/update").is_none());
-        assert!(render("now-playing-unsure", (1280.0, 800.0)).find("np/yes").is_some());
+        assert!(
+            render("now-playing-unsure", (1280.0, 800.0))
+                .find("np/yes")
+                .is_some()
+        );
         let rt = render("now-playing-picking", (1280.0, 800.0));
-        assert!(rt.find("np-picker").is_some() && rt.find("pick/0").is_some() && rt.find("pick/none").is_some());
-        assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-not-on-list").is_some());
+        assert!(
+            rt.find("np-picker").is_some()
+                && rt.find("pick/0").is_some()
+                && rt.find("pick/none").is_some()
+        );
+        assert!(
+            render("now-playing-not-on-list", (1280.0, 800.0))
+                .find("np-not-on-list")
+                .is_some()
+        );
         // Asked first: skips an episode, or not aired yet. The note shows; nothing was recorded.
         for name in ["now-playing-offer-skip", "now-playing-offer-not-aired"] {
             let rt = render(name, (1280.0, 800.0));
-            assert!(rt.find("banner/update").is_some() && rt.find("banner/note").is_some() && rt.find("banner/undo").is_none(), "{name}");
+            assert!(
+                rt.find("banner/update").is_some()
+                    && rt.find("banner/note").is_some()
+                    && rt.find("banner/undo").is_none(),
+                "{name}"
+            );
         }
         let rt = render("now-playing-not-on-list-added", (1280.0, 800.0));
         assert!(rt.find("banner/undo").is_some() && rt.find("np-not-on-list").is_none());
         for name in ["list-plus-one-not-aired", "list-editor-not-aired"] {
             let rt = render(name, (1280.0, 800.0));
-            assert!(rt.find("ask/anyway").is_some() && rt.find("ask/cancel").is_some(), "{name}");
+            assert!(
+                rt.find("ask/anyway").is_some() && rt.find("ask/cancel").is_some(),
+                "{name}"
+            );
         }
         let rt = render("now-playing-unknown", (1280.0, 800.0));
         assert!(rt.find("np/update").is_none() && rt.find("np-card").is_some());
         // No match: no tick, no "Offer at", and the picker button says "Pick anime…".
         let rt = render("now-playing-unmatched", (1280.0, 800.0));
-        assert!(rt.find("np-bar").is_some() && rt.find("np-tick").is_none() && rt.find("np-offer-at").is_none());
+        assert!(
+            rt.find("np-bar").is_some()
+                && rt.find("np-tick").is_none()
+                && rt.find("np-offer-at").is_none()
+        );
         assert!(rt.find("np/wrong").is_some());
         // With a match both stay.
         let rt = render("now-playing-page", (1280.0, 800.0));
-        assert!(rt.find("np-tick").is_some() && rt.find("np-offer-at").is_some() && rt.find("np/wrong").is_some());
+        assert!(
+            rt.find("np-tick").is_some()
+                && rt.find("np-offer-at").is_some()
+                && rt.find("np/wrong").is_some()
+        );
         let rt = render("now-playing-empty", (1280.0, 800.0));
-        assert!(rt.find("np-empty").is_some() && rt.find("np-mini").is_none() && rt.find("np-players").is_some());
+        assert!(
+            rt.find("np-empty").is_some()
+                && rt.find("np-mini").is_none()
+                && rt.find("np-players").is_some()
+        );
     }
 
     #[test]
     fn settings_has_updates_and_players() {
         for size in [(1360.0, 860.0), (960.0, 600.0)] {
             let rt = render("settings-detection", size);
-            for key in ["set/page/detection", "set/auto", "set/threshold", "set/keep-higher", "set/switch/mpv", "set/process-scan", "set/process-minutes/plus"] {
+            for key in [
+                "set/page/detection",
+                "set/auto",
+                "set/threshold",
+                "set/keep-higher",
+                "set/switch/mpv",
+                "set/process-scan",
+                "set/process-minutes/plus",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
         }
         let rt = render("settings-auto-on", (1360.0, 860.0));
         assert!(rt.find("set/auto").is_some() && rt.state.prefs.auto);
-        assert!(render("settings-players-off", (1360.0, 860.0)).find("set/switch/vlc").is_some());
+        assert!(
+            render("settings-players-off", (1360.0, 860.0))
+                .find("set/switch/vlc")
+                .is_some()
+        );
     }
 
     #[test]
     fn the_update_banner_fits_each_install() {
-        let has = |rt: &Runtime<State>, keys: &[&str]| keys.iter().map(|k| rt.find(k).is_some()).collect::<Vec<_>>();
-        let keys = ["update-notice", "update-notes", "update-download", "update-skip", "update-dismiss"];
+        let has = |rt: &Runtime<State>, keys: &[&str]| {
+            keys.iter()
+                .map(|k| rt.find(k).is_some())
+                .collect::<Vec<_>>()
+        };
+        let keys = [
+            "update-notice",
+            "update-notes",
+            "update-download",
+            "update-skip",
+            "update-dismiss",
+        ];
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("update-available", size);
             assert_eq!(has(&rt, &keys), [true; 5], "{size:?}");
-            assert_eq!(has(&render("update-available-windows", size), &keys), [true; 5], "Windows: the installer behind Download");
+            assert_eq!(
+                has(&render("update-available-windows", size), &keys),
+                [true; 5],
+                "Windows: the installer behind Download"
+            );
             // Package and install.sh copies: no Download, but say how.
-            for name in ["update-available-aur", "update-available-homebrew", "update-available-install-sh"] {
+            for name in [
+                "update-available-aur",
+                "update-available-homebrew",
+                "update-available-install-sh",
+            ] {
                 let rt = render(name, size);
                 assert_eq!(has(&rt, &keys), [true, true, false, true, true], "{name}");
             }
             // Below minimum_supported: no Skip and no ✕.
-            assert_eq!(has(&render("update-required", size), &keys), [true, true, true, false, false]);
-            assert_eq!(has(&render("update-required-aur", size), &keys), [true, true, false, false, false]);
+            assert_eq!(
+                has(&render("update-required", size), &keys),
+                [true, true, true, false, false]
+            );
+            assert_eq!(
+                has(&render("update-required-aur", size), &keys),
+                [true, true, false, false, false]
+            );
             let rt = render("update-with-offer", size);
             assert!(rt.find("banner").is_some() && rt.find("update-notice").is_some());
         }
-        assert!(render("list-watching", (1280.0, 800.0)).find("update-notice").is_none(), "nothing without a check");
+        assert!(
+            render("list-watching", (1280.0, 800.0))
+                .find("update-notice")
+                .is_none(),
+            "nothing without a check"
+        );
     }
 
     #[test]
     fn settings_has_the_update_switch() {
-        for scene in ["settings-page", "settings-general", "settings-updates", "settings-updates-off"] {
+        for scene in [
+            "settings-page",
+            "settings-general",
+            "settings-updates",
+            "settings-updates-off",
+        ] {
             let rt = render(scene, (1360.0, 860.0));
-            assert!(rt.find("set/check-updates").is_some() && rt.find("set/check-now").is_some(), "{scene}");
+            assert!(
+                rt.find("set/check-updates").is_some() && rt.find("set/check-now").is_some(),
+                "{scene}"
+            );
         }
     }
 
@@ -3437,20 +4719,39 @@ mod tests {
         let rt = render("now-playing-not-on-list-japanese", (1280.0, 800.0));
         assert!(rt.find("np-not-on-list").is_some() && rt.find("np-relation").is_some());
         let mut s = State::fake();
-        (SCENES.iter().find(|(n, _)| *n == "now-playing-not-on-list-japanese").unwrap().1)(&mut s);
+        (SCENES
+            .iter()
+            .find(|(n, _)| *n == "now-playing-not-on-list-japanese")
+            .unwrap()
+            .1)(&mut s);
         let n = s.now.as_ref().unwrap();
-        assert_eq!(s.not_on_list_title(n).as_deref(), Some("ベルベット果樹園年代記 第2期 後半"));
+        assert_eq!(
+            s.not_on_list_title(n).as_deref(),
+            Some("ベルベット果樹園年代記 第2期 後半")
+        );
         assert_eq!(
             s.relation_text(n).as_deref(),
-            Some("episode 15 of Velvet Orchard Chronicle 2nd Season is episode 2 of ベルベット果樹園年代記 第2期 後半 (anime-relations)")
+            Some(
+                "episode 15 of Velvet Orchard Chronicle 2nd Season is episode 2 of ベルベット果樹園年代記 第2期 後半 (anime-relations)"
+            )
         );
-        assert_eq!(s.ctl_now().unwrap().title, "ベルベット果樹園年代記 第2期 後半", "kot now too");
+        assert_eq!(
+            s.ctl_now().unwrap().title,
+            "ベルベット果樹園年代記 第2期 後半",
+            "kot now too"
+        );
         s.set_titles(TitleLang::English);
         let n = s.now.as_ref().unwrap();
-        assert_eq!(s.not_on_list_title(n).as_deref(), Some("Velvet Orchard Chronicle Season 2 Part 2"));
+        assert_eq!(
+            s.not_on_list_title(n).as_deref(),
+            Some("Velvet Orchard Chronicle Season 2 Part 2")
+        );
         s.set_titles(TitleLang::Romaji);
         let n = s.now.as_ref().unwrap();
-        assert_eq!(s.not_on_list_title(n).as_deref(), Some("Velvet Orchard Chronicle 2nd Season Part 2"));
+        assert_eq!(
+            s.not_on_list_title(n).as_deref(),
+            Some("Velvet Orchard Chronicle 2nd Season Part 2")
+        );
     }
 
     #[test]
@@ -3458,21 +4759,45 @@ mod tests {
         for scene in ["settings-page", "settings-startup-on"] {
             let rt = render(scene, (1360.0, 860.0));
             assert!(rt.find("set/page/general").is_some(), "{scene}");
-            assert!(rt.find("set/login").is_some() && rt.find("set/background").is_some(), "{scene}");
+            assert!(
+                rt.find("set/login").is_some() && rt.find("set/background").is_some(),
+                "{scene}"
+            );
         }
         // Narrow: one column, still there.
-        assert!(render("settings-startup-on", (960.0, 700.0)).find("set/login").is_some());
+        assert!(
+            render("settings-startup-on", (960.0, 700.0))
+                .find("set/login")
+                .is_some()
+        );
     }
 
     #[test]
     fn settings_has_the_on_startup_choices() {
         use kotora_core::config::{OpenOn, StartMode};
         let mut rt = render("settings-general", (1360.0, 860.0));
-        for k in ["set/row/open-on", "set/open-on/home", "set/open-on/last", "set/row/start-mode", "set/start-mode/last", "set/start-mode/anime", "set/start-mode/manga"] {
+        for k in [
+            "set/row/open-on",
+            "set/open-on/home",
+            "set/open-on/last",
+            "set/row/start-mode",
+            "set/start-mode/last",
+            "set/start-mode/anime",
+            "set/start-mode/manga",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
-        assert_eq!((rt.state.prefs.open_on, rt.state.prefs.start_mode), (OpenOn::Home, StartMode::Last), "today's behaviour");
-        for (k, check) in [("set/open-on/last", 0), ("set/start-mode/manga", 1), ("set/start-mode/anime", 2), ("set/open-on/home", 3)] {
+        assert_eq!(
+            (rt.state.prefs.open_on, rt.state.prefs.start_mode),
+            (OpenOn::Home, StartMode::Last),
+            "today's behaviour"
+        );
+        for (k, check) in [
+            ("set/open-on/last", 0),
+            ("set/start-mode/manga", 1),
+            ("set/start-mode/anime", 2),
+            ("set/open-on/home", 3),
+        ] {
             let (x, y) = rt.find(k).unwrap();
             rt.pointer_down(x, y);
             rt.pointer_up(x, y);
@@ -3496,7 +4821,14 @@ mod tests {
     fn settings_has_the_discord_switches_off_by_default() {
         let mut rt = render("settings-general", (1360.0, 860.0));
         assert!(!rt.state.prefs.discord.enabled, "off by default");
-        for k in ["set/row/discord", "set/row/discord-cover", "set/row/discord-buttons", "set/row/discord-hide-paused", "set/row/discord-hide-title", "set/row/discord-status"] {
+        for k in [
+            "set/row/discord",
+            "set/row/discord-cover",
+            "set/row/discord-buttons",
+            "set/row/discord-hide-paused",
+            "set/row/discord-hide-title",
+            "set/row/discord-status",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         // The options are inert while the main switch is off.
@@ -3517,13 +4849,24 @@ mod tests {
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.frame(1.0 / 60.0);
-        assert!(rt.state.prefs.discord.hide_title, "an option works once it is on");
-        assert_eq!(rt.state.prefs.discord.status(), kotora_core::config::StatusIn::Title, "the default");
+        assert!(
+            rt.state.prefs.discord.hide_title,
+            "an option works once it is on"
+        );
+        assert_eq!(
+            rt.state.prefs.discord.status(),
+            kotora_core::config::StatusIn::Title,
+            "the default"
+        );
         let (x, y) = rt.find("set/discord-status/episode").unwrap();
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.frame(1.0 / 60.0);
-        assert_eq!(rt.state.prefs.discord.status(), kotora_core::config::StatusIn::Episode, "Show in status changes once it is on");
+        assert_eq!(
+            rt.state.prefs.discord.status(),
+            kotora_core::config::StatusIn::Episode,
+            "Show in status changes once it is on"
+        );
         let rt = render("settings-discord-on", (960.0, 700.0));
         assert!(rt.state.prefs.discord.hide_paused && rt.find("set/discord").is_some());
     }
@@ -3544,55 +4887,175 @@ mod tests {
     #[test]
     fn search_shows_the_list_then_myanimelist() {
         let rt = render("search-online", (1280.0, 800.0));
-        for key in ["page/search", "nav/search", "sr/list-head", "0", "sr/online-head", "hit/9101", "hit/9104", "add", "menu"] {
+        for key in [
+            "page/search",
+            "nav/search",
+            "sr/list-head",
+            "0",
+            "sr/online-head",
+            "hit/9101",
+            "hit/9104",
+            "add",
+            "menu",
+        ] {
             assert!(rt.find(key).is_some(), "{key}");
         }
-        assert!(rt.find("hit/0").is_none(), "an anime on the list shows once, above");
+        assert!(
+            rt.find("hit/0").is_none(),
+            "an anime on the list shows once, above"
+        );
         assert!(rt.find("chips").is_none());
-        assert!(render("search-online-menu", (1280.0, 800.0)).find("add-menu").is_some());
+        assert!(
+            render("search-online-menu", (1280.0, 800.0))
+                .find("add-menu")
+                .is_some()
+        );
         let rt = render("search-online-added", (1280.0, 800.0));
         assert!(rt.find("9101").is_some() && rt.find("hit/9101").is_none());
-        for name in ["search-online-pending", "search-online-short", "search-online-offline", "search-online-error", "search-online-none"] {
+        for name in [
+            "search-online-pending",
+            "search-online-short",
+            "search-online-offline",
+            "search-online-error",
+            "search-online-none",
+        ] {
             let rt = render(name, (1280.0, 800.0));
-            assert!(rt.find("sr/note").is_some() && rt.find("hit/9101").is_none(), "{name}");
+            assert!(
+                rt.find("sr/note").is_some() && rt.find("hit/9101").is_none(),
+                "{name}"
+            );
         }
-        assert!(render("search-online-error", (1280.0, 800.0)).find("sr/retry").is_some());
-        assert!(render("search-online-none", (1280.0, 800.0)).find("sr/list-none").is_some());
-        assert!(render("search-online", (960.0, 600.0)).find("add").is_some(), "the add button fits a small window");
-        assert!(render("search-mal-id", (960.0, 600.0)).find("sr/id/41590").is_some());
-        assert!(render("now-playing-relation-not-on-list", (1280.0, 800.0)).find("np-relation").is_some());
+        assert!(
+            render("search-online-error", (1280.0, 800.0))
+                .find("sr/retry")
+                .is_some()
+        );
+        assert!(
+            render("search-online-none", (1280.0, 800.0))
+                .find("sr/list-none")
+                .is_some()
+        );
+        assert!(
+            render("search-online", (960.0, 600.0))
+                .find("add")
+                .is_some(),
+            "the add button fits a small window"
+        );
+        assert!(
+            render("search-mal-id", (960.0, 600.0))
+                .find("sr/id/41590")
+                .is_some()
+        );
+        assert!(
+            render("now-playing-relation-not-on-list", (1280.0, 800.0))
+                .find("np-relation")
+                .is_some()
+        );
         let rt = render("now-playing-rewatch-offer", (960.0, 600.0));
-        assert!(rt.find("banner/rewatch").is_some() && rt.find("banner/rewatch-ask").is_some() && rt.find("banner/update").is_none());
-        assert!(render("now-playing-rewatch-started", (1280.0, 800.0)).find("banner/undo").is_some());
+        assert!(
+            rt.find("banner/rewatch").is_some()
+                && rt.find("banner/rewatch-ask").is_some()
+                && rt.find("banner/update").is_none()
+        );
+        assert!(
+            render("now-playing-rewatch-started", (1280.0, 800.0))
+                .find("banner/undo")
+                .is_some()
+        );
         let rt = render("now-reading-reread-offer", (960.0, 600.0));
-        assert!(rt.find("rd-banner/reread").is_some() && rt.find("rd-banner/reread-ask").is_some() && rt.find("rd-banner/mark").is_none());
-        assert!(render("now-reading-reread-offer-page", (1280.0, 800.0)).find("rd/reread").is_some());
-        assert!(render("now-reading-reread-started", (1280.0, 800.0)).find("rd-banner/undo").is_some());
-        assert!(render("list-rewatching", (1280.0, 800.0)).find("top/extra").is_some());
-        assert!(render("list-editor-rewatch", (1280.0, 800.0)).find("ed/rewatch").is_some());
+        assert!(
+            rt.find("rd-banner/reread").is_some()
+                && rt.find("rd-banner/reread-ask").is_some()
+                && rt.find("rd-banner/mark").is_none()
+        );
+        assert!(
+            render("now-reading-reread-offer-page", (1280.0, 800.0))
+                .find("rd/reread")
+                .is_some()
+        );
+        assert!(
+            render("now-reading-reread-started", (1280.0, 800.0))
+                .find("rd-banner/undo")
+                .is_some()
+        );
+        assert!(
+            render("list-rewatching", (1280.0, 800.0))
+                .find("top/extra")
+                .is_some()
+        );
+        assert!(
+            render("list-editor-rewatch", (1280.0, 800.0))
+                .find("ed/rewatch")
+                .is_some()
+        );
         let rt = render("details-rewatch", (1280.0, 800.0));
         assert!(rt.find("det/rewatch").is_some() && rt.find("det/rewatched").is_some());
-        assert!(render("details-rewatching", (1280.0, 800.0)).find("det/stop-rewatch").is_some());
-        assert!(render("now-playing-not-on-list", (1280.0, 800.0)).find("np-relation").is_none());
-        assert!(render("search-online", (1280.0, 800.0)).find("sr/id/").is_none());
+        assert!(
+            render("details-rewatching", (1280.0, 800.0))
+                .find("det/stop-rewatch")
+                .is_some()
+        );
+        assert!(
+            render("now-playing-not-on-list", (1280.0, 800.0))
+                .find("np-relation")
+                .is_none()
+        );
+        assert!(
+            render("search-online", (1280.0, 800.0))
+                .find("sr/id/")
+                .is_none()
+        );
     }
 
     #[test]
     fn details_show_the_anime_and_the_entry() {
         for size in [(1280.0, 800.0), (960.0, 600.0)] {
             let rt = render("details-on-list", size);
-            for key in ["page/details", "det/back", "det/open-mal", "det-title", "det-tags", "det-stats", "det/score", "det-facts", "det-synopsis", "det-mine", "det/progress", "det/edit"] {
+            for key in [
+                "page/details",
+                "det/back",
+                "det/open-mal",
+                "det-title",
+                "det-tags",
+                "det-stats",
+                "det/score",
+                "det-facts",
+                "det-synopsis",
+                "det-mine",
+                "det/progress",
+                "det/edit",
+            ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
             }
             assert!(rt.find("det/add").is_none());
         }
         let rt = render("details-editor", (1280.0, 800.0));
-        assert!(rt.find("editor").is_some() && rt.find("ed/save").is_some() && rt.find("det/edit").is_none());
+        assert!(
+            rt.find("editor").is_some()
+                && rt.find("ed/save").is_some()
+                && rt.find("det/edit").is_none()
+        );
         let rt = render("details-not-on-list", (1280.0, 800.0));
-        assert!(rt.find("det/add-watching").is_some() && rt.find("det/add/plan").is_some() && rt.find("det/progress").is_none());
-        assert!(render("details-added", (1280.0, 800.0)).find("det/progress").is_some());
-        assert!(render("details-loading", (1280.0, 800.0)).find("det-loading").is_some());
-        assert!(render("details-error", (1280.0, 800.0)).find("det/retry").is_some());
+        assert!(
+            rt.find("det/add-watching").is_some()
+                && rt.find("det/add/plan").is_some()
+                && rt.find("det/progress").is_none()
+        );
+        assert!(
+            render("details-added", (1280.0, 800.0))
+                .find("det/progress")
+                .is_some()
+        );
+        assert!(
+            render("details-loading", (1280.0, 800.0))
+                .find("det-loading")
+                .is_some()
+        );
+        assert!(
+            render("details-error", (1280.0, 800.0))
+                .find("det/retry")
+                .is_some()
+        );
         // The sidebar keeps the page Back goes to lit.
         let rt = render("details-on-list", (1280.0, 800.0));
         assert!(rt.find("nav/watching").is_some());
@@ -3601,14 +5064,40 @@ mod tests {
     #[test]
     fn the_precise_offer_and_its_answers() {
         let rt = render("precise-offer", (1280.0, 800.0));
-        assert!(rt.find("precise").is_some() && rt.find("precise/on").is_some() && rt.find("precise/no").is_some());
-        assert!(render("precise-offer", (960.0, 600.0)).find("precise/on").is_some());
-        assert!(render("precise-written", (1280.0, 800.0)).find("precise/written").is_some());
-        assert!(render("precise-already-set", (1280.0, 800.0)).find("precise/ok").is_some());
-        assert!(render("precise-failed", (1280.0, 800.0)).find("precise/error").is_some());
-        assert!(render("list", (1280.0, 800.0)).find("precise").is_none(), "mpv's socket answers: no offer");
+        assert!(
+            rt.find("precise").is_some()
+                && rt.find("precise/on").is_some()
+                && rt.find("precise/no").is_some()
+        );
+        assert!(
+            render("precise-offer", (960.0, 600.0))
+                .find("precise/on")
+                .is_some()
+        );
+        assert!(
+            render("precise-written", (1280.0, 800.0))
+                .find("precise/written")
+                .is_some()
+        );
+        assert!(
+            render("precise-already-set", (1280.0, 800.0))
+                .find("precise/ok")
+                .is_some()
+        );
+        assert!(
+            render("precise-failed", (1280.0, 800.0))
+                .find("precise/error")
+                .is_some()
+        );
+        assert!(
+            render("list", (1280.0, 800.0)).find("precise").is_none(),
+            "mpv's socket answers: no offer"
+        );
         let rt = render("settings-players-process", (1280.0, 800.0));
-        assert!(rt.find("set/precise-on").is_some() && rt.find("precise").is_none(), "answered: Settings only");
+        assert!(
+            rt.find("set/precise-on").is_some() && rt.find("precise").is_none(),
+            "answered: Settings only"
+        );
         let rt = render("now-playing-process", (1280.0, 800.0));
         assert!(rt.find("np-no-position").is_some() && rt.find("np-bar").is_none());
     }
@@ -3616,29 +5105,62 @@ mod tests {
     #[test]
     fn the_precise_prompt_on_now_playing() {
         let rt = render("precise-prompt", (1280.0, 800.0));
-        assert!(rt.find("precise-prompt/on").is_some() && rt.find("precise-prompt/not-now").is_some());
-        assert!(rt.find("precise/on").is_none(), "one offer at a time: the page's prompt");
-        assert!(render("precise-prompt", (960.0, 600.0)).find("precise-prompt/on").is_some());
+        assert!(
+            rt.find("precise-prompt/on").is_some() && rt.find("precise-prompt/not-now").is_some()
+        );
+        assert!(
+            rt.find("precise/on").is_none(),
+            "one offer at a time: the page's prompt"
+        );
+        assert!(
+            render("precise-prompt", (960.0, 600.0))
+                .find("precise-prompt/on")
+                .is_some()
+        );
         let rt = render("precise-prompt-with-offer", (1280.0, 800.0));
         assert!(rt.find("banner/update").is_some() && rt.find("precise-prompt/on").is_some());
         // Answered (or by IPC): no prompt.
-        assert!(render("now-playing-process", (1280.0, 800.0)).find("precise-prompt").is_none());
-        assert!(render("now-playing-page", (1280.0, 800.0)).find("precise-prompt").is_none());
+        assert!(
+            render("now-playing-process", (1280.0, 800.0))
+                .find("precise-prompt")
+                .is_none()
+        );
+        assert!(
+            render("now-playing-page", (1280.0, 800.0))
+                .find("precise-prompt")
+                .is_none()
+        );
         #[cfg(target_os = "macos")]
-        assert!(render("precise-prompt-iina", (1280.0, 800.0)).find("precise-prompt/on").is_some());
+        assert!(
+            render("precise-prompt-iina", (1280.0, 800.0))
+                .find("precise-prompt/on")
+                .is_some()
+        );
     }
 
     /// Settings: the section list when wide, tabs when narrow; the search's results and none.
     #[test]
     fn settings_sections_tabs_and_search() {
         let rt = render("settings-general", (1360.0, 900.0));
-        assert!(rt.find("set/sections").is_some() && rt.find("set/section/detection").is_some() && rt.find("set/search").is_some());
+        assert!(
+            rt.find("set/sections").is_some()
+                && rt.find("set/section/detection").is_some()
+                && rt.find("set/search").is_some()
+        );
         let rt = render("settings-general", (960.0, 600.0));
         assert!(rt.find("set/section/about").is_some(), "the tabs");
         for size in [(1360.0, 900.0), (960.0, 600.0)] {
             let rt = render("settings-search", size);
-            assert!(rt.find("set/results").is_some() && rt.find("set/row/start-at-login").is_some() && rt.find("set/result-head/general").is_some(), "{size:?}");
-            assert!(rt.find("set/page/general").is_none(), "the results take the section's place");
+            assert!(
+                rt.find("set/results").is_some()
+                    && rt.find("set/row/start-at-login").is_some()
+                    && rt.find("set/result-head/general").is_some(),
+                "{size:?}"
+            );
+            assert!(
+                rt.find("set/page/general").is_none(),
+                "the results take the section's place"
+            );
             let rt = render("settings-search-none", size);
             assert!(rt.find("set/no-results").is_some(), "{size:?}");
         }
@@ -3649,12 +5171,27 @@ mod tests {
     #[test]
     fn settings_has_the_notification_switches() {
         let rt = render("settings-notifications", (1280.0, 800.0));
-        for k in ["set/page/notifications", "set/notify-detected", "set/notify-offer", "set/notify-recorded", "set/notify-started", "set/notify-episode"] {
+        for k in [
+            "set/page/notifications",
+            "set/notify-detected",
+            "set/notify-offer",
+            "set/notify-recorded",
+            "set/notify-started",
+            "set/notify-episode",
+        ] {
             assert!(rt.find(k).is_some(), "{k}");
         }
         assert!(rt.find("set/notify-support").is_none());
-        assert!(render("settings-notifications-no-buttons", (1280.0, 800.0)).find("set/notify-support").is_some());
-        assert!(render("settings-notifications-denied", (960.0, 600.0)).find("set/notify-support").is_some());
+        assert!(
+            render("settings-notifications-no-buttons", (1280.0, 800.0))
+                .find("set/notify-support")
+                .is_some()
+        );
+        assert!(
+            render("settings-notifications-denied", (960.0, 600.0))
+                .find("set/notify-support")
+                .is_some()
+        );
     }
 
     /// A press on a row's title opens the details page; elsewhere on the row, the editor.
@@ -3670,7 +5207,10 @@ mod tests {
         rt.pointer_down(bx, by);
         rt.pointer_up(bx, by);
         rt.frame(1.0 / 60.0);
-        assert!(rt.find("page/details").is_none() && rt.find("rows").is_some(), "Back returns to the list");
+        assert!(
+            rt.find("page/details").is_none() && rt.find("rows").is_some(),
+            "Back returns to the list"
+        );
         // The progress column of the first row: the editor opens under it.
         let (_, ry) = rt.find("title-link").unwrap();
         rt.pointer_down(800.0, ry);
@@ -3800,7 +5340,15 @@ mod row_presses {
     fn rt(name: &str) -> Runtime<State> {
         let mut s = State::fake();
         (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
-        let mut rt = Runtime::new(s, crate::ui::view, (1280.0, 800.0), Env { system_dark: true, scale: 1.0 });
+        let mut rt = Runtime::new(
+            s,
+            crate::ui::view,
+            (1280.0, 800.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
@@ -3820,29 +5368,55 @@ mod row_presses {
     /// The middle of the title link of `title` (its label is "About TITLE").
     fn title_at(rt: &Runtime<State>, title: &str) -> (f32, f32) {
         let label = format!("About {title}");
-        let e = rt.elements().into_iter().find(|e| e.label.as_deref() == Some(label.as_str()) && !e.exiting).unwrap_or_else(|| panic!("{title}"));
+        let e = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.label.as_deref() == Some(label.as_str()) && !e.exiting)
+            .unwrap_or_else(|| panic!("{title}"));
         let [x, y, w, h] = e.rect;
         (x + w / 2.0, y + h / 2.0)
     }
 
     /// Row A by its title (editor), then row B by its title: the editor moves to B.
-    fn check(scene: &str, a: &str, b: &str, editor: fn(&State) -> Option<u32>, id: fn(&State, &str) -> u32) {
+    fn check(
+        scene: &str,
+        a: &str,
+        b: &str,
+        editor: fn(&State) -> Option<u32>,
+        id: fn(&State, &str) -> u32,
+    ) {
         let mut r = rt(scene);
         // Row A: the blank part of its title column opens the editor.
         let (_, ya) = title_at(&r, a);
         tap(&mut r, 600.0, ya);
-        assert_eq!(editor(&r.state), Some(id(&r.state, a)), "{scene}: the row's editor");
+        assert_eq!(
+            editor(&r.state),
+            Some(id(&r.state, a)),
+            "{scene}: the row's editor"
+        );
         assert_ne!(r.state.page, Page::Details);
         // Row B's title: the editor moves, no details page.
         let (xb, yb) = title_at(&r, b);
         tap(&mut r, xb, yb);
-        assert_ne!(r.state.page, Page::Details, "{scene}: no details page with an editor open");
-        assert_eq!(editor(&r.state), Some(id(&r.state, b)), "{scene}: the editor moved to B");
+        assert_ne!(
+            r.state.page,
+            Page::Details,
+            "{scene}: no details page with an editor open"
+        );
+        assert_eq!(
+            editor(&r.state),
+            Some(id(&r.state, b)),
+            "{scene}: the editor moved to B"
+        );
         // With no editor open, the title opens the details page as before.
         let mut r = rt(scene);
         let (xa, ya) = title_at(&r, a);
         tap(&mut r, xa, ya);
-        assert_eq!(r.state.page, Page::Details, "{scene}: the title opens the details page");
+        assert_eq!(
+            r.state.page,
+            Page::Details,
+            "{scene}: the title opens the details page"
+        );
     }
 
     /// The link hugs a short title and still stops at its column with a long one (truncated).
@@ -3851,23 +5425,60 @@ mod row_presses {
         let mut s = State::fake();
         s.entries[0].title = "An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill".into();
         s.refresh();
-        let mut rt = Runtime::new(s, crate::ui::view, (1000.0, 760.0), Env { system_dark: true, scale: 1.0 });
+        let mut rt = Runtime::new(
+            s,
+            crate::ui::view,
+            (1000.0, 760.0),
+            Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
         let els = rt.elements();
-        let link = |t: &str| els.iter().find(|e| e.label.as_deref() == Some(&format!("About {t}"))).map(|e| e.rect).unwrap();
-        let plus = els.iter().find(|e| e.key.as_deref() == Some("plus")).map(|e| e.rect).unwrap();
-        let long = link("An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill");
-        assert!(long[0] + long[2] < plus[0], "the long title stays in its column: {long:?}");
+        let link = |t: &str| {
+            els.iter()
+                .find(|e| e.label.as_deref() == Some(&format!("About {t}")))
+                .map(|e| e.rect)
+                .unwrap()
+        };
+        let plus = els
+            .iter()
+            .find(|e| e.key.as_deref() == Some("plus"))
+            .map(|e| e.rect)
+            .unwrap();
+        let long = link(
+            "An Extremely Long Light Novel Title That Never Ends: The Girl Who Lit the Lantern on the Hill",
+        );
+        assert!(
+            long[0] + long[2] < plus[0],
+            "the long title stays in its column: {long:?}"
+        );
         let short = link("Neon Ronin 2099");
-        assert!(short[2] < long[2] / 2.0, "a short title's link is about as wide as its text: {short:?}");
+        assert!(
+            short[2] < long[2] / 2.0,
+            "a short title's link is about as wide as its text: {short:?}"
+        );
     }
 
     #[test]
     fn a_title_pressed_with_an_editor_open_moves_the_editor() {
-        check("list", "Lanterns of Kirigaoka", "Starfall Delivery Service", |s| s.editor.map(|e| e.id), |s, t| s.entries.iter().find(|e| e.title == t).unwrap().id);
-        check("manga-list", "Inkwell Cartographers", "Salt & Gears", |s| s.manga.editor.map(|e| e.id), |s, t| s.manga.entries.iter().find(|e| e.title == t).unwrap().id);
+        check(
+            "list",
+            "Lanterns of Kirigaoka",
+            "Starfall Delivery Service",
+            |s| s.editor.map(|e| e.id),
+            |s, t| s.entries.iter().find(|e| e.title == t).unwrap().id,
+        );
+        check(
+            "manga-list",
+            "Inkwell Cartographers",
+            "Salt & Gears",
+            |s| s.manga.editor.map(|e| e.id),
+            |s, t| s.manga.entries.iter().find(|e| e.title == t).unwrap().id,
+        );
     }
 }
 
@@ -3880,7 +5491,15 @@ mod mirror_links {
     fn keys(name: &str, size: (f32, f32)) -> rune::Runtime<State> {
         let mut s = State::fake();
         (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
-        let mut rt = rune::Runtime::new(s, crate::ui::view, size, rune::Env { system_dark: true, scale: 1.0 });
+        let mut rt = rune::Runtime::new(
+            s,
+            crate::ui::view,
+            size,
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
@@ -3889,17 +5508,30 @@ mod mirror_links {
 
     #[test]
     fn both_links_with_the_mirror_one_without() {
-        for (name, size) in [("details-mirror", (1280.0, 800.0)), ("details-mirror-narrow", (1000.0, 760.0)), ("manga-details-mirror", (1280.0, 800.0))] {
+        for (name, size) in [
+            ("details-mirror", (1280.0, 800.0)),
+            ("details-mirror-narrow", (1000.0, 760.0)),
+            ("manga-details-mirror", (1280.0, 800.0)),
+        ] {
             let rt = keys(name, size);
-            assert!(rt.find("det/open-mal").is_some() && rt.find("det/open-other").is_some(), "{name}");
+            assert!(
+                rt.find("det/open-mal").is_some() && rt.find("det/open-other").is_some(),
+                "{name}"
+            );
         }
         for name in ["ctx-menu-mirror", "manga-ctx-mirror"] {
             let rt = keys(name, (1280.0, 800.0));
-            assert!(rt.find("ctx/mal").is_some() && rt.find("ctx/other").is_some(), "{name}");
+            assert!(
+                rt.find("ctx/mal").is_some() && rt.find("ctx/other").is_some(),
+                "{name}"
+            );
         }
         for name in ["details-on-list", "manga-details", "ctx-menu", "manga-ctx"] {
             let rt = keys(name, (1280.0, 800.0));
-            assert!(rt.find("det/open-other").is_none() && rt.find("ctx/other").is_none(), "{name}: one link without the mirror");
+            assert!(
+                rt.find("det/open-other").is_none() && rt.find("ctx/other").is_none(),
+                "{name}: one link without the mirror"
+            );
         }
     }
 }
@@ -3911,21 +5543,39 @@ mod settings_scroll {
     use super::*;
 
     fn rect(rt: &rune::Runtime<State>, key: &str) -> [f32; 4] {
-        rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).map(|e| e.rect).unwrap_or_else(|| panic!("{key}"))
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key))
+            .map(|e| e.rect)
+            .unwrap_or_else(|| panic!("{key}"))
     }
 
     fn reachable(setup: fn(&mut State), preview: &str, button: &str) {
         let (w, h) = (1360.0, 860.0);
         let mut s = State::fake();
         setup(&mut s);
-        let mut rt = rune::Runtime::new(s, crate::ui::view, (w, h), rune::Env { system_dark: true, scale: 1.0 });
+        let mut rt = rune::Runtime::new(
+            s,
+            crate::ui::view,
+            (w, h),
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
         let area = rect(&rt, "settings-scroll");
-        assert!(area[1] + area[3] <= h + 0.5, "{preview}: the scroll area fits the window: {area:?}");
+        assert!(
+            area[1] + area[3] <= h + 0.5,
+            "{preview}: the scroll area fits the window: {area:?}"
+        );
         let b = rect(&rt, button);
-        assert!(b[1] + b[3] > h, "{preview}: the case is real: the button starts below the window ({b:?})");
+        assert!(
+            b[1] + b[3] > h,
+            "{preview}: the case is real: the button starts below the window ({b:?})"
+        );
         // Scroll down with the wheel over the area until the button shows.
         for _ in 0..40 {
             rt.wheel(area[0] + 40.0, area[1] + 40.0, -120.0);
@@ -3935,9 +5585,15 @@ mod settings_scroll {
             rt.frame(1.0 / 60.0);
         }
         let b = rect(&rt, button);
-        assert!(b[1] >= area[1] - 0.5 && b[1] + b[3] <= h + 0.5, "{preview}: scrolled into reach: {b:?}");
+        assert!(
+            b[1] >= area[1] - 0.5 && b[1] + b[3] <= h + 0.5,
+            "{preview}: scrolled into reach: {b:?}"
+        );
         let p = rect(&rt, preview);
-        assert!(p[1] + p[3] <= h + 0.5, "{preview}: the whole card can be seen: {p:?}");
+        assert!(
+            p[1] + p[3] <= h + 0.5,
+            "{preview}: the whole card can be seen: {p:?}"
+        );
     }
 
     #[test]
@@ -3979,7 +5635,15 @@ mod manga_polish {
     fn rt(name: &str) -> rune::Runtime<State> {
         let mut s = State::fake();
         (SCENES.iter().find(|(n, _)| *n == name).unwrap().1)(&mut s);
-        let mut rt = rune::Runtime::new(s, crate::ui::view, (1280.0, 900.0), rune::Env { system_dark: true, scale: 1.0 });
+        let mut rt = rune::Runtime::new(
+            s,
+            crate::ui::view,
+            (1280.0, 900.0),
+            rune::Env {
+                system_dark: true,
+                scale: 1.0,
+            },
+        );
         for _ in 0..3 {
             rt.frame(1.0 / 60.0);
         }
@@ -3989,10 +5653,16 @@ mod manga_polish {
     #[test]
     fn home_search_and_grid_show_their_manga_parts() {
         let r = rt("home-manga");
-        assert!(r.find("home/reading").is_some() && r.find("read/2").is_some(), "Continue reading with Salt & Gears");
+        assert!(
+            r.find("home/reading").is_some() && r.find("read/2").is_some(),
+            "Continue reading with Salt & Gears"
+        );
         assert!(r.find("read/3").is_some(), "a reread shows");
         assert!(r.find("read/4").is_some(), "On hiatus still reads on");
-        assert!(rt("home").find("home/reading").is_none(), "Manga off: no manga on Home");
+        assert!(
+            rt("home").find("home/reading").is_none(),
+            "Manga off: no manga on Home"
+        );
         let r = rt("search-kind-manga");
         assert!(r.find("search/kind/manga").is_some() && r.find("hit/501").is_some());
         assert!(rt("manga-grid-selected").find("msel/2").is_some());
@@ -4029,7 +5699,10 @@ mod manga_polish {
         let r = rt("now-reading-empty");
         assert!(r.find("np-up-next").is_none());
         let r = rt("now-reading-dbz");
-        assert!(r.find("rd/ask").is_some() && r.find("rd/renumbered").is_some() && r.find("np-up-next").is_none());
+        assert!(
+            r.find("rd/ask").is_some()
+                && r.find("rd/renumbered").is_some()
+                && r.find("np-up-next").is_none()
+        );
     }
 }
-

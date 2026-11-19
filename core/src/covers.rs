@@ -23,7 +23,10 @@ pub fn dir() -> PathBuf {
 
 /// One HTTP client for the cover workers (connections are reused).
 pub fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(TIMEOUT)).build().into()
+    ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .build()
+        .into()
 }
 
 /// The file a cover URL is kept in: a stable FNV-1a hash of the URL.
@@ -55,7 +58,12 @@ pub fn fetch(agent: &ureq::Agent, dir: &Path, url: &str, online: bool) -> Result
         return Err("not an https URL".into());
     }
     let resp = agent.get(url).call().map_err(|e| e.to_string())?;
-    let bytes = resp.into_body().with_config().limit(MAX_BODY).read_to_vec().map_err(|e| e.to_string())?;
+    let bytes = resp
+        .into_body()
+        .with_config()
+        .limit(MAX_BODY)
+        .read_to_vec()
+        .map_err(|e| e.to_string())?;
     if bytes.is_empty() {
         return Err("empty body".into());
     }
@@ -71,7 +79,11 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     // Its own temp name per write: two workers may save the same cover at once.
     static SEQ: AtomicUsize = AtomicUsize::new(0);
-    let tmp = path.with_extension(format!("tmp{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+    let tmp = path.with_extension(format!(
+        "tmp{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let result = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
@@ -85,12 +97,20 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Deletes the oldest files until the folder fits `budget` bytes.
 pub fn prune(dir: &Path, budget: u64) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = rd
         .flatten()
         .filter_map(|e| {
             let m = e.metadata().ok()?;
-            m.is_file().then(|| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), e.path()))
+            m.is_file().then(|| {
+                (
+                    m.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    m.len(),
+                    e.path(),
+                )
+            })
         })
         .collect();
     let mut total: u64 = files.iter().map(|f| f.1).sum();
@@ -128,7 +148,10 @@ mod tests {
         assert!(fetch(&agent, &dir, url, false).is_err(), "offline miss");
         write_atomic(&path_for(&dir, url), b"jpeg bytes").unwrap();
         assert_eq!(fetch(&agent, &dir, url, false).unwrap(), b"jpeg bytes");
-        assert!(fetch(&agent, &dir, "http://cdn.example.invalid/x.jpg", true).is_err(), "https only");
+        assert!(
+            fetch(&agent, &dir, "http://cdn.example.invalid/x.jpg", true).is_err(),
+            "https only"
+        );
         clear(&dir);
         assert!(!dir.exists());
     }
@@ -136,8 +159,14 @@ mod tests {
     #[test]
     fn names_are_stable_and_distinct() {
         let d = Path::new("/c");
-        assert_eq!(path_for(d, "https://a/1.jpg"), path_for(d, "https://a/1.jpg"));
-        assert_ne!(path_for(d, "https://a/1.jpg"), path_for(d, "https://a/2.jpg"));
+        assert_eq!(
+            path_for(d, "https://a/1.jpg"),
+            path_for(d, "https://a/1.jpg")
+        );
+        assert_ne!(
+            path_for(d, "https://a/1.jpg"),
+            path_for(d, "https://a/2.jpg")
+        );
     }
 
     #[test]
@@ -147,7 +176,12 @@ mod tests {
             let p = dir.join(name);
             write_atomic(&p, &[0u8; 100]).unwrap();
             let t = std::time::UNIX_EPOCH + Duration::from_secs(1_000 + i as u64);
-            std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
         }
         prune(&dir, 200);
         assert!(!dir.join("old").exists() && dir.join("mid").exists() && dir.join("new").exists());

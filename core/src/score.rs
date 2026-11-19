@@ -76,7 +76,8 @@ impl rusqlite::ToSql for Score {
 impl rusqlite::types::FromSql for Score {
     fn column_result(v: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Score> {
         let n = v.as_i64()?;
-        Score::from_points(n.clamp(0, 100) as u32).ok_or(rusqlite::types::FromSqlError::OutOfRange(n))
+        Score::from_points(n.clamp(0, 100) as u32)
+            .ok_or(rusqlite::types::FromSqlError::OutOfRange(n))
     }
 }
 
@@ -137,7 +138,13 @@ impl Smiley {
 }
 
 impl ScoreFormat {
-    pub const ALL: [ScoreFormat; 5] = [ScoreFormat::Point100, ScoreFormat::Point10Decimal, ScoreFormat::Point10, ScoreFormat::Point5, ScoreFormat::Point3];
+    pub const ALL: [ScoreFormat; 5] = [
+        ScoreFormat::Point100,
+        ScoreFormat::Point10Decimal,
+        ScoreFormat::Point10,
+        ScoreFormat::Point5,
+        ScoreFormat::Point3,
+    ];
 
     /// AniList's name: `POINT_100`, `POINT_10_DECIMAL`, `POINT_10`, `POINT_5`, `POINT_3`.
     pub fn anilist_name(self) -> &'static str {
@@ -213,7 +220,9 @@ impl ScoreFormat {
         match self {
             ScoreFormat::Point100 | ScoreFormat::Point10 => v.to_string(),
             ScoreFormat::Point10Decimal => format!("{}.{}", v / 10, v % 10),
-            ScoreFormat::Point5 => "\u{2605}".repeat(v as usize) + &"\u{2606}".repeat(5 - v as usize),
+            ScoreFormat::Point5 => {
+                "\u{2605}".repeat(v as usize) + &"\u{2606}".repeat(5 - v as usize)
+            }
             ScoreFormat::Point3 => self.smiley(s).map_or("", Smiley::text).to_string(),
         }
     }
@@ -238,11 +247,12 @@ impl ScoreFormat {
             ScoreFormat::Point5 => 5,
             ScoreFormat::Point3 => 3,
         };
-        (1..=n).filter_map(|i| match self {
-            ScoreFormat::Point100 | ScoreFormat::Point10Decimal => Score::from_points(i * 10),
-            _ => self.score_of(i),
-        })
-        .collect()
+        (1..=n)
+            .filter_map(|i| match self {
+                ScoreFormat::Point100 | ScoreFormat::Point10Decimal => Score::from_points(i * 10),
+                _ => self.score_of(i),
+            })
+            .collect()
     }
 
     /// The editor's − / + step in points, for the formats finer than the choices: 1 point (100)
@@ -288,7 +298,10 @@ impl ScoreFormat {
                 }
                 Score::from_points((x * 10.0).round() as u32)
             }
-            ScoreFormat::Point5 if t.chars().all(|c| matches!(c, '*' | '\u{2605}' | '\u{2606}')) => {
+            ScoreFormat::Point5
+                if t.chars()
+                    .all(|c| matches!(c, '*' | '\u{2605}' | '\u{2606}')) =>
+            {
                 self.score_of(t.chars().filter(|c| *c != '\u{2606}').count() as u32)
             }
             ScoreFormat::Point3 if Smiley::ALL.iter().any(|s| s.text() == t) => {
@@ -336,14 +349,31 @@ mod tests {
         assert_eq!(Score::from_ten(8).map(Score::points), Some(80));
         assert_eq!(Score::from_ten(0), None);
         // MyAnimeList takes the nearest whole: the 73 → 7 case, half up.
-        assert_eq!((p(73).to_ten(), p(75).to_ten(), p(4).to_ten(), p(100).to_ten()), (7, 8, 1, 10));
+        assert_eq!(
+            (
+                p(73).to_ten(),
+                p(75).to_ten(),
+                p(4).to_ten(),
+                p(100).to_ten()
+            ),
+            (7, 8, 1, 10)
+        );
     }
 
     #[test]
     fn each_format_shows_a_73() {
         let s = p(73);
         let shown: Vec<String> = ScoreFormat::ALL.iter().map(|f| f.show(s)).collect();
-        assert_eq!(shown, ["73", "7.3", "7", "\u{2605}\u{2605}\u{2605}\u{2605}\u{2606}", ":)"]);
+        assert_eq!(
+            shown,
+            [
+                "73",
+                "7.3",
+                "7",
+                "\u{2605}\u{2605}\u{2605}\u{2605}\u{2606}",
+                ":)"
+            ]
+        );
         assert_eq!(ScoreFormat::Point10Decimal.show(p(80)), "8.0");
         assert_eq!(ScoreFormat::Point10Decimal.show(p(5)), "0.5");
         assert_eq!(ScoreFormat::Point5.words(p(20)), "1 star");
@@ -353,9 +383,15 @@ mod tests {
     #[test]
     fn smileys_and_stars_follow_anilist_bounds() {
         let f = ScoreFormat::Point3;
-        assert_eq!([1, 35, 36, 60, 61, 100].map(|n| f.value(p(n))), [1, 1, 2, 2, 3, 3]);
+        assert_eq!(
+            [1, 35, 36, 60, 61, 100].map(|n| f.value(p(n))),
+            [1, 1, 2, 2, 3, 3]
+        );
         let f = ScoreFormat::Point5;
-        assert_eq!([1, 29, 30, 50, 89, 90, 100].map(|n| f.value(p(n))), [1, 1, 2, 3, 4, 5, 5]);
+        assert_eq!(
+            [1, 29, 30, 50, 89, 90, 100].map(|n| f.value(p(n))),
+            [1, 1, 2, 3, 4, 5, 5]
+        );
     }
 
     #[test]
@@ -369,16 +405,30 @@ mod tests {
                 }
             }
         }
-        assert_eq!(ScoreFormat::Point3.choices().iter().map(|s| s.points()).collect::<Vec<_>>(), [35, 60, 85]);
+        assert_eq!(
+            ScoreFormat::Point3
+                .choices()
+                .iter()
+                .map(|s| s.points())
+                .collect::<Vec<_>>(),
+            [35, 60, 85]
+        );
     }
 
     #[test]
     fn picking_what_already_shows_keeps_the_precise_score() {
         let f = ScoreFormat::Point5;
-        assert_eq!(f.pick(Some(p(73)), f.score_of(4)), Some(p(73)), "4 stars again: still 73");
+        assert_eq!(
+            f.pick(Some(p(73)), f.score_of(4)),
+            Some(p(73)),
+            "4 stars again: still 73"
+        );
         assert_eq!(f.pick(Some(p(73)), f.score_of(5)), Some(p(100)));
         assert_eq!(f.pick(Some(p(73)), None), None);
-        assert_eq!(ScoreFormat::Point100.pick(Some(p(73)), Some(p(70))), Some(p(70)));
+        assert_eq!(
+            ScoreFormat::Point100.pick(Some(p(73)), Some(p(70))),
+            Some(p(70))
+        );
     }
 
     #[test]
@@ -398,7 +448,10 @@ mod tests {
         assert_eq!(ScoreFormat::Point10Decimal.parse("8"), Ok(Some(p(80))));
         assert_eq!(ScoreFormat::Point10.parse("7"), Ok(Some(p(70))));
         assert_eq!(ScoreFormat::Point5.parse("***"), Ok(Some(p(60))));
-        assert_eq!(ScoreFormat::Point5.parse("\u{2605}\u{2605}\u{2605}\u{2605}\u{2606}"), Ok(Some(p(80))));
+        assert_eq!(
+            ScoreFormat::Point5.parse("\u{2605}\u{2605}\u{2605}\u{2605}\u{2606}"),
+            Ok(Some(p(80)))
+        );
         assert_eq!(ScoreFormat::Point3.parse(":)"), Ok(Some(p(85))));
         assert_eq!(ScoreFormat::Point3.parse("2"), Ok(Some(p(60))));
         for f in ScoreFormat::ALL {
@@ -413,9 +466,15 @@ mod tests {
     #[test]
     fn serde_names_are_anilists() {
         for f in ScoreFormat::ALL {
-            assert_eq!(serde_json::to_string(&f).unwrap(), format!("\"{}\"", f.anilist_name()));
+            assert_eq!(
+                serde_json::to_string(&f).unwrap(),
+                format!("\"{}\"", f.anilist_name())
+            );
             assert_eq!(ScoreFormat::from_anilist(f.anilist_name()), Some(f));
         }
-        assert_eq!(serde_json::from_str::<Option<Score>>("73").unwrap(), Some(p(73)));
+        assert_eq!(
+            serde_json::from_str::<Option<Score>>("73").unwrap(),
+            Some(p(73))
+        );
     }
 }

@@ -37,12 +37,30 @@ pub struct Entry {
     pub action: fn(&mut State, &mut Tx),
 }
 
-const fn item(menu: Option<&'static str>, id: &'static str, title: &'static str, chord: Option<&'static str>, action: fn(&mut State, &mut Tx)) -> Entry {
-    Entry { menu, id, title, chord, action }
+const fn item(
+    menu: Option<&'static str>,
+    id: &'static str,
+    title: &'static str,
+    chord: Option<&'static str>,
+    action: fn(&mut State, &mut Tx),
+) -> Entry {
+    Entry {
+        menu,
+        id,
+        title,
+        chord,
+        action,
+    }
 }
 
 const fn sep(menu: Option<&'static str>) -> Entry {
-    Entry { menu, id: "", title: "-", chord: None, action: |_, _| {} }
+    Entry {
+        menu,
+        id: "",
+        title: "-",
+        chord: None,
+        action: |_, _| {},
+    }
 }
 
 const GO: Option<&str> = Some("Go");
@@ -51,34 +69,70 @@ const GO: Option<&str> = Some("Go");
 pub const ENTRIES: &[Entry] = &[
     item(None, "app.about", "About Kotora", None, |_, _| about()),
     sep(None),
-    item(None, "app.settings", "Settings\u{2026}", Some("mod+comma"), |s, tx| go(s, tx, Page::Settings)),
+    item(
+        None,
+        "app.settings",
+        "Settings\u{2026}",
+        Some("mod+comma"),
+        |s, tx| go(s, tx, Page::Settings),
+    ),
     sep(None),
-    item(GO, "go.search", "Search", Some("mod+k"), |s, tx| go(s, tx, Page::Search)),
+    item(GO, "go.search", "Search", Some("mod+k"), |s, tx| {
+        go(s, tx, Page::Search)
+    }),
     item(GO, "go.find", "Find in List", Some("mod+f"), find),
     sep(GO),
-    item(GO, "go.watching", "Watching", Some("mod+1"), |s, tx| go(s, tx, Page::List(Status::Watching))),
-    item(GO, "go.plan", "Plan to Watch", Some("mod+2"), |s, tx| go(s, tx, Page::List(Status::PlanToWatch))),
-    item(GO, "go.completed", "Completed", Some("mod+3"), |s, tx| go(s, tx, Page::List(Status::Completed))),
-    item(GO, "go.on_hold", "On Hold", Some("mod+4"), |s, tx| go(s, tx, Page::List(Status::OnHold))),
-    item(GO, "go.dropped", "Dropped", Some("mod+5"), |s, tx| go(s, tx, Page::List(Status::Dropped))),
+    item(GO, "go.watching", "Watching", Some("mod+1"), |s, tx| {
+        go(s, tx, Page::List(Status::Watching))
+    }),
+    item(GO, "go.plan", "Plan to Watch", Some("mod+2"), |s, tx| {
+        go(s, tx, Page::List(Status::PlanToWatch))
+    }),
+    item(GO, "go.completed", "Completed", Some("mod+3"), |s, tx| {
+        go(s, tx, Page::List(Status::Completed))
+    }),
+    item(GO, "go.on_hold", "On Hold", Some("mod+4"), |s, tx| {
+        go(s, tx, Page::List(Status::OnHold))
+    }),
+    item(GO, "go.dropped", "Dropped", Some("mod+5"), |s, tx| {
+        go(s, tx, Page::List(Status::Dropped))
+    }),
     sep(GO),
-    item(GO, "go.now_playing", "Now Playing", None, |s, tx| go(s, tx, Page::NowPlaying)),
-    item(GO, "go.airing", "Airing", None, |s, tx| go(s, tx, Page::Airing)),
-    item(GO, "go.stats", "Statistics", None, |s, tx| go(s, tx, Page::Stats)),
-    item(GO, "go.queue", "Sync Queue", None, |s, tx| go(s, tx, Page::Queue)),
+    item(GO, "go.now_playing", "Now Playing", None, |s, tx| {
+        go(s, tx, Page::NowPlaying)
+    }),
+    item(GO, "go.airing", "Airing", None, |s, tx| {
+        go(s, tx, Page::Airing)
+    }),
+    item(GO, "go.stats", "Statistics", None, |s, tx| {
+        go(s, tx, Page::Stats)
+    }),
+    item(GO, "go.queue", "Sync Queue", None, |s, tx| {
+        go(s, tx, Page::Queue)
+    }),
 ];
 
 /// The sidebar's way to a page, so a menu pick and a click do the same.
 fn go(s: &mut State, tx: &mut Tx, page: Page) {
     // ⌘1 to ⌘5 open the list pages of the sidebar's switch (Anime or Manga).
-    let page = if let Page::List(st) = page { s.list_page(st) } else { page };
+    let page = if let Page::List(st) = page {
+        s.list_page(st)
+    } else {
+        page
+    };
     crate::ui::go_to(s, page, tx);
 }
 
 /// ⌘F as `ui::on_key` has it: the list's filter box on a list page, else the search page. Picking
 /// the item does the same as the key.
 fn find(s: &mut State, tx: &mut Tx) {
-    let key = rune::KeyEvent { key: rune::Key::Command('f'), mods: rune::Mods { cmd: true, ..Default::default() } };
+    let key = rune::KeyEvent {
+        key: rune::Key::Command('f'),
+        mods: rune::Mods {
+            cmd: true,
+            ..Default::default()
+        },
+    };
     crate::ui::on_key(s, &key, tx);
 }
 
@@ -90,7 +144,11 @@ fn shortcut(chord: &str) -> Option<Shortcut> {
 /// "alt+1" to "alt+5" with Option.
 fn chord_for(e: &Entry, keys: PageKeys) -> Option<String> {
     let c = e.chord?;
-    match c.strip_prefix("mod+").and_then(|d| d.parse::<u8>().ok()).filter(|d| (1..=5).contains(d)) {
+    match c
+        .strip_prefix("mod+")
+        .and_then(|d| d.parse::<u8>().ok())
+        .filter(|d| (1..=5).contains(d))
+    {
         Some(d) => Some(keys.chord(char::from(b'0' + d))),
         None => Some(c.to_string()),
     }
@@ -101,7 +159,11 @@ fn items(keys: PageKeys) -> Vec<MenuItem<State>> {
     ENTRIES
         .iter()
         .map(|e| {
-            let mut m = if e.title == "-" { MenuItem::separator() } else { MenuItem::new(e.title, e.action).id(e.id).keys_first() };
+            let mut m = if e.title == "-" {
+                MenuItem::separator()
+            } else {
+                MenuItem::new(e.title, e.action).id(e.id).keys_first()
+            };
             if let Some(menu) = e.menu {
                 m = m.menu(menu);
             }
@@ -119,7 +181,9 @@ pub fn install(mut app: App<State>) -> App<State> {
     let keys = if rune::is_headless() {
         PageKeys::default()
     } else {
-        kotora_core::config::Config::load(&kotora_core::paths::config_file()).map(|c| c.keys.pages).unwrap_or_default()
+        kotora_core::config::Config::load(&kotora_core::paths::config_file())
+            .map(|c| c.keys.pages)
+            .unwrap_or_default()
     };
     for m in items(keys) {
         app = app.menu_item(m);
@@ -153,14 +217,28 @@ pub fn sync() {
 
 /// The standard About panel: the bundle's name and icon, the binary's version, the licence.
 fn about() {
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let app = NSApplication::sharedApplication(mtm);
-    let keys = [NSString::from_str("ApplicationName"), NSString::from_str("ApplicationVersion"), NSString::from_str("Version"), NSString::from_str("Copyright")];
+    let keys = [
+        NSString::from_str("ApplicationName"),
+        NSString::from_str("ApplicationVersion"),
+        NSString::from_str("Version"),
+        NSString::from_str("Copyright"),
+    ];
     let values = [
         NSString::from_str("Kotora"),
         NSString::from_str(env!("CARGO_PKG_VERSION")),
-        NSString::from_str(&format!("{}{}", kotora_ctl::BUILD, kotora_ctl::dev_suffix())),
-        NSString::from_str(&format!("{}\nA tribute to Taiga, the Windows anime tracker.\nFree software under the GNU GPL, version 3 or later.", crate::COPYRIGHT)),
+        NSString::from_str(&format!(
+            "{}{}",
+            kotora_ctl::BUILD,
+            kotora_ctl::dev_suffix()
+        )),
+        NSString::from_str(&format!(
+            "{}\nA tribute to Taiga, the Windows anime tracker.\nFree software under the GNU GPL, version 3 or later.",
+            crate::COPYRIGHT
+        )),
     ];
     let keys: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
     let values: Vec<&NSString> = values.iter().map(|v| &**v).collect();
@@ -173,14 +251,22 @@ fn about() {
 
 /// Tidies the app menu winit made; true once nothing is left to do. Cheap and idempotent.
 fn tidy() -> bool {
-    let Some(mtm) = MainThreadMarker::new() else { return true };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return true;
+    };
     let app = NSApplication::sharedApplication(mtm);
-    let Some(root) = app.mainMenu() else { return false };
-    let Some(menu) = root.itemAtIndex(0).and_then(|i| i.submenu()) else { return false };
+    let Some(root) = app.mainMenu() else {
+        return false;
+    };
+    let Some(menu) = root.itemAtIndex(0).and_then(|i| i.submenu()) else {
+        return false;
+    };
     let ours = sel!(runeMenuAction:);
     let mut i = 0;
     while i < menu.numberOfItems() {
-        let Some(item) = menu.itemAtIndex(i) else { break };
+        let Some(item) = menu.itemAtIndex(i) else {
+            break;
+        };
         let action = item.action();
         if action == Some(sel!(orderFrontStandardAboutPanel:)) && action != Some(ours) {
             // winit's About and the line under it.
@@ -201,15 +287,22 @@ fn tidy() -> bool {
             item.setTitle(&NSString::from_str(t));
         }
         // A line between Services and Hide, as every Mac app has.
-        if item.submenu().is_some() && item.title().to_string() == "Services" && menu.itemAtIndex(i + 1).is_some_and(|n| !n.isSeparatorItem()) {
+        if item.submenu().is_some()
+            && item.title().to_string() == "Services"
+            && menu
+                .itemAtIndex(i + 1)
+                .is_some_and(|n| !n.isSeparatorItem())
+        {
             menu.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), i + 1);
         }
         i += 1;
     }
     // The Window menu becomes AppKit's windows menu (it lists the window, Bring All to Front).
     if app.windowsMenu().is_none() {
-        let window: Option<objc2::rc::Retained<NSMenu>> =
-            (0..root.numberOfItems()).filter_map(|i| root.itemAtIndex(i)).find(|i| i.title().to_string() == "Window").and_then(|i| i.submenu());
+        let window: Option<objc2::rc::Retained<NSMenu>> = (0..root.numberOfItems())
+            .filter_map(|i| root.itemAtIndex(i))
+            .find(|i| i.title().to_string() == "Window")
+            .and_then(|i| i.submenu());
         match window {
             Some(m) => app.setWindowsMenu(Some(&m)),
             None => return false,
@@ -223,7 +316,11 @@ mod tests {
     use super::*;
 
     fn titles(menu: Option<&str>) -> Vec<&'static str> {
-        ENTRIES.iter().filter(|e| e.menu == menu).map(|e| e.title).collect()
+        ENTRIES
+            .iter()
+            .filter(|e| e.menu == menu)
+            .map(|e| e.title)
+            .collect()
     }
 
     #[test]
@@ -231,10 +328,28 @@ mod tests {
         assert_eq!(titles(None), ["About Kotora", "-", "Settings\u{2026}", "-"]);
         assert_eq!(
             titles(GO),
-            ["Search", "Find in List", "-", "Watching", "Plan to Watch", "Completed", "On Hold", "Dropped", "-", "Now Playing", "Airing", "Statistics", "Sync Queue"]
+            [
+                "Search",
+                "Find in List",
+                "-",
+                "Watching",
+                "Plan to Watch",
+                "Completed",
+                "On Hold",
+                "Dropped",
+                "-",
+                "Now Playing",
+                "Airing",
+                "Statistics",
+                "Sync Queue"
+            ]
         );
         // Ids are unique (Rune refuses the whole menu otherwise).
-        let mut ids: Vec<_> = ENTRIES.iter().filter(|e| e.title != "-").map(|e| e.id).collect();
+        let mut ids: Vec<_> = ENTRIES
+            .iter()
+            .filter(|e| e.title != "-")
+            .map(|e| e.id)
+            .collect();
         let n = ids.len();
         ids.sort();
         ids.dedup();
@@ -247,14 +362,46 @@ mod tests {
             assert!(shortcut(e.chord.unwrap()).is_some(), "{} parses", e.id);
         }
         let settings = ENTRIES.iter().find(|e| e.id == "app.settings").unwrap();
-        assert_eq!(shortcut(settings.chord.unwrap()).unwrap(), "cmd+comma".parse::<Shortcut>().unwrap());
+        assert_eq!(
+            shortcut(settings.chord.unwrap()).unwrap(),
+            "cmd+comma".parse::<Shortcut>().unwrap()
+        );
     }
 
     #[test]
     fn the_page_items_follow_the_chosen_keys() {
-        let chords = |keys| ENTRIES.iter().filter_map(|e| chord_for(e, keys)).collect::<Vec<_>>();
-        assert_eq!(chords(PageKeys::Primary), ["mod+comma", "mod+k", "mod+f", "mod+1", "mod+2", "mod+3", "mod+4", "mod+5"]);
-        assert_eq!(chords(PageKeys::Alt), ["mod+comma", "mod+k", "mod+f", "alt+1", "alt+2", "alt+3", "alt+4", "alt+5"]);
+        let chords = |keys| {
+            ENTRIES
+                .iter()
+                .filter_map(|e| chord_for(e, keys))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            chords(PageKeys::Primary),
+            [
+                "mod+comma",
+                "mod+k",
+                "mod+f",
+                "mod+1",
+                "mod+2",
+                "mod+3",
+                "mod+4",
+                "mod+5"
+            ]
+        );
+        assert_eq!(
+            chords(PageKeys::Alt),
+            [
+                "mod+comma",
+                "mod+k",
+                "mod+f",
+                "alt+1",
+                "alt+2",
+                "alt+3",
+                "alt+4",
+                "alt+5"
+            ]
+        );
         for c in chords(PageKeys::Alt) {
             assert!(shortcut(&c).is_some(), "{c} parses");
         }

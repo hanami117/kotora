@@ -27,7 +27,11 @@ pub mod yacreader;
 /// Pages are counted from 1, as YACReader does (`currentPage` is 1 for a book that was just
 /// opened).
 pub fn chapter_read(read_flag: bool, current_page: i64, num_pages: i64) -> bool {
-    if num_pages > 0 { current_page >= num_pages - 1 } else { read_flag }
+    if num_pages > 0 {
+        current_page >= num_pages - 1
+    } else {
+        read_flag
+    }
 }
 
 #[cfg(test)]
@@ -36,7 +40,10 @@ mod tests {
 
     #[test]
     fn the_page_beats_a_stale_flag() {
-        assert!(!chapter_read(true, 1, 200), "set from an earlier reading; page 1 now");
+        assert!(
+            !chapter_read(true, 1, 200),
+            "set from an earlier reading; page 1 now"
+        );
         assert!(!chapter_read(true, 12, 200));
         assert!(chapter_read(true, 199, 200));
         assert!(chapter_read(true, 0, 0), "no page count: the flag");

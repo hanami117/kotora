@@ -30,12 +30,23 @@ pub fn score_spread(entries: &[Entry]) -> [u32; 10] {
 /// The mean of the scores in a spread, `None` with no score.
 pub fn spread_mean(n: &[u32; 10]) -> Option<f64> {
     let count: u32 = n.iter().sum();
-    (count > 0).then(|| n.iter().enumerate().map(|(i, c)| f64::from(*c) * (i as f64 + 1.0)).sum::<f64>() / f64::from(count))
+    (count > 0).then(|| {
+        n.iter()
+            .enumerate()
+            .map(|(i, c)| f64::from(*c) * (i as f64 + 1.0))
+            .sum::<f64>()
+            / f64::from(count)
+    })
 }
 
 /// The counts per status: MyAnimeList's when known, else the saved list's.
 fn counts(s: &State, stats: Option<&AnimeStats>) -> [(Status, u32); 5] {
-    Status::ALL.map(|st| (st, stats.map_or_else(|| s.count(st) as u32, |x| x.count(st))))
+    Status::ALL.map(|st| {
+        (
+            st,
+            stats.map_or_else(|| s.count(st) as u32, |x| x.count(st)),
+        )
+    })
 }
 
 /// "1,234".
@@ -50,15 +61,27 @@ fn joined_text(p: &Profile) -> Option<String> {
 }
 
 pub fn page(s: &State, wide: bool) -> El {
-    let Some((name, service)) = &s.account else { return el() };
+    let Some((name, service)) = &s.account else {
+        return el();
+    };
     let profile = s.profile.clone().unwrap_or_default();
     let stats = profile.stats.as_ref();
-    let mut body = col().px(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).gap(16.0).max_w(1120.0);
+    let mut body = col()
+        .px(theme::PAGE_PAD)
+        .pt(4.0)
+        .pb(theme::PAGE_PAD)
+        .gap(16.0)
+        .max_w(1120.0);
     body = body.child(head(s, name, service, &profile));
     let anime = anime_card(s, stats);
     let scores = scores_card(s);
     body = body.child(if wide {
-        row().gap(16.0).w_full().items_start().child(anime.grow(1.0).min_w(0.0)).child(scores.w(400.0))
+        row()
+            .gap(16.0)
+            .w_full()
+            .items_start()
+            .child(anime.grow(1.0).min_w(0.0))
+            .child(scores.w(400.0))
     } else {
         col().gap(16.0).w_full().child(anime).child(scores)
     });
@@ -71,33 +94,73 @@ pub fn page(s: &State, wide: bool) -> El {
             .py(12.0)
             .radius(theme::R_LG)
             .border(1.0, PAL.border)
-            .child(text(format!("Signed in as {name} on {service}.")).font(theme::BODY).color(PAL.dim).grow(1.0).min_w(0.0).wrap())
-            .child(small_button("profile/sign-out", "Sign out", false, Some(crate::online::sign_out))),
+            .child(
+                text(format!("Signed in as {name} on {service}."))
+                    .font(theme::BODY)
+                    .color(PAL.dim)
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .wrap(),
+            )
+            .child(small_button(
+                "profile/sign-out",
+                "Sign out",
+                false,
+                Some(crate::online::sign_out),
+            )),
     );
     col()
         .key("page/profile")
         .w_full()
         .h_full()
         .child(crate::ui::top(s, "Profile", None, false))
-        .child(col().key("profile-scroll").scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0).child(body))
+        .child(
+            col()
+                .key("profile-scroll")
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .grow(1.0)
+                .min_h(0.0)
+                .child(body),
+        )
 }
 
 /// The picture, the name, when they joined, and the link to the profile on MyAnimeList.
 fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
     const SIZE: f32 = 72.0;
-    let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    let initial: String = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
     // As in the sidebar: MAL's blue in both themes, the picture over it once loaded.
     let mut face = el()
         .key("profile/avatar")
         .size(SIZE, SIZE)
         .radius(SIZE / 2.0)
-        .linear_gradient(160.0 * std::f32::consts::PI / 180.0, [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))])
+        .linear_gradient(
+            160.0 * std::f32::consts::PI / 180.0,
+            [(0.0, hex("#2e51a2")), (1.0, hex("#1d3170"))],
+        )
         .center()
-        .child(text(initial).font(TextStyle::new(28.0, 600.0)).color(hex("#edf0f7")));
+        .child(
+            text(initial)
+                .font(TextStyle::new(28.0, 600.0))
+                .color(hex("#edf0f7")),
+        );
     if let Some(img) = s.covers.get(AVATAR_ID, s.avatar.as_deref(), SIZE, SIZE) {
-        face = face.child(el().absolute(0.0, 0.0).size(SIZE, SIZE).radius(SIZE / 2.0).pixels(img.pixels()));
+        face = face.child(
+            el().absolute(0.0, 0.0)
+                .size(SIZE, SIZE)
+                .radius(SIZE / 2.0)
+                .pixels(img.pixels()),
+        );
     }
-    let joined = joined_text(p).map_or_else(|| service.to_string(), |j| format!("{service} \u{b7} Joined {j}"));
+    let joined = joined_text(p).map_or_else(
+        || service.to_string(),
+        |j| format!("{service} \u{b7} Joined {j}"),
+    );
     let url = s.service.profile_url(name);
     row()
         .key("profile/head")
@@ -113,8 +176,19 @@ fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(4.0)
-                .child(text(name.to_string()).key("profile/name").font(TextStyle::new(22.0, 600.0)).color(PAL.text).truncate())
-                .child(text(joined).key("profile/joined").font(theme::BODY).color(PAL.dim)),
+                .child(
+                    text(name.to_string())
+                        .key("profile/name")
+                        .font(TextStyle::new(22.0, 600.0))
+                        .color(PAL.text)
+                        .truncate(),
+                )
+                .child(
+                    text(joined)
+                        .key("profile/joined")
+                        .font(theme::BODY)
+                        .color(PAL.dim),
+                ),
         )
         .child(
             row()
@@ -133,7 +207,11 @@ fn head(s: &State, name: &str, service: &str, p: &Profile) -> El {
                 .press(PAL.press())
                 .cursor(rune::Cursor::Pointer)
                 .on_press(move |s: &mut State| crate::online::open_url(s, url.clone()))
-                .child(text(format!("Open on {}", s.service.title())).font(theme::LABEL_BTN).color(PAL.text))
+                .child(
+                    text(format!("Open on {}", s.service.title()))
+                        .font(theme::LABEL_BTN)
+                        .color(PAL.text),
+                )
                 .child(rune::icon(&crate::icons::EXTERNAL, 14.0).color(PAL.dim)),
         )
 }
@@ -144,7 +222,11 @@ fn figure(key: &str, big: String, small: &str) -> El {
         .key(key.to_string())
         .grow(1.0)
         .gap(2.0)
-        .child(text(big).font(TextStyle::new(24.0, 600.0).features("'tnum' 1")).color(PAL.text))
+        .child(
+            text(big)
+                .font(TextStyle::new(24.0, 600.0).features("'tnum' 1"))
+                .color(PAL.text),
+        )
         .child(text(small.to_string()).font(theme::LABEL).color(PAL.faint))
 }
 
@@ -155,17 +237,42 @@ fn anime_card(s: &State, stats: Option<&AnimeStats>) -> El {
         .key("profile/figures")
         .gap(16.0)
         .pt(6.0)
-        .child(figure("profile/days", stats.map_or_else(dash, |x| format!("{:.1}", x.days)), "Days watched"))
-        .child(figure("profile/episodes", stats.map_or_else(dash, |x| grouped(x.episodes)), "Episodes"))
-        .child(figure("profile/mean", stats.filter(|x| x.mean_score > 0.0).map_or_else(dash, |x| format!("{:.2}", x.mean_score)), "Mean score"));
+        .child(figure(
+            "profile/days",
+            stats.map_or_else(dash, |x| format!("{:.1}", x.days)),
+            "Days watched",
+        ))
+        .child(figure(
+            "profile/episodes",
+            stats.map_or_else(dash, |x| grouped(x.episodes)),
+            "Episodes",
+        ))
+        .child(figure(
+            "profile/mean",
+            stats
+                .filter(|x| x.mean_score > 0.0)
+                .map_or_else(dash, |x| format!("{:.2}", x.mean_score)),
+            "Mean score",
+        ));
     let counts = counts(s, stats);
     let total: u32 = counts.iter().map(|c| c.1).sum();
-    let mut bar = row().key("profile/bar").w_full().h(12.0).gap(2.0).radius(6.0).clip_rounded(6.0);
+    let mut bar = row()
+        .key("profile/bar")
+        .w_full()
+        .h(12.0)
+        .gap(2.0)
+        .radius(6.0)
+        .clip_rounded(6.0);
     if total == 0 {
         bar = bar.fill(PAL.border);
     }
     for (st, n) in counts.iter().filter(|c| c.1 > 0) {
-        bar = bar.child(el().key(format!("profile/bar/{}", st.slug())).grow(*n as f32).h_full().fill(PAL.status(*st)));
+        bar = bar.child(
+            el().key(format!("profile/bar/{}", st.slug()))
+                .grow(*n as f32)
+                .h_full()
+                .fill(PAL.status(*st)),
+        );
     }
     let mut legend = row().key("profile/legend").flex_wrap().gap(8.0).pt(4.0);
     for (st, n) in counts {
@@ -182,18 +289,46 @@ fn anime_card(s: &State, stats: Option<&AnimeStats>) -> El {
                 .child(text(grouped(n)).font(theme::NUM_MED).color(PAL.text)),
         );
     }
-    let mut c = card("profile/anime", "Anime").gap(12.0).child(figures).child(
-        col()
-            .gap(6.0)
-            .pt(4.0)
-            .child(row().child(text("By status").font(theme::CAPTION).color(PAL.faint)).child(spacer()).child(text(format!("{} entries", grouped(total))).font(theme::LABEL_NUM).color(PAL.dim)))
-            .child(bar),
-    );
+    let mut c = card("profile/anime", "Anime")
+        .gap(12.0)
+        .child(figures)
+        .child(
+            col()
+                .gap(6.0)
+                .pt(4.0)
+                .child(
+                    row()
+                        .child(text("By status").font(theme::CAPTION).color(PAL.faint))
+                        .child(spacer())
+                        .child(
+                            text(format!("{} entries", grouped(total)))
+                                .font(theme::LABEL_NUM)
+                                .color(PAL.dim),
+                        ),
+                )
+                .child(bar),
+        );
     c = c.child(legend);
     match stats {
-        Some(x) if x.rewatched > 0 => c.child(text(format!("Rewatched {}", kotora_core::queue::times(x.rewatched))).font(theme::LABEL).color(PAL.faint)),
+        Some(x) if x.rewatched > 0 => c.child(
+            text(format!(
+                "Rewatched {}",
+                kotora_core::queue::times(x.rewatched)
+            ))
+            .font(theme::LABEL)
+            .color(PAL.faint),
+        ),
         Some(_) => c,
-        None => c.child(text(format!("{}'s numbers come with the next sync; the counts are from your saved list.", s.service.title())).key("profile/pending").font(theme::LABEL).color(PAL.faint).wrap()),
+        None => c.child(
+            text(format!(
+                "{}'s numbers come with the next sync; the counts are from your saved list.",
+                s.service.title()
+            ))
+            .key("profile/pending")
+            .font(theme::LABEL)
+            .color(PAL.faint)
+            .wrap(),
+        ),
     }
 }
 
@@ -203,9 +338,18 @@ fn scores_card(s: &State) -> El {
     let n = score_spread(&s.entries);
     let max = n.iter().copied().max().unwrap_or(0).max(1);
     let scored: u32 = n.iter().sum();
-    let mut chart = row().key("profile/chart").w_full().h(CHART_H + 36.0).gap(6.0).items_end();
+    let mut chart = row()
+        .key("profile/chart")
+        .w_full()
+        .h(CHART_H + 36.0)
+        .gap(6.0)
+        .items_end();
     for (i, c) in n.iter().enumerate() {
-        let h = if *c == 0 { 2.0 } else { (CHART_H * *c as f32 / max as f32).max(4.0) };
+        let h = if *c == 0 {
+            2.0
+        } else {
+            (CHART_H * *c as f32 / max as f32).max(4.0)
+        };
         chart = chart.child(
             col()
                 .key(format!("profile/score/{}", i + 1))
@@ -213,23 +357,57 @@ fn scores_card(s: &State) -> El {
                 .min_w(0.0)
                 .gap(4.0)
                 .items_center()
-                .child(text(if *c == 0 { String::new() } else { c.to_string() }).font(theme::SMALL.features("'tnum' 1")).color(PAL.dim))
-                .child(el().w_full().h(h).radius(3.0).fill(if *c == 0 { PAL.border } else { PAL.accent }))
-                .child(text((i + 1).to_string()).font(theme::LABEL_NUM).color(PAL.faint)),
+                .child(
+                    text(if *c == 0 {
+                        String::new()
+                    } else {
+                        c.to_string()
+                    })
+                    .font(theme::SMALL.features("'tnum' 1"))
+                    .color(PAL.dim),
+                )
+                .child(el().w_full().h(h).radius(3.0).fill(if *c == 0 {
+                    PAL.border
+                } else {
+                    PAL.accent
+                }))
+                .child(
+                    text((i + 1).to_string())
+                        .font(theme::LABEL_NUM)
+                        .color(PAL.faint),
+                ),
         );
     }
     let line = match spread_mean(&n) {
         Some(m) => format!("{} scored \u{b7} mean {m:.2}", grouped(scored)),
         None => "No scores on your list yet.".to_string(),
     };
-    card("profile/scores", "Your scores").gap(10.0).child(chart.pt(6.0)).child(text(line).key("profile/scored").font(theme::LABEL).color(PAL.dim))
+    card("profile/scores", "Your scores")
+        .gap(10.0)
+        .child(chart.pt(6.0))
+        .child(
+            text(line)
+                .key("profile/scored")
+                .font(theme::LABEL)
+                .color(PAL.dim),
+        )
 }
 
 /// Made-up numbers for the scenes and the fake state.
 pub fn fake() -> Profile {
     Profile {
         joined: Some("2019-03-02T10:20:30+00:00".into()),
-        stats: Some(AnimeStats { days: 63.1, episodes: 3790, mean_score: 7.62, rewatched: 4, watching: 11, completed: 236, on_hold: 7, dropped: 2, plan_to_watch: 48 }),
+        stats: Some(AnimeStats {
+            days: 63.1,
+            episodes: 3790,
+            mean_score: 7.62,
+            rewatched: 4,
+            watching: 11,
+            completed: 236,
+            on_hold: 7,
+            dropped: 2,
+            plan_to_watch: 48,
+        }),
         ..Profile::default()
     }
 }
@@ -264,7 +442,10 @@ mod tests {
     fn counts_fall_back_to_the_saved_list() {
         let s = State::fake();
         let mine = counts(&s, None);
-        assert_eq!(mine[0], (Status::Watching, s.count(Status::Watching) as u32));
+        assert_eq!(
+            mine[0],
+            (Status::Watching, s.count(Status::Watching) as u32)
+        );
         let x = fake().stats.unwrap();
         assert_eq!(counts(&s, Some(&x))[2], (Status::Completed, 236));
         assert_eq!(joined_text(&fake()).as_deref(), Some("Mar 2, 2019"));

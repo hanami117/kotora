@@ -19,9 +19,20 @@ fn resources() {
     }
     println!("cargo:rerun-if-changed=../BUILD");
     // The fourth number of the file version is the build (the `BUILD` file).
-    let build: u64 = std::fs::read_to_string("../BUILD").ok().and_then(|b| b.trim().parse().ok()).unwrap_or(1);
-    let num = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-    let version = (num("CARGO_PKG_VERSION_MAJOR") << 48) | (num("CARGO_PKG_VERSION_MINOR") << 32) | (num("CARGO_PKG_VERSION_PATCH") << 16) | (build & 0xffff);
+    let build: u64 = std::fs::read_to_string("../BUILD")
+        .ok()
+        .and_then(|b| b.trim().parse().ok())
+        .unwrap_or(1);
+    let num = |k: &str| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    let version = (num("CARGO_PKG_VERSION_MAJOR") << 48)
+        | (num("CARGO_PKG_VERSION_MINOR") << 32)
+        | (num("CARGO_PKG_VERSION_PATCH") << 16)
+        | (build & 0xffff);
     let mut res = winresource::WindowsResource::new();
     res.set_icon(&format!("{dir}/kotora.ico"))
         .set_manifest_file(&format!("{dir}/kotora.exe.manifest"))
@@ -30,7 +41,10 @@ fn resources() {
         .set("ProductName", "Kotora")
         .set("FileDescription", "Kotora")
         .set("CompanyName", "Kotora")
-        .set("LegalCopyright", "Copyright (C) 2026 Thomas Lonigro. GPL-3.0-or-later")
+        .set(
+            "LegalCopyright",
+            "Copyright (C) 2026 Thomas Lonigro. GPL-3.0-or-later",
+        )
         .set("OriginalFilename", "kotora.exe")
         .set("InternalName", "kotora");
     // Never fail the build over the resources: a copy without an icon still runs.

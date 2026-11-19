@@ -38,7 +38,8 @@ pub const INTERVAL: Duration = Duration::from_secs(5);
 
 /// File extensions counted as video (lower case).
 pub const VIDEO_EXTS: &[&str] = &[
-    "3gp", "asf", "avi", "divx", "f4v", "flv", "m2ts", "m2v", "m4v", "mk3d", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogm", "ogv", "rm", "rmvb", "ts", "vob", "webm", "wmv",
+    "3gp", "asf", "avi", "divx", "f4v", "flv", "m2ts", "m2v", "m4v", "mk3d", "mkv", "mov", "mp4",
+    "mpeg", "mpg", "mts", "ogm", "ogv", "rm", "rmvb", "ts", "vob", "webm", "wmv",
 ];
 
 /// Whether a path looks like a video file.
@@ -48,7 +49,9 @@ pub fn is_video(path: &str) -> bool {
     }
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => VIDEO_EXTS.iter().any(|v| ext.eq_ignore_ascii_case(v)),
+        Some((stem, ext)) if !stem.is_empty() => {
+            VIDEO_EXTS.iter().any(|v| ext.eq_ignore_ascii_case(v))
+        }
         _ => false,
     }
 }
@@ -94,7 +97,10 @@ pub trait Procs {
 
 /// argv from a NUL-separated block (`/proc/PID/cmdline`).
 pub fn split_nul(b: &[u8]) -> Vec<String> {
-    b.split(|c| *c == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect()
+    b.split(|c| *c == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect()
 }
 
 /// `/proc` on Linux. The root is a parameter so tests use a fake tree.
@@ -107,7 +113,10 @@ pub struct ProcFs {
 #[cfg(unix)]
 impl ProcFs {
     pub fn new(root: impl Into<PathBuf>, uid: u32) -> ProcFs {
-        ProcFs { root: root.into(), uid }
+        ProcFs {
+            root: root.into(),
+            uid,
+        }
     }
 
     /// The real `/proc`, for the current user.
@@ -120,8 +129,11 @@ impl ProcFs {
 #[cfg(unix)]
 impl Procs for ProcFs {
     fn pids(&mut self) -> Vec<u32> {
-        let Ok(dir) = std::fs::read_dir(&self.root) else { return Vec::new() };
-        dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok()).collect()
+        let Ok(dir) = std::fs::read_dir(&self.root) else {
+            return Vec::new();
+        };
+        dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
+            .collect()
     }
 
     fn name(&self, pid: u32) -> Option<String> {
@@ -136,7 +148,9 @@ impl Procs for ProcFs {
 
     fn files(&self, pid: u32) -> Vec<(i32, String)> {
         let dir = self.root.join(pid.to_string()).join("fd");
-        let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
         rd.filter_map(|e| {
             let e = e.ok()?;
             let fd: i32 = e.file_name().to_str()?.parse().ok()?;
@@ -147,14 +161,18 @@ impl Procs for ProcFs {
     }
 
     fn args(&self, pid: u32) -> Vec<String> {
-        std::fs::read(self.root.join(pid.to_string()).join("cmdline")).map(|b| split_nul(&b)).unwrap_or_default()
+        std::fs::read(self.root.join(pid.to_string()).join("cmdline"))
+            .map(|b| split_nul(&b))
+            .unwrap_or_default()
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Seen {
     /// Not a player. `rechecked`: its name was read twice (once after a scan's delay).
-    Other { rechecked: bool },
+    Other {
+        rechecked: bool,
+    },
     Player(Kind),
 }
 
@@ -175,7 +193,11 @@ pub struct Scanner<P: Procs> {
 
 impl<P: Procs> Scanner<P> {
     pub fn new(procs: P) -> Scanner<P> {
-        Scanner { procs, seen: HashMap::new(), picked: HashMap::new() }
+        Scanner {
+            procs,
+            seen: HashMap::new(),
+            picked: HashMap::new(),
+        }
     }
 
     /// The player processes now, by pid.
@@ -194,7 +216,12 @@ impl<P: Procs> Scanner<P> {
             };
             self.seen.insert(pid, seen);
             if let Seen::Player(kind) = seen {
-                let videos: Vec<(i32, String)> = self.procs.files(pid).into_iter().filter(|(_, p)| is_video(p)).collect();
+                let videos: Vec<(i32, String)> = self
+                    .procs
+                    .files(pid)
+                    .into_iter()
+                    .filter(|(_, p)| is_video(p))
+                    .collect();
                 let file = pick(&videos, self.picked.get(&pid));
                 match &file {
                     Some(f) => self.picked.insert(pid, f.clone()),
@@ -228,7 +255,10 @@ fn pick(videos: &[(i32, String)], before: Option<&String>) -> Option<String> {
     {
         return Some(b.clone());
     }
-    videos.iter().min_by_key(|(fd, _)| *fd).map(|(_, p)| p.clone())
+    videos
+        .iter()
+        .min_by_key(|(fd, _)| *fd)
+        .map(|(_, p)| p.clone())
 }
 
 /// Turns scans into hub inputs, sending changes only.
@@ -247,7 +277,12 @@ impl Reporter {
     pub fn apply(&mut self, found: &[Found], now: f64) -> Vec<Input> {
         let mut out = Vec::new();
         let pids: HashSet<u32> = found.iter().map(|f| f.pid).collect();
-        let gone: Vec<u32> = self.sent.keys().copied().filter(|p| !pids.contains(p)).collect();
+        let gone: Vec<u32> = self
+            .sent
+            .keys()
+            .copied()
+            .filter(|p| !pids.contains(p))
+            .collect();
         for pid in gone {
             if let Some((_, Some(_))) = self.sent.remove(&pid) {
                 out.push(Input::Gone(key(pid)));
@@ -266,18 +301,38 @@ impl Reporter {
         // One state per switch: playing if any of its processes has a video open.
         let mut now_status: HashMap<Switch, (String, Led)> = HashMap::new();
         for f in found {
-            let (line, led) = if f.file.is_some() { ("video file open", Led::Playing) } else { ("running, no video open", Led::Idle) };
-            let e = now_status.entry(f.kind.switch).or_insert_with(|| (line.to_string(), led));
+            let (line, led) = if f.file.is_some() {
+                ("video file open", Led::Playing)
+            } else {
+                ("running, no video open", Led::Idle)
+            };
+            let e = now_status
+                .entry(f.kind.switch)
+                .or_insert_with(|| (line.to_string(), led));
             if led == Led::Playing {
                 *e = (line.to_string(), led);
             }
         }
-        let mut switches: Vec<Switch> = self.status.keys().chain(now_status.keys()).copied().collect::<HashSet<_>>().into_iter().collect();
+        let mut switches: Vec<Switch> = self
+            .status
+            .keys()
+            .chain(now_status.keys())
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         switches.sort_by_key(|s| Switch::ALL.iter().position(|a| a == s));
         for sw in switches {
-            let st = now_status.remove(&sw).unwrap_or_else(|| ("not running".to_string(), Led::Off));
+            let st = now_status
+                .remove(&sw)
+                .unwrap_or_else(|| ("not running".to_string(), Led::Off));
             if self.status.get(&sw) != Some(&st) {
-                out.push(Input::Status(SourceStatus { switch: sw, via: Via::Process, line: st.0.clone(), led: st.1 }));
+                out.push(Input::Status(SourceStatus {
+                    switch: sw,
+                    via: Via::Process,
+                    line: st.0.clone(),
+                    led: st.1,
+                }));
                 self.status.insert(sw, st);
             }
         }
@@ -325,7 +380,11 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>) {
                 return;
             }
         }
-        let got = if on { wake.recv_timeout(INTERVAL) } else { wake.recv().map_err(|_| RecvTimeoutError::Disconnected) };
+        let got = if on {
+            wake.recv_timeout(INTERVAL)
+        } else {
+            wake.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
         if got == Err(RecvTimeoutError::Disconnected) {
             return;
         }
@@ -348,7 +407,8 @@ mod tests {
 
     impl Tree {
         fn new(name: &str) -> Tree {
-            let dir = std::env::temp_dir().join(format!("kotora-procfs-{name}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("kotora-procfs-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Tree { dir }
@@ -364,7 +424,13 @@ mod tests {
         }
 
         fn close(&self, pid: u32, fd: i32) {
-            std::fs::remove_file(self.dir.join(pid.to_string()).join("fd").join(fd.to_string())).unwrap();
+            std::fs::remove_file(
+                self.dir
+                    .join(pid.to_string())
+                    .join("fd")
+                    .join(fd.to_string()),
+            )
+            .unwrap();
         }
 
         fn kill(&self, pid: u32) {
@@ -389,10 +455,30 @@ mod tests {
 
     #[test]
     fn video_files_only() {
-        for p in ["/v/A - 01.mkv", "/v/b.MP4", "/v/c.webm", "/v/d.m2ts", "/v/e.ts", "/v/f.ogm"] {
+        for p in [
+            "/v/A - 01.mkv",
+            "/v/b.MP4",
+            "/v/c.webm",
+            "/v/d.m2ts",
+            "/v/e.ts",
+            "/v/f.ogm",
+        ] {
             assert!(is_video(p), "{p}");
         }
-        for p in ["/v/a.ass", "/v/a.srt", "/usr/share/fonts/x.ttf", "/usr/lib/libmpv.so.2", "socket:[1234]", "pipe:[9]", "anon_inode:[eventfd]", "/dev/dri/renderD128", "/v/a.mka", "/v/.mkv", "/v/x.mkv (deleted)", "rel/x.mkv"] {
+        for p in [
+            "/v/a.ass",
+            "/v/a.srt",
+            "/usr/share/fonts/x.ttf",
+            "/usr/lib/libmpv.so.2",
+            "socket:[1234]",
+            "pipe:[9]",
+            "anon_inode:[eventfd]",
+            "/dev/dri/renderD128",
+            "/v/a.mka",
+            "/v/.mkv",
+            "/v/x.mkv (deleted)",
+            "rel/x.mkv",
+        ] {
             assert!(!is_video(p), "{p}");
         }
     }
@@ -401,13 +487,33 @@ mod tests {
     fn finds_the_video_a_player_has_open() {
         let t = Tree::new("find");
         t.proc(100, "bash", &[(0, "/dev/pts/1")]);
-        t.proc(200, "mpv", &[(0, "/dev/pts/1"), (3, "socket:[77]"), (5, "/usr/lib/libass.so.9"), (9, "/v/Show - 03.ass"), (12, "/v/Show - 03.mkv"), (14, "/usr/share/fonts/a.otf")]);
+        t.proc(
+            200,
+            "mpv",
+            &[
+                (0, "/dev/pts/1"),
+                (3, "socket:[77]"),
+                (5, "/usr/lib/libass.so.9"),
+                (9, "/v/Show - 03.ass"),
+                (12, "/v/Show - 03.mkv"),
+                (14, "/usr/share/fonts/a.otf"),
+            ],
+        );
         t.proc(300, "vlc", &[(4, "/usr/lib/vlc/plugins/x.so")]);
         t.proc(400, "firefox", &[(30, "/v/Other - 01.mkv")]);
         let mut sc = t.scanner();
         let found = sc.scan();
-        assert_eq!(files(&found), [(200, Some("/v/Show - 03.mkv")), (300, None)]);
-        assert_eq!(found[0].kind, Kind { player: "mpv", switch: Switch::Mpv });
+        assert_eq!(
+            files(&found),
+            [(200, Some("/v/Show - 03.mkv")), (300, None)]
+        );
+        assert_eq!(
+            found[0].kind,
+            Kind {
+                player: "mpv",
+                switch: Switch::Mpv
+            }
+        );
         assert_eq!(found[1].kind.switch, Switch::Vlc);
     }
 
@@ -480,21 +586,45 @@ mod tests {
     #[test]
     fn the_reporter_sends_changes_only() {
         let mpv = kind_of("mpv").unwrap();
-        let f = |file: Option<&str>| vec![Found { pid: 7, kind: mpv, file: file.map(String::from) }];
+        let f = |file: Option<&str>| {
+            vec![Found {
+                pid: 7,
+                kind: mpv,
+                file: file.map(String::from),
+            }]
+        };
         let mut r = Reporter::default();
-        assert_eq!(kinds(&r.apply(&f(Some("/v/a.mkv")), 1.0)), ["update proc:7 /v/a.mkv", "status Mpv video file open"]);
+        assert_eq!(
+            kinds(&r.apply(&f(Some("/v/a.mkv")), 1.0)),
+            ["update proc:7 /v/a.mkv", "status Mpv video file open"]
+        );
         assert!(r.apply(&f(Some("/v/a.mkv")), 6.0).is_empty());
-        assert_eq!(kinds(&r.apply(&f(Some("/v/b.mkv")), 11.0)), ["update proc:7 /v/b.mkv"]);
-        assert_eq!(kinds(&r.apply(&f(None), 16.0)), ["gone proc:7", "status Mpv running, no video open"]);
-        assert_eq!(kinds(&r.apply(&f(Some("/v/c.mkv")), 21.0)), ["update proc:7 /v/c.mkv", "status Mpv video file open"]);
-        assert_eq!(kinds(&r.apply(&[], 26.0)), ["gone proc:7", "status Mpv not running"]);
+        assert_eq!(
+            kinds(&r.apply(&f(Some("/v/b.mkv")), 11.0)),
+            ["update proc:7 /v/b.mkv"]
+        );
+        assert_eq!(
+            kinds(&r.apply(&f(None), 16.0)),
+            ["gone proc:7", "status Mpv running, no video open"]
+        );
+        assert_eq!(
+            kinds(&r.apply(&f(Some("/v/c.mkv")), 21.0)),
+            ["update proc:7 /v/c.mkv", "status Mpv video file open"]
+        );
+        assert_eq!(
+            kinds(&r.apply(&[], 26.0)),
+            ["gone proc:7", "status Mpv not running"]
+        );
         assert!(r.apply(&[], 31.0).is_empty());
     }
 
     #[test]
     fn snapshots_have_no_position() {
         let p = snapshot(7, kind_of("vlc").unwrap(), "/v/a.mkv", 3.0);
-        assert_eq!((p.via, p.position, p.duration, p.state, p.at), (Via::Process, None, None, PlayState::Playing, 3.0));
+        assert_eq!(
+            (p.via, p.position, p.duration, p.state, p.at),
+            (Via::Process, None, None, PlayState::Playing, 3.0)
+        );
         assert_eq!(p.file(), Some("/v/a.mkv"));
     }
 }

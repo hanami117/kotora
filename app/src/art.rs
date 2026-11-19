@@ -122,7 +122,15 @@ impl Covers {
     /// returns None. Cheap: callable from the view.
     pub fn get(&self, id: u32, url: Option<&str>, w: f32, h: f32) -> Option<Image> {
         let scale = self.scale.get();
-        self.get_key((id, (w * scale).ceil() as u32, (h * scale).ceil() as u32, false), url)
+        self.get_key(
+            (
+                id,
+                (w * scale).ceil() as u32,
+                (h * scale).ceil() as u32,
+                false,
+            ),
+            url,
+        )
     }
 
     /// The blurred backdrop of media `id` ([`BLUR_W`] x [`BLUR_H`] pixels whatever the scale),
@@ -143,7 +151,11 @@ impl Covers {
         }
         let cache = self.cache.as_ref()?;
         if self.fake {
-            let px = if key.3 { blur(&fake_pixels(id, 64, 96), 64, 96) } else { fake_pixels(id, key.1, key.2) };
+            let px = if key.3 {
+                blur(&fake_pixels(id, 64, 96), 64, 96)
+            } else {
+                fake_pixels(id, key.1, key.2)
+            };
             let img = cache.rgba(key.1, key.2, px);
             // Headless snaps are taken at once: wait for the tiny decode, as for the logo.
             let _ = img.wait();
@@ -155,10 +167,18 @@ impl Covers {
             return None;
         }
         let mut q = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        q.jobs.push(Job { key, url: url.to_string() });
+        q.jobs.push(Job {
+            key,
+            url: url.to_string(),
+        });
         if q.workers < WORKERS {
             q.workers += 1;
-            spawn_worker(self.queue.clone(), handle.clone(), self.online, !self.pruned.replace(true));
+            spawn_worker(
+                self.queue.clone(),
+                handle.clone(),
+                self.online,
+                !self.pruned.replace(true),
+            );
         }
         None
     }
@@ -167,7 +187,9 @@ impl Covers {
     fn loaded(&mut self, key: Key, w: u32, h: u32, rgba: Vec<u8>) -> bool {
         let inner = self.inner.get_mut();
         inner.in_flight.remove(&key);
-        let Some(cache) = &self.cache else { return false };
+        let Some(cache) = &self.cache else {
+            return false;
+        };
         let img = cache.rgba(w, h, rgba);
         put(inner, key, img);
         true
@@ -217,7 +239,15 @@ fn put(inner: &mut Inner, key: Key, img: Image) {
     }
     inner.total += cost;
     while inner.total > MEMORY_BUDGET && inner.images.len() > 1 {
-        let Some(oldest) = inner.images.iter().filter(|(k, _)| **k != key).min_by_key(|(_, e)| e.1).map(|(k, _)| *k) else { break };
+        let Some(oldest) = inner
+            .images
+            .iter()
+            .filter(|(k, _)| **k != key)
+            .min_by_key(|(_, e)| e.1)
+            .map(|(k, _)| *k)
+        else {
+            break;
+        };
         if let Some(e) = inner.images.remove(&oldest) {
             inner.total -= e.2;
         }
@@ -248,9 +278,17 @@ fn spawn_worker(queue: Arc<Mutex<Queue>>, handle: Handle, online: bool, prune: b
                 };
                 let (key, w, h) = (job.key, job.key.1, job.key.2);
                 let blurred = key.3;
-                let got = covers::fetch(&agent, &dir, &job.url, online).and_then(|b| if blurred { decode_blurred(&b) } else { decode(&b, w, h) });
+                let got = covers::fetch(&agent, &dir, &job.url, online).and_then(|b| {
+                    if blurred {
+                        decode_blurred(&b)
+                    } else {
+                        decode(&b, w, h)
+                    }
+                });
                 match got {
-                    Ok(rgba) => handle.update_if(move |s: &mut State, _| s.covers.loaded(key, w, h, rgba)),
+                    Ok(rgba) => {
+                        handle.update_if(move |s: &mut State, _| s.covers.loaded(key, w, h, rgba))
+                    }
                     Err(_) => handle.update_if(move |s: &mut State, _| {
                         s.covers.failed(key);
                         false
@@ -267,16 +305,30 @@ fn spawn_worker(queue: Arc<Mutex<Queue>>, handle: Handle, online: bool, prune: b
 /// Decodes a cover and shrinks it to fill `w` x `h` pixels exactly (cropping the overhang), so
 /// memory holds only what is drawn. Straight-alpha sRGB RGBA, as `ImageCache::rgba` takes it.
 fn decode(bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>, String> {
-    let img = if is_webp(bytes) { decode_webp(bytes)? } else { image::load_from_memory(bytes).map_err(|e| e.to_string())? };
-    Ok(img.resize_to_fill(w, h, image::imageops::FilterType::Triangle).to_rgba8().into_raw())
+    let img = if is_webp(bytes) {
+        decode_webp(bytes)?
+    } else {
+        image::load_from_memory(bytes).map_err(|e| e.to_string())?
+    };
+    Ok(img
+        .resize_to_fill(w, h, image::imageops::FilterType::Triangle)
+        .to_rgba8()
+        .into_raw())
 }
 
 /// Decodes a cover into its blurred backdrop: the whole cover squashed to [`BLUR_W`] x
 /// [`BLUR_H`], then [`blur`]. Runs once per cover on a worker thread.
 fn decode_blurred(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let img = if is_webp(bytes) { decode_webp(bytes)? } else { image::load_from_memory(bytes).map_err(|e| e.to_string())? };
+    let img = if is_webp(bytes) {
+        decode_webp(bytes)?
+    } else {
+        image::load_from_memory(bytes).map_err(|e| e.to_string())?
+    };
     // A small cover first (box filter: cheap, and the blur hides it).
-    let small = img.resize_exact(64, 96, image::imageops::FilterType::Triangle).to_rgba8().into_raw();
+    let small = img
+        .resize_exact(64, 96, image::imageops::FilterType::Triangle)
+        .to_rgba8()
+        .into_raw();
     Ok(blur(&small, 64, 96))
 }
 
@@ -330,7 +382,11 @@ fn box_pass(src: &[[f32; 3]], w: usize, h: usize, r: isize, horizontal: bool) ->
         for x in 0..w {
             let mut a = [0.0f32; 3];
             for k in -r..=r {
-                let (sx, sy) = if horizontal { ((x as isize + k).clamp(0, w as isize - 1) as usize, y) } else { (x, (y as isize + k).clamp(0, h as isize - 1) as usize) };
+                let (sx, sy) = if horizontal {
+                    ((x as isize + k).clamp(0, w as isize - 1) as usize, y)
+                } else {
+                    (x, (y as isize + k).clamp(0, h as isize - 1) as usize)
+                };
                 let p = src[sy * w + sx];
                 a = [a[0] + p[0], a[1] + p[1], a[2] + p[2]];
             }
@@ -348,7 +404,8 @@ fn is_webp(bytes: &[u8]) -> bool {
 /// WebP through `image-webp`'s decoder alone: `image`'s `webp` feature would also link the
 /// encoder (about 0.5 MB more in the release binary for the same decoder).
 fn decode_webp(bytes: &[u8]) -> Result<image::DynamicImage, String> {
-    let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let mut d =
+        image_webp::WebPDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
     let (w, h) = d.dimensions();
     let alpha = d.has_alpha();
     let mut buf = vec![0; d.output_buffer_size().ok_or("WebP too large")?];
@@ -364,8 +421,12 @@ fn decode_webp(bytes: &[u8]) -> Result<image::DynamicImage, String> {
 /// A made-up cover for the scenes: a two-colour diagonal poster with a pale band, unlike the
 /// generated tiles, so a snap shows which rows have covers.
 fn fake_pixels(id: u32, w: u32, h: u32) -> Vec<u8> {
-    const PAIRS: [([u8; 3], [u8; 3]); 4] =
-        [([40, 70, 140], [230, 140, 60]), ([30, 110, 90], [240, 220, 160]), ([120, 40, 80], [250, 170, 120]), ([60, 50, 120], [130, 200, 230])];
+    const PAIRS: [([u8; 3], [u8; 3]); 4] = [
+        ([40, 70, 140], [230, 140, 60]),
+        ([30, 110, 90], [240, 220, 160]),
+        ([120, 40, 80], [250, 170, 120]),
+        ([60, 50, 120], [130, 200, 230]),
+    ];
     let (a, b) = PAIRS[id as usize % PAIRS.len()];
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
@@ -374,7 +435,11 @@ fn fake_pixels(id: u32, w: u32, h: u32) -> Vec<u8> {
             let band = (y as f32 / h as f32 - 0.62).abs() < 0.06;
             for c in 0..3 {
                 let v = a[c] as f32 * (1.0 - t) + b[c] as f32 * t;
-                out.push(if band { (v * 0.4 + 255.0 * 0.6) as u8 } else { v as u8 });
+                out.push(if band {
+                    (v * 0.4 + 255.0 * 0.6) as u8
+                } else {
+                    v as u8
+                });
             }
             out.push(255);
         }
@@ -391,7 +456,12 @@ mod tests {
         // A 225 x 320 JPEG, MAL's medium cover size.
         let src = image::RgbImage::from_pixel(225, 320, image::Rgb([200, 100, 50]));
         let mut jpeg = Vec::new();
-        image::DynamicImage::ImageRgb8(src).write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg).unwrap();
+        image::DynamicImage::ImageRgb8(src)
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
         let rgba = decode(&jpeg, 68, 96).unwrap();
         assert_eq!(rgba.len(), 68 * 96 * 4);
         assert!(decode(b"not an image", 68, 96).is_err());
@@ -400,7 +470,10 @@ mod tests {
     /// MAL serves some covers as WebP: lossy (VP8) and lossless with alpha (VP8L), both 24 x 36.
     #[test]
     fn decode_webp_covers() {
-        for (bytes, name) in [(&include_bytes!("../tests/cover.webp")[..], "lossy"), (&include_bytes!("../tests/cover-alpha.webp")[..], "alpha")] {
+        for (bytes, name) in [
+            (&include_bytes!("../tests/cover.webp")[..], "lossy"),
+            (&include_bytes!("../tests/cover-alpha.webp")[..], "alpha"),
+        ] {
             assert!(is_webp(bytes), "{name}");
             let rgba = decode(bytes, 68, 96).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(rgba.len(), 68 * 96 * 4, "{name}");
@@ -408,7 +481,11 @@ mod tests {
             assert!(rgba[0] > rgba[2], "{name}: {:?}", &rgba[..4]);
         }
         let alpha = decode(include_bytes!("../tests/cover-alpha.webp"), 24, 36).unwrap();
-        assert!((100..160).contains(&alpha[3]), "half transparent: {}", alpha[3]);
+        assert!(
+            (100..160).contains(&alpha[3]),
+            "half transparent: {}",
+            alpha[3]
+        );
         assert!(decode(b"RIFF\0\0\0\0WEBPVP8 broken", 68, 96).is_err());
     }
 
@@ -427,14 +504,21 @@ mod tests {
             c.get(id, url, 34.0, 48.0);
         }
         let (n, bytes) = c.usage();
-        assert!(bytes <= MEMORY_BUDGET && n < 1000, "{n} covers, {bytes} bytes");
+        assert!(
+            bytes <= MEMORY_BUDGET && n < 1000,
+            "{n} covers, {bytes} bytes"
+        );
         let mut c = Covers::default();
         c.attach(ImageCache::new(Arc::new(|| {})));
         c.fake();
         c.get(u32::MAX, url, 24.0, 24.0);
         c.get(3, url, 34.0, 48.0);
         c.forget(u32::MAX);
-        assert_eq!(c.usage(), (1, 34 * 48 * 4 * 4 / 3), "only the forgotten one goes");
+        assert_eq!(
+            c.usage(),
+            (1, 34 * 48 * 4 * 4 / 3),
+            "only the forgotten one goes"
+        );
     }
 
     /// The backdrop is one small image per cover, the same at any scale, smooth and mid-light.
@@ -462,14 +546,20 @@ mod tests {
         assert_eq!(out.len(), (BLUR_W * BLUR_H * 4) as usize);
         let row: Vec<u8> = out.chunks(4).take(BLUR_W as usize).map(|p| p[0]).collect();
         assert!(row.iter().all(|v| (60..=190).contains(v)), "{row:?}");
-        assert!(row.windows(2).all(|w| w[0].abs_diff(w[1]) <= 12), "no hard edge left: {row:?}");
+        assert!(
+            row.windows(2).all(|w| w[0].abs_diff(w[1]) <= 12),
+            "no hard edge left: {row:?}"
+        );
         assert!(decode_blurred(b"not an image").is_err());
     }
 
     #[test]
     fn headless_without_a_handle_never_queues() {
         let c = Covers::default();
-        assert!(c.get(1, Some("https://cdn.example.invalid/1.jpg"), 34.0, 48.0).is_none());
+        assert!(
+            c.get(1, Some("https://cdn.example.invalid/1.jpg"), 34.0, 48.0)
+                .is_none()
+        );
         assert!(c.queue.lock().unwrap().jobs.is_empty());
         assert!(c.get(1, None, 34.0, 48.0).is_none());
     }

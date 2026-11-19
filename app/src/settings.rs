@@ -12,13 +12,18 @@ use std::sync::LazyLock;
 use kotora_core::config;
 use kotora_core::service::ServiceId;
 use kotora_detect::Switch;
-use rune::{El, Icon, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, spacer, text, text_input};
+use rune::{
+    El, Icon, Key, KeyEvent, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, spacer, text,
+    text_input,
+};
 
 use crate::icons;
 use crate::model::{Auth, State};
 use crate::now::THRESHOLDS;
 use crate::theme::{self, PAL};
-use crate::ui::{cell, field_hint, hex, kbd, led_color, service_row, small_button, switch, switch_if};
+use crate::ui::{
+    cell, field_hint, hex, kbd, led_color, service_row, small_button, switch, switch_if,
+};
 
 // ------------------------------------------------------------------------------------ sections
 
@@ -37,7 +42,17 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 9] = [Section::General, Section::Appearance, Section::Account, Section::Detection, Section::Library, Section::Notifications, Section::Manga, Section::Feeds, Section::About];
+    pub const ALL: [Section; 9] = [
+        Section::General,
+        Section::Appearance,
+        Section::Account,
+        Section::Detection,
+        Section::Library,
+        Section::Notifications,
+        Section::Manga,
+        Section::Feeds,
+        Section::About,
+    ];
 
     /// The `config.toml` value, also the end of the section's keys.
     pub fn key(self) -> &'static str {
@@ -89,34 +104,115 @@ impl Section {
     /// The section's groups: a heading (or none) over its rows, in order.
     fn groups(self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         match self {
-            Section::General => vec![(Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]), (Some("On startup"), vec![Row::OpenOn, Row::StartMode]), (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]), (Some("Discord"), vec![Row::Discord, Row::DiscordCover, Row::DiscordButtons, Row::DiscordHidePaused, Row::DiscordHideTitle, Row::DiscordStatus]), (Some("Keyboard"), vec![Row::PageKeys])],
+            Section::General => vec![
+                (Some("Startup"), vec![Row::StartAtLogin, Row::StartHidden]),
+                (Some("On startup"), vec![Row::OpenOn, Row::StartMode]),
+                (Some("Updates"), vec![Row::CheckUpdates, Row::CheckNow]),
+                (
+                    Some("Discord"),
+                    vec![
+                        Row::Discord,
+                        Row::DiscordCover,
+                        Row::DiscordButtons,
+                        Row::DiscordHidePaused,
+                        Row::DiscordHideTitle,
+                        Row::DiscordStatus,
+                    ],
+                ),
+                (Some("Keyboard"), vec![Row::PageKeys]),
+            ],
             Section::Appearance => vec![(None, vec![Row::Theme, Row::Titles, Row::Intro])],
-            Section::Account => vec![(Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]), (Some("Sign-in"), vec![Row::ClientId, Row::Token]), (Some("Your list"), vec![Row::Export, Row::ExportManga, Row::Import, Row::ImportManga, Row::FillVolumes])],
+            Section::Account => vec![
+                (Some("Service"), vec![Row::Mal, Row::AniList, Row::Mirror]),
+                (Some("Sign-in"), vec![Row::ClientId, Row::Token]),
+                (
+                    Some("Your list"),
+                    vec![
+                        Row::Export,
+                        Row::ExportManga,
+                        Row::Import,
+                        Row::ImportManga,
+                        Row::FillVolumes,
+                    ],
+                ),
+            ],
             Section::Detection => {
-                let mut players: Vec<Row> = Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
+                let mut players: Vec<Row> =
+                    Switch::here().iter().map(|sw| Row::Player(*sw)).collect();
                 if kotora_detect::VLC_WEB {
                     players.push(Row::VlcWeb);
                 }
                 vec![
                     (Some("Players"), players),
-                    (Some("Recording episodes"), vec![Row::Auto, Row::Threshold, Row::KeepHigher]),
-                    (Some("Players without setup"), vec![Row::ProcessScan, Row::ProcessMinutes]),
+                    (
+                        Some("Recording episodes"),
+                        vec![Row::Auto, Row::Threshold, Row::KeepHigher],
+                    ),
+                    (
+                        Some("Players without setup"),
+                        vec![Row::ProcessScan, Row::ProcessMinutes],
+                    ),
                 ]
             }
             Section::Library => vec![(None, vec![Row::Folders, Row::OpenWith])],
             Section::Notifications => vec![
-                (Some("While you watch"), vec![Row::NotifyDetected, Row::NotifyOffer, Row::NotifyRecorded]),
+                (
+                    Some("While you watch"),
+                    vec![Row::NotifyDetected, Row::NotifyOffer, Row::NotifyRecorded],
+                ),
                 (Some("Airing"), vec![Row::NotifyStarted, Row::NotifyEpisode]),
-                (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
+                (
+                    Some("Manga"),
+                    vec![
+                        Row::NotifyReadOffer,
+                        Row::NotifyReadRecorded,
+                        Row::NotifyChapter,
+                    ],
+                ),
             ],
-            Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
+            Section::Manga => vec![
+                (Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]),
+                (
+                    Some("Reading detection"),
+                    vec![
+                        Row::ReadingYac,
+                        Row::ReadingFind,
+                        Row::ReadingLibs,
+                        Row::ReadingOpen,
+                        Row::ReadingMinutes,
+                        Row::ReadingFolders,
+                    ],
+                ),
+            ],
             Section::Feeds => vec![
-                (Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsAutocheck, Row::FeedsMinutes, Row::FeedsNewAction, Row::FeedsNotify]),
-                (Some("Filters"), vec![Row::FeedsFiltersOn, Row::FeedsFilters]),
-                (Some("Downloads"), vec![Row::FeedsApp, Row::FeedsFolder, Row::FeedsOrder]),
-                (Some("Search and history"), vec![Row::FeedsSearch, Row::FeedsHistory]),
+                (
+                    Some("Torrent feeds"),
+                    vec![
+                        Row::FeedsOn,
+                        Row::FeedsList,
+                        Row::FeedsAutocheck,
+                        Row::FeedsMinutes,
+                        Row::FeedsNewAction,
+                        Row::FeedsNotify,
+                    ],
+                ),
+                (
+                    Some("Filters"),
+                    vec![Row::FeedsFiltersOn, Row::FeedsFilters],
+                ),
+                (
+                    Some("Downloads"),
+                    vec![Row::FeedsApp, Row::FeedsFolder, Row::FeedsOrder],
+                ),
+                (
+                    Some("Search and history"),
+                    vec![Row::FeedsSearch, Row::FeedsHistory],
+                ),
             ],
-            Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links]), (None, vec![Row::Support])],
+            Section::About => vec![
+                (None, vec![Row::About, Row::Licences, Row::Links]),
+                (None, vec![Row::Support]),
+            ],
         }
     }
 }
@@ -297,79 +393,501 @@ struct Spec {
     words: &'static str,
 }
 
-const fn spec(row: Row, section: Section, title: &'static str, note: &'static str, words: &'static str) -> Spec {
-    Spec { row, section, title, note, words }
+const fn spec(
+    row: Row,
+    section: Section,
+    title: &'static str,
+    note: &'static str,
+    words: &'static str,
+) -> Spec {
+    Spec {
+        row,
+        section,
+        title,
+        note,
+        words,
+    }
 }
 
 /// Every row but the players (`index` adds those for this system), in section order.
 const SPECS: &[Spec] = &[
-    spec(Row::StartAtLogin, Section::General, "Start Kotora when I log in", "Kotora keeps detecting episodes from the moment you log in.", "login log in logon autostart auto start startup boot launch open at login login items session automatically"),
-    spec(Row::StartHidden, Section::General, "Start in the background", "At login, show only the tray icon, no window.", "background hidden minimised minimized tray menu bar silent quiet no window autostart startup login"),
-    spec(Row::OpenOn, Section::General, "Open on", "Home, or the page Kotora was on when it was last closed or hidden.", "on startup start launch open opens home last page remember restore resume where screen first page"),
-    spec(Row::StartMode, Section::General, "Mode", "Last used, Anime or Manga. Manga only when Manga is on.", "on startup start launch open mode anime manga switch last used remember kind"),
-    spec(Row::CheckUpdates, Section::General, "Check for updates", crate::update::CHECK_NOTE, "update updates upgrade new version release kotora.moe privacy"),
-    spec(Row::CheckNow, Section::General, "Check now", "When Kotora last checked for a new version.", "update updates upgrade new version release last checked"),
-    spec(Row::PageKeys, Section::General, "List page shortcuts", "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.", "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go"),
-    spec(Row::Discord, Section::General, "Show on Discord", "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.", "discord rich presence status activity presence taiga show playing watching friends share"),
-    spec(Row::DiscordCover, Section::General, "Show the cover", "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.", "discord cover art poster image picture"),
-    spec(Row::DiscordButtons, Section::General, "Show a button", "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.", "discord button buttons link anilist myanimelist"),
-    spec(Row::DiscordHidePaused, Section::General, "Hide while paused", "Clears the status while the player is paused or idle.", "discord hide paused pause idle stopped clear"),
-    spec(Row::DiscordHideTitle, Section::General, "Hide the title", "Says \u{201c}Watching anime\u{201d} and no title, cover or button.", "discord hide title private privacy secret incognito"),
-    spec(Row::DiscordStatus, Section::General, "Show in status", "What Discord shows next to the activity icon in the member list: the app name, the anime title or the episode.", "discord status show in app name anime title episode member list profile compact line"),
-    spec(Row::Theme, Section::Appearance, "Theme", "System follows your desktop's light or dark setting.", "dark mode light mode night colour color appearance system"),
-    spec(Row::Titles, Section::Appearance, "Titles", "Romaji, English or Japanese titles everywhere.", "title language romaji english japanese names kot"),
-    spec(Row::Intro, Section::Appearance, "Startup animation", "Claw marks when Kotora opens.", "intro splash launch claw motion animation reduce motion"),
-    spec(Row::Mal, Section::Account, "MyAnimeList", "Signed in, or Sign in. Or switch to it.", "mal myanimelist account service sign in sign out log in login logout user switch use"),
-    spec(Row::ClientId, Section::Account, "Client ID", "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.", "client id api key apiconfig developer setup wizard set up again"),
-    spec(Row::Token, Section::Account, "Sign-in token", "Kept in a file only you can read. Signing out deletes it.", "token security privacy password file keyring"),
-    spec(Row::AniList, Section::Account, "AniList", "Signed in, or Sign in. Or switch to it.", "anilist al account service sign in sign out log in login logout user switch use"),
-    spec(Row::Mirror, Section::Account, "Mirror edits", "Every change also goes to your list on the other service.", "mirror mirroring copy both two accounts sync myanimelist anilist mal al align merge second"),
-    spec(Row::Export, Section::Account, "Export anime list\u{2026}", "Your anime list as a MyAnimeList XML file.", "export anime backup save download xml mal myanimelist file kitsu taiga move transfer"),
-    spec(Row::Import, Section::Account, "Import anime list\u{2026}", "Read a MyAnimeList anime XML export and add it to your anime list.", "import anime restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge"),
-    spec(Row::ExportManga, Section::Account, "Export manga list\u{2026}", "Your manga list as a MyAnimeList XML file.", "export backup save download xml mal myanimelist file manga chapters volumes move transfer"),
-    spec(Row::FillVolumes, Section::Account, "Fill volumes from chapters\u{2026}", "Volumes read from chapters read, with MangaDex\u{2019}s volume tables; never lowered.", "volumes chapters mangadex fill manga count compute"),
-    spec(Row::ImportManga, Section::Account, "Import manga list\u{2026}", "Read a MyAnimeList manga XML export and add it to your manga list.", "import restore load upload xml gz mal myanimelist file manga chapters volumes move transfer merge"),
-    spec(Row::VlcWeb, Section::Detection, "VLC web interface", if cfg!(windows) { "VLC reports through its web interface, with a password." } else { "VLC on the Mac reports through its web interface, with a password." }, "vlc web interface http password lua config.toml"),
-    spec(Row::Auto, Section::Detection, "Update automatically", "Record confident matches without asking.", "auto automatic ask before updating ask first confirm record"),
-    spec(Row::Threshold, Section::Detection, "Offer the update at", "Share of the episode watched.", "threshold percent percentage watched progress 70 80 90 100"),
-    spec(Row::KeepHigher, Section::Detection, "Keep the higher progress in conflicts", "When only the progress differs and yours is higher, Kotora sends yours.", "conflict conflicts sync queue progress"),
-    spec(Row::ProcessScan, Section::Detection, if cfg!(windows) { "Find players without setup" } else { "Find players by their open files" }, "No setup, but no position or pause.", "process open files proc lsof scan no setup window title command line zero config"),
-    spec(Row::ProcessMinutes, Section::Detection, "Count a file after it stays open", "Minutes, when the episode's length is unknown.", "minutes process time open files duration"),
-    spec(Row::Folders, Section::Library, "Folders", crate::library::FOLDERS_NOTE, "library folder folders directory files disk drive rescan scan play next episode"),
-    spec(Row::OpenWith, Section::Library, "Open with", crate::library::OPEN_WITH_NOTE, "player play mpv iina vlc default automatic open"),
-    spec(Row::NotifyDetected, Section::Notifications, "Episode detected", "When a recognised episode starts playing.", "notification notifications alert popup detected"),
-    spec(Row::NotifyOffer, Section::Notifications, "Update offered", "Update to 6? with Update and Not now.", "notification notifications alert popup offer ask"),
-    spec(Row::NotifyRecorded, Section::Notifications, "Episode recorded", "Recorded, with Undo.", "notification notifications alert popup recorded undo"),
-    spec(Row::NotifyStarted, Section::Notifications, "Started airing", "When a show on Plan to watch starts airing.", "notification notifications alert popup airing premiere plan to watch"),
-    spec(Row::ReleaseMu, Section::Manga, "MangaUpdates", "Release data for Publishing from MangaUpdates.", "manga release data source sources mangaupdates publishing chapters latest"),
-    spec(Row::ReleaseMd, Section::Manga, "MangaDex", "Release data for Publishing from MangaDex, official chapters included.", "manga release data source sources mangadex publishing chapters latest official manga plus"),
-    spec(Row::ReadingYac, Section::Manga, "YACReader", crate::reading::SWITCH_NOTE, "reading detection detect read chapter comic reader yacreader cbz cbr mark as read library"),
-    spec(Row::ReadingFind, Section::Manga, "Find YACReader\u{2019}s libraries", "Also watch the libraries listed in YACReader\u{2019}s own settings.", "reading yacreader library libraries find auto ini settings"),
-    spec(Row::ReadingOpen, Section::Manga, "Any reader (open files)", crate::reading::OPEN_FILES_NOTE, "reading detection any reader open file files process simple comic mcomix okular evince zathura komikku preview cbz cbr pdf zip folder"),
-    spec(Row::ReadingMinutes, Section::Manga, "Open this long counts as read", "When the next chapter doesn\u{2019}t open first.", "reading minutes open time counts read threshold"),
-    spec(Row::ReadingFolders, Section::Manga, "Comic folders", "Any app\u{2019}s comic files in these folders count; elsewhere only known readers.", "reading comic folders folder manga directory path"),
-    spec(Row::NotifyReadOffer, Section::Notifications, "Chapter read offered", "Mark Ch 21 as read? with Mark read and Not now.", "notification notifications alert manga chapter read offer ask mark reading detection yacreader"),
-    spec(Row::NotifyReadRecorded, Section::Notifications, "Chapter recorded", "Marked, with Undo.", "notification notifications alert manga chapter recorded marked undo reading detection"),
-    spec(Row::ReadingLibs, Section::Manga, "YACReader libraries", "Found in YACReader\u{2019}s settings, or added here.", "reading library libraries folder comics yacreader ydb database path"),
-    spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
-    spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
-    spec(Row::FeedsOn, Section::Feeds, "Torrent feeds", crate::feeds::SWITCH_NOTE, "torrent torrents feed feeds rss atom nyaa magnet release releases download new episode subs fansub"),
-    spec(Row::FeedsList, Section::Feeds, "Feeds", "The RSS feeds Kotora checks. None is built in.", "feed feeds rss url address add remove nyaa source sources key passkey apikey"),
-    spec(Row::FeedsMinutes, Section::Feeds, "Check every", "How often Kotora checks your feeds while it runs.", "interval minutes poll check every often refresh"),
-    spec(Row::FeedsSearch, Section::Feeds, "Search address", "Search releases on a show uses this address, with %title% as the title, as in Taiga.", "search address url title %title% nyaa find releases episodes missing backlog taiga"),
-    spec(Row::FeedsAutocheck, Section::Feeds, "Check automatically", "Check the feeds on an interval, as Taiga's auto-check.", "auto check automatic automatically interval torrents new"),
-    spec(Row::FeedsNewAction, Section::Feeds, "When new episodes are found", "Notify, or download the selected ones at once.", "new episodes action notify download automatically auto-download auto"),
-    spec(Row::FeedsFiltersOn, Section::Feeds, "Enable filters", "Taiga's torrent filters: conditions, then discard, select or prefer.", "filter filters enable conditions discard select prefer"),
-    spec(Row::FeedsFilters, Section::Feeds, "Filters", "Taiga's filter manager: presets, conditions, actions, per-anime filters, import and export.", "filter filters manager preset presets condition conditions action discard select prefer fansub group resolution anime import export xml default"),
-    spec(Row::FeedsApp, Section::Feeds, "Open torrents with", "The system's torrent app, or one you choose.", "app application client torrent qbittorrent transmission deluge open with path program"),
-    spec(Row::FeedsFolder, Section::Feeds, "Save to a folder", "Save .torrent files into a folder, a folder per anime.", "folder save download directory watch subfolder subfolders torrent file"),
-    spec(Row::FeedsOrder, Section::Feeds, "Download order", "The order Download marked uses: episode or date.", "order sort episode date ascending descending download marked"),
-    spec(Row::FeedsHistory, Section::Feeds, "Torrent history", "The torrents already downloaded: discarded when a feed shows them again.", "history archive downloaded clear torrents already"),
-    spec(Row::FeedsNotify, Section::Feeds, "New release", "A notification when a feed has a new episode for your list.", "notification notifications alert popup release feed torrent new episode"),
-    spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
-    spec(Row::Licences, Section::About, "Licences", "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.", "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright"),
-    spec(Row::Links, Section::About, "Links", "kotora.moe and the source code.", "website site github source code links kotora.moe"),
-    spec(Row::Support, Section::About, "Support Kotora", "Kotora is free. You can support it on Ko-fi.", "support donate donation kofi ko-fi tip heart"),
+    spec(
+        Row::StartAtLogin,
+        Section::General,
+        "Start Kotora when I log in",
+        "Kotora keeps detecting episodes from the moment you log in.",
+        "login log in logon autostart auto start startup boot launch open at login login items session automatically",
+    ),
+    spec(
+        Row::StartHidden,
+        Section::General,
+        "Start in the background",
+        "At login, show only the tray icon, no window.",
+        "background hidden minimised minimized tray menu bar silent quiet no window autostart startup login",
+    ),
+    spec(
+        Row::OpenOn,
+        Section::General,
+        "Open on",
+        "Home, or the page Kotora was on when it was last closed or hidden.",
+        "on startup start launch open opens home last page remember restore resume where screen first page",
+    ),
+    spec(
+        Row::StartMode,
+        Section::General,
+        "Mode",
+        "Last used, Anime or Manga. Manga only when Manga is on.",
+        "on startup start launch open mode anime manga switch last used remember kind",
+    ),
+    spec(
+        Row::CheckUpdates,
+        Section::General,
+        "Check for updates",
+        crate::update::CHECK_NOTE,
+        "update updates upgrade new version release kotora.moe privacy",
+    ),
+    spec(
+        Row::CheckNow,
+        Section::General,
+        "Check now",
+        "When Kotora last checked for a new version.",
+        "update updates upgrade new version release last checked",
+    ),
+    spec(
+        Row::PageKeys,
+        Section::General,
+        "List page shortcuts",
+        "A modifier key with 1 to 5 opens Watching, Plan to watch, Completed, On hold and Dropped.",
+        "keyboard shortcut shortcuts keys hotkey hotkeys keybinding keybindings bindings chord ctrl control alt option cmd command modifier numbers digits 1 2 3 4 5 pages lists navigate go",
+    ),
+    spec(
+        Row::Discord,
+        Section::General,
+        "Show on Discord",
+        "Shows the episode you watch (and the chapter you read) as your Discord status. Needs the Discord app on this computer; Kotora makes no connection of its own.",
+        "discord rich presence status activity presence taiga show playing watching friends share",
+    ),
+    spec(
+        Row::DiscordCover,
+        Section::General,
+        "Show the cover",
+        "The cover as the status image. Discord\u{2019}s servers fetch it from the list service.",
+        "discord cover art poster image picture",
+    ),
+    spec(
+        Row::DiscordButtons,
+        Section::General,
+        "Show a button",
+        "\u{201c}View on AniList\u{201d} or \u{201c}View on MyAnimeList\u{201d}. You don\u{2019}t see your own buttons; others do.",
+        "discord button buttons link anilist myanimelist",
+    ),
+    spec(
+        Row::DiscordHidePaused,
+        Section::General,
+        "Hide while paused",
+        "Clears the status while the player is paused or idle.",
+        "discord hide paused pause idle stopped clear",
+    ),
+    spec(
+        Row::DiscordHideTitle,
+        Section::General,
+        "Hide the title",
+        "Says \u{201c}Watching anime\u{201d} and no title, cover or button.",
+        "discord hide title private privacy secret incognito",
+    ),
+    spec(
+        Row::DiscordStatus,
+        Section::General,
+        "Show in status",
+        "What Discord shows next to the activity icon in the member list: the app name, the anime title or the episode.",
+        "discord status show in app name anime title episode member list profile compact line",
+    ),
+    spec(
+        Row::Theme,
+        Section::Appearance,
+        "Theme",
+        "System follows your desktop's light or dark setting.",
+        "dark mode light mode night colour color appearance system",
+    ),
+    spec(
+        Row::Titles,
+        Section::Appearance,
+        "Titles",
+        "Romaji, English or Japanese titles everywhere.",
+        "title language romaji english japanese names kot",
+    ),
+    spec(
+        Row::Intro,
+        Section::Appearance,
+        "Startup animation",
+        "Claw marks when Kotora opens.",
+        "intro splash launch claw motion animation reduce motion",
+    ),
+    spec(
+        Row::Mal,
+        Section::Account,
+        "MyAnimeList",
+        "Signed in, or Sign in. Or switch to it.",
+        "mal myanimelist account service sign in sign out log in login logout user switch use",
+    ),
+    spec(
+        Row::ClientId,
+        Section::Account,
+        "Client ID",
+        "The ID of your own MyAnimeList API app, or your own AniList API client instead of Kotora\u{2019}s. Set up again.",
+        "client id api key apiconfig developer setup wizard set up again",
+    ),
+    spec(
+        Row::Token,
+        Section::Account,
+        "Sign-in token",
+        "Kept in a file only you can read. Signing out deletes it.",
+        "token security privacy password file keyring",
+    ),
+    spec(
+        Row::AniList,
+        Section::Account,
+        "AniList",
+        "Signed in, or Sign in. Or switch to it.",
+        "anilist al account service sign in sign out log in login logout user switch use",
+    ),
+    spec(
+        Row::Mirror,
+        Section::Account,
+        "Mirror edits",
+        "Every change also goes to your list on the other service.",
+        "mirror mirroring copy both two accounts sync myanimelist anilist mal al align merge second",
+    ),
+    spec(
+        Row::Export,
+        Section::Account,
+        "Export anime list\u{2026}",
+        "Your anime list as a MyAnimeList XML file.",
+        "export anime backup save download xml mal myanimelist file kitsu taiga move transfer",
+    ),
+    spec(
+        Row::Import,
+        Section::Account,
+        "Import anime list\u{2026}",
+        "Read a MyAnimeList anime XML export and add it to your anime list.",
+        "import anime restore load upload xml gz mal myanimelist file kitsu taiga move transfer merge",
+    ),
+    spec(
+        Row::ExportManga,
+        Section::Account,
+        "Export manga list\u{2026}",
+        "Your manga list as a MyAnimeList XML file.",
+        "export backup save download xml mal myanimelist file manga chapters volumes move transfer",
+    ),
+    spec(
+        Row::FillVolumes,
+        Section::Account,
+        "Fill volumes from chapters\u{2026}",
+        "Volumes read from chapters read, with MangaDex\u{2019}s volume tables; never lowered.",
+        "volumes chapters mangadex fill manga count compute",
+    ),
+    spec(
+        Row::ImportManga,
+        Section::Account,
+        "Import manga list\u{2026}",
+        "Read a MyAnimeList manga XML export and add it to your manga list.",
+        "import restore load upload xml gz mal myanimelist file manga chapters volumes move transfer merge",
+    ),
+    spec(
+        Row::VlcWeb,
+        Section::Detection,
+        "VLC web interface",
+        if cfg!(windows) {
+            "VLC reports through its web interface, with a password."
+        } else {
+            "VLC on the Mac reports through its web interface, with a password."
+        },
+        "vlc web interface http password lua config.toml",
+    ),
+    spec(
+        Row::Auto,
+        Section::Detection,
+        "Update automatically",
+        "Record confident matches without asking.",
+        "auto automatic ask before updating ask first confirm record",
+    ),
+    spec(
+        Row::Threshold,
+        Section::Detection,
+        "Offer the update at",
+        "Share of the episode watched.",
+        "threshold percent percentage watched progress 70 80 90 100",
+    ),
+    spec(
+        Row::KeepHigher,
+        Section::Detection,
+        "Keep the higher progress in conflicts",
+        "When only the progress differs and yours is higher, Kotora sends yours.",
+        "conflict conflicts sync queue progress",
+    ),
+    spec(
+        Row::ProcessScan,
+        Section::Detection,
+        if cfg!(windows) {
+            "Find players without setup"
+        } else {
+            "Find players by their open files"
+        },
+        "No setup, but no position or pause.",
+        "process open files proc lsof scan no setup window title command line zero config",
+    ),
+    spec(
+        Row::ProcessMinutes,
+        Section::Detection,
+        "Count a file after it stays open",
+        "Minutes, when the episode's length is unknown.",
+        "minutes process time open files duration",
+    ),
+    spec(
+        Row::Folders,
+        Section::Library,
+        "Folders",
+        crate::library::FOLDERS_NOTE,
+        "library folder folders directory files disk drive rescan scan play next episode",
+    ),
+    spec(
+        Row::OpenWith,
+        Section::Library,
+        "Open with",
+        crate::library::OPEN_WITH_NOTE,
+        "player play mpv iina vlc default automatic open",
+    ),
+    spec(
+        Row::NotifyDetected,
+        Section::Notifications,
+        "Episode detected",
+        "When a recognised episode starts playing.",
+        "notification notifications alert popup detected",
+    ),
+    spec(
+        Row::NotifyOffer,
+        Section::Notifications,
+        "Update offered",
+        "Update to 6? with Update and Not now.",
+        "notification notifications alert popup offer ask",
+    ),
+    spec(
+        Row::NotifyRecorded,
+        Section::Notifications,
+        "Episode recorded",
+        "Recorded, with Undo.",
+        "notification notifications alert popup recorded undo",
+    ),
+    spec(
+        Row::NotifyStarted,
+        Section::Notifications,
+        "Started airing",
+        "When a show on Plan to watch starts airing.",
+        "notification notifications alert popup airing premiere plan to watch",
+    ),
+    spec(
+        Row::ReleaseMu,
+        Section::Manga,
+        "MangaUpdates",
+        "Release data for Publishing from MangaUpdates.",
+        "manga release data source sources mangaupdates publishing chapters latest",
+    ),
+    spec(
+        Row::ReleaseMd,
+        Section::Manga,
+        "MangaDex",
+        "Release data for Publishing from MangaDex, official chapters included.",
+        "manga release data source sources mangadex publishing chapters latest official manga plus",
+    ),
+    spec(
+        Row::ReadingYac,
+        Section::Manga,
+        "YACReader",
+        crate::reading::SWITCH_NOTE,
+        "reading detection detect read chapter comic reader yacreader cbz cbr mark as read library",
+    ),
+    spec(
+        Row::ReadingFind,
+        Section::Manga,
+        "Find YACReader\u{2019}s libraries",
+        "Also watch the libraries listed in YACReader\u{2019}s own settings.",
+        "reading yacreader library libraries find auto ini settings",
+    ),
+    spec(
+        Row::ReadingOpen,
+        Section::Manga,
+        "Any reader (open files)",
+        crate::reading::OPEN_FILES_NOTE,
+        "reading detection any reader open file files process simple comic mcomix okular evince zathura komikku preview cbz cbr pdf zip folder",
+    ),
+    spec(
+        Row::ReadingMinutes,
+        Section::Manga,
+        "Open this long counts as read",
+        "When the next chapter doesn\u{2019}t open first.",
+        "reading minutes open time counts read threshold",
+    ),
+    spec(
+        Row::ReadingFolders,
+        Section::Manga,
+        "Comic folders",
+        "Any app\u{2019}s comic files in these folders count; elsewhere only known readers.",
+        "reading comic folders folder manga directory path",
+    ),
+    spec(
+        Row::NotifyReadOffer,
+        Section::Notifications,
+        "Chapter read offered",
+        "Mark Ch 21 as read? with Mark read and Not now.",
+        "notification notifications alert manga chapter read offer ask mark reading detection yacreader",
+    ),
+    spec(
+        Row::NotifyReadRecorded,
+        Section::Notifications,
+        "Chapter recorded",
+        "Marked, with Undo.",
+        "notification notifications alert manga chapter recorded marked undo reading detection",
+    ),
+    spec(
+        Row::ReadingLibs,
+        Section::Manga,
+        "YACReader libraries",
+        "Found in YACReader\u{2019}s settings, or added here.",
+        "reading library libraries folder comics yacreader ydb database path",
+    ),
+    spec(
+        Row::NotifyChapter,
+        Section::Notifications,
+        "New chapter",
+        "When a manga you're reading gets a new chapter on MangaUpdates.",
+        "notification notifications alert manga chapter new chapter release publishing mangaupdates",
+    ),
+    spec(
+        Row::NotifyEpisode,
+        Section::Notifications,
+        "New episode",
+        "When the next episode of a show you're watching is out.",
+        "notification notifications alert popup new episode aired out broadcast",
+    ),
+    spec(
+        Row::FeedsOn,
+        Section::Feeds,
+        "Torrent feeds",
+        crate::feeds::SWITCH_NOTE,
+        "torrent torrents feed feeds rss atom nyaa magnet release releases download new episode subs fansub",
+    ),
+    spec(
+        Row::FeedsList,
+        Section::Feeds,
+        "Feeds",
+        "The RSS feeds Kotora checks. None is built in.",
+        "feed feeds rss url address add remove nyaa source sources key passkey apikey",
+    ),
+    spec(
+        Row::FeedsMinutes,
+        Section::Feeds,
+        "Check every",
+        "How often Kotora checks your feeds while it runs.",
+        "interval minutes poll check every often refresh",
+    ),
+    spec(
+        Row::FeedsSearch,
+        Section::Feeds,
+        "Search address",
+        "Search releases on a show uses this address, with %title% as the title, as in Taiga.",
+        "search address url title %title% nyaa find releases episodes missing backlog taiga",
+    ),
+    spec(
+        Row::FeedsAutocheck,
+        Section::Feeds,
+        "Check automatically",
+        "Check the feeds on an interval, as Taiga's auto-check.",
+        "auto check automatic automatically interval torrents new",
+    ),
+    spec(
+        Row::FeedsNewAction,
+        Section::Feeds,
+        "When new episodes are found",
+        "Notify, or download the selected ones at once.",
+        "new episodes action notify download automatically auto-download auto",
+    ),
+    spec(
+        Row::FeedsFiltersOn,
+        Section::Feeds,
+        "Enable filters",
+        "Taiga's torrent filters: conditions, then discard, select or prefer.",
+        "filter filters enable conditions discard select prefer",
+    ),
+    spec(
+        Row::FeedsFilters,
+        Section::Feeds,
+        "Filters",
+        "Taiga's filter manager: presets, conditions, actions, per-anime filters, import and export.",
+        "filter filters manager preset presets condition conditions action discard select prefer fansub group resolution anime import export xml default",
+    ),
+    spec(
+        Row::FeedsApp,
+        Section::Feeds,
+        "Open torrents with",
+        "The system's torrent app, or one you choose.",
+        "app application client torrent qbittorrent transmission deluge open with path program",
+    ),
+    spec(
+        Row::FeedsFolder,
+        Section::Feeds,
+        "Save to a folder",
+        "Save .torrent files into a folder, a folder per anime.",
+        "folder save download directory watch subfolder subfolders torrent file",
+    ),
+    spec(
+        Row::FeedsOrder,
+        Section::Feeds,
+        "Download order",
+        "The order Download marked uses: episode or date.",
+        "order sort episode date ascending descending download marked",
+    ),
+    spec(
+        Row::FeedsHistory,
+        Section::Feeds,
+        "Torrent history",
+        "The torrents already downloaded: discarded when a feed shows them again.",
+        "history archive downloaded clear torrents already",
+    ),
+    spec(
+        Row::FeedsNotify,
+        Section::Feeds,
+        "New release",
+        "A notification when a feed has a new episode for your list.",
+        "notification notifications alert popup release feed torrent new episode",
+    ),
+    spec(
+        Row::About,
+        Section::About,
+        "About Kotora",
+        "Version, and a tribute to Taiga.",
+        "version about taiga credits thanks",
+    ),
+    spec(
+        Row::Licences,
+        Section::About,
+        "Licences",
+        "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.",
+        "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright",
+    ),
+    spec(
+        Row::Links,
+        Section::About,
+        "Links",
+        "kotora.moe and the source code.",
+        "website site github source code links kotora.moe",
+    ),
+    spec(
+        Row::Support,
+        Section::About,
+        "Support Kotora",
+        "Kotora is free. You can support it on Ko-fi.",
+        "support donate donation kofi ko-fi tip heart",
+    ),
 ];
 
 /// A player row's search words beyond its name.
@@ -418,14 +936,33 @@ fn index() -> Vec<Entry> {
     for section in Section::ALL {
         if section == Section::Detection {
             for sw in Switch::here() {
-                v.push(Entry { row: Row::Player(*sw), section, hay: fold(&format!("{} {} {}", section.title(), sw.label(), player_words(*sw))) });
+                v.push(Entry {
+                    row: Row::Player(*sw),
+                    section,
+                    hay: fold(&format!(
+                        "{} {} {}",
+                        section.title(),
+                        sw.label(),
+                        player_words(*sw)
+                    )),
+                });
             }
         }
         for s in SPECS.iter().filter(|s| s.section == section) {
             if s.row == Row::VlcWeb && !kotora_detect::VLC_WEB {
                 continue;
             }
-            v.push(Entry { row: s.row, section, hay: fold(&format!("{} {} {} {}", section.title(), s.title, s.note, s.words)) });
+            v.push(Entry {
+                row: s.row,
+                section,
+                hay: fold(&format!(
+                    "{} {} {} {}",
+                    section.title(),
+                    s.title,
+                    s.note,
+                    s.words
+                )),
+            });
         }
     }
     v
@@ -441,7 +978,12 @@ pub fn find(query: &str) -> Vec<usize> {
     if words.is_empty() {
         return Vec::new();
     }
-    INDEX.iter().enumerate().filter(|(_, e)| words.iter().all(|w| e.hay.contains(w))).map(|(i, _)| i).collect()
+    INDEX
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| words.iter().all(|w| e.hay.contains(w)))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 // ------------------------------------------------------------------------------------- state
@@ -491,7 +1033,12 @@ pub fn select(s: &mut State, section: Section) {
     s.settings.flash = None;
     if s.settings.section != section {
         s.settings.section = section;
-        crate::detect::save_setting(s, "display", "settings_section", config::quote(section.key()));
+        crate::detect::save_setting(
+            s,
+            "display",
+            "settings_section",
+            config::quote(section.key()),
+        );
     }
 }
 
@@ -503,7 +1050,10 @@ pub fn open(s: &mut State, section: Section) {
 
 /// Up or Down in the section list: the section above or below (no wrap).
 fn step(s: &mut State, by: isize) -> bool {
-    let at = Section::ALL.iter().position(|x| *x == s.settings.section).unwrap_or(0) as isize;
+    let at = Section::ALL
+        .iter()
+        .position(|x| *x == s.settings.section)
+        .unwrap_or(0) as isize;
     let next = (at + by).clamp(0, Section::ALL.len() as isize - 1) as usize;
     if Section::ALL[next] == s.settings.section {
         return false;
@@ -514,7 +1064,13 @@ fn step(s: &mut State, by: isize) -> bool {
 
 /// The rows the search shows, as `(section, row)` in section order.
 pub fn results(s: &State) -> Vec<(Section, Row)> {
-    s.settings.hits.iter().filter_map(|&i| INDEX.get(i)).filter(|e| shown(s, e.row)).map(|e| (e.section, e.row)).collect()
+    s.settings
+        .hits
+        .iter()
+        .filter_map(|&i| INDEX.get(i))
+        .filter(|e| shown(s, e.row))
+        .map(|e| (e.section, e.row))
+        .collect()
 }
 
 /// Leaves the search for `section`, scrolled to `row`, which is tinted for a moment.
@@ -576,8 +1132,14 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> Option<bool> {
 /// What the list page keys do, with the chosen modifier, and that the others stay.
 fn page_keys_note(keys: config::PageKeys) -> String {
     let (first, last) = (keys.hint('1'), keys.hint('5'));
-    let fixed = if cfg!(target_os = "macos") { "\u{2318} , for Settings, \u{2318} K and \u{2318} F" } else { "Ctrl , for Settings, Ctrl K, Ctrl F and Ctrl Q (quit)" };
-    format!("{first} to {last} open Watching, Plan to watch, Completed, On hold and Dropped, also while you type in a search box. {fixed} stay as they are.")
+    let fixed = if cfg!(target_os = "macos") {
+        "\u{2318} , for Settings, \u{2318} K and \u{2318} F"
+    } else {
+        "Ctrl , for Settings, Ctrl K, Ctrl F and Ctrl Q (quit)"
+    };
+    format!(
+        "{first} to {last} open Watching, Plan to watch, Completed, On hold and Dropped, also while you type in a search box. {fixed} stay as they are."
+    )
 }
 
 // -------------------------------------------------------------------------------------- view
@@ -589,18 +1151,33 @@ pub const TABS_W: f32 = 760.0;
 pub fn page(s: &State, width: f32) -> El {
     let narrow = width < TABS_W;
     let searching = searching(s);
-    let content = if searching { search_results(s) } else { section_view(s, s.settings.section) };
+    let content = if searching {
+        search_results(s)
+    } else {
+        section_view(s, s.settings.section)
+    };
     // The scroll area takes the page's height in both layouts: in the wide one it sits in a row
     // whose items start at the top, so it is stretched on purpose (else it grows with its content,
     // a tall section or a preview is cut at the window's edge and nothing scrolls).
     let scroll = col()
         .key("settings-scroll")
-        .scroll(ScrollSpec { stick_bottom: false })
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
         .grow(1.0)
         .self_stretch()
         .min_h(0.0)
         .min_w(0.0)
-        .child(col().w_full().px(if narrow { theme::PAGE_PAD } else { 8.0 }).pr(theme::PAGE_PAD).pt(4.0).pb(theme::PAGE_PAD).max_w(820.0).child(content));
+        .child(
+            col()
+                .w_full()
+                .px(if narrow { theme::PAGE_PAD } else { 8.0 })
+                .pr(theme::PAGE_PAD)
+                .pt(4.0)
+                .pb(theme::PAGE_PAD)
+                .max_w(820.0)
+                .child(content),
+        );
     let top = row()
         .key("top")
         .gap(12.0)
@@ -615,13 +1192,25 @@ pub fn page(s: &State, width: f32) -> El {
     if narrow {
         page.child(tabs(s, searching)).child(scroll)
     } else {
-        page.child(row().w_full().grow(1.0).min_h(0.0).items_start().child(side(s, searching)).child(scroll))
+        page.child(
+            row()
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .items_start()
+                .child(side(s, searching))
+                .child(scroll),
+        )
     }
 }
 
 /// The search field. Enter goes to the first result; Escape clears it.
 fn search_box(s: &State, narrow: bool) -> El {
-    let k = if cfg!(target_os = "macos") { "\u{2318} F" } else { "Ctrl F" };
+    let k = if cfg!(target_os = "macos") {
+        "\u{2318} F"
+    } else {
+        "Ctrl F"
+    };
     let field = text_input(&s.settings.query, theme::BODY)
         .key("set/search-input")
         .grow(1.0)
@@ -662,7 +1251,14 @@ fn search_box(s: &State, narrow: bool) -> El {
         .center_y()
         .radius(theme::R_SM)
         .fill(PAL.field)
-        .border(1.0, if s.settings.query.focused { PAL.accent.alpha(0.6) } else { PAL.border })
+        .border(
+            1.0,
+            if s.settings.query.focused {
+                PAL.accent.alpha(0.6)
+            } else {
+                PAL.border
+            },
+        )
         .child(icon(&icons::SEARCH, 16.0).color(PAL.faint))
         .child(field);
     if s.settings.query.text.is_empty() {
@@ -690,7 +1286,15 @@ fn search_box(s: &State, narrow: bool) -> El {
 
 /// The section list (wide windows).
 fn side(s: &State, searching: bool) -> El {
-    let mut c = col().key("set/sections").role("list").label("Settings sections").w(208.0).pl(theme::PAGE_PAD - 8.0).pr(8.0).pt(4.0).gap(2.0);
+    let mut c = col()
+        .key("set/sections")
+        .role("list")
+        .label("Settings sections")
+        .w(208.0)
+        .pl(theme::PAGE_PAD - 8.0)
+        .pr(8.0)
+        .pt(4.0)
+        .gap(2.0);
     for sec in Section::ALL {
         let on = !searching && sec == s.settings.section;
         let fg = if on { PAL.text } else { PAL.dim };
@@ -712,18 +1316,36 @@ fn side(s: &State, searching: bool) -> El {
                 select(s, sec);
             })
             .child(icon(sec.icon(), 16.0).color(if on { PAL.accent_hi } else { fg }))
-            .child(text(sec.title()).font(TextStyle::new(13.0, if on { 500.0 } else { 400.0 })).color(fg));
+            .child(
+                text(sec.title())
+                    .font(TextStyle::new(13.0, if on { 500.0 } else { 400.0 }))
+                    .color(fg),
+            );
         if on {
             item = item.fill(PAL.raised);
         }
         c = c.child(item);
     }
-    c.child(text("\u{2191} \u{2193} to move").font(theme::SMALL).color(PAL.faint).px(8.0).pt(10.0))
+    c.child(
+        text("\u{2191} \u{2193} to move")
+            .font(theme::SMALL)
+            .color(PAL.faint)
+            .px(8.0)
+            .pt(10.0),
+    )
 }
 
 /// The sections as a row of tabs (narrow windows).
 fn tabs(s: &State, searching: bool) -> El {
-    let mut r = row().key("set/sections").role("tablist").label("Settings sections").gap(2.0).padding(3.0).radius(theme::R_MD).fill(PAL.field).border(1.0, PAL.border);
+    let mut r = row()
+        .key("set/sections")
+        .role("tablist")
+        .label("Settings sections")
+        .gap(2.0)
+        .padding(3.0)
+        .radius(theme::R_MD)
+        .fill(PAL.field)
+        .border(1.0, PAL.border);
     for sec in Section::ALL {
         let on = !searching && sec == s.settings.section;
         let mut t = row()
@@ -741,23 +1363,43 @@ fn tabs(s: &State, searching: bool) -> El {
                 tx.instant();
                 select(s, sec);
             })
-            .child(text(sec.title()).font(TextStyle::new(12.0, if on { 600.0 } else { 500.0 })).color(if on { PAL.text } else { PAL.dim }));
-        t = if on { t.fill(PAL.raised).border(1.0, PAL.border_strong) } else { t.hover(PAL.hover()) };
+            .child(
+                text(sec.title())
+                    .font(TextStyle::new(12.0, if on { 600.0 } else { 500.0 }))
+                    .color(if on { PAL.text } else { PAL.dim }),
+            );
+        t = if on {
+            t.fill(PAL.raised).border(1.0, PAL.border_strong)
+        } else {
+            t.hover(PAL.hover())
+        };
         r = r.child(t);
     }
-    row().w_full().px(theme::PAGE_PAD).pb(12.0).child(r.flex_wrap())
+    row()
+        .w_full()
+        .px(theme::PAGE_PAD)
+        .pb(12.0)
+        .child(r.flex_wrap())
 }
 
 /// A section: its title, then each group in a card.
 fn section_view(s: &State, sec: Section) -> El {
-    let mut c = col().key(format!("set/page/{}", sec.key())).w_full().gap(8.0).child(
-        row()
-            .gap(10.0)
-            .center_y()
-            .pb(4.0)
-            .child(icon(sec.icon(), 18.0).color(PAL.accent_hi))
-            .child(text(sec.title()).font(TextStyle::new(17.0, 600.0)).color(PAL.text)),
-    );
+    let mut c = col()
+        .key(format!("set/page/{}", sec.key()))
+        .w_full()
+        .gap(8.0)
+        .child(
+            row()
+                .gap(10.0)
+                .center_y()
+                .pb(4.0)
+                .child(icon(sec.icon(), 18.0).color(PAL.accent_hi))
+                .child(
+                    text(sec.title())
+                        .font(TextStyle::new(17.0, 600.0))
+                        .color(PAL.text),
+                ),
+        );
     for (i, (head, rows)) in sec.groups().into_iter().enumerate() {
         if let Some(h) = head {
             c = c.child(group_head(h).mt(if i == 0 { 4.0 } else { 14.0 }));
@@ -765,7 +1407,11 @@ fn section_view(s: &State, sec: Section) -> El {
             c = c.child(el().h(10.0));
         }
         let rows: Vec<Row> = rows.into_iter().filter(|r| shown(s, *r)).collect();
-        c = c.child(group_card(s, &format!("set/group/{}-{i}", sec.key()), &rows));
+        c = c.child(group_card(
+            s,
+            &format!("set/group/{}-{i}", sec.key()),
+            &rows,
+        ));
     }
     if sec == Section::Notifications
         && let Some(n) = notify_support(s)
@@ -791,12 +1437,22 @@ fn shown(s: &State, r: Row) -> bool {
 }
 
 fn group_head(title: &str) -> El {
-    text(title.to_uppercase()).font(theme::CAPTION).color(PAL.faint).px(4.0)
+    text(title.to_uppercase())
+        .font(theme::CAPTION)
+        .color(PAL.faint)
+        .px(4.0)
 }
 
 /// A card of rows with a line between each two.
 fn group_card(s: &State, key: &str, rows: &[Row]) -> El {
-    let mut c = col().key(key.to_string()).w_full().px(8.0).py(4.0).radius(theme::R_LG).fill(PAL.surface).border(1.0, PAL.border);
+    let mut c = col()
+        .key(key.to_string())
+        .w_full()
+        .px(8.0)
+        .py(4.0)
+        .radius(theme::R_LG)
+        .fill(PAL.surface)
+        .border(1.0, PAL.border);
     for (i, r) in rows.iter().enumerate() {
         if i > 0 {
             c = c.child(el().mx(8.0).h(1.0).fill(PAL.border));
@@ -808,8 +1464,17 @@ fn group_card(s: &State, key: &str, rows: &[Row]) -> El {
 
 /// `row` in its keyed wrapper, tinted while a search jump flashes it.
 fn item(s: &State, r: Row) -> El {
-    let w = col().key(r.key()).w_full().px(8.0).radius(theme::R_MD).child(row_el(s, r));
-    if s.settings.flash == Some(r) { w.fill(PAL.accent.alpha(0.14)) } else { w }
+    let w = col()
+        .key(r.key())
+        .w_full()
+        .px(8.0)
+        .radius(theme::R_MD)
+        .child(row_el(s, r));
+    if s.settings.flash == Some(r) {
+        w.fill(PAL.accent.alpha(0.14))
+    } else {
+        w
+    }
 }
 
 /// The results by section, or a note when there are none.
@@ -823,20 +1488,36 @@ fn search_results(s: &State) -> El {
             .pt(72.0)
             .gap(6.0)
             .items_center()
-            .child(text(format!("No settings match \u{201c}{q}\u{201d}")).font(theme::SECTION).color(PAL.text).wrap())
-            .child(text("Try \u{201c}theme\u{201d}, \u{201c}login\u{201d} or \u{201c}mpv\u{201d}.").font(theme::LABEL).color(PAL.dim));
+            .child(
+                text(format!("No settings match \u{201c}{q}\u{201d}"))
+                    .font(theme::SECTION)
+                    .color(PAL.text)
+                    .wrap(),
+            )
+            .child(
+                text("Try \u{201c}theme\u{201d}, \u{201c}login\u{201d} or \u{201c}mpv\u{201d}.")
+                    .font(theme::LABEL)
+                    .color(PAL.dim),
+            );
     }
     let n = found.len();
     let mut c = col().key("set/results").w_full().gap(8.0).child(
-        text(format!("{n} setting{} match \u{201c}{q}\u{201d} \u{b7} Return opens the first", if n == 1 { "" } else { "s" }))
-            .font(theme::LABEL)
-            .color(PAL.dim)
-            .pb(4.0),
+        text(format!(
+            "{n} setting{} match \u{201c}{q}\u{201d} \u{b7} Return opens the first",
+            if n == 1 { "" } else { "s" }
+        ))
+        .font(theme::LABEL)
+        .color(PAL.dim)
+        .pb(4.0),
     );
     let mut i = 0;
     while i < found.len() {
         let sec = found[i].0;
-        let rows: Vec<Row> = found[i..].iter().take_while(|(x, _)| *x == sec).map(|(_, r)| *r).collect();
+        let rows: Vec<Row> = found[i..]
+            .iter()
+            .take_while(|(x, _)| *x == sec)
+            .map(|(_, r)| *r)
+            .collect();
         i += rows.len();
         let first = rows[0];
         c = c
@@ -858,7 +1539,11 @@ fn search_results(s: &State) -> El {
                     .cursor(rune::Cursor::Pointer)
                     .on_press_tx(move |s: &mut State, tx: &mut Tx| jump(s, sec, first, tx))
                     .child(icon(sec.icon(), 14.0).color(PAL.accent_hi))
-                    .child(text(sec.title().to_uppercase()).font(theme::CAPTION).color(PAL.dim))
+                    .child(
+                        text(sec.title().to_uppercase())
+                            .font(theme::CAPTION)
+                            .color(PAL.dim),
+                    )
                     .child(icon(&icons::RIGHT, 12.0).color(PAL.faint)),
             )
             .child(group_card(s, &format!("set/result/{}", sec.key()), &rows));
@@ -880,7 +1565,12 @@ fn line(title: &str, note: impl Into<String>, control: El) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .gap(3.0)
-                .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap())
+                .child(
+                    text(title.to_string())
+                        .font(theme::BODY_MED)
+                        .color(PAL.text)
+                        .wrap(),
+                )
                 .child(text(note.into()).font(theme::LABEL).color(PAL.dim).wrap()),
         )
         .child(control)
@@ -895,7 +1585,12 @@ fn block(title: &str, note: impl Into<String>, control: El) -> El {
         .child(
             col()
                 .gap(3.0)
-                .child(text(title.to_string()).font(theme::BODY_MED).color(PAL.text).wrap())
+                .child(
+                    text(title.to_string())
+                        .font(theme::BODY_MED)
+                        .color(PAL.text)
+                        .wrap(),
+                )
                 .child(text(note.into()).font(theme::LABEL).color(PAL.dim).wrap()),
         )
         .child(control)
@@ -915,22 +1610,53 @@ fn pill(key: &str, label: &str, c: rune::Color) -> El {
         .child(text(label.to_string()).font(theme::LABEL).color(PAL.text))
 }
 
-fn choice<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
+fn choice<T: Copy + PartialEq + 'static>(
+    key: &str,
+    items: &[T],
+    on: T,
+    label: fn(T) -> &'static str,
+    slug: fn(T) -> &'static str,
+    set: fn(&mut State, T),
+) -> El {
     choice_if(key, items, on, true, label, slug, set)
 }
 
 /// A choice that can be disabled (dimmed, and it ignores presses), like [`switch_if`].
-pub(crate) fn choice_if<T: Copy + PartialEq + 'static>(key: &str, items: &[T], on: T, enabled: bool, label: fn(T) -> &'static str, slug: fn(T) -> &'static str, set: fn(&mut State, T)) -> El {
+pub(crate) fn choice_if<T: Copy + PartialEq + 'static>(
+    key: &str,
+    items: &[T],
+    on: T,
+    enabled: bool,
+    label: fn(T) -> &'static str,
+    slug: fn(T) -> &'static str,
+    set: fn(&mut State, T),
+) -> El {
     let mut r = row().key(key.to_string()).gap(6.0).flex_wrap();
     for &t in items {
-        r = r.child(cell(format!("{key}/{}", slug(t)), label(t).to_string(), on == t, move |s: &mut State| if enabled { set(s, t) }).child(text(label(t)).font(theme::LABEL).color(PAL.text)));
+        r = r.child(
+            cell(
+                format!("{key}/{}", slug(t)),
+                label(t).to_string(),
+                on == t,
+                move |s: &mut State| {
+                    if enabled {
+                        set(s, t)
+                    }
+                },
+            )
+            .child(text(label(t)).font(theme::LABEL).color(PAL.text)),
+        );
     }
     if enabled { r } else { r.opacity(0.4) }
 }
 
 fn row_el(s: &State, r: Row) -> El {
     let p = &s.prefs;
-    let tray = if cfg!(target_os = "macos") { "menu bar" } else { "tray" };
+    let tray = if cfg!(target_os = "macos") {
+        "menu bar"
+    } else {
+        "tray"
+    };
     match r {
         Row::StartAtLogin => {
             let l = &p.login;
@@ -1254,17 +1980,29 @@ fn row_el(s: &State, r: Row) -> El {
 }
 
 fn notify(title: &str, note: &str, key: &str, on: bool, kind: crate::notes::Kind) -> El {
-    line(title, note, switch(key.into(), title, on, move |s, v| s.set_notify(kind, v)))
+    line(
+        title,
+        note,
+        switch(key.into(), title, on, move |s, v| s.set_notify(kind, v)),
+    )
 }
 
 /// What the system can't do with notifications, if anything.
 fn notify_support(s: &State) -> Option<El> {
     use crate::notes::Support;
     let line = match s.notes.support {
-        Support::NoButtons => "Your notification server shows no buttons: answer in Kotora\u{2019}s banner or with kot confirm.",
-        Support::Outside => "Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them.",
-        Support::Denied if cfg!(windows) => "Notifications are off for Kotora, or for all apps, in Windows Settings \u{2192} System \u{2192} Notifications.",
-        Support::Denied => "Notifications are off for Kotora in System Settings \u{2192} Notifications.",
+        Support::NoButtons => {
+            "Your notification server shows no buttons: answer in Kotora\u{2019}s banner or with kot confirm."
+        }
+        Support::Outside => {
+            "Kotora runs outside Kotora.app, so notifications have no buttons. Open Kotora.app to get them."
+        }
+        Support::Denied if cfg!(windows) => {
+            "Notifications are off for Kotora, or for all apps, in Windows Settings \u{2192} System \u{2192} Notifications."
+        }
+        Support::Denied => {
+            "Notifications are off for Kotora in System Settings \u{2192} Notifications."
+        }
         Support::Unknown | Support::Buttons => return None,
     };
     Some(
@@ -1279,7 +2017,14 @@ fn notify_support(s: &State) -> Option<El> {
             .fill(PAL.tint(PAL.warn(), 0.12))
             .border(1.0, PAL.warn().alpha(0.35))
             .child(icon(&icons::ALERT, 16.0).color(PAL.warn()))
-            .child(text(line.to_string()).font(theme::LABEL).color(PAL.text).wrap().grow(1.0).min_w(0.0)),
+            .child(
+                text(line.to_string())
+                    .font(theme::LABEL)
+                    .color(PAL.text)
+                    .wrap()
+                    .grow(1.0)
+                    .min_w(0.0),
+            ),
     )
 }
 
@@ -1288,26 +2033,45 @@ fn player(s: &State, sw: Switch) -> El {
     let on = s.prefs.players.get(sw.config_key());
     let (line, led) = s.player_line(sw);
     let help = match sw {
-        Switch::OtherMpris => format!("Haruna, Celluloid and others that report a file \u{b7} {}", line.split(" \u{b7} ").last().unwrap_or("")),
+        Switch::OtherMpris => format!(
+            "Haruna, Celluloid and others that report a file \u{b7} {}",
+            line.split(" \u{b7} ").last().unwrap_or("")
+        ),
         _ if !on => "Switched off: Kotora doesn\u{2019}t look for it.".to_string(),
         _ => line,
     };
-    let mut c = col().key(format!("set/player/{}", sw.config_key())).w_full().child(
-        row()
-            .gap(12.0)
-            .py(12.0)
-            .center_y()
-            .child(el().size(8.0, 8.0).radius(4.0).fill(if on { led_color(led) } else { PAL.faint }))
-            .child(
-                col()
-                    .grow(1.0)
-                    .min_w(0.0)
-                    .gap(3.0)
-                    .child(text(sw.label().to_string()).font(theme::BODY_MED).color(PAL.text))
-                    .child(text(help).font(theme::LABEL).color(PAL.dim).truncate()),
-            )
-            .child(switch(format!("set/switch/{}", sw.config_key()), sw.label(), on, move |s, v| s.set_player(sw, v))),
-    );
+    let mut c = col()
+        .key(format!("set/player/{}", sw.config_key()))
+        .w_full()
+        .child(
+            row()
+                .gap(12.0)
+                .py(12.0)
+                .center_y()
+                .child(el().size(8.0, 8.0).radius(4.0).fill(if on {
+                    led_color(led)
+                } else {
+                    PAL.faint
+                }))
+                .child(
+                    col()
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .gap(3.0)
+                        .child(
+                            text(sw.label().to_string())
+                                .font(theme::BODY_MED)
+                                .color(PAL.text),
+                        )
+                        .child(text(help).font(theme::LABEL).color(PAL.dim).truncate()),
+                )
+                .child(switch(
+                    format!("set/switch/{}", sw.config_key()),
+                    sw.label(),
+                    on,
+                    move |s, v| s.set_player(sw, v),
+                )),
+        );
     if sw == Switch::Mpv
         && let Some(h) = crate::precise::settings_hint(s)
     {
@@ -1417,14 +2181,47 @@ fn account_row(s: &State, id: ServiceId) -> El {
             ServiceId::Mal => |s| crate::online::switch_service(s, ServiceId::Mal),
             ServiceId::AniList => |s| crate::online::switch_service(s, ServiceId::AniList),
         };
-        let line = format!("Not in use. Kotora keeps one list at a time: your {} list now.", s.service.title());
-        return service_row(key, badge, fill, id.title(), line, small_button(&format!("{key}/use"), &format!("Use {}", id.title()), false, Some(switch)), false);
+        let line = format!(
+            "Not in use. Kotora keeps one list at a time: your {} list now.",
+            s.service.title()
+        );
+        return service_row(
+            key,
+            badge,
+            fill,
+            id.title(),
+            line,
+            small_button(
+                &format!("{key}/use"),
+                &format!("Use {}", id.title()),
+                false,
+                Some(switch),
+            ),
+            false,
+        );
     }
     let (line, action) = match (&s.account, s.auth) {
-        (Some((name, _)), _) => (format!("Signed in as {name}"), small_button("sign-out", "Sign out", false, Some(crate::online::sign_out))),
-        (None, Auth::NoClientId) => ("Needs a Client ID first (below)".to_string(), small_button("sign-in", "Sign in", true, None)),
-        (None, Auth::SigningIn) => ("Waiting for your browser\u{2026}".to_string(), small_button("cancel", "Cancel", false, Some(crate::online::cancel_sign_in))),
-        (None, _) => ("Not signed in".to_string(), small_button("sign-in", "Sign in", true, Some(crate::online::sign_in))),
+        (Some((name, _)), _) => (
+            format!("Signed in as {name}"),
+            small_button("sign-out", "Sign out", false, Some(crate::online::sign_out)),
+        ),
+        (None, Auth::NoClientId) => (
+            "Needs a Client ID first (below)".to_string(),
+            small_button("sign-in", "Sign in", true, None),
+        ),
+        (None, Auth::SigningIn) => (
+            "Waiting for your browser\u{2026}".to_string(),
+            small_button(
+                "cancel",
+                "Cancel",
+                false,
+                Some(crate::online::cancel_sign_in),
+            ),
+        ),
+        (None, _) => (
+            "Not signed in".to_string(),
+            small_button("sign-in", "Sign in", true, Some(crate::online::sign_in)),
+        ),
     };
     service_row(key, badge, fill, id.title(), line, action, true)
 }
@@ -1455,10 +2252,22 @@ mod tests {
 
     #[test]
     fn search_finds_the_startup_rows() {
-        assert!(finds("open on", Row::OpenOn) && finds("last page", Row::OpenOn) && finds("home", Row::OpenOn));
+        assert!(
+            finds("open on", Row::OpenOn)
+                && finds("last page", Row::OpenOn)
+                && finds("home", Row::OpenOn)
+        );
         assert!(finds("on startup", Row::OpenOn) && finds("on startup", Row::StartMode));
-        assert!(finds("mode", Row::StartMode) && finds("manga", Row::StartMode) && finds("last used", Row::StartMode));
-        assert_eq!(rows("startup animation"), vec![Row::Intro], "the animation stays alone");
+        assert!(
+            finds("mode", Row::StartMode)
+                && finds("manga", Row::StartMode)
+                && finds("last used", Row::StartMode)
+        );
+        assert_eq!(
+            rows("startup animation"),
+            vec![Row::Intro],
+            "the animation stays alone"
+        );
     }
 
     #[test]
@@ -1522,13 +2331,22 @@ mod tests {
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         {
-            assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
+            assert!(
+                !finds("iina", Row::Player(Switch::Iina)),
+                "no IINA off the Mac"
+            );
             assert!(finds("haruna", Row::Player(Switch::OtherMpris)));
-            assert!(rows("vlc password").is_empty(), "the web interface is the Mac's");
+            assert!(
+                rows("vlc password").is_empty(),
+                "the web interface is the Mac's"
+            );
         }
         #[cfg(windows)]
         {
-            assert!(!finds("iina", Row::Player(Switch::Iina)), "no IINA off the Mac");
+            assert!(
+                !finds("iina", Row::Player(Switch::Iina)),
+                "no IINA off the Mac"
+            );
             assert!(finds("vlc password", Row::VlcWeb));
         }
     }
@@ -1548,18 +2366,30 @@ mod tests {
                 for r in rows {
                     assert!(!seen.contains(&r), "{r:?} twice");
                     seen.push(r);
-                    let e = INDEX.iter().find(|e| e.row == r).unwrap_or_else(|| panic!("{r:?} not in the search"));
+                    let e = INDEX
+                        .iter()
+                        .find(|e| e.row == r)
+                        .unwrap_or_else(|| panic!("{r:?} not in the search"));
                     assert_eq!(e.section, sec, "{r:?}");
                 }
             }
         }
-        assert_eq!(seen.len(), INDEX.len(), "the search has no row the sections don't show");
+        assert_eq!(
+            seen.len(),
+            INDEX.len(),
+            "the search has no row the sections don't show"
+        );
     }
 
     #[test]
     fn support_is_in_about_and_points_at_kofi() {
         assert_eq!(SUPPORT_URL, "https://ko-fi.com/hanami117");
-        assert!(Section::About.groups().iter().any(|(_, rows)| rows.contains(&Row::Support)));
+        assert!(
+            Section::About
+                .groups()
+                .iter()
+                .any(|(_, rows)| rows.contains(&Row::Support))
+        );
         assert!(finds("donate", Row::Support) && finds("ko-fi", Row::Support));
     }
 
@@ -1578,16 +2408,28 @@ mod tests {
     #[test]
     fn the_section_is_remembered() {
         let mut s = State::fake();
-        assert_eq!(s.settings.section, Section::General, "General the first time");
+        assert_eq!(
+            s.settings.section,
+            Section::General,
+            "General the first time"
+        );
         open(&mut s, Section::Detection);
         s.go(crate::model::Page::List(kotora_core::Status::Watching));
         s.go(crate::model::Page::Settings);
-        assert_eq!(s.settings.section, Section::Detection, "back on the section left");
+        assert_eq!(
+            s.settings.section,
+            Section::Detection,
+            "back on the section left"
+        );
         // `config.toml` keeps it across starts.
         let c = config::Config::parse("[display]\nsettings_section = \"notifications\"\n").unwrap();
         load(&mut s, &c);
         assert_eq!(s.settings.section, Section::Notifications);
-        for (k, want) in [("", Section::General), ("nonsense", Section::General), ("about", Section::About)] {
+        for (k, want) in [
+            ("", Section::General),
+            ("nonsense", Section::General),
+            ("about", Section::About),
+        ] {
             let mut c = config::Config::default();
             c.display.settings_section = k.into();
             load(&mut s, &c);
@@ -1605,7 +2447,11 @@ mod tests {
         let mut s = State::fake();
         s.go(crate::model::Page::Settings);
         let mut tx = Tx::default();
-        assert_eq!(on_key(&mut s, &ev(Key::Up, Mods::default()), &mut tx), Some(false), "already the first");
+        assert_eq!(
+            on_key(&mut s, &ev(Key::Up, Mods::default()), &mut tx),
+            Some(false),
+            "already the first"
+        );
         on_key(&mut s, &ev(Key::Down, Mods::default()), &mut tx);
         on_key(&mut s, &ev(Key::Down, Mods::default()), &mut tx);
         assert_eq!(s.settings.section, Section::Account);
@@ -1614,14 +2460,34 @@ mod tests {
         }
         assert_eq!(s.settings.section, Section::About, "no wrap");
         // Cmd+F (Ctrl+F) focuses the field, here and through the app's keys.
-        let f = if cfg!(target_os = "macos") { ev(Key::Command('f'), Mods { cmd: true, ..Default::default() }) } else { ev(Key::Command('f'), Mods { ctrl: true, ..Default::default() }) };
+        let f = if cfg!(target_os = "macos") {
+            ev(
+                Key::Command('f'),
+                Mods {
+                    cmd: true,
+                    ..Default::default()
+                },
+            )
+        } else {
+            ev(
+                Key::Command('f'),
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            )
+        };
         assert!(crate::ui::on_key(&mut s, &f, &mut tx));
         assert!(s.settings.query.focused);
         assert_eq!(s.page, crate::model::Page::Settings, "not the search page");
         // Typing, then Escape clears; Up and Down leave the results alone.
         set_query(&mut s, "theme");
         assert_eq!(on_key(&mut s, &ev(Key::Up, Mods::default()), &mut tx), None);
-        assert!(crate::ui::on_key(&mut s, &ev(Key::Escape, Mods::default()), &mut tx));
+        assert!(crate::ui::on_key(
+            &mut s,
+            &ev(Key::Escape, Mods::default()),
+            &mut tx
+        ));
         assert!(s.settings.query.text.is_empty() && s.settings.hits.is_empty());
         assert_eq!(s.settings.section, Section::About);
     }

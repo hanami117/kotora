@@ -17,11 +17,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 
-use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
-use windows_sys::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, UNICODE_STRING};
-use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
-use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
-use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_USER};
+use windows_sys::Wdk::System::Threading::{
+    NtQueryInformationProcess, ProcessCommandLineInformation,
+};
+use windows_sys::Win32::Foundation::{
+    BOOL, CloseHandle, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, UNICODE_STRING,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_USER,
+};
 
 use crate::procfs::INTERVAL;
 use crate::run::{Input, MpcProcess, Shared};
@@ -64,7 +75,15 @@ fn command_line(h: HANDLE) -> Option<String> {
         let mut need = 0u32;
         let size = (buf.len() * 8) as u32;
         // SAFETY: `buf` is `size` bytes, aligned for UNICODE_STRING; `h` is an open handle.
-        let status = unsafe { NtQueryInformationProcess(h, ProcessCommandLineInformation, buf.as_mut_ptr().cast(), size, &mut need) };
+        let status = unsafe {
+            NtQueryInformationProcess(
+                h,
+                ProcessCommandLineInformation,
+                buf.as_mut_ptr().cast(),
+                size,
+                &mut need,
+            )
+        };
         if status >= 0 {
             // SAFETY: on success the buffer starts with a UNICODE_STRING whose `Buffer` points
             // at `Length` bytes of UTF-16 further on in the same buffer.
@@ -78,7 +97,10 @@ fn command_line(h: HANDLE) -> Option<String> {
                 if start < lo || start + us.Length as usize > hi {
                     return None;
                 }
-                String::from_utf16_lossy(std::slice::from_raw_parts(us.Buffer, us.Length as usize / 2))
+                String::from_utf16_lossy(std::slice::from_raw_parts(
+                    us.Buffer,
+                    us.Length as usize / 2,
+                ))
             };
             return Some(line);
         }
@@ -114,7 +136,11 @@ unsafe extern "system" fn each_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let mut cls = [0u16; 256];
         let n = GetClassNameW(hwnd, cls.as_mut_ptr(), cls.len() as i32).max(0);
         let class = String::from_utf16_lossy(&cls[..n as usize]);
-        ctx.out.entry(pid).or_default().push(Win { hwnd: hwnd as isize, title, class });
+        ctx.out.entry(pid).or_default().push(Win {
+            hwnd: hwnd as isize,
+            title,
+            class,
+        });
     }
     1
 }
@@ -151,12 +177,18 @@ impl Sys for System {
             let exe = exe_path(h);
             let command_line = command_line(h).unwrap_or_default();
             CloseHandle(h);
-            Some(ProcInfo { exe: exe?, command_line })
+            Some(ProcInfo {
+                exe: exe?,
+                command_line,
+            })
         }
     }
 
     fn windows(&mut self, pids: &HashSet<u32>) -> HashMap<u32, Vec<Win>> {
-        let mut ctx = Titles { pids, out: HashMap::new() };
+        let mut ctx = Titles {
+            pids,
+            out: HashMap::new(),
+        };
         // SAFETY: `ctx` outlives the call; the callback only uses it during the call.
         unsafe { EnumWindows(Some(each_window), &mut ctx as *mut Titles as LPARAM) };
         ctx.out
@@ -167,10 +199,24 @@ impl Sys for System {
             let mut answer = 0usize;
             // SAFETY: a plain message to a window handle (a stale handle makes the call fail);
             // it gives up after 200 ms or at once when the window hangs.
-            let ok = unsafe { SendMessageTimeoutW(hwnd as HWND, WM_USER, what, 0, SMTO_ABORTIFHUNG, 200, &mut answer) };
+            let ok = unsafe {
+                SendMessageTimeoutW(
+                    hwnd as HWND,
+                    WM_USER,
+                    what,
+                    0,
+                    SMTO_ABORTIFHUNG,
+                    200,
+                    &mut answer,
+                )
+            };
             (ok != 0).then_some(answer as isize as i64)
         };
-        Some(Pot { status: ask(POT_GET_PLAY_STATUS)?, position_ms: ask(POT_GET_CURRENT_TIME)?, duration_ms: ask(POT_GET_TOTAL_TIME)? })
+        Some(Pot {
+            status: ask(POT_GET_PLAY_STATUS)?,
+            position_ms: ask(POT_GET_CURRENT_TIME)?,
+            duration_ms: ask(POT_GET_TOTAL_TIME)?,
+        })
     }
 }
 
@@ -183,7 +229,12 @@ pub fn players() -> Vec<Seen> {
 /// The thread: scan, report, sleep [`INTERVAL`] (or until the settings change). While the
 /// source is off it blocks until the settings change. It also tells MPC's web source whether
 /// an MPC-HC or MPC-BE process runs, so that source asks nothing when none does.
-pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>, mpc_wake: Option<Sender<()>>) {
+pub fn run(
+    shared: Arc<Shared>,
+    wake: Receiver<()>,
+    tx: Sender<Input>,
+    mpc_wake: Option<Sender<()>>,
+) {
     let mut scanner = Scanner::new(System);
     let mut reporter = Reporter::default();
     let mut mpc_before = None;
@@ -220,7 +271,11 @@ pub fn run(shared: Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>, mpc_wake:
                 return;
             }
         }
-        let got = if on { wake.recv_timeout(INTERVAL) } else { wake.recv().map_err(|_| RecvTimeoutError::Disconnected) };
+        let got = if on {
+            wake.recv_timeout(INTERVAL)
+        } else {
+            wake.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
         if got == Err(RecvTimeoutError::Disconnected) {
             return;
         }
@@ -271,7 +326,11 @@ mod tests {
         let _ = child.wait();
         let seen = found.expect("the stand-in mpv.exe was not found");
         assert_eq!((seen.kind.player, seen.family), ("mpv", Family::Mpv));
-        assert!(seen.exe.to_lowercase().ends_with(r"\mpv.exe"), "{}", seen.exe);
+        assert!(
+            seen.exe.to_lowercase().ends_with(r"\mpv.exe"),
+            "{}",
+            seen.exe
+        );
         // No window: the command line is all there is.
         assert_eq!(seen.file.as_deref(), Some(file));
         // It is gone at the next scan.
@@ -283,20 +342,56 @@ mod tests {
     #[test]
     fn a_real_window_title_is_read() {
         use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-        use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
-        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+        };
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
         let title = "[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv - mpv";
         // SAFETY: a plain window of a system class, destroyed below; strings are NUL-terminated.
-        let hwnd = unsafe { CreateWindowExW(0, wide("STATIC").as_ptr(), wide(title).as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 200, 100, std::ptr::null_mut(), std::ptr::null_mut(), GetModuleHandleW(std::ptr::null()), std::ptr::null()) };
-        assert!(!hwnd.is_null(), "no window: {}", std::io::Error::last_os_error());
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                wide("STATIC").as_ptr(),
+                wide(title).as_ptr(),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                0,
+                0,
+                200,
+                100,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                GetModuleHandleW(std::ptr::null()),
+                std::ptr::null(),
+            )
+        };
+        assert!(
+            !hwnd.is_null(),
+            "no window: {}",
+            std::io::Error::last_os_error()
+        );
         let me = std::process::id();
         let wins = System.windows(&HashSet::from([me]));
         // SAFETY: the window made above, on this thread.
         unsafe { DestroyWindow(hwnd) };
         let mine = wins.get(&me).cloned().unwrap_or_default();
-        let w = mine.iter().find(|w| w.hwnd == hwnd as isize).unwrap_or_else(|| panic!("the window is not listed: {mine:?}"));
-        assert_eq!((w.title.as_str(), w.class.to_lowercase().as_str()), (title, "static"));
-        assert_eq!(read_title(Family::Mpv, w), Some(Shown::Media("[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv".into())));
+        let w = mine
+            .iter()
+            .find(|w| w.hwnd == hwnd as isize)
+            .unwrap_or_else(|| panic!("the window is not listed: {mine:?}"));
+        assert_eq!(
+            (w.title.as_str(), w.class.to_lowercase().as_str()),
+            (title, "static")
+        );
+        assert_eq!(
+            read_title(Family::Mpv, w),
+            Some(Shown::Media(
+                "[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv".into()
+            ))
+        );
         // A window that isn't PotPlayer's answers nothing useful: no position is made up.
         assert_eq!(System.potplayer(0).and_then(Pot::pos), None);
     }
@@ -308,11 +403,16 @@ mod tests {
         use windows_sys::Win32::Foundation::FILETIME;
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
         let cpu = || {
-            let z = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let z = FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            };
             let (mut c, mut e, mut k, mut u) = (z, z, z, z);
             // SAFETY: four FILETIMEs to fill, for this process.
             unsafe { GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u) };
-            let t = |f: FILETIME| (u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime)) as f64 / 10_000.0;
+            let t = |f: FILETIME| {
+                (u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime)) as f64 / 10_000.0
+            };
             t(k) + t(u)
         };
         let mut scanner = Scanner::new(System);
@@ -326,14 +426,20 @@ mod tests {
         let wall_ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(N);
         let cpu_ms = (cpu() - cpu0) / f64::from(N);
         let share = cpu_ms / (INTERVAL.as_secs_f64() * 1000.0) * 100.0;
-        println!("scan_cost: {processes} processes; one scan {wall_ms:.3} ms wall, {cpu_ms:.3} ms CPU; at one scan every {} s that is {share:.4} % of one core", INTERVAL.as_secs());
+        println!(
+            "scan_cost: {processes} processes; one scan {wall_ms:.3} ms wall, {cpu_ms:.3} ms CPU; at one scan every {} s that is {share:.4} % of one core",
+            INTERVAL.as_secs()
+        );
         // The window pass, as when a player runs (here: this process stands in for it).
         let me = HashSet::from([std::process::id()]);
         let start = Instant::now();
         for _ in 0..N {
             System.windows(&me);
         }
-        println!("scan_cost: window pass {:.3} ms wall", start.elapsed().as_secs_f64() * 1000.0 / f64::from(N));
+        println!(
+            "scan_cost: window pass {:.3} ms wall",
+            start.elapsed().as_secs_f64() * 1000.0 / f64::from(N)
+        );
         assert!(processes > 5, "the process list is empty");
         assert!(wall_ms < 50.0, "a scan takes {wall_ms} ms");
     }

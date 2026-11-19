@@ -82,7 +82,10 @@ impl TokenStore {
     /// Saves the token of `service`; the other service's token stays.
     pub fn save(&self, service: &str, t: &Token) -> std::io::Result<()> {
         let mut file = self.read().unwrap_or_default();
-        *file.slot(service).ok_or_else(|| std::io::Error::other(format!("no token slot for {service}")))? = Some(t.clone());
+        *file
+            .slot(service)
+            .ok_or_else(|| std::io::Error::other(format!("no token slot for {service}")))? =
+            Some(t.clone());
         self.write(&file)
     }
 
@@ -118,7 +121,9 @@ impl TokenStore {
 
     /// Sign out of one service: its token goes, the other's stays (the file goes with the last).
     pub fn forget(&self, service: &str) -> std::io::Result<()> {
-        let Some(mut file) = self.read() else { return self.delete() };
+        let Some(mut file) = self.read() else {
+            return self.delete();
+        };
         if let Some(slot) = file.slot(service) {
             *slot = None;
         }
@@ -139,7 +144,11 @@ mod tests {
     use super::*;
 
     fn tok() -> Token {
-        Token { access_token: "fake-access".into(), refresh_token: "fake-refresh".into(), expires_at: 1000 }
+        Token {
+            access_token: "fake-access".into(),
+            refresh_token: "fake-refresh".into(),
+            expires_at: 1000,
+        }
     }
 
     #[test]
@@ -169,17 +178,32 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kotora-tok2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let store = TokenStore::new(dir.join("tokens.json"));
-        let al = Token { access_token: "fake-anilist".into(), refresh_token: String::new(), expires_at: 2000 };
+        let al = Token {
+            access_token: "fake-anilist".into(),
+            refresh_token: String::new(),
+            expires_at: 2000,
+        };
         store.save_mal(&tok()).unwrap();
         store.save_anilist(&al).unwrap();
-        assert_eq!((store.load_mal(), store.load_anilist()), (Some(tok()), Some(al.clone())), "saving one keeps the other");
+        assert_eq!(
+            (store.load_mal(), store.load_anilist()),
+            (Some(tok()), Some(al.clone())),
+            "saving one keeps the other"
+        );
         store.forget("mal").unwrap();
         assert_eq!((store.load_mal(), store.load_anilist()), (None, Some(al)));
         store.forget("anilist").unwrap();
-        assert!(!store.path().exists(), "the last one takes the file with it");
+        assert!(
+            !store.path().exists(),
+            "the last one takes the file with it"
+        );
         // A file from 0.1 (MAL only, no AniList key) still reads.
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(store.path(), r#"{"mal":{"access_token":"a","refresh_token":"r","expires_at":5}}"#).unwrap();
+        std::fs::write(
+            store.path(),
+            r#"{"mal":{"access_token":"a","refresh_token":"r","expires_at":5}}"#,
+        )
+        .unwrap();
         assert_eq!(store.load_mal().map(|t| t.expires_at), Some(5));
         assert_eq!(store.load_anilist(), None);
         let _ = std::fs::remove_dir_all(&dir);

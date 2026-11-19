@@ -34,7 +34,10 @@ pub fn parse_status(body: &str, at: f64) -> Option<Playing> {
         _ => PlayState::Stopped,
     };
     let meta = v.pointer("/information/category/meta");
-    let file = meta.and_then(|m| m.get("filename")).and_then(Value::as_str).map(str::to_string);
+    let file = meta
+        .and_then(|m| m.get("filename"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let length = v.get("length").and_then(Value::as_f64).filter(|l| *l > 0.0);
     // `position` (0–1) is finer than `time` (whole seconds).
     let position = match (v.get("position").and_then(Value::as_f64), length) {
@@ -46,7 +49,11 @@ pub fn parse_status(body: &str, at: f64) -> Option<Playing> {
         player: "VLC".into(),
         switch: Switch::Vlc,
         via: Via::VlcHttp,
-        path: if state == PlayState::Stopped { None } else { file },
+        path: if state == PlayState::Stopped {
+            None
+        } else {
+            file
+        },
         title: None,
         position,
         duration: length,
@@ -62,7 +69,9 @@ fn basic(password: &str) -> String {
     let b = format!(":{password}").into_bytes();
     let mut out = String::new();
     for c in b.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
         for i in 0..4 {
             if i <= c.len() {
                 out.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
@@ -87,8 +96,15 @@ fn fetch(port: u16, password: &str) -> Got {
     if std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_err() {
         return Got::NotRunning;
     }
-    let agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(5))).http_status_as_error(false).build().new_agent();
-    let r = agent.get(format!("http://127.0.0.1:{port}/requests/status.json")).header("Authorization", basic(password)).call();
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let r = agent
+        .get(format!("http://127.0.0.1:{port}/requests/status.json"))
+        .header("Authorization", basic(password))
+        .call();
     match r {
         Ok(mut resp) if resp.status() == 200 => match resp.body_mut().read_to_string() {
             Ok(body) => match parse_status(&body, crate::clock()) {
@@ -104,7 +120,12 @@ fn fetch(port: u16, password: &str) -> Got {
 }
 
 fn status(line: &str, led: Led) -> Input {
-    Input::Status(SourceStatus { switch: Switch::Vlc, via: Via::VlcHttp, line: line.into(), led })
+    Input::Status(SourceStatus {
+        switch: Switch::Vlc,
+        via: Via::VlcHttp,
+        line: line.into(),
+        led,
+    })
 }
 
 /// The thread. `wake` is pinged when the settings change; while the source is off it blocks
@@ -118,8 +139,22 @@ pub fn run(shared: std::sync::Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>
                 had_player = false;
                 let _ = tx.send(Input::Gone(KEY.into()));
             }
-            let line = if password.is_empty() { "web interface not set up (needs VLC's password)" } else { "web interface: off" };
-            if tx.send(status(line, if password.is_empty() { Led::Problem } else { Led::Off })).is_err() {
+            let line = if password.is_empty() {
+                "web interface not set up (needs VLC's password)"
+            } else {
+                "web interface: off"
+            };
+            if tx
+                .send(status(
+                    line,
+                    if password.is_empty() {
+                        Led::Problem
+                    } else {
+                        Led::Off
+                    },
+                ))
+                .is_err()
+            {
                 return;
             }
             None
@@ -127,7 +162,9 @@ pub fn run(shared: std::sync::Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>
             let (input, wait) = match fetch(port, &password) {
                 Got::Status(p) => {
                     let (line, led, wait) = match p.state {
-                        PlayState::Playing => ("web interface: playing", Led::Playing, WAIT_PLAYING),
+                        PlayState::Playing => {
+                            ("web interface: playing", Led::Playing, WAIT_PLAYING)
+                        }
                         _ => ("web interface: running", Led::Idle, WAIT_IDLE),
                     };
                     let _ = tx.send(status(line, led));
@@ -136,7 +173,10 @@ pub fn run(shared: std::sync::Arc<Shared>, wake: Receiver<()>, tx: Sender<Input>
                 }
                 other => {
                     let (line, led) = match &other {
-                        Got::Refused => ("web interface refused the password".to_string(), Led::Problem),
+                        Got::Refused => (
+                            "web interface refused the password".to_string(),
+                            Led::Problem,
+                        ),
                         Got::Odd(m) => (format!("web interface: {m}"), Led::Problem),
                         _ => ("web interface: not running".to_string(), Led::Off),
                     };
@@ -175,11 +215,24 @@ mod tests {
     #[test]
     fn reads_vlcs_status() {
         let p = parse_status(PLAYING, 3.0).unwrap();
-        assert_eq!(p.path.as_deref(), Some("[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv"));
-        assert_eq!((p.state, p.duration, p.rate, p.at), (PlayState::Playing, Some(1421.0), 1.0, 3.0));
+        assert_eq!(
+            p.path.as_deref(),
+            Some("[Hoshi] Lanterns of Kirigaoka - 06 (1080p).mkv")
+        );
+        assert_eq!(
+            (p.state, p.duration, p.rate, p.at),
+            (PlayState::Playing, Some(1421.0), 1.0, 3.0)
+        );
         assert!((p.position.unwrap() - 731.5).abs() < 0.1);
-        let stopped = parse_status(r#"{"state":"stopped","time":0,"length":0,"position":0}"#, 0.0).unwrap();
-        assert_eq!((stopped.state, stopped.path, stopped.duration), (PlayState::Stopped, None, None));
+        let stopped = parse_status(
+            r#"{"state":"stopped","time":0,"length":0,"position":0}"#,
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            (stopped.state, stopped.path, stopped.duration),
+            (PlayState::Stopped, None, None)
+        );
         assert!(parse_status("<html>", 0.0).is_none());
         assert!(parse_status(r#"{"x":1}"#, 0.0).is_none());
     }

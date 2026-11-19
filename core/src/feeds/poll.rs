@@ -10,7 +10,11 @@ use super::{Feed, FeedError, MAX_BODY, mask, parse};
 pub enum Fetched {
     /// 304: nothing new.
     Same,
-    New { body: String, etag: Option<String>, modified: Option<String> },
+    New {
+        body: String,
+        etag: Option<String>,
+        modified: Option<String>,
+    },
 }
 
 /// One GET. `Err`: a message without the URL's secrets.
@@ -24,7 +28,10 @@ pub fn fetch(url: &str, etag: Option<&str>, modified: Option<&str>) -> Result<Fe
         .user_agent(concat!("Kotora/", env!("CARGO_PKG_VERSION")))
         .build()
         .into();
-    let mut req = agent.get(url).header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5");
+    let mut req = agent.get(url).header(
+        "Accept",
+        "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
+    );
     if let Some(e) = etag {
         req = req.header("If-None-Match", e);
     }
@@ -36,10 +43,24 @@ pub fn fetch(url: &str, etag: Option<&str>, modified: Option<&str>) -> Result<Fe
     match resp.status().as_u16() {
         304 => Ok(Fetched::Same),
         200 => {
-            let header = |k: &str| resp.headers().get(k).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let header = |k: &str| {
+                resp.headers()
+                    .get(k)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            };
             let (etag, modified) = (header("etag"), header("last-modified"));
-            let body = resp.body_mut().with_config().limit(MAX_BODY as u64).read_to_string().map_err(|e| clean(e.to_string()))?;
-            Ok(Fetched::New { body, etag, modified })
+            let body = resp
+                .body_mut()
+                .with_config()
+                .limit(MAX_BODY as u64)
+                .read_to_string()
+                .map_err(|e| clean(e.to_string()))?;
+            Ok(Fetched::New {
+                body,
+                etag,
+                modified,
+            })
         }
         s => Err(format!("HTTP {s}")),
     }
@@ -58,7 +79,12 @@ pub fn download_target(item: &super::Item, dir: &std::path::Path) -> Result<Stri
     if let Ok(rd) = std::fs::read_dir(dir) {
         let week = std::time::Duration::from_secs(7 * 86_400);
         for f in rd.flatten() {
-            if f.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > week) {
+            if f.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > week)
+            {
                 let _ = std::fs::remove_file(f.path());
             }
         }
@@ -72,20 +98,33 @@ pub fn download_target(item: &super::Item, dir: &std::path::Path) -> Result<Stri
     let clean = |e: String| e.replace(&url, &mask(&url));
     let mut resp = agent.get(&url).call().map_err(|e| clean(e.to_string()))?;
     if resp.status().as_u16() != 200 {
-        return Err(format!("The .torrent file: HTTP {}", resp.status().as_u16()));
+        return Err(format!(
+            "The .torrent file: HTTP {}",
+            resp.status().as_u16()
+        ));
     }
-    let bytes = resp.body_mut().with_config().limit(MAX_BODY as u64).read_to_vec().map_err(|e| clean(e.to_string()))?;
+    let bytes = resp
+        .body_mut()
+        .with_config()
+        .limit(MAX_BODY as u64)
+        .read_to_vec()
+        .map_err(|e| clean(e.to_string()))?;
     if bytes.first() != Some(&b'd') {
         return Err("The link gave no .torrent file.".into());
     }
-    let name = item.info_hash.clone().unwrap_or_else(|| format!("{:016x}", fnv(&url)));
+    let name = item
+        .info_hash
+        .clone()
+        .unwrap_or_else(|| format!("{:016x}", fnv(&url)));
     let path = dir.join(format!("{name}.torrent"));
     std::fs::write(&path, bytes).map_err(|e| format!("Can't save the .torrent file: {e}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
 fn fnv(s: &str) -> u64 {
-    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    })
 }
 
 /// What Kotora keeps about one feed between checks (in memory).
@@ -115,14 +154,21 @@ fn jitter(secs: i64, seed: u64) -> i64 {
     if span == 0 {
         return 0;
     }
-    let x = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407) >> 33;
+    let x = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407)
+        >> 33;
     (x % (2 * span as u64 + 1)) as i64 - span
 }
 
 impl FeedState {
     /// The interval for this feed, seconds: the user's, raised by the feed's ttl.
     pub fn interval(&self, minutes: u32) -> i64 {
-        i64::from(minutes.max(crate::config::Feeds::MIN_MINUTES).max(self.ttl.unwrap_or(0).min(24 * 60))) * 60
+        i64::from(
+            minutes
+                .max(crate::config::Feeds::MIN_MINUTES)
+                .max(self.ttl.unwrap_or(0).min(24 * 60)),
+        ) * 60
     }
 
     pub fn due(&self, now: i64) -> bool {
@@ -165,14 +211,21 @@ mod tests {
         assert!(st.due(0));
         st.ok(1000, 30, 7);
         let i = 30 * 60;
-        assert!((1000 + i - i / 10..=1000 + i + i / 10).contains(&st.next), "{}", st.next);
+        assert!(
+            (1000 + i - i / 10..=1000 + i + i / 10).contains(&st.next),
+            "{}",
+            st.next
+        );
         // The floor is 10 minutes; a ttl raises it.
         assert_eq!(st.interval(1), 600);
         st.ttl = Some(60);
         assert_eq!(st.interval(30), 3600);
         st.ttl = None;
         st.failed(2000, 30, "HTTP 503".into());
-        assert_eq!((st.next, st.failures, st.error.as_deref()), (2000 + 2 * i, 1, Some("HTTP 503")));
+        assert_eq!(
+            (st.next, st.failures, st.error.as_deref()),
+            (2000 + 2 * i, 1, Some("HTTP 503"))
+        );
         for _ in 0..10 {
             st.failed(2000, 30, "HTTP 503".into());
         }
@@ -190,9 +243,20 @@ mod tests {
 
     #[test]
     fn magnets_go_as_they_are() {
-        let it = super::super::Item { magnet: Some("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into()), torrent: Some("https://x.example/a.torrent".into()), ..Default::default() };
-        assert!(download_target(&it, std::path::Path::new("/nonexistent")).unwrap().starts_with("magnet:"));
-        let none = super::super::Item { torrent: Some("file:///x.torrent".into()), ..Default::default() };
+        let it = super::super::Item {
+            magnet: Some("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into()),
+            torrent: Some("https://x.example/a.torrent".into()),
+            ..Default::default()
+        };
+        assert!(
+            download_target(&it, std::path::Path::new("/nonexistent"))
+                .unwrap()
+                .starts_with("magnet:")
+        );
+        let none = super::super::Item {
+            torrent: Some("file:///x.torrent".into()),
+            ..Default::default()
+        };
         assert!(download_target(&none, std::path::Path::new("/nonexistent")).is_err());
     }
 
@@ -205,7 +269,10 @@ mod tests {
     #[test]
     fn read_keeps_the_ttl() {
         let mut st = FeedState::default();
-        let body = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/feeds/fixtures/nyaa.xml")).unwrap();
+        let body = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/feeds/fixtures/nyaa.xml"),
+        )
+        .unwrap();
         let f = st.read(&body).unwrap();
         assert_eq!((st.ttl, st.items, f.items.len()), (Some(15), 3, 3));
     }

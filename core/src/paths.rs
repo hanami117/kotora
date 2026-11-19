@@ -12,7 +12,10 @@ use std::path::PathBuf;
 /// absolute path, so nothing is ever written relative to the working directory by mistake.
 pub fn home_dir() -> Option<PathBuf> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute())
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
 }
 
 /// Which of the Windows folders.
@@ -30,8 +33,17 @@ pub(crate) enum Kind {
 /// the last resort when neither the AppData variables nor `USERPROFILE` are set: a real folder,
 /// never the working directory.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn windows_dir(kind: Kind, env: &dyn Fn(&str) -> Option<OsString>, temp: PathBuf) -> PathBuf {
-    let abs = |var: &str| env(var).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute());
+pub(crate) fn windows_dir(
+    kind: Kind,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    temp: PathBuf,
+) -> PathBuf {
+    let abs = |var: &str| {
+        env(var)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
     let xdg = match kind {
         Kind::Config => "XDG_CONFIG_HOME",
         Kind::Data => "XDG_DATA_HOME",
@@ -48,7 +60,9 @@ pub(crate) fn windows_dir(kind: Kind, env: &dyn Fn(&str) -> Option<OsString>, te
         Kind::Config => ("APPDATA", "AppData\\Roaming"),
         _ => ("LOCALAPPDATA", "AppData\\Local"),
     };
-    let base = abs(var).or_else(|| abs("USERPROFILE").map(|h| h.join(under_profile))).unwrap_or_else(|| temp.join("kotora-profile"));
+    let base = abs(var)
+        .or_else(|| abs("USERPROFILE").map(|h| h.join(under_profile)))
+        .unwrap_or_else(|| temp.join("kotora-profile"));
     let dir = base.join("kotora");
     match kind {
         Kind::Cache => dir.join("Cache"),
@@ -73,9 +87,16 @@ fn xdg(var: &str, _home_rel: &str) -> PathBuf {
 
 #[cfg(not(windows))]
 fn xdg(var: &str, home_rel: &str) -> PathBuf {
-    match std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()) {
+    match std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
         Some(p) => p,
-        None => std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(home_rel),
+        None => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(home_rel),
     }
     .join("kotora")
 }
@@ -134,7 +155,10 @@ pub fn create_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
     }
     #[cfg(not(unix))]
@@ -151,37 +175,90 @@ mod tests {
     use super::*;
 
     fn dir(kind: Kind, vars: &[(&str, &str)]) -> String {
-        let env = |v: &str| vars.iter().find(|(k, _)| *k == v).map(|(_, val)| OsString::from(val));
-        windows_dir(kind, &env, PathBuf::from(if cfg!(windows) { "C:\\Temp" } else { "/tmp" })).to_string_lossy().replace('/', "\\")
+        let env = |v: &str| {
+            vars.iter()
+                .find(|(k, _)| *k == v)
+                .map(|(_, val)| OsString::from(val))
+        };
+        windows_dir(
+            kind,
+            &env,
+            PathBuf::from(if cfg!(windows) { "C:\\Temp" } else { "/tmp" }),
+        )
+        .to_string_lossy()
+        .replace('/', "\\")
     }
 
     /// The Windows rule. Absolute paths are judged by the system the test runs on, so the
     /// inputs are absolute on both kinds.
     #[test]
     fn windows_folders() {
-        let (roaming, local, profile) = if cfg!(windows) { ("C:\\U\\me\\AppData\\Roaming", "C:\\U\\me\\AppData\\Local", "C:\\U\\me") } else { ("/U/me/AppData/Roaming", "/U/me/AppData/Local", "/U/me") };
+        let (roaming, local, profile) = if cfg!(windows) {
+            (
+                "C:\\U\\me\\AppData\\Roaming",
+                "C:\\U\\me\\AppData\\Local",
+                "C:\\U\\me",
+            )
+        } else {
+            ("/U/me/AppData/Roaming", "/U/me/AppData/Local", "/U/me")
+        };
         let w = |p: &str| p.replace('/', "\\");
-        let vars = [("APPDATA", roaming), ("LOCALAPPDATA", local), ("USERPROFILE", profile)];
+        let vars = [
+            ("APPDATA", roaming),
+            ("LOCALAPPDATA", local),
+            ("USERPROFILE", profile),
+        ];
         assert_eq!(dir(Kind::Config, &vars), format!("{}\\kotora", w(roaming)));
         assert_eq!(dir(Kind::Data, &vars), format!("{}\\kotora", w(local)));
         assert_eq!(dir(Kind::State, &vars), format!("{}\\kotora", w(local)));
-        assert_eq!(dir(Kind::Cache, &vars), format!("{}\\kotora\\Cache", w(local)));
-        assert_eq!(dir(Kind::Logs, &vars), format!("{}\\kotora\\Logs", w(local)));
+        assert_eq!(
+            dir(Kind::Cache, &vars),
+            format!("{}\\kotora\\Cache", w(local))
+        );
+        assert_eq!(
+            dir(Kind::Logs, &vars),
+            format!("{}\\kotora\\Logs", w(local))
+        );
         // Only the profile is known.
         let vars = [("USERPROFILE", profile)];
-        assert_eq!(dir(Kind::Config, &vars), format!("{}\\AppData\\Roaming\\kotora", w(profile)));
-        assert_eq!(dir(Kind::Data, &vars), format!("{}\\AppData\\Local\\kotora", w(profile)));
+        assert_eq!(
+            dir(Kind::Config, &vars),
+            format!("{}\\AppData\\Roaming\\kotora", w(profile))
+        );
+        assert_eq!(
+            dir(Kind::Data, &vars),
+            format!("{}\\AppData\\Local\\kotora", w(profile))
+        );
         // Nothing is set, or only relative paths: a folder under temp, never the working directory.
-        for vars in [&[][..], &[("APPDATA", "AppData"), ("LOCALAPPDATA", ""), ("USERPROFILE", "me")][..]] {
-            for kind in [Kind::Config, Kind::Data, Kind::Cache, Kind::State, Kind::Logs] {
+        for vars in [
+            &[][..],
+            &[
+                ("APPDATA", "AppData"),
+                ("LOCALAPPDATA", ""),
+                ("USERPROFILE", "me"),
+            ][..],
+        ] {
+            for kind in [
+                Kind::Config,
+                Kind::Data,
+                Kind::Cache,
+                Kind::State,
+                Kind::Logs,
+            ] {
                 let d = dir(kind, vars);
                 assert!(d.contains("kotora-profile\\kotora"), "{d}");
-                assert!(PathBuf::from(d.replace('\\', std::path::MAIN_SEPARATOR_STR)).is_absolute() || !cfg!(windows));
+                assert!(
+                    PathBuf::from(d.replace('\\', std::path::MAIN_SEPARATOR_STR)).is_absolute()
+                        || !cfg!(windows)
+                );
             }
         }
         // A scratch XDG folder wins (test instances).
         let vars = [("XDG_DATA_HOME", profile), ("LOCALAPPDATA", local)];
         assert_eq!(dir(Kind::Data, &vars), format!("{}\\kotora", w(profile)));
-        assert_eq!(dir(Kind::Cache, &vars), format!("{}\\kotora\\Cache", w(local)));
+        assert_eq!(
+            dir(Kind::Cache, &vars),
+            format!("{}\\kotora\\Cache", w(local))
+        );
     }
 }
