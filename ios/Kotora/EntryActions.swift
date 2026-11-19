@@ -7,6 +7,7 @@ struct EntryActions: View {
     @EnvironmentObject private var model: AppModel
     let row: Row
     @State private var editing = false
+    @State private var removeQuestion: String?
 
     var body: some View {
         let manga = row.kind == .manga
@@ -31,13 +32,29 @@ struct EntryActions: View {
                 }
                 Spacer()
             }
+            HStack(spacing: 8) {
+                if row.progress > 0 {
+                    button(manga ? "−1 chapter" : "−1 episode", id: "minus-one") { model.minusOne(row) }
+                }
+                button("Remove from list…", id: "remove") { Task { await ask() } }
+                Spacer()
+            }
         }
         .padding(16)
+        .confirmationDialog(removeQuestion ?? "", isPresented: Binding(get: { removeQuestion != nil }, set: { if !$0 { removeQuestion = nil } }), titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { model.removeFromList(row) }
+            Button("Cancel", role: .cancel) {}
+        }
         .sheet(isPresented: $editing) {
             EntryEditorSheet(ref: RowRef(kind: row.kind, id: row.id))
                 .environment(\.palette, p)
                 .presentationDetents([.large])
         }
+    }
+
+    /// The core's question (with the mirror note when the mirror is on), then the confirm.
+    private func ask() async {
+        removeQuestion = (try? await model.editing?.removeQuestion(kind: row.kind, id: row.id)) ?? "Remove \(row.title) from your list?"
     }
 
     /// "Not yet", "once", "twice", "3 times" (the core's words).

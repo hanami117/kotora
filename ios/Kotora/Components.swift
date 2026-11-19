@@ -256,6 +256,9 @@ struct SnackBar: View {
             if let edit = snack.undo {
                 Button("Undo") { model.undo(edit) }
                     .font(Inter.semibold(14)).foregroundStyle(Color.hex(0xff9d3f))
+            } else if let removal = snack.removal {
+                Button("Undo") { model.undoRemoval(removal) }
+                    .font(Inter.semibold(14)).foregroundStyle(Color.hex(0xff9d3f))
             }
         }
         .padding(.horizontal, 16).frame(minHeight: 48)

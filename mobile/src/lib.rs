@@ -30,6 +30,7 @@ mod edit;
 pub use edit::*;
 mod insights;
 pub use insights::*;
+mod remove;
 
 /// The redirect registered with Kotora's MyAnimeList client for Android.
 pub const MAL_REDIRECT_URI: &str = "io.github.hanami117.kotora://oauth/mal";

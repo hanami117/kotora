@@ -70,6 +70,8 @@ struct Snack: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var undo: Edit?
+    /// A removal from the list: Undo discards the queued removal.
+    var removal: Removal?
 }
 
 /// The app's state: the session, the list page, sign-in. The same as the Android app's
