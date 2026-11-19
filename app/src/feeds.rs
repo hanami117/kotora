@@ -77,9 +77,15 @@ pub struct FeedsUi {
     pub manual: HashMap<String, ItemState>,
     /// The item whose actions are shown.
     pub open_row: Option<String>,
-    pub hide_discarded: bool,
-    pub history: bool,
+    /// The filter box over the table, the header sort, and the rows they leave (indices).
+    pub query: TextEdit,
+    pub sort: (crate::torrents::SortCol, bool),
+    pub visible: Vec<usize>,
+    /// The page's tab: 0 Your shows, 1 All releases, 2 History.
+    pub tab: u8,
     pub editor: crate::torrents::FilterEditor,
+    /// Torrents → Your shows: the per-show searches.
+    pub shows: crate::shows::Shows,
     pub app_edit: TextEdit,
     pub folder_edit: TextEdit,
     /// Already notified, loaded once from the store; `None` before the first check.
@@ -192,6 +198,7 @@ impl State {
             .collect();
         if self.feeds.cfg.enabled {
             self.feeds_reselect();
+            self.shows_refresh(false);
         }
     }
 
@@ -207,9 +214,11 @@ impl State {
         if let (Some(sv), Some(e)) = (self.feeds.search.as_mut(), found) {
             sv.entries = e;
         }
+        self.shows_reexamine();
+        self.feeds_refilter();
     }
 
-    fn feeds_examine(&self, items: &[(i64, Item)]) -> Vec<Entry> {
+    pub(crate) fn feeds_examine(&self, items: &[(i64, Item)]) -> Vec<Entry> {
         let f = &self.feeds;
         let empty = Relations::default();
         let rel = f.relations.as_deref().unwrap_or(&empty);
@@ -235,10 +244,20 @@ impl State {
         );
         for e in &mut entries {
             if let Some(st) = f.manual.get(&e.item.key()) {
-                e.state = *st;
-                if st.is_discarded() {
+                if e.state.is_discarded() && !st.is_discarded() {
+                    // Shown with the filter's reason, so it never looks like a normal item.
+                    e.why = format!(
+                        "{} \u{b7} kept by you",
+                        if e.why.is_empty() {
+                            "Discarded"
+                        } else {
+                            e.why.as_str()
+                        }
+                    );
+                } else if st.is_discarded() {
                     e.why = "Discarded by you".into();
                 }
+                e.state = *st;
             }
         }
         entries
@@ -259,8 +278,11 @@ impl State {
         if self.feeds.archive.is_none() {
             self.feeds.archive = p.archive.map(|titles| Archive { titles });
         }
+        // A new check decides again: states set by hand last until then (as in Taiga).
+        self.feeds.manual.clear();
         self.feeds_reselect();
         self.feeds_notify();
+        self.shows_refresh(false);
         true
     }
 
@@ -505,7 +527,14 @@ impl State {
             .feeds
             .entries
             .iter()
-            .chain(self.feeds.search.iter().flat_map(|sv| sv.entries.iter()));
+            .chain(self.feeds.search.iter().flat_map(|sv| sv.entries.iter()))
+            .chain(
+                self.feeds
+                    .shows
+                    .by_id
+                    .values()
+                    .flat_map(|x| x.entries.iter()),
+            );
         let mut jobs = Vec::new();
         for k in &keys {
             if self.feeds.busy.contains(k) {
@@ -669,7 +698,7 @@ impl State {
             loading: true,
             ..SearchView::default()
         });
-        self.feeds.history = false;
+        self.feeds.tab = 1;
         self.open_feeds();
         let Some(h) = self.handle.clone() else { return };
         let _ = std::thread::Builder::new()

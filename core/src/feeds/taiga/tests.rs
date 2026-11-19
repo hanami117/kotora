@@ -395,3 +395,49 @@ fn download_order_by_anime_then_episode() {
     e[0].state = ItemState::DiscardedNormal;
     assert_eq!(download_order(&e, false, false).len(), 2);
 }
+
+/// Every release of a watched episode is discarded by "Discard watched and available episodes",
+/// whatever its resolution (a 1080p twin once stayed shown while its 720p one was discarded).
+#[test]
+fn watched_episode_twins_are_all_discarded() {
+    let l = vec![
+        entry(10, "Dragon Ball Super: Beerus", Status::Watching, 2),
+        entry(11, "Dragon Ball Super", Status::Completed, 131),
+    ];
+    let titles = [
+        "[Yameii] Dragon Ball Super: Beerus - S01E02 [English Dub] [CR WEB-DL 1080p H264 AAC] [C0A5F010]",
+        "[Yameii] Dragon Ball Super: Beerus - S01E02 [English Dub] [CR WEB-DL 720p H264 AAC] [49E59E5E]",
+        "[Erai-raws] Dragon Ball Super: Beerus - 02 [1080p CR WEB-DL AVC AAC][MultiSub]",
+    ];
+    let items: Vec<(i64, Item)> = titles
+        .iter()
+        .enumerate()
+        .map(|(n, t)| {
+            (
+                0,
+                Item {
+                    guid: format!("g{n}"),
+                    title: t.to_string(),
+                    info_hash: Some(format!("{n:040x}")),
+                    ..Item::default()
+                },
+            )
+        })
+        .collect();
+    let mut e = examine(&items, &l, &HashMap::new(), &Relations::default());
+    let w = World {
+        list: &l,
+        available: &|_, _| false,
+    };
+    run_filters(&mut e, &default_filters(), true, &Archive::default(), &w);
+    assert_eq!(e.len(), 3);
+    for x in &e {
+        assert_eq!(
+            (x.anime_id, x.release.episodes, x.state),
+            (Some(10), Some((2, 2)), ItemState::DiscardedNormal),
+            "{}",
+            x.item.title
+        );
+        assert_eq!(x.why, "Discard watched and available episodes");
+    }
+}

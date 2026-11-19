@@ -526,10 +526,12 @@ pub const SCENES: &[Scene] = &[
     }),
     // The Feeds page: new episodes, best release first; one row opened; no feeds yet.
     ("feeds", |s| {
+        s.feeds.tab = 1;
         crate::feeds::fake(s);
         s.open_feeds();
     }),
     ("feeds-open", |s| {
+        s.feeds.tab = 1;
         crate::feeds::fake(s);
         s.feeds.open_row = s
             .feeds
@@ -570,15 +572,32 @@ pub const SCENES: &[Scene] = &[
             .map(|(_, i)| i.title.clone())
             .collect();
         s.feeds.archive = Some(kotora_core::feeds::taiga::Archive { titles: t });
-        s.feeds.history = true;
+        s.feeds.tab = 2;
         s.open_feeds();
     }),
     ("feeds-empty", |s| {
+        s.feeds.tab = 1;
         s.feeds.cfg.enabled = true;
         s.open_feeds();
     }),
     // The ↓ Ep N badge on Watching, and the details' Available card.
     ("feeds-list-badge", |s| crate::feeds::fake(s)),
+    // Torrents → Your shows with real show names (no one's list): Black Clover (long-running,
+    // next episode not aired), One Piece (episode out from a search), Dragon Ball Super: Beerus
+    // (out in the feeds, several releases, one opened), a finished show watched to the end.
+    ("feeds-shows", |s| {
+        shows_scene(s);
+        s.open_feeds();
+    }),
+    ("feeds-shows-narrow", |s| {
+        shows_scene(s);
+        s.open_feeds();
+    }),
+    ("feeds-all", |s| {
+        crate::feeds::fake(s);
+        s.feeds.tab = 1;
+        s.open_feeds();
+    }),
     ("feeds-details", |s| {
         crate::feeds::fake(s);
         let id = s
@@ -3682,7 +3701,6 @@ mod tests {
                 "page/feeds",
                 "feeds/table",
                 "feeds/head",
-                "feeds/sources",
                 "nav/feeds",
                 "feeds/download",
                 "feeds/select-new",
@@ -3725,15 +3743,22 @@ mod tests {
         crate::feeds::fake(&mut s);
         // Every feed item is on the page; the unmatched ones dimmed with the reason.
         let rt = render("feeds", (1280.0, 800.0));
-        for e in &s.feeds.entries {
-            assert!(
-                rt.find(&format!("feeds/item/{}", e.item.key())).is_some(),
-                "{}",
-                e.item.title
-            );
-        }
-        let noise = s.feeds.entries.iter().find(|e| e.item.guid == "noise-0").unwrap();
-        assert!(rt.find(&format!("feeds/why/{}", noise.item.key())).is_some());
+        // Every item is a row of All releases (the virtual list draws the visible ones).
+        assert_eq!(s.feeds.visible.len(), s.feeds.entries.len());
+        assert!(
+            rt.find(&format!("feeds/item/{}", s.feeds.entries[0].item.key()))
+                .is_some()
+        );
+        let noise = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| e.item.guid == "noise-0")
+            .unwrap();
+        assert!(
+            rt.find(&format!("feeds/why/{}", noise.item.key()))
+                .is_some()
+        );
         assert!(
             s.feeds
                 .entries
@@ -3835,6 +3860,100 @@ mod tests {
         s.feeds_filter_save();
         assert_eq!(s.feeds.filters.len(), n + 1);
         assert_eq!(s.feeds.filters[n].conditions.len(), 8);
+    }
+
+    /// Torrents → Your shows: one row per show with the next episode's state and the best
+    /// release; All releases keeps Taiga's table (virtual rows) with the filter box, chips and
+    /// sorting; a discarded item the user checks says it was kept.
+    #[test]
+    fn torrents_your_shows() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("feeds-shows", size);
+            for key in ["shows", "shows/0", "feeds/tab/shows", "feeds/tab/all"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            let rt = render("feeds-all", size);
+            for key in [
+                "feeds/filter",
+                "feeds/view/new",
+                "feeds/sort/Anime",
+                "feeds/rows",
+            ] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+        }
+        let mut s = State::fake();
+        super::shows_scene(&mut s);
+        let line = |s: &State, t: &str| {
+            let e = s.entries.iter().find(|e| e.title == t).unwrap();
+            crate::shows::row_of(s, e)
+        };
+        assert_eq!(
+            line(&s, "Black Clover").line,
+            crate::shows::Line::NotOut(171)
+        );
+        let op = line(&s, "One Piece");
+        assert_eq!(op.line, crate::shows::Line::Out(1145));
+        assert!(op.releases[0].item.title.contains("1080p") && op.releases.len() == 2);
+        let b = line(&s, "Dragon Ball Super: Beerus");
+        assert_eq!(b.line, crate::shows::Line::Out(3));
+        assert_eq!(
+            b.releases.len(),
+            2,
+            "the watched Ep 2 never shows; the Yameii 720p is preferred away"
+        );
+        assert_eq!(
+            line(&s, "Frieren: Beyond Journey's End").line,
+            crate::shows::Line::UpToDate
+        );
+        // Ep 2 is discarded by the watched filter; checking it keeps it, and says so.
+        let k = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| e.item.guid == "show-4")
+            .unwrap()
+            .item
+            .key();
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .find(|e| e.item.key() == k)
+                .unwrap()
+                .state
+                .is_discarded()
+        );
+        s.feeds_toggle(&k);
+        let e = s.feeds.entries.iter().find(|e| e.item.key() == k).unwrap();
+        assert!(!e.state.is_discarded());
+        assert_eq!(
+            crate::torrents::reason(e).unwrap(),
+            "Discard watched and available episodes \u{b7} kept by you"
+        );
+        // The filter box and the chips.
+        s.feeds.tab = 1;
+        s.feeds.query.text = "beerus 03".into();
+        s.feeds_refilter();
+        assert_eq!(s.feeds.visible.len(), 3);
+        s.feeds.query.text.clear();
+        s.set_feeds_view("discarded");
+        assert!(
+            s.feeds
+                .visible
+                .iter()
+                .all(|&i| s.feeds.entries[i].state.is_discarded())
+        );
+        s.set_feeds_view("all");
+        s.feeds_sort_by(crate::torrents::SortCol::Seeders);
+        s.feeds_sort_by(crate::torrents::SortCol::Seeders);
+        let seeds: Vec<u32> = s
+            .feeds
+            .visible
+            .iter()
+            .map(|&i| s.feeds.entries[i].item.seeders.unwrap_or(0))
+            .collect();
+        assert!(seeds.windows(2).all(|w| w[0] >= w[1]));
     }
 
     /// Statistics: every part at both sizes, the empty state's line, manga's words, and the
@@ -5723,4 +5842,126 @@ mod manga_polish {
                 && r.find("np-up-next").is_none()
         );
     }
+}
+
+/// Real show names for Torrents → Your shows; made-up releases.
+fn shows_scene(s: &mut State) {
+    use kotora_core::airing::NextAiring;
+    use kotora_core::feeds::Item;
+    let now = s.clock();
+    let w: Vec<usize> = s
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.status == Status::Watching)
+        .map(|(i, _)| i)
+        .take(4)
+        .collect();
+    let set = |e: &mut crate::model::Entry,
+               t: &str,
+               p: u32,
+               total: Option<u32>,
+               air: crate::model::Air,
+               next: Option<u32>| {
+        e.title = t.into();
+        e.main_title = t.into();
+        e.title_en = None;
+        e.progress = p;
+        e.episodes = total;
+        e.air = air;
+        e.next_airing = next.map(|n| NextAiring {
+            episode: n,
+            at: now + 3 * 86_400,
+        });
+    };
+    set(
+        &mut s.entries[w[0]],
+        "Black Clover",
+        170,
+        None,
+        crate::model::Air::Airing,
+        Some(171),
+    );
+    set(
+        &mut s.entries[w[1]],
+        "One Piece",
+        1144,
+        None,
+        crate::model::Air::Airing,
+        Some(1146),
+    );
+    set(
+        &mut s.entries[w[2]],
+        "Dragon Ball Super: Beerus",
+        2,
+        Some(13),
+        crate::model::Air::Airing,
+        Some(4),
+    );
+    set(
+        &mut s.entries[w[3]],
+        "Frieren: Beyond Journey's End",
+        28,
+        Some(28),
+        crate::model::Air::Finished,
+        None,
+    );
+    crate::feeds::fake(s);
+    // Black Clover's next episode hasn't aired: no release of it.
+    s.feeds.items.retain(|(_, i)| {
+        !["Black Clover", "One Piece", "Beerus", "Frieren"]
+            .iter()
+            .any(|t| i.title.contains(t))
+    });
+    let beerus = s.entries[w[2]].id;
+    let op = s.entries[w[1]].id;
+    let mk = |n: u32, t: &str, seed: u32, size: u64| Item {
+        guid: format!("show-{n}"),
+        title: t.into(),
+        info_hash: Some(format!("{:040x}", 7000 + n)),
+        magnet: Some(format!("magnet:?xt=urn:btih:{:040x}", 7000 + n)),
+        seeders: Some(seed),
+        leechers: Some(seed / 3),
+        size: Some(size),
+        ..Item::default()
+    };
+    s.feeds.items.extend([
+        (0, mk(1, "[Yameii] Dragon Ball Super: Beerus - S01E03 [English Dub] [CR WEB-DL 1080p H264 AAC] [0A1B2C3D]", 72, 1_400_000_000)),
+        (0, mk(2, "[Yameii] Dragon Ball Super: Beerus - S01E03 [English Dub] [CR WEB-DL 720p H264 AAC] [4E5F6A7B]", 58, 730_000_000)),
+        (0, mk(3, "[Erai-raws] Dragon Ball Super: Beerus - 03 [1080p CR WEB-DL AVC AAC][MultiSub]", 140, 1_350_000_000)),
+        (0, mk(4, "[Yameii] Dragon Ball Super: Beerus - S01E02 [English Dub] [CR WEB-DL 1080p H264 AAC] [C0A5F010]", 72, 1_400_000_000)),
+    ]);
+    s.feeds.search_edit.text = kotora_core::feeds::NYAA_SEARCH.into();
+    s.feeds_reselect();
+    let op_items = vec![
+        mk(
+            10,
+            "[SubsPlease] One Piece - 1145 (1080p) [AB12CD34].mkv",
+            900,
+            1_450_000_000,
+        ),
+        mk(
+            11,
+            "[Erai-raws] One Piece - 1145 [720p CR WEB-DL AVC AAC][MultiSub]",
+            310,
+            700_000_000,
+        ),
+        mk(
+            12,
+            "[SubsPlease] One Piece - 1144 (1080p) [EE12CD34].mkv",
+            1200,
+            1_440_000_000,
+        ),
+    ];
+    s.shows_got(op, Ok(Some(op_items)));
+    s.shows_got(
+        s.entries[w[0]].id,
+        Ok(Some(vec![mk(
+            20,
+            "[SubsPlease] Black Clover - 170 (1080p) [FF00AA11].mkv",
+            400,
+            1_400_000_000,
+        )])),
+    );
+    s.feeds.shows.open.insert(beerus);
 }

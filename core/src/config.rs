@@ -174,6 +174,8 @@ pub struct Feeds {
     pub sort_desc: bool,
     /// The history of downloaded torrents keeps this many titles.
     pub archive_max: u32,
+    /// The Torrents page's chip: `all`, `list`, `new`, `selected`, `discarded`.
+    pub view: String,
 }
 
 impl Feeds {
@@ -221,6 +223,7 @@ impl Default for Feeds {
             sort_by: "episode".into(),
             sort_desc: false,
             archive_max: 1000,
+            view: "all".into(),
         }
     }
 }

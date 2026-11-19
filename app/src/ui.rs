@@ -179,6 +179,10 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         go_to(s, s.list_page(status), tx);
         return true;
     }
+    if k.is_command('f') && s.page == Page::Feeds && s.feeds.tab == 1 {
+        s.feeds.query.focused = true;
+        return true;
+    }
     if k.is_command('f') && matches!(s.page, Page::Manga(_)) && s.has_list() {
         s.manga.query.focused = true;
         return true;

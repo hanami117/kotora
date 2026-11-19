@@ -11,7 +11,6 @@
 //! discarded), the filter manager in Settings → Feeds, per-anime filters, the torrent history
 //! and the download options. The engine is `kotora_core::feeds::taiga`.
 
-use std::collections::HashSet;
 use std::path::Path;
 
 use kotora_core::config::{self, Feeds};
@@ -1384,7 +1383,221 @@ const W_GROUP: f32 = 110.0;
 const W_SIZE: f32 = 70.0;
 const W_VIDEO: f32 = 110.0;
 const W_PEERS: f32 = 70.0;
+const ROW_H: f32 = 34.0;
 
+/// The quick chips over the table (Taiga's toolbar filter), remembered in `[feeds] view`.
+pub const VIEWS: [&str; 5] = ["all", "list", "new", "selected", "discarded"];
+
+pub fn view_label(v: &str) -> &'static str {
+    match v {
+        "list" => "On my list",
+        "new" => "New",
+        "selected" => "Selected",
+        "discarded" => "Discarded",
+        _ => "All",
+    }
+}
+
+fn in_view(v: &str, e: &Entry) -> bool {
+    match v {
+        "list" => e.anime_id.is_some(),
+        "new" => is_new(e),
+        "selected" => e.state == ItemState::Selected,
+        "discarded" => e.state.is_discarded(),
+        _ => true,
+    }
+}
+
+/// The columns a header click sorts by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortCol {
+    /// Taiga's own order (selected, blank, discarded).
+    #[default]
+    State,
+    Anime,
+    Episode,
+    Group,
+    Size,
+    Video,
+    Seeders,
+    Description,
+}
+
+/// Whether the typed words all appear in the anime title, the release title, the group or the
+/// episode (any case).
+fn matches_query(s: &State, e: &Entry, words: &[String]) -> bool {
+    if words.is_empty() {
+        return true;
+    }
+    let hay = format!(
+        "{} {} {} {}",
+        anime_text(s, e),
+        e.item.title,
+        e.release.parsed.group.as_deref().unwrap_or(""),
+        e.episode_text()
+    )
+    .to_lowercase();
+    words.iter().all(|w| hay.contains(w.as_str()))
+}
+
+impl State {
+    /// The rows shown: chip, words, then the sort. Kept in `feeds.visible`, so the virtual rows
+    /// read an index instead of filtering again per row.
+    pub fn feeds_refilter(&mut self) {
+        let words: Vec<String> = self
+            .feeds
+            .query
+            .text
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let view = self.feeds.cfg.view.clone();
+        let t = self.feeds_table();
+        let mut v: Vec<usize> = (0..t.len())
+            .filter(|&i| in_view(&view, &t[i]) && matches_query(self, &t[i], &words))
+            .collect();
+        let (col, desc) = self.feeds.sort;
+        if col != SortCol::State || desc {
+            let key = |e: &Entry| -> (String, u64) {
+                match col {
+                    SortCol::State => (String::new(), 0),
+                    SortCol::Anime => (anime_text(self, e).to_lowercase(), 0),
+                    SortCol::Episode => (
+                        anime_text(self, e).to_lowercase(),
+                        u64::from(e.release.episodes.map_or(0, |x| x.0)),
+                    ),
+                    SortCol::Group => (
+                        e.release
+                            .parsed
+                            .group
+                            .clone()
+                            .unwrap_or_default()
+                            .to_lowercase(),
+                        0,
+                    ),
+                    SortCol::Size => (String::new(), e.item.size.unwrap_or(0)),
+                    SortCol::Video => (
+                        String::new(),
+                        u64::from(
+                            e.release
+                                .parsed
+                                .resolution
+                                .as_deref()
+                                .and_then(taiga::resolution_height)
+                                .unwrap_or(0),
+                        ),
+                    ),
+                    SortCol::Seeders => (String::new(), u64::from(e.item.seeders.unwrap_or(0))),
+                    SortCol::Description => (e.item.description.to_lowercase(), 0),
+                }
+            };
+            v.sort_by(|&a, &b| {
+                let o = key(&t[a]).cmp(&key(&t[b]));
+                if desc { o.reverse() } else { o }
+            });
+        }
+        self.feeds.visible = v;
+    }
+
+    pub fn set_feeds_view(&mut self, v: &'static str) {
+        self.feeds.cfg.view = v.into();
+        self.feeds_set("view", config::quote(v));
+        self.feeds_refilter();
+    }
+
+    /// A header click: that column ascending, again descending, a third time Taiga's order.
+    pub fn feeds_sort_by(&mut self, c: SortCol) {
+        self.feeds.sort = match self.feeds.sort {
+            (x, false) if x == c && c != SortCol::State => (c, true),
+            (x, true) if x == c => (SortCol::State, false),
+            _ => (c, false),
+        };
+        self.feeds_refilter();
+    }
+
+    /// Escape in the filter box: the words go.
+    pub fn feeds_clear_query(&mut self) {
+        self.feeds.query = TextEdit::default();
+        self.feeds_refilter();
+    }
+}
+
+/// The filter box and the chips with their counts.
+fn filter_bar(s: &State) -> El {
+    let f = &s.feeds;
+    let input = row()
+        .key("feeds/filter/box")
+        .role("textbox")
+        .w(260.0)
+        .min_w(0.0)
+        .h(28.0)
+        .px(10.0)
+        .center_y()
+        .radius(theme::R_SM)
+        .fill(PAL.field)
+        .border(1.0, PAL.border_strong)
+        .child(
+            text_input(&f.query, TextStyle::new(12.0, 400.0))
+                .key("feeds/filter")
+                .grow(1.0)
+                .min_w(0.0)
+                .single_line()
+                .color(PAL.text)
+                .placeholder(
+                    field_hint(
+                        &f.query,
+                        if cfg!(target_os = "macos") {
+                            "Filter  \u{2318}F"
+                        } else {
+                            "Filter  Ctrl+F"
+                        },
+                    ),
+                    PAL.faint,
+                )
+                .on_edit(|s: &mut State| &mut s.feeds.query)
+                .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+                    if k.key == rune::Key::Escape {
+                        s.feeds_clear_query();
+                        tx.blur();
+                        return true;
+                    }
+                    false
+                })
+                .on_input_change(|s: &mut State, _tx: &mut Tx| s.feeds_refilter()),
+        );
+    let t = s.feeds_table();
+    let mut r = row()
+        .key("feeds/filter-bar")
+        .gap(6.0)
+        .pb(8.0)
+        .center_y()
+        .flex_wrap()
+        .child(input);
+    for v in VIEWS {
+        let n = t.iter().filter(|e| in_view(v, e)).count();
+        let label = format!("{} {n}", view_label(v));
+        r = r.child(
+            crate::ui::cell(
+                format!("feeds/view/{v}"),
+                label.clone(),
+                f.cfg.view == v,
+                move |s| s.set_feeds_view(v),
+            )
+            .child(text(label).font(theme::LABEL).color(PAL.text)),
+        );
+    }
+    if f.visible.len() != t.len() {
+        r = r.child(
+            text(format!("{} of {} shown", f.visible.len(), t.len()))
+                .key("feeds/filter/count")
+                .font(theme::LABEL)
+                .color(PAL.dim),
+        );
+    }
+    r
+}
+
+#[derive(Clone)]
 struct Cols {
     group: bool,
     video: bool,
@@ -1401,6 +1614,7 @@ fn cols(width: f32) -> Cols {
     }
 }
 
+#[allow(dead_code)]
 fn head_cell(t: &str, w: Option<f32>) -> El {
     let x = text(t.to_string())
         .font(theme::CAPTION)
@@ -1420,7 +1634,33 @@ fn cell_text(t: String, w: Option<f32>, color: rune::Color) -> El {
     }
 }
 
-fn header(c: &Cols) -> El {
+fn head_sort(s: &State, t: &str, w: Option<f32>, c: SortCol) -> El {
+    let (on, desc) = s.feeds.sort;
+    let label = if on == c {
+        format!("{t} {}", if desc { "\u{2193}" } else { "\u{2191}" })
+    } else {
+        t.to_string()
+    };
+    let x = text(label)
+        .font(theme::CAPTION)
+        .color(if on == c { PAL.text } else { PAL.faint })
+        .truncate();
+    let b = row()
+        .key(format!("feeds/sort/{c:?}"))
+        .role("button")
+        .label(format!("Sort by {t}"))
+        .center_y()
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            tx.instant();
+            s.feeds_sort_by(c);
+        });
+    match w {
+        Some(w) => b.w(w).child(x),
+        None => b.grow(1.0).min_w(0.0).child(x),
+    }
+}
+
+fn header(s: &State, c: &Cols) -> El {
     let mut r = row()
         .key("feeds/head")
         .gap(theme::COL_GAP)
@@ -1428,26 +1668,29 @@ fn header(c: &Cols) -> El {
         .center_y()
         .px(10.0)
         .child(el().w(W_CHECK))
-        .child(head_cell("ANIME", None))
-        .child(head_cell("EPISODE", Some(W_EP)));
+        .child(head_sort(s, "ANIME", None, SortCol::Anime))
+        .child(head_sort(s, "EPISODE", Some(W_EP), SortCol::Episode));
     if c.group {
-        r = r.child(head_cell("GROUP", Some(W_GROUP)));
+        r = r.child(head_sort(s, "GROUP", Some(W_GROUP), SortCol::Group));
     }
-    r = r.child(head_cell("SIZE", Some(W_SIZE)));
+    r = r.child(head_sort(s, "SIZE", Some(W_SIZE), SortCol::Size));
     if c.video {
-        r = r.child(head_cell("VIDEO", Some(W_VIDEO)));
+        r = r.child(head_sort(s, "VIDEO", Some(W_VIDEO), SortCol::Video));
     }
     if c.peers {
-        r = r.child(head_cell("S / L", Some(W_PEERS)));
+        r = r.child(head_sort(s, "S / L", Some(W_PEERS), SortCol::Seeders));
     }
     if c.desc {
-        r = r.child(head_cell("DESCRIPTION", None));
+        r = r.child(head_sort(s, "DESCRIPTION", None, SortCol::Description));
     }
     r
 }
 
 /// Why an item is dimmed: the filter that discarded it, the history, or no anime on the list.
 pub fn reason(e: &Entry) -> Option<String> {
+    if !e.state.is_discarded() && !e.why.is_empty() {
+        return Some(e.why.clone());
+    }
     if e.state.is_discarded() {
         return Some(if e.why.is_empty() {
             "Discarded".into()
@@ -1514,7 +1757,7 @@ fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
         .role("row")
         .label(e.item.title.clone())
         .gap(theme::COL_GAP)
-        .h(34.0)
+        .h(ROW_H)
         .px(10.0)
         .center_y()
         .radius(theme::R_SM)
@@ -1731,21 +1974,78 @@ fn tab(key: &str, label: &str, on: bool, f: impl Fn(&mut State) + 'static) -> El
     )
 }
 
-/// The Torrents page (Taiga's torrent tab).
+/// The search bar while "Search torrents" results replace the feeds' items.
+fn search_bar(s: &State) -> Option<El> {
+    let sv = s.feeds.search.as_ref()?;
+    let mut bar = row()
+        .key("feeds/search")
+        .gap(10.0)
+        .center_y()
+        .px(theme::PAGE_PAD)
+        .pb(8.0)
+        .child(
+            text(format!("Search: {}", sv.title))
+                .font(theme::BODY_MED)
+                .color(PAL.text)
+                .truncate()
+                .min_w(0.0),
+        );
+    bar = if sv.loading {
+        bar.child(
+            text("Searching\u{2026}")
+                .key("feeds/search/loading")
+                .font(theme::LABEL)
+                .color(PAL.dim),
+        )
+    } else if let Some(e) = &sv.error {
+        bar.child(
+            text(mask(e))
+                .key("feeds/search/error")
+                .font(theme::LABEL)
+                .color(PAL.warn())
+                .truncate()
+                .min_w(0.0),
+        )
+    } else {
+        bar.child(
+            text(format!("{} results", sv.entries.len()))
+                .font(theme::LABEL)
+                .color(PAL.dim),
+        )
+    };
+    Some(bar.child(spacer()).child(small(
+        "feeds/search/close".into(),
+        "Back to feeds",
+        false,
+        |s| {
+            s.feeds.search = None;
+            s.feeds_reselect();
+        },
+    )))
+}
+
+fn scroller(key: &str, inner: f32, body: El) -> El {
+    col()
+        .key(key.to_string())
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .px(theme::PAGE_PAD)
+                .pt(4.0)
+                .pb(theme::PAGE_PAD)
+                .w(inner + 2.0 * theme::PAGE_PAD)
+                .child(body),
+        )
+}
+
+/// The Torrents page: Your shows (default), All releases (Taiga's table), History.
 pub fn page(s: &State, width: f32) -> El {
     let f = &s.feeds;
     let inner = (width - 2.0 * theme::PAGE_PAD).max(320.0);
-    let c = cols(inner);
-    let table = s.feeds_table();
-    let checked = table
-        .iter()
-        .filter(|e| e.state == ItemState::Selected)
-        .count();
-    let news: HashSet<_> = table
-        .iter()
-        .filter(|e| is_new(e))
-        .map(|e| e.item.key())
-        .collect();
     let mut tools = row()
         .key("feeds/tools")
         .gap(8.0)
@@ -1753,214 +2053,189 @@ pub fn page(s: &State, width: f32) -> El {
         .pb(8.0)
         .center_y()
         .flex_wrap()
-        .child(tab("feeds/tab/torrents", "Torrents", !f.history, |s| {
-            s.feeds.history = false
+        .child(tab("feeds/tab/shows", "Your shows", f.tab == 0, |s| {
+            s.feeds.tab = 0
         }))
-        .child(tab("feeds/tab/history", "History", f.history, |s| {
-            s.feeds.history = true
+        .child(tab("feeds/tab/all", "All releases", f.tab == 1, |s| {
+            s.feeds.tab = 1
+        }))
+        .child(tab("feeds/tab/history", "History", f.tab == 2, |s| {
+            s.feeds.tab = 2
         }))
         .child(spacer());
-    if !f.history {
-        if !f.cfg.sources.is_empty() {
-            tools = tools.child(small(
-                "feeds/check".into(),
-                "Check new torrents",
-                false,
-                |s| s.feeds_check_now(),
-            ));
-        }
-        tools = tools
-            .child(small(
-                "feeds/select-new".into(),
-                &format!("Select all new ({})", news.len()),
-                false,
-                State::feeds_select_new,
-            ))
-            .child(small(
-                "feeds/discard".into(),
-                "Discard marked",
-                false,
-                State::feeds_discard_marked,
-            ))
-            .child(small(
-                "feeds/discard-rest".into(),
-                "Discard unmarked",
-                false,
-                State::feeds_discard_rest,
-            ))
-            .child(small(
-                "feeds/download".into(),
-                &format!("Download marked ({checked})"),
-                checked > 0,
-                move |s| {
-                    if checked > 0 {
-                        s.feeds_download_marked();
-                    }
-                },
-            ))
-            .child(small(
-                "feeds/hide".into(),
-                if f.hide_discarded {
-                    "Show discarded"
-                } else {
-                    "Hide discarded"
-                },
-                false,
-                |s| s.feeds.hide_discarded = !s.feeds.hide_discarded,
-            ));
+    let can_check = !f.cfg.sources.is_empty() || !f.cfg.search.trim().is_empty();
+    if f.tab != 2 && can_check {
+        tools = tools.child(small("feeds/check".into(), "Check now", false, |s| {
+            s.feeds_check_now();
+            s.shows_refresh(true);
+        }));
     }
-    let mut body = col().gap(12.0).w_full();
-    if f.history {
-        body = body.child(history_view(s));
-    } else {
-        if let Some(sv) = &f.search {
-            let mut bar = row().key("feeds/search").gap(10.0).center_y().child(
-                text(format!("Search: {}", sv.title))
-                    .font(theme::BODY_MED)
-                    .color(PAL.text)
-                    .truncate()
-                    .min_w(0.0),
-            );
-            if sv.loading {
-                bar = bar.child(
-                    text("Searching\u{2026}")
-                        .key("feeds/search/loading")
-                        .font(theme::LABEL)
-                        .color(PAL.dim),
-                );
-            } else if let Some(e) = &sv.error {
-                bar = bar.child(
-                    text(mask(e))
-                        .key("feeds/search/error")
-                        .font(theme::LABEL)
-                        .color(PAL.warn())
-                        .truncate()
-                        .min_w(0.0),
-                );
-            } else {
-                bar = bar.child(
-                    text(format!("{} results", sv.entries.len()))
-                        .font(theme::LABEL)
-                        .color(PAL.dim),
-                );
-            }
-            body = body.child(bar.child(spacer()).child(small(
-                "feeds/search/close".into(),
-                "Back to feeds",
-                false,
-                |s| {
-                    s.feeds.search = None;
-                    s.feeds_reselect();
-                },
-            )));
+    let mut page = col()
+        .key("page/feeds")
+        .w_full()
+        .h_full()
+        .child(crate::ui::top(s, "Torrents", Some(s.feeds_count()), false));
+    let said = f.said.as_ref().map(|t| {
+        text(t.clone())
+            .key("feeds/said")
+            .font(theme::LABEL)
+            .color(PAL.dim)
+            .wrap()
+            .px(theme::PAGE_PAD)
+            .pb(6.0)
+    });
+    match f.tab {
+        2 => page
+            .child(tools)
+            .child(scroller("feeds-scroll", inner, history_view(s))),
+        0 => {
+            page = page.child(tools).children(said);
+            page.child(scroller(
+                "feeds-scroll",
+                inner,
+                crate::shows::view(s, inner),
+            ))
         }
-        if f.cfg.sources.is_empty() && f.search.is_none() {
-            body = body.child(
-                col()
+        _ => {
+            let table = s.feeds_table();
+            let checked = table
+                .iter()
+                .filter(|e| e.state == ItemState::Selected)
+                .count();
+            let news = table.iter().filter(|e| is_new(e)).count();
+            tools = tools
+                .child(small(
+                    "feeds/select-new".into(),
+                    &format!("Select all new ({news})"),
+                    false,
+                    State::feeds_select_new,
+                ))
+                .child(small(
+                    "feeds/discard".into(),
+                    "Discard marked",
+                    false,
+                    State::feeds_discard_marked,
+                ))
+                .child(small(
+                    "feeds/discard-rest".into(),
+                    "Discard unmarked",
+                    false,
+                    State::feeds_discard_rest,
+                ))
+                .child(small(
+                    "feeds/download".into(),
+                    &format!("Download marked ({checked})"),
+                    checked > 0,
+                    move |s| {
+                        if checked > 0 {
+                            s.feeds_download_marked();
+                        }
+                    },
+                ));
+            page = page.child(tools).children(search_bar(s)).children(said);
+            if f.cfg.sources.is_empty() && f.search.is_none() {
+                let empty = col()
                     .key("feeds/empty")
                     .gap(10.0)
                     .py(30.0)
                     .items_center()
                     .w_full()
                     .child(text("No feeds yet").font(theme::BODY_MED).color(PAL.text))
-                    .child(text("Add an RSS feed in Settings \u{2192} Feeds. Kotora checks only the feeds you add.").font(theme::BODY).color(PAL.dim).wrap())
-                    .child(small("feeds/open-settings".into(), "Open Settings", true, |s| crate::settings::open(s, crate::settings::Section::Feeds))),
-            );
-        } else {
-            let shown: Vec<&Entry> = table
-                .iter()
-                .filter(|e| {
-                    // Every item, as in Taiga's list; only "Hide discarded" leaves some out.
-                    !(f.hide_discarded && e.state.is_discarded())
-                })
-                .collect();
-            let mut t = col()
+                    .child(
+                        text("Add an RSS feed in Settings \u{2192} Feeds, or see Your shows.")
+                            .font(theme::BODY)
+                            .color(PAL.dim)
+                            .wrap(),
+                    )
+                    .child(small(
+                        "feeds/open-settings".into(),
+                        "Open Settings",
+                        true,
+                        |s| crate::settings::open(s, crate::settings::Section::Feeds),
+                    ));
+                return page.child(scroller("feeds-scroll", inner, empty));
+            }
+            let c = cols(inner);
+            let mut fixed = col()
                 .key("feeds/table")
-                .w_full()
-                .child(header(&c))
+                .px(theme::PAGE_PAD)
+                .w(inner + 2.0 * theme::PAGE_PAD)
+                .child(filter_bar(s))
+                .child(header(s, &c))
                 .child(el().h(1.0).w_full().fill(PAL.border));
-            if shown.is_empty() {
+            if let Some(e) = f
+                .open_row
+                .as_ref()
+                .and_then(|k| table.iter().find(|e| &e.item.key() == k))
+            {
+                fixed = fixed.child(row_actions(s, e));
+            }
+            let n = f.visible.len();
+            if n == 0 {
                 let waiting = f.search.as_ref().map_or(
                     f.lines.is_empty() || f.lines.values().any(|l| l.checking),
                     |sv| sv.loading,
                 );
-                t = t.child(
-                    text(if waiting {
-                        "Checking your feeds\u{2026}"
-                    } else {
-                        "No torrents."
-                    })
-                    .key("feeds/none")
-                    .font(theme::BODY)
-                    .color(PAL.dim)
-                    .py(12.0)
-                    .px(10.0),
+                let line = if table.is_empty() && waiting {
+                    "Checking your feeds\u{2026}"
+                } else if table.is_empty() {
+                    "No torrents."
+                } else {
+                    "No torrents match."
+                };
+                fixed = fixed.child(
+                    text(line)
+                        .key("feeds/none")
+                        .font(theme::BODY)
+                        .color(PAL.dim)
+                        .py(12.0)
+                        .px(10.0),
                 );
             }
-            for e in shown {
-                t = t.child(table_row(s, e, &c));
-                if f.open_row.as_deref() == Some(&e.item.key()) {
-                    t = t.child(row_actions(s, e));
-                }
-            }
-            body = body.child(t);
-            if f.search.is_none() && !f.cfg.sources.is_empty() {
-                let mut feeds = card("feeds/sources", "Your feeds");
-                for src in &f.cfg.sources {
-                    let (dot, line) = crate::feeds::status_line(s, &src.url);
-                    feeds = feeds.child(
-                        row()
-                            .gap(10.0)
-                            .py(4.0)
-                            .center_y()
-                            .child(el().size(7.0, 7.0).radius(3.5).fill(dot))
-                            .child(
-                                text(src.name.clone())
-                                    .font(theme::BODY)
-                                    .color(PAL.text)
-                                    .truncate()
-                                    .min_w(0.0),
-                            )
-                            .child(spacer())
-                            .child(text(line).font(theme::LABEL).color(PAL.dim)),
-                    );
-                }
-                body = body.child(feeds);
-            }
+            page = page.child(fixed);
+            let wide = c.clone();
+            page.child(
+                col()
+                    .key("feeds-scroll")
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .grow(1.0)
+                    .min_h(0.0)
+                    .child(
+                        col()
+                            .key("feeds/rows")
+                            .px(theme::PAGE_PAD)
+                            .w(inner + 2.0 * theme::PAGE_PAD)
+                            .growth(rune::GrowthSpec::default())
+                            .virtual_rows(
+                                n,
+                                ROW_H,
+                                |s: &State, r| {
+                                    s.feeds
+                                        .visible
+                                        .get(r)
+                                        .and_then(|&i| s.feeds_table().get(i))
+                                        .map_or_else(
+                                            || format!("gone-{r}"),
+                                            |e| format!("feeds/item/{}", e.item.key()),
+                                        )
+                                        .into()
+                                },
+                                move |s: &State, r| match s
+                                    .feeds
+                                    .visible
+                                    .get(r)
+                                    .and_then(|&i| s.feeds_table().get(i))
+                                {
+                                    Some(e) => table_row(s, e, &wide),
+                                    None => el().h(ROW_H),
+                                },
+                            ),
+                    ),
+            )
         }
     }
-    if let Some(said) = &f.said {
-        body = body.child(
-            text(said.clone())
-                .key("feeds/said")
-                .font(theme::LABEL)
-                .color(PAL.dim)
-                .wrap(),
-        );
-    }
-    col()
-        .key("page/feeds")
-        .w_full()
-        .h_full()
-        .child(crate::ui::top(s, "Torrents", Some(s.feeds_count()), false))
-        .child(tools)
-        .child(
-            col()
-                .key("feeds-scroll")
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .grow(1.0)
-                .min_h(0.0)
-                .child(
-                    col()
-                        .px(theme::PAGE_PAD)
-                        .pt(4.0)
-                        .pb(theme::PAGE_PAD)
-                        .w(inner + 2.0 * theme::PAGE_PAD)
-                        .child(body),
-                ),
-        )
 }
 
 /// Details → "Torrents": the next new episode's items, Download, the preferred group, Search.

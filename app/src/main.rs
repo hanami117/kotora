@@ -55,6 +55,7 @@ mod scores;
 mod search;
 mod settings;
 mod setup;
+mod shows;
 mod startup;
 mod stats;
 mod theme;
