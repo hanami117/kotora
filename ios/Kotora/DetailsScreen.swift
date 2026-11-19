@@ -81,19 +81,9 @@ struct DetailsScreen: View {
                         }
                     }
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 14)
-                    if row.rewatching || row.timesRewatched > 0 {
-                        Rectangle().fill(p.border).frame(height: 1)
-                        HStack {
-                            Text(manga ? "Rereading" : "Rewatching").font(Inter.medium(15)).foregroundStyle(p.text)
-                            Spacer()
-                            Text(row.rewatching ? "On" : "Done \(row.timesRewatched)×").font(Inter.regular(13)).foregroundStyle(p.dim)
-                        }
-                        .padding(16)
-                    }
+                    EntryActions(row: row)
                 }
-                Text("The editor, synopsis and the service's details come in a later build.")
-                    .font(Inter.regular(12)).foregroundStyle(p.faint)
-                    .padding(.horizontal, 16).padding(.vertical, 14).padding(.bottom, 60)
+                Spacer(minLength: 80)
             }
         }
         .ignoresSafeArea(edges: .top)

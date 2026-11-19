@@ -38,9 +38,7 @@ struct SettingsScreen: View {
                                 }
                             }
                         }
-                        ListLine(title: "Waiting changes", subtitle: waiting == 0 ? "Everything is sent." : "\(waiting) waiting to sync", divider: false) {
-                            EmptyView()
-                        } trailing: { EmptyView() }
+                        QueueLink(waiting: waiting)
                     }
                     Text("Sign out removes this phone's copy of the list, its waiting changes and the sign-in.")
                         .font(Inter.regular(12)).foregroundStyle(p.faint)

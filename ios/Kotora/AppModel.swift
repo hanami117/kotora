@@ -100,7 +100,7 @@ final class AppModel: ObservableObject {
         if list.syncedAt == nil { sync() } else { requestFlush() }
     }
 
-    private func requestFlush() {
+    func requestFlush() {
         guard let r = repo, !r.isSample else { return }
         flusher.request(r)
     }
