@@ -78,6 +78,7 @@ pub struct Mark {
     pub chapters: u32,
     pub volumes: u32,
     pub status: Status,
+    pub rereading: bool,
 }
 
 /// A chapter (or volume) marked from here, for Undo.
@@ -90,6 +91,11 @@ pub struct Marked {
     pub old_status: Status,
     pub completed: bool,
     pub auto: bool,
+    /// The reread state before, for Undo (a reread started or finished from here).
+    pub old_rereading: bool,
+    pub old_times: u32,
+    /// This mark started a reread.
+    pub reread: bool,
 }
 
 /// The comic read last, and what Kotora does about it.
@@ -823,7 +829,7 @@ impl State {
 
     /// Whether a closed comic still has something to say: a question or an Undo.
     fn reading_asks(&self) -> bool {
-        self.reading.current.as_ref().is_some_and(|r| r.marked.is_some() || (r.read.finished && !r.dismissed && self.reading_offer().is_some()))
+        self.reading.current.as_ref().is_some_and(|r| r.marked.is_some() || (r.read.finished && !r.dismissed && (self.reading_offer().is_some() || self.reread_offer().is_some())))
     }
 
     /// The comics open now. The followed one closed: it is no longer "Now Reading" at once, and
@@ -885,6 +891,19 @@ impl State {
         Some((i, core_reading::offer(e.chapters, e.chapters_total, e.volumes, e.volumes_total, &r.read)?))
     }
 
+    /// "Reading it again?": a Completed manga (not being reread) is read, and what a reread
+    /// would start at. Asked, never marked by itself.
+    pub fn reread_offer(&self) -> Option<(usize, Offer)> {
+        let r = self.reading.current.as_ref()?;
+        let id = r.media_id()?;
+        let i = self.manga.entries.iter().position(|e| e.id == id)?;
+        let e = &self.manga.entries[i];
+        if e.status != Status::Completed || e.rereading {
+            return None;
+        }
+        Some((i, core_reading::reread_offer(e.chapters_total, e.volumes_total, &r.read)?))
+    }
+
     /// Why it asks even with "Update automatically" on: it skips chapters (or volumes).
     pub fn reading_note(&self) -> Option<String> {
         let (i, o) = self.reading_offer()?;
@@ -903,13 +922,13 @@ impl State {
         if r.dismissed || !self.has_list() || !self.manga.enabled {
             return false;
         }
-        r.marked.is_some() || (r.read.finished && self.reading_offer().is_some())
+        r.marked.is_some() || (r.read.finished && (self.reading_offer().is_some() || self.reread_offer().is_some()))
     }
 
     fn reading_mark(&self) -> Option<Mark> {
         let id = self.reading.current.as_ref()?.media_id()?;
         let e = self.manga.entries.iter().find(|e| e.id == id)?;
-        Some(Mark { id, chapters: e.chapters, volumes: e.volumes, status: e.status })
+        Some(Mark { id, chapters: e.chapters, volumes: e.volumes, status: e.status, rereading: e.rereading })
     }
 
     /// After the manga list changed: a changed entry asks again ("Not now" was about the old
@@ -944,7 +963,18 @@ impl State {
         if !r.read.finished || r.acted || r.dismissed || !self.has_list() {
             return;
         }
-        let Some((i, o)) = self.reading_offer() else { return };
+        let Some((i, o)) = self.reading_offer() else {
+            // A completed manga is read again: always ask, even with "Update automatically" on.
+            if let Some((i, o)) = self.reread_offer() {
+                let title = self.manga.entries[i].title.clone();
+                if let Some(r) = &mut self.reading.current {
+                    r.acted = true;
+                }
+                log(format_args!("asks: reread from {} of {title}", o.start_label()));
+                self.notify_reading(NoteKind::Reread, format!("Reading {title} again?"), format!("Start a reread at {}.", o.start_label()));
+            }
+            return;
+        };
         let title = self.manga.entries[i].title.clone();
         let note = self.reading_note();
         // An open file only (no page) is a guess: always ask, as for a player seen by its file.
@@ -965,9 +995,13 @@ impl State {
 
     /// Mark read (the banner, `kot confirm`, the notification): the offer goes to the queue.
     pub fn mark_reading(&mut self, auto: bool) -> Result<(String, Offer), String> {
+        if self.reading_offer().is_none() && !auto && self.reread_offer().is_some() {
+            return self.start_reread_reading();
+        }
         let (i, o) = self.reading_offer().ok_or("Nothing to mark: no recognised new chapter was read.")?;
         let e = &self.manga.entries[i];
         let (id, title, old_chapters, old_volumes, old_status) = (e.id, e.title.clone(), e.chapters, e.volumes, e.status);
+        let (old_rereading, old_times) = (e.rereading, e.times_reread);
         let last = o.chapter.is_some_and(|c| e.chapters_total == Some(c));
         let status = (old_status == Status::PlanToWatch && !last).then_some(Status::Watching);
         if let Some(r) = &mut self.reading.current {
@@ -981,11 +1015,41 @@ impl State {
         r?;
         let completed = old_status != Status::Completed && self.manga.entries.iter().any(|e| e.id == id && e.status == Status::Completed);
         if let Some(r) = &mut self.reading.current {
-            r.marked = Some(Marked { id, offer: o, old_chapters, old_volumes, old_status, completed, auto });
+            r.marked = Some(Marked { id, offer: o, old_chapters, old_volumes, old_status, completed, auto, old_rereading, old_times, reread: false });
             r.acted = true;
             r.picking = false;
         }
         log(format_args!("marked {} of {title}", o.label()));
+        self.reading.send(In::Answered);
+        Ok((title, o))
+    }
+
+    /// "Start reread" on the banner (or `kot confirm`): the Completed manga is read again from
+    /// the file's chapter (and volume), as one queued change; the last chapter ends it again,
+    /// counted. Undo puts it back.
+    pub fn start_reread_reading(&mut self) -> Result<(String, Offer), String> {
+        let (i, o) = self.reread_offer().ok_or("Nothing to reread: no completed manga was read.")?;
+        let e = &self.manga.entries[i];
+        let (id, title, old_chapters, old_volumes, old_status, old_times) = (e.id, e.title.clone(), e.chapters, e.volumes, e.status, e.times_reread);
+        let start = Change::start_rewatch(&e.values()).ok_or("That manga is not completed.")?;
+        // One edit: the reread, and where it is (the counts restart: what the file names, else 0).
+        let cur = start.apply(e.values());
+        let at = Change { progress: Some(o.chapter.unwrap_or(0)), volumes: Some(o.volume.unwrap_or(0)), ..Default::default() }.completes(&cur, e.chapters_total);
+        if let Some(r) = &mut self.reading.current {
+            r.mark = None;
+        }
+        let r = self.manga_edit(id, start.merge(at));
+        let mark = self.reading_mark();
+        if let Some(r) = &mut self.reading.current {
+            r.mark = mark;
+        }
+        r?;
+        if let Some(r) = &mut self.reading.current {
+            r.marked = Some(Marked { id, offer: o, old_chapters, old_volumes, old_status, completed: false, auto: false, old_rereading: false, old_times, reread: true });
+            r.acted = true;
+            r.picking = false;
+        }
+        log(format_args!("reread started at {} of {title}", o.label()));
         self.reading.send(In::Answered);
         Ok((title, o))
     }
@@ -1003,7 +1067,8 @@ impl State {
         if let Some(r) = &mut self.reading.current {
             r.mark = None;
         }
-        let _ = self.manga_edit(m.id, Change { progress: Some(m.old_chapters), volumes: Some(m.old_volumes), status: Some(m.old_status), ..Default::default() });
+        let back = Change { progress: Some(m.old_chapters), volumes: Some(m.old_volumes), status: Some(m.old_status), rewatching: Some(m.old_rereading), times_rewatched: Some(m.old_times), ..Default::default() };
+        let _ = self.manga_edit(m.id, back);
         let mark = self.reading_mark();
         self.withdraw_reading_note();
         log("undone");
@@ -1128,7 +1193,8 @@ impl State {
             pages: pos(r.read.pages),
             finished: r.read.finished,
             matched: self.reading_match_text(r),
-            offer: self.reading_offer().map(|(_, o)| o.label()),
+            offer: self.reading_offer().or_else(|| self.reread_offer()).map(|(_, o)| o.label()),
+            reread: self.reading_offer().is_none() && self.reread_offer().is_some(),
             note: self.reading_note(),
             recorded: r.marked.map(|m| m.offer.label()),
             dismissed: r.dismissed,
@@ -1148,7 +1214,7 @@ impl State {
 
     fn notify_reading(&mut self, kind: NoteKind, summary: String, body: String) {
         let on = match kind {
-            NoteKind::ReadOffer => self.prefs.notify.read_offer,
+            NoteKind::ReadOffer | NoteKind::Reread => self.prefs.notify.read_offer,
             NoteKind::ReadRecorded => self.prefs.notify.read_recorded,
             _ => false,
         };
@@ -1159,7 +1225,7 @@ impl State {
             return;
         };
         let tail = match kind {
-            NoteKind::ReadOffer => Some("Open Kotora, or run kot confirm.".to_string()),
+            NoteKind::ReadOffer | NoteKind::Reread => Some("Open Kotora, or run kot confirm.".to_string()),
             _ => Some("Undo is in Kotora's banner.".to_string()),
         };
         self.notes.show(Note { id, kind, summary, body, tail });
@@ -1177,9 +1243,12 @@ impl State {
             return None;
         }
         let marked = self.reading.current.as_ref().is_some_and(|r| r.marked.is_some());
-        let asks = !marked && self.reading_offer().is_some();
+        let asks = !marked && (self.reading_offer().is_some() || self.reread_offer().is_some());
         match act {
             Act::Update if asks => match self.mark_reading(false) {
+                Ok((title, o)) if self.reading.current.as_ref().and_then(|r| r.marked).is_some_and(|m| m.reread) => {
+                    self.notify_reading(NoteKind::ReadRecorded, format!("Started rereading from {}", o.start_label()), title);
+                }
                 Ok((title, o)) => self.notify_reading(NoteKind::ReadRecorded, format!("Marked {} as read", o.label()), title),
                 Err(_) => self.open_reading(),
             },
@@ -1573,7 +1642,7 @@ pub fn mini(s: &State, r: &Reading, tall: bool) -> El {
     let (id, url) = cover_of(s, r, &title);
     let what = r.read.label();
     let tail = if r.marked.is_some() {
-        "Marked as read".to_string()
+        if r.marked.is_some_and(|m| m.reread) { "Rereading".to_string() } else { "Marked as read".to_string() }
     } else if r.read.finished {
         if r.read.weak { "Counted as read".into() } else { "Read to the end".into() }
     } else if r.read.pages > 0 && !r.read.weak {
@@ -1656,19 +1725,46 @@ pub fn banner(s: &State) -> El {
         .child(el().size(8.0, 8.0).radius(4.0).fill(PAL.accent))
         .child(reading_cover(s, r, 36.0, 52.0, 12.0));
     if let Some(m) = r.marked {
+        let finished = m.old_rereading && s.manga.entries.iter().any(|e| e.id == m.id && !e.rereading);
         let how = match (m.auto, m.completed) {
+            _ if m.reread => "Reread started",
+            (true, _) if finished => "Marked automatically \u{b7} Reread finished",
+            (false, _) if finished => "Marked \u{b7} Reread finished",
             (true, true) => "Marked automatically \u{b7} Completed",
             (false, true) => "Marked \u{b7} Completed",
             (true, false) => "Marked automatically",
             (false, false) => "Marked",
         };
+        let (lead, what) = if m.reread { ("Rereading ", format!(" from {}", m.offer.start_label())) } else { ("Read ", format!(" {}", m.offer.label())) };
         let waiting = s.manga.entries.iter().find(|e| e.id == m.id).and_then(|e| e.waiting).unwrap_or(if s.service == kotora_core::service::ServiceId::AniList { "Sent to AniList" } else { "Sent to MyAnimeList" });
         return b
-            .child(col().grow(1.0).min_w(0.0).gap(3.0).child(line("Read ", title, format!(" {}", m.offer.label()))).child(text(format!("{how} \u{b7} {waiting}")).font(theme::LABEL).color(PAL.dim)))
+            .child(col().grow(1.0).min_w(0.0).gap(3.0).child(line(lead, title, what)).child(text(format!("{how} \u{b7} {waiting}")).key("rd-banner/how").font(theme::LABEL).color(PAL.dim)))
             .child(button("rd-banner/undo", "Undo", false, Some(State::undo_reading)))
             .child(ghost("rd-banner/close", "Close", |s| {
                 s.dismiss_reading();
             }));
+    }
+    // A completed manga read again: ask, never start by itself.
+    if s.reading_offer().is_none()
+        && let Some((i, o)) = s.reread_offer()
+    {
+        let e = &s.manga.entries[i];
+        let times = match e.times_reread {
+            0 => "Completed".to_string(),
+            n => format!("Completed, reread {}", kotora_core::queue::times(n)),
+        };
+        let small = format!("{} \u{b7} {times}", how(&r.read));
+        return b
+            .key("rd-banner")
+            .child(col().grow(1.0).min_w(0.0).gap(3.0).child(line("Read ", title, format!(" {}", r.read.label()))).child(text(small).font(theme::LABEL).color(PAL.dim).truncate()))
+            .child(text("Reading it again?").key("rd-banner/reread-ask").font(TextStyle::new(14.0, 600.0)).color(PAL.cream))
+            .child(action("rd-banner/reread".into(), &format!("Start reread at {}", o.start_label()), true, |s, _| {
+                let _ = s.confirm_reading();
+            }).h(32.0).px(12.0))
+            .child(button("rd-banner/not-now", "Not now", false, Some(|s: &mut State| {
+                s.dismiss_reading();
+            })))
+            .child(ghost("rd-banner/wrong", "Wrong manga\u{2026}", State::wrong_manga));
     }
     let Some((i, o)) = s.reading_offer() else { return el() };
     let e = &s.manga.entries[i];
@@ -1745,7 +1841,8 @@ pub fn card_for(s: &State, r: &Reading) -> El {
     }
     let mut acts = row().gap(8.0).mt(8.0);
     if let Some(m) = r.marked {
-        acts = acts.child(text(format!("Marked {} as read.", m.offer.label())).font(theme::LABEL).color(PAL.ok())).child(button("rd/undo", "Undo", false, Some(State::undo_reading)));
+        let said = if m.reread { format!("Rereading from {}.", m.offer.start_label()) } else { format!("Marked {} as read.", m.offer.label()) };
+        acts = acts.child(text(said).key("rd/marked").font(theme::LABEL).color(PAL.ok())).child(button("rd/undo", "Undo", false, Some(State::undo_reading)));
     } else if let Some((_, o)) = s.reading_offer() {
         let label = format!("Mark {} as read", o.label());
         acts = acts.child(action("rd/mark".into(), &label, r.read.finished, |s, _| {
@@ -1763,6 +1860,12 @@ pub fn card_for(s: &State, r: &Reading) -> El {
         } else if r.read.weak {
             info = info.child(text(how(&r.read)).key("rd/why").font(theme::LABEL).color(PAL.faint).wrap());
         }
+    } else if let Some((_, o)) = s.reread_offer() {
+        let label = format!("Start reread at {}", o.start_label());
+        acts = acts.child(action("rd/reread".into(), &label, r.read.finished, |s, _| {
+            let _ = s.confirm_reading();
+        }));
+        info = info.child(text(if r.read.finished { "Completed: Reading it again? Kotora asks before it starts a reread." } else { "Completed: once this is read to the end, Kotora asks if you are reading it again." }).key("rd/reread-note").font(theme::LABEL).color(PAL.faint).wrap());
     } else if matches!(r.found, Found::List { .. }) {
         info = info.child(text("Nothing to mark: your list is at or past this already.").font(theme::LABEL).color(PAL.faint).wrap());
     }
