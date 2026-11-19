@@ -53,6 +53,42 @@ pub fn support_url() -> String {
     SUPPORT_URL.into()
 }
 
+/// One line of About → Licences: what, and under which licence.
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct LicenceLine {
+    pub name: String,
+    pub licence: String,
+}
+
+/// About → Licences: every part the phone app ships, in the desktop's words (`settings.rs`).
+/// `android`: the Android app's own parts (JNA, AndroidX) instead of iOS's none.
+#[uniffi::export]
+pub fn licence_lines(android: bool) -> Vec<LicenceLine> {
+    let l = |name: &str, licence: &str| LicenceLine { name: name.into(), licence: licence.into() };
+    let mut out = vec![
+        l("Kotora", "GPL-3.0-or-later"),
+        l("Inter (the font)", "SIL Open Font License 1.1"),
+        l("\u{5c0f}\u{864e}, drawn from Noto Sans JP", "SIL Open Font License 1.1"),
+        l("UniFFI (Rust to the app)", "MPL-2.0"),
+        l("SQLite (through rusqlite)", "Public domain (rusqlite: MIT)"),
+        l("ureq, rustls, serde and the other Rust crates", "MIT or Apache-2.0"),
+        l("Volume data for \u{201c}Fill volumes from chapters\u{201d}", "MangaDex"),
+        l("Release data for Publishing", "MangaUpdates and MangaDex"),
+    ];
+    if android {
+        out.push(l("JNA (Java to Rust)", "Apache-2.0 or LGPL-2.1-or-later"));
+        out.push(l("AndroidX, Jetpack Compose, Kotlin", "Apache-2.0"));
+    }
+    out.push(l("Not affiliated with MyAnimeList, AniList, MangaDex or MangaUpdates.", ""));
+    out
+}
+
+/// The welcome screen's small print (the desktop's `setup.rs`).
+#[uniffi::export]
+pub fn welcome_note() -> String {
+    "Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with MyAnimeList or AniList.".into()
+}
+
 #[uniffi::export]
 impl Kotora {
     /// "Open on …" for an entry of the active service: its page there, and with the mirror on
@@ -76,6 +112,8 @@ mod tests {
         assert_eq!(profile_url(Service::Mal, "hana".into()), "https://myanimelist.net/profile/hana");
         assert_eq!(profile_url(Service::AniList, "hana".into()), "https://anilist.co/user/hana");
         assert_eq!(service_title(Service::AniList), "AniList");
+        assert!(licence_lines(true).len() > licence_lines(false).len());
+        assert!(welcome_note().starts_with("Kotora is a tribute to Taiga"));
         assert_eq!((site_url().as_str(), source_url().as_str(), support_url().as_str()), ("https://kotora.moe", "https://github.com/hanami117/kotora", "https://ko-fi.com/hanami117"));
     }
 }
