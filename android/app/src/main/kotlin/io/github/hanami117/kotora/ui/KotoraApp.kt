@@ -49,6 +49,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.hanami117.kotora.core.MediaKind
+import io.github.hanami117.kotora.core.ProfileInfo
+import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.ui.theme.Kotora
 import kotlinx.coroutines.launch
@@ -71,7 +73,10 @@ fun KotoraApp(vm: AppViewModel, version: String, nowSeconds: () -> Long, onLookA
         is Session.Broken -> Box(Modifier.fillMaxSize().background(k.bg).padding(32.dp), contentAlignment = Alignment.Center) {
             Text(s.message, color = k.dropped, textAlign = TextAlign.Center)
         }
-        is Session.SignedOut -> SignInScreen(s.error, s.busy, vm::hasClientId, vm::signIn, onLookAround)
+        is Session.SignedOut -> SignInScreen(
+            s.error, s.busy, vm::hasClientId, vm::signIn, onLookAround,
+            onToken = if (vm.lastSignIn == Service.ANI_LIST) vm::signInWithToken else null,
+        )
         is Session.SignedIn -> SignedIn(vm, s, version, nowSeconds, prefs)
     }
 }
@@ -129,6 +134,10 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onPlusOne = vm::plusOne,
                     onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
                     modifier = Modifier.statusBarsPadding(),
+                    expired = vm.expired,
+                    onSignIn = vm::signIn,
+                    linksFor = { r -> vm.serviceLinks(r.kind, r.id) },
+                    onOpenUrl = vm::openUrl,
                 )
             }
             composable(Tab.AIRING.route) {
@@ -172,7 +181,17 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onIntro = prefs.onIntro,
                     systemNotificationsOff = prefs.notificationsOff,
                     onOpenSystemSettings = prefs.openSystemSettings,
+                    onProfile = { nav.navigate("profile") },
+                    onOpenUrl = vm::openUrl,
                 )
+            }
+            composable("profile") {
+                var info by remember { mutableStateOf<ProfileInfo?>(null) }
+                LaunchedEffect(s.active?.service) { info = s.active?.service?.let { vm.profile(it) } }
+                ProfileScreen(info, vm.isSample, onBack = { nav.popBackStack() }, onOpenUrl = vm::openUrl, onSignOut = {
+                    nav.popBackStack()
+                    vm.signOut(it)
+                }, modifier = Modifier.navigationBarsPadding())
             }
             composable("details/{kind}/{id}") { back ->
                 val kind = MediaKind.valueOf(back.arguments?.getString("kind") ?: "ANIME")
@@ -185,7 +204,10 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     loaded = true
                 }
                 if (loaded) {
-                    DetailsScreen(row, s.active, onBack = { nav.popBackStack() }, onPlusOne = vm::plusOne, modifier = Modifier.navigationBarsPadding())
+                    DetailsScreen(
+                        row, s.active, onBack = { nav.popBackStack() }, onPlusOne = vm::plusOne, modifier = Modifier.navigationBarsPadding(),
+                        links = vm.serviceLinks(kind, id), onOpenUrl = vm::openUrl,
+                    )
                 } else {
                     Box(Modifier.fillMaxSize().background(k.bg), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = k.accent)

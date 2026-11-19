@@ -38,6 +38,7 @@ import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.Row as ListRow
+import io.github.hanami117.kotora.core.ServiceLink
 import io.github.hanami117.kotora.ui.theme.Kotora
 
 /**
@@ -45,7 +46,15 @@ import io.github.hanami117.kotora.ui.theme.Kotora
  * (synopsis, score, rank, the editor) come in M3.
  */
 @Composable
-fun DetailsScreen(row: ListRow?, account: Account?, onBack: () -> Unit, onPlusOne: (ListRow) -> Unit, modifier: Modifier = Modifier) {
+fun DetailsScreen(
+    row: ListRow?,
+    account: Account?,
+    onBack: () -> Unit,
+    onPlusOne: (ListRow) -> Unit,
+    modifier: Modifier = Modifier,
+    links: List<ServiceLink> = emptyList(),
+    onOpenUrl: (String) -> Unit = {},
+) {
     val k = Kotora.colors
     if (row == null) {
         Column(modifier.fillMaxSize().background(k.bg).statusBarsPadding()) {
@@ -82,6 +91,12 @@ fun DetailsScreen(row: ListRow?, account: Account?, onBack: () -> Unit, onPlusOn
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 airPill(row)?.let { (text, live) -> Pill(text, live) }
                 if (row.waiting) Pill("Waiting to sync", false, k.onHold)
+            }
+            // "Open on MyAnimeList" / "Open on AniList" (desktop details.rs `det/open-mal`).
+            if (links.isNotEmpty()) {
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (l in links) OpenOnButton(l.label, { onOpenUrl(l.url) })
+                }
             }
             Card {
                 Column {

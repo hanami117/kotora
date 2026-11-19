@@ -36,7 +36,7 @@ import kotlinx.coroutines.withContext
  * Files: the database and the tokens in `noBackupFilesDir` (never backed up), `config.toml` in
  * `filesDir/config`, caches in `cacheDir/kotora`.
  */
-class CoreRepository(context: Context) : Repository {
+class CoreRepository(context: Context) : Repository, AccountRepository {
     private val app = context.applicationContext
     private val vault = KeystoreVault(File(app.noBackupFilesDir, "tokens"))
     private val kotora: Kotora = Kotora(
@@ -76,6 +76,10 @@ class CoreRepository(context: Context) : Repository {
     override suspend fun setNotifySettings(settings: NotifySettings) = io { kotora.setNotifySettings(settings) }
     override suspend fun airNotes(): List<Note> = io { kotora.airNotes() }
     override suspend fun chapterNotes(): List<Note> = io { kotora.chapterNotes() }
+
+    override suspend fun profile(service: Service) = io { kotora.profile(service) }
+    override fun serviceLinks(kind: MediaKind, id: UInt) = kotora.serviceLinks(kind, id)
+    override suspend fun signInWithToken(raw: String): Account = io { kotora.signInWithToken(raw) }
 }
 
 /** The core's window on Android: the user's time zone, the log, the Keystore-wrapped tokens. */

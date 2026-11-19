@@ -20,6 +20,9 @@ import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
 import io.github.hanami117.kotora.core.StatusCount
+import io.github.hanami117.kotora.core.ProfileInfo
+import io.github.hanami117.kotora.core.ServiceLink
+import io.github.hanami117.kotora.data.AccountRepository
 import io.github.hanami117.kotora.data.Repository
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -92,6 +95,12 @@ class AppViewModel(
     /** A notification was tapped: the page to open (kind, id). */
     private val opens = Channel<Pair<MediaKind, UInt>>(Channel.CONFLATED)
     val openFlow = opens.receiveAsFlow()
+    /** The service that asked to sign in again (the "Sign in again" banner); the list stays. */
+    var expired by mutableStateOf<Service?>(null)
+        private set
+    /** The service of the last sign-in started (AniList shows the token paste after a problem). */
+    var lastSignIn by mutableStateOf<Service?>(null)
+        private set
 
     private val snacks = Channel<Snack>(Channel.BUFFERED)
     val snackFlow = snacks.receiveAsFlow()
@@ -169,8 +178,10 @@ class AppViewModel(
                 r.flush()
                 r.sync()
                 list = list.copy(problem = null)
+                expired = null
                 (session as? Session.SignedIn)?.let { session = Session.SignedIn(r.accounts()) }
             } catch (e: KotoraException.SignInAgain) {
+                expired = (session as? Session.SignedIn)?.active?.service
                 list = list.copy(problem = "Sign in again: the service no longer accepts Kotora's sign-in.")
             } catch (e: Exception) {
                 list = list.copy(problem = message(e))
@@ -289,6 +300,7 @@ class AppViewModel(
     /** Opens the service's sign-in page; the redirect comes back through [finishSignIn]. */
     fun signIn(service: Service) {
         val r = repo ?: return
+        lastSignIn = service
         viewModelScope.launch {
             try {
                 val p = r.signInStart(service)
@@ -333,6 +345,7 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 r.signInFinish(p, redirect)
+                if (expired == service) expired = null
                 start()
             } catch (e: Exception) {
                 session = Session.SignedOut(error = message(e))
@@ -347,6 +360,33 @@ class AppViewModel(
             list = ListUi()
             airing = AiringUi()
             start()
+        }
+    }
+
+    // ---------------------------------------------------------------- links, profile, token paste
+
+    /** Opens a web page (a Custom Tab), as the sign-in does. */
+    fun openUrl(url: String) {
+        viewModelScope.launch { urls.send(url) }
+    }
+
+    /** The entry's "Open on …" links (the active service's page). */
+    fun serviceLinks(kind: MediaKind, id: UInt): List<ServiceLink> =
+        runCatching { (repo as? AccountRepository)?.serviceLinks(kind, id) }.getOrNull() ?: emptyList()
+
+    suspend fun profile(service: Service): ProfileInfo? = runCatching { (repo as? AccountRepository)?.profile(service) }.getOrNull()
+
+    /** Signs in with a pasted AniList token or address; the problem's words, or null when it worked. */
+    suspend fun signInWithToken(raw: String): String? {
+        val r = repo as? AccountRepository ?: return "Kotora couldn't start."
+        return try {
+            val a = r.signInWithToken(raw)
+            if (session is Session.SignedIn) snacks.send(Snack("Signed in to ${serviceTitle(a.service)} as ${a.userName}."))
+            expired = null
+            start()
+            null
+        } catch (e: Exception) {
+            message(e)
         }
     }
 

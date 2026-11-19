@@ -1,6 +1,9 @@
 package io.github.hanami117.kotora.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +46,8 @@ fun SettingsScreen(
     onIntro: (Boolean) -> Unit = {},
     systemNotificationsOff: Boolean = false,
     onOpenSystemSettings: () -> Unit = {},
+    onProfile: (() -> Unit)? = null,
+    onOpenUrl: (String) -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg).verticalScroll(rememberScrollState())) {
@@ -55,6 +60,14 @@ fun SettingsScreen(
                     Item(serviceTitle(a.service), if (a.active) "${a.userName} · shown" else a.userName) {
                         if (sample) KButton("Leave", onLeaveSample, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
                         else KButton("Sign out", { onSignOut(a.service) }, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
+                    }
+                }
+                if (onProfile != null && accounts.isNotEmpty()) {
+                    HorizontalDivider(color = k.border)
+                    Row(Modifier.clickable(role = Role.Button, onClick = onProfile)) {
+                        Item("Profile", "Your numbers on ${serviceTitle((accounts.firstOrNull { it.active } ?: accounts.first()).service)}") {
+                            Icon(KIcons.Chevron, null, tint = k.faint)
+                        }
                     }
                 }
                 HorizontalDivider(color = k.border)
@@ -116,6 +129,7 @@ fun SettingsScreen(
                 Item("Font", "Inter, SIL Open Font License 1.1") {}
                 HorizontalDivider(color = k.border)
                 Item("小虎", "Noto Sans JP outlines, SIL Open Font License 1.1") {}
+                AboutLinks(onOpenUrl)
             }
         }
     }

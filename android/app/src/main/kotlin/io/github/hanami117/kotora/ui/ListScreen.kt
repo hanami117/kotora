@@ -2,7 +2,9 @@ package io.github.hanami117.kotora.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +57,7 @@ import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.core.Service
+import io.github.hanami117.kotora.core.ServiceLink
 import io.github.hanami117.kotora.core.Sort
 import io.github.hanami117.kotora.ui.theme.Kotora
 
@@ -73,6 +76,10 @@ fun ListScreen(
     onPlusOne: (ListRow) -> Unit,
     onOpen: (ListRow) -> Unit,
     modifier: Modifier = Modifier,
+    expired: Service? = null,
+    onSignIn: (Service) -> Unit = {},
+    linksFor: (ListRow) -> List<ServiceLink> = { emptyList() },
+    onOpenUrl: (String) -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
@@ -92,13 +99,14 @@ fun ListScreen(
             }
         }
         SyncLine(ui, account, now, onSort)
+        if (expired != null) SignInAgainBanner(expired, onSignIn)
         PullToRefreshBox(isRefreshing = ui.syncing, onRefresh = onSync, modifier = Modifier.weight(1f)) {
             if (ui.loaded && ui.rows.isEmpty()) {
                 EmptyList(ui)
             } else {
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(ui.rows, key = { "${it.kind}-${it.id}" }) { row ->
-                        ListRowItem(row, onPlusOne = { onPlusOne(row) }, onOpen = { onOpen(row) })
+                        ListRowItem(row, onPlusOne = { onPlusOne(row) }, onOpen = { onOpen(row) }, links = { linksFor(row) }, onOpenUrl = onOpenUrl)
                         HorizontalDivider(color = k.border, thickness = 1.dp)
                     }
                 }
@@ -207,11 +215,16 @@ private fun EmptyList(ui: ListUi) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit) {
+fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit, links: () -> List<ServiceLink> = { emptyList() }, onOpenUrl: (String) -> Unit = {}) {
     val k = Kotora.colors
+    // Long press: the desktop context menu's "Open on {service}" items (ctxmenu.rs `open_items`).
+    var menu by remember { mutableStateOf<List<ServiceLink>>(emptyList()) }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 84.dp).clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().heightIn(min = 84.dp)
+            .combinedClickable(onClick = onOpen, onLongClick = { menu = links() })
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -237,6 +250,18 @@ fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit) {
         val atEnd = row.total?.let { row.progress >= it } == true
         val canPlus = !atEnd && (row.status == ListStatus.WATCHING || row.rewatching)
         if (canPlus) PlusButton(onPlusOne, row)
+        DropdownMenu(expanded = menu.isNotEmpty(), onDismissRequest = { menu = emptyList() }, containerColor = k.raised) {
+            for (l in menu) {
+                DropdownMenuItem(
+                    text = { Text(l.label, color = k.text) },
+                    trailingIcon = { Icon(KIcons.External, null, tint = k.dim, modifier = Modifier.size(16.dp)) },
+                    onClick = {
+                        menu = emptyList()
+                        onOpenUrl(l.url)
+                    },
+                )
+            }
+        }
     }
 }
 

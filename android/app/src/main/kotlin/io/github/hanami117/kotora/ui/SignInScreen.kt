@@ -38,6 +38,7 @@ fun SignInScreen(
     hasClientId: (Service) -> Boolean,
     onSignIn: (Service) -> Unit,
     onLookAround: (() -> Unit)?,
+    onToken: (suspend (String) -> String?)? = null,
 ) {
     val k = Kotora.colors
     Column(
@@ -76,6 +77,8 @@ fun SignInScreen(
         }
         if (error != null) {
             Text(error, color = k.dropped, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp))
+            // AniList's fallback after a problem (desktop setup.rs `setup/token`).
+            if (onToken != null && !busy) TokenPasteField(onToken, Modifier.padding(top = 12.dp))
         }
         Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(KIcons.Lock, null, tint = k.faint, modifier = Modifier.size(18.dp).padding(top = 1.dp))

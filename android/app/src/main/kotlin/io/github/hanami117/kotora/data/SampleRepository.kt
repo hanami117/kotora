@@ -29,7 +29,7 @@ import java.util.Locale
  * Made-up lists in memory (the mockup's titles; nothing real). Edits change the rows here only;
  * nothing goes anywhere. Used by the screenshot tests and by "Look around" in debug builds.
  */
-class SampleRepository(private val now: Long = 1_795_000_000L) : Repository {
+class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, AccountRepository {
     override val isSample = true
 
     private val rows: MutableList<Row> = sampleRows(now).toMutableList()
@@ -89,6 +89,10 @@ class SampleRepository(private val now: Long = 1_795_000_000L) : Repository {
     }
     override suspend fun airNotes(): List<Note> = emptyList()
     override suspend fun chapterNotes(): List<Note> = emptyList()
+    override suspend fun profile(service: Service) = sampleProfile()
+    override fun serviceLinks(kind: MediaKind, id: UInt) =
+        listOf(io.github.hanami117.kotora.core.ServiceLink(Service.MAL, "Open on MyAnimeList", Links.media(Service.MAL, kind, id)))
+    override suspend fun signInWithToken(raw: String): Account = throw io.github.hanami117.kotora.core.KotoraException.NoClientId("Sample data: no sign-in.")
 
     companion object {
         /**

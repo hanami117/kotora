@@ -19,6 +19,7 @@ import io.github.hanami117.kotora.ui.AiringUi
 import io.github.hanami117.kotora.ui.DetailsScreen
 import io.github.hanami117.kotora.ui.IntroOverlay
 import io.github.hanami117.kotora.ui.ListScreen
+import io.github.hanami117.kotora.ui.ProfileScreen
 import io.github.hanami117.kotora.ui.ListUi
 import io.github.hanami117.kotora.ui.SettingsScreen
 import io.github.hanami117.kotora.ui.SignInScreen
@@ -132,5 +133,22 @@ class ScreenshotTest {
             notify = NotifySettings(startedAiring = true, newEpisode = false, newChapter = false),
             systemNotificationsOff = true,
         )
+    }
+
+    // Batches A, G, H: links, Profile, AniList token paste, "Sign in again".
+    @Test fun profileDark() = shot("profile", true) { ProfileScreen(io.github.hanami117.kotora.data.sampleProfile(), false, {}, {}, {}) }
+    @Test fun profileLight() = shot("profile", false) { ProfileScreen(io.github.hanami117.kotora.data.sampleProfile(), false, {}, {}, {}) }
+    @Test fun detailsLinksDark() = shot("details-links", true) {
+        val row = runBlocking { repo.entry(MediaKind.ANIME, 7u) }
+        DetailsScreen(row, account, {}, {}, links = repo.serviceLinks(MediaKind.ANIME, 7u))
+    }
+    @Test fun listExpiredDark() = shot("list-expired", true) {
+        ListScreen(listUi(), account, now, {}, {}, {}, {}, {}, {}, expired = Service.MAL)
+    }
+    @Test fun signInTokenLight() = shot("signin-token", false) {
+        SignInScreen("AniList refused the token. Sign in again.", false, { true }, {}, null, onToken = { null })
+    }
+    @Test fun settingsLinksDark() = shot("settings-links", true) {
+        SettingsScreen(listOf(account), true, 0u, "0.5.0", false, {}, {}, {}, onProfile = {})
     }
 }
