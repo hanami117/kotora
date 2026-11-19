@@ -2575,9 +2575,9 @@ mod tests {
         assert!(render("settings-mirror-error", (1280.0, 800.0)).find("set/mirror-error").is_some());
         assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-note").is_some());
         assert!(render("settings-mirror-sign-in", (1280.0, 800.0)).find("set/mirror-switch").is_some());
-        // Labelled Beta, off and on.
-        assert!(render("settings-mirror", (1280.0, 800.0)).find("set/mirror-beta").is_some());
-        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-beta").is_some());
+        // No Beta label any more, off or on.
+        assert!(render("settings-mirror", (1280.0, 800.0)).find("set/mirror-beta").is_none());
+        assert!(render("settings-mirror-on", (1280.0, 800.0)).find("set/mirror-beta").is_none());
         // The Queue page: website edits, the conflict, the mirror's list, and the badge.
         let rt = render("queue-mirror", (1280.0, 1400.0));
         for k in ["queue-mirror", "mirror-edit/9101/use-mirror", "mirror-edit/9101/leave", "queue-mirror-list", "qmh/waiting", "qmh/failed", "qmh/sent", "qmh/waits"] {

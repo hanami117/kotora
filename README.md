@@ -40,7 +40,7 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
   read, as it does for an episode. YACReader gives the exact page and Continue reading; other readers (Simple
   Comic, MComix, Okular, Preview, …) count by the file they have open (opt-in, macOS and Linux). Names like
   `Title v04.cbz` or `Title c120.cbz` say the volume or chapter.
-- Signed in to both services, the mirror (Beta) sends every change you make to the other list too, anime and
+- Signed in to both services, the mirror sends every change you make to the other list too, anime and
   manga, and never overwrites an edit made on the other website (Settings → Account → Mirror edits to …).
 - Import a MyAnimeList XML export (anime or manga) into either service, with a preview first; export a MyAnimeList anime or manga list as one (Settings → Account → Import anime list… / Import manga list…, Export anime list… / Export manga list…).
 - Statistics (sidebar → Statistics, anime or manga): episodes and time watched, chapters and volumes read, this
