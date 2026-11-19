@@ -27,6 +27,7 @@ use kotora_core::{Change, Kind, ListItem, Scope, ScoreFormat, Status, paths, tim
 uniffi::setup_scaffolding!();
 
 mod edit;
+mod quick;
 pub use edit::*;
 mod remove;
 pub use remove::*;
@@ -220,6 +221,9 @@ pub struct Row {
     /// A change of this entry waits in the queue ("Waiting to sync").
     pub waiting: bool,
     pub updated_at: i64,
+    /// The waiting change's tag: "Waiting to sync", "Conflict in queue", "Sync failed".
+    #[uniffi(default)]
+    pub sync_label: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -240,6 +244,11 @@ pub struct Edit {
     pub before_rewatching: bool,
     pub before_times_rewatched: u32,
     pub before_volumes: u32,
+    /// The score before (100-point scale), put back by Undo when `restore_score` (Score ▸).
+    #[uniffi(default)]
+    pub before_score: Option<u32>,
+    #[uniffi(default = false)]
+    pub restore_score: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq)]
@@ -435,7 +444,7 @@ impl Kotora {
     fn rows(&self, store: &Store, service: Service, kind: Kind) -> Result<Vec<Row>, KotoraError> {
         let fmt = self.score_format(store, service);
         let waiting = waiting_ids(store, service, kind);
-        Ok(store.load_list(Scope::new(service.name(), kind))?.iter().map(|it| row(it, fmt, waiting.contains(&it.media.id))).collect())
+        Ok(store.load_list(Scope::new(service.name(), kind))?.iter().map(|it| row(it, fmt, &waiting)).collect())
     }
 
     fn log(&self, level: LogLevel, message: String) {
@@ -443,11 +452,31 @@ impl Kotora {
     }
 }
 
-fn waiting_ids(store: &Store, service: Service, kind: Kind) -> Vec<u32> {
-    store.queue(service.name(), time::now_unix()).unwrap_or_default().into_iter().filter(|o| o.kind == kind && o.state.is_open()).map(|o| o.media_id).collect()
+/// The entries of `kind` with an open change, and the tag each shows (a conflict or a failure
+/// over a plain wait).
+pub(crate) struct Waiting(Vec<(u32, kotora_core::queue::OpState)>);
+
+impl Waiting {
+    pub(crate) fn contains(&self, id: &u32) -> bool {
+        self.0.iter().any(|(i, _)| i == id)
+    }
+
+    fn label(&self, id: u32) -> Option<String> {
+        use kotora_core::queue::OpState;
+        let rank = |s: OpState| match s {
+            OpState::Conflict => 2,
+            OpState::Failed => 1,
+            _ => 0,
+        };
+        self.0.iter().filter(|(i, _)| *i == id).map(|(_, s)| *s).max_by_key(|s| rank(*s)).map(|s| quick::sync_label(s).to_string())
+    }
 }
 
-fn row(it: &ListItem, fmt: ScoreFormat, waiting: bool) -> Row {
+fn waiting_ids(store: &Store, service: Service, kind: Kind) -> Waiting {
+    Waiting(store.queue(service.name(), time::now_unix()).unwrap_or_default().into_iter().filter(|o| o.kind == kind && o.state.is_open()).map(|o| (o.media_id, o.state)).collect())
+}
+
+fn row(it: &ListItem, fmt: ScoreFormat, waiting: &Waiting) -> Row {
     let m = &it.media;
     Row {
         kind: m.kind.into(),
@@ -467,8 +496,9 @@ fn row(it: &ListItem, fmt: ScoreFormat, waiting: bool) -> Row {
         cover_url: m.cover_url.clone(),
         rewatching: it.rewatching,
         times_rewatched: it.times_rewatched,
-        waiting,
+        waiting: waiting.contains(&m.id),
         updated_at: it.updated_at,
+        sync_label: waiting.label(m.id),
     }
 }
 
@@ -642,8 +672,8 @@ impl Kotora {
         let service = self.active_or_err()?;
         let store = self.store();
         let fmt = self.score_format(&store, service);
-        let waiting = waiting_ids(&store, service, kind.into()).contains(&id);
-        Ok(store.load_item(Scope::new(service.name(), kind.into()), id)?.map(|it| row(&it, fmt, waiting)))
+        let waiting = waiting_ids(&store, service, kind.into());
+        Ok(store.load_item(Scope::new(service.name(), kind.into()), id)?.map(|it| row(&it, fmt, &waiting)))
     }
 
     /// When the list of `kind` was last fetched (unix seconds).
@@ -666,11 +696,31 @@ impl Kotora {
         let mut store = self.store();
         let scope = Scope::new(service.name(), k);
         let item = store.load_item(scope, id)?.ok_or(KotoraError::NotFound)?;
+        let before = item.values();
+        // A manga read by volume (no chapter yet, some volumes) steps volumes, as the desktop.
+        if quick::plus_volumes(k, item.progress, item.volumes) {
+            let total = item.media.volumes.filter(|n| *n > 0);
+            if total.is_some_and(|n| item.volumes >= n) {
+                return Err(other(format!("{} is at its last volume.", item.media.title)));
+            }
+            store.enqueue(scope, id, Change { volumes: Some(item.volumes + 1), ..Default::default() }, time::now_unix())?;
+            return Ok(Edit {
+                kind,
+                id,
+                message: format!("{}: volume {} saved", item.media.title, item.volumes + 1),
+                before_status: before.status.into(),
+                before_progress: before.progress,
+                before_rewatching: before.rewatching,
+                before_times_rewatched: before.times_rewatched,
+                before_volumes: before.volumes,
+                before_score: None,
+                restore_score: false,
+            });
+        }
         let total = item.media.episodes.filter(|n| *n > 0);
         if total.is_some_and(|n| item.progress >= n) {
             return Err(other(format!("{} is at its last {}.", item.media.title, k.unit())));
         }
-        let before = item.values();
         let change = Change { progress: Some(item.progress + 1), ..Default::default() }.completes(&before, total);
         store.enqueue(scope, id, change, time::now_unix())?;
         let mut message = format!("{}: {} {} saved", item.media.title, k.unit(), item.progress + 1);
@@ -686,6 +736,8 @@ impl Kotora {
             before_rewatching: before.rewatching,
             before_times_rewatched: before.times_rewatched,
             before_volumes: before.volumes,
+            before_score: None,
+            restore_score: false,
         })
     }
 
@@ -701,7 +753,7 @@ impl Kotora {
             rewatching: Some(edit.before_rewatching),
             times_rewatched: Some(edit.before_times_rewatched),
             volumes: (edit.kind == MediaKind::Manga).then_some(edit.before_volumes),
-            ..Default::default()
+            score: edit.restore_score.then(|| edit.before_score.and_then(kotora_core::Score::from_points)),
         }
         .without_same(&item.values());
         if !back.is_empty() {

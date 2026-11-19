@@ -209,6 +209,8 @@ impl Kotora {
             before_rewatching: before.rewatching,
             before_times_rewatched: before.times_rewatched,
             before_volumes: before.volumes,
+            before_score: None,
+            restore_score: false,
         })
     }
 

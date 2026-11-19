@@ -321,7 +321,7 @@ impl Kotora {
             .map(|&i| {
                 let it = &items[i];
                 PageLine {
-                    row: row(it, fmt, waiting.contains(&it.media.id)),
+                    row: row(it, fmt, &waiting),
                     new_episode: new_eps[i],
                     on_hiatus: kind == MediaKind::Manga && it.media.air_status == "on_hiatus",
                     score_mark: it.score.map(|s| score_mark(fmt, s)),

@@ -329,3 +329,54 @@ fn a_conflict_shows_both_sides_in_the_desktop_words() {
     assert_eq!(edit::conflict_values(&op, &theirs, ScoreFormat::Point10), "Progress 9 / 12 \u{b7} Score 7");
     assert_eq!(edit::remote_text(Kind::Anime, op.remote.as_ref().unwrap(), Some(12), ScoreFormat::Point10), "9 / 12, Watching, score 7");
 }
+
+#[test]
+fn move_to_and_score_queue_with_undo_and_tag_the_row() {
+    let dir = scratch("quick");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+
+    let e = k.move_to(MediaKind::Anime, 1, ListStatus::Completed).unwrap().unwrap();
+    assert_eq!(e.message, "Moved Hoshikuzu Relay to Completed");
+    let r = k.entry(MediaKind::Anime, 1).unwrap().unwrap();
+    assert_eq!((r.status, r.progress, r.sync_label.as_deref()), (ListStatus::Completed, 12, Some("Waiting to sync")), "Completed sets the last episode");
+    k.undo(e).unwrap();
+    let r = k.entry(MediaKind::Anime, 1).unwrap().unwrap();
+    assert_eq!((r.status, r.progress, r.sync_label), (ListStatus::Watching, 6, None));
+    assert_eq!(k.move_to(MediaKind::Anime, 1, ListStatus::Watching).unwrap(), None, "same status: nothing");
+
+    let e = k.set_score(MediaKind::Anime, 2, None).unwrap().unwrap();
+    assert_eq!(e.message, "Removed the score of Kagerou Bakery");
+    assert_eq!(k.entry(MediaKind::Anime, 2).unwrap().unwrap().score, None);
+    k.undo(e).unwrap();
+    assert_eq!(k.entry(MediaKind::Anime, 2).unwrap().unwrap().score.as_deref(), Some("8"), "Undo of No score");
+    let e = k.set_score(MediaKind::Anime, 2, Some(90)).unwrap().unwrap();
+    assert_eq!(e.message, "Scored Kagerou Bakery 9");
+    assert_eq!(k.waiting_count(), 1);
+
+    // Signed in, no timetable, airing: no telling, no question.
+    assert_eq!(k.not_aired_question(MediaKind::Anime, 1), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_manga_read_by_volume_steps_volumes() {
+    let dir = scratch("volumes");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    let mut m = item(7, "Umi no Toshokan", Status::Watching, 0, None, 10);
+    m.media.kind = Kind::Manga;
+    m.media.volumes = Some(4);
+    m.volumes = 2;
+    k.store().replace_list(Scope::new("mal", Kind::Manga), &[m], 1_000).unwrap();
+    let r = k.entry(MediaKind::Manga, 7).unwrap().unwrap();
+    assert_eq!(crate::quick::plus_one_label(r), "One more volume");
+    let e = k.plus_one(MediaKind::Manga, 7).unwrap();
+    assert_eq!(e.message, "Umi no Toshokan: volume 3 saved");
+    let r = k.entry(MediaKind::Manga, 7).unwrap().unwrap();
+    assert_eq!((r.progress, r.volumes), (0, 3));
+    k.undo(e).unwrap();
+    assert_eq!(k.entry(MediaKind::Manga, 7).unwrap().unwrap().volumes, 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
