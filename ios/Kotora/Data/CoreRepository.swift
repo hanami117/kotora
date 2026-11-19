@@ -11,6 +11,7 @@ import Security
 /// - `Caches/kotora`: caches (never backed up; the system may clear it).
 /// - The tokens: the Keychain (`KeychainVault`), this device only, not synchronised.
 final class CoreRepository: Repository, @unchecked Sendable {
+    /// Internal, not private: `Extras/Insights.swift` adds the Statistics and settings calls.
     let kotora: Kotora
 
     let isSample = false

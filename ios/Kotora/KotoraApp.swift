@@ -17,6 +17,7 @@ struct KotoraApp: App {
             Themed { RootView() }
                 .environmentObject(model)
                 .onOpenURL { model.finishSignIn($0.absoluteString) }
+                .modifier(LaunchExtras())
         }
         .onChange(of: phase) { _, now in
             switch now {
@@ -110,11 +111,11 @@ struct SignedInView: View {
 
     /// Debug launch arguments for screenshots: `-screen list|details|airing|search|settings`, `-id 7`.
     init() {
-        var screen = "home"
+        var screen = Prefs.startTab ?? "home"
         var id: UInt32 = 7
         #if DEBUG
         let d = UserDefaults.standard
-        screen = d.string(forKey: "screen") ?? "home"
+        screen = d.string(forKey: "screen") ?? screen
         if d.integer(forKey: "id") > 0 { id = UInt32(d.integer(forKey: "id")) }
         #endif
         _tab = State(initialValue: screen == "details" ? .list : Tab(rawValue: screen) ?? .home)
@@ -165,6 +166,7 @@ struct SignedInView: View {
                 .tag(Tab.settings)
         }
         .tint(p.accent)
+        .modifier(StartupState(tab: tab.rawValue))
         .animation(.easeOut(duration: 0.2), value: model.snack)
     }
 

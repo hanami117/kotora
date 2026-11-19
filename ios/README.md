@@ -58,3 +58,16 @@ Debug launch arguments (`run-sim.sh "iPhone 17" <args>` or `xcrun simctl launch 
    turn on Developer Mode on it (Settings → Privacy & Security), pick it as the run destination, Run.
 4. On the phone: Settings → General → VPN & Device Management → trust the developer. A free team's
    profile lasts 7 days: run from Xcode again to renew it (the list and sign-in stay).
+
+## Intro, Statistics, settings (`Kotora/Intro`, `Kotora/Extras`)
+
+- **Startup intro**: the desktop's, one to one. The spec (geometry in a 1600×1000 box that covers
+  the screen, timeline, easings, colours) lives in `app/src/intro.rs`; `Intro/IntroView.swift`
+  ports it to a `Canvas`, 小虎 from `app/src/kanji.rs`'s paths (`Intro/Kanji.swift`). 0.10 s solid
+  orange, then 0.8 s: slashes at 0.06/0.15/0.24 s (0.12 s each, cubic(0.3,0,0.2,1)), split at
+  0.33 s (0.45 s). Reduce Motion: hold 0.12 s, fade 0.25 s. Tap skips (0.15 s fade). Cold start
+  only; `[display] intro`. Debug: `-intro YES|NO`, `-introAt 0.3` (a held frame).
+- **Statistics**: Settings → Statistics, the desktop's page (`kotora.stats`, local).
+- **Settings** in `config.toml`, the desktop's keys: `[display] theme|intro|list_kind`,
+  `[startup] open_on|mode|last_page`, `[notifications] new_episode|started_airing|new_chapter`
+  (`kotora.settings()` / `setSetting`). Fill volumes from chapters: `kotora.volumeFill()`.

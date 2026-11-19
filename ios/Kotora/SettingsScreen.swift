@@ -11,6 +11,7 @@ struct SettingsScreen: View {
     var body: some View {
         let accounts = model.session.accounts
         let waiting = model.list.waiting
+        NavigationStack {
         VStack(spacing: 0) {
             AppBar(title: "Settings") { AccountMenu() }
             ScrollView {
@@ -54,6 +55,9 @@ struct SettingsScreen: View {
                         }
                     }
 
+                    // Statistics, Appearance, Startup, Notifications, Fill volumes (Extras/SettingsExtras.swift).
+                    SettingsExtras()
+
                     SectionTitle(text: "About")
                     Card {
                         ListLine(title: "Kotora \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? coreVersion())",
@@ -68,6 +72,8 @@ struct SettingsScreen: View {
             }
         }
         .background(p.bg)
+        .toolbar(.hidden, for: .navigationBar)
+        }
     }
 
     private func smallButton(_ title: String, _ action: @escaping () -> Void) -> some View {
