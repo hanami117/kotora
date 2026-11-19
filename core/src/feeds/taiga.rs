@@ -85,9 +85,17 @@ pub struct Entry {
     pub category: Category,
     pub state: ItemState,
     pub new_episode: bool,
+    /// Why it is discarded: the filter's name, "Already downloaded"; empty otherwise.
+    pub why: String,
 }
 
 impl Entry {
+    /// Discarded by a filter: its name says why.
+    pub fn discard_by(&mut self, option: FilterOption, filter: &str) {
+        self.discard(option);
+        self.why = filter.to_string();
+    }
+
     /// `FeedItem::Discard(option)`.
     pub fn discard(&mut self, option: FilterOption) {
         self.state = match option {
@@ -241,6 +249,7 @@ pub fn examine(
             category,
             state: ItemState::Blank,
             new_episode: false,
+            why: String::new(),
         });
     }
     out
@@ -1011,7 +1020,7 @@ pub fn apply_filter(
     }
     let m = matched(f, &entries[i], w);
     match f.action {
-        Action::Discard if m => entries[i].discard(f.option),
+        Action::Discard if m => entries[i].discard_by(f.option, &f.name),
         Action::Select if m => entries[i].state = ItemState::Selected,
         Action::Discard | Action::Select => return false,
         Action::Prefer => {
@@ -1021,7 +1030,7 @@ pub fn apply_filter(
                     if m {
                         entries[i].state = ItemState::Selected;
                     } else {
-                        entries[i].discard(f.option);
+                        entries[i].discard_by(f.option, &f.name);
                     }
                 } else if m {
                     if !apply_preference_filter(f, entries, i, w) {
@@ -1031,7 +1040,7 @@ pub fn apply_filter(
                     return false;
                 }
             } else if !m {
-                entries[i].discard(f.option);
+                entries[i].discard_by(f.option, &f.name);
             } else {
                 return false;
             }
@@ -1139,6 +1148,7 @@ pub fn run_filters(
     for e in entries.iter_mut() {
         if !e.state.is_discarded() && archive.contains(&e.item.title) {
             e.state = ItemState::DiscardedNormal;
+            e.why = "Already downloaded".into();
         }
     }
     entries.sort_by_key(|e| e.state.priority());

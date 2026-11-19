@@ -3723,6 +3723,24 @@ mod tests {
         }
         let mut s = State::fake();
         crate::feeds::fake(&mut s);
+        // Every feed item is on the page; the unmatched ones dimmed with the reason.
+        let rt = render("feeds", (1280.0, 800.0));
+        for e in &s.feeds.entries {
+            assert!(
+                rt.find(&format!("feeds/item/{}", e.item.key())).is_some(),
+                "{}",
+                e.item.title
+            );
+        }
+        let noise = s.feeds.entries.iter().find(|e| e.item.guid == "noise-0").unwrap();
+        assert!(rt.find(&format!("feeds/why/{}", noise.item.key())).is_some());
+        assert!(
+            s.feeds
+                .entries
+                .iter()
+                .filter(|e| e.anime_id.is_none())
+                .all(|e| crate::torrents::reason(e).is_some())
+        );
         // Taiga's default filters: the Watching items selected, the not-in-list ones discarded.
         let watching: Vec<u32> = s
             .entries

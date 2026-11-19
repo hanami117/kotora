@@ -1150,7 +1150,14 @@ impl Config {
     /// Reads the file. A missing file is an empty config; a broken one is an error message.
     pub fn load(path: &Path) -> Result<Config, String> {
         match std::fs::read_to_string(path) {
-            Ok(t) => Config::parse(&t),
+            Ok(t) => Config::parse(&t).inspect_err(|_| {
+                // A file Kotora can't read is never rewritten (writes refuse it); a copy is kept
+                // beside it in case it gets edited by hand.
+                let copy = path.with_extension("toml.broken");
+                if !copy.exists() {
+                    let _ = std::fs::copy(path, copy);
+                }
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(format!("can't read config.toml: {e}")),
         }
@@ -1160,6 +1167,37 @@ impl Config {
 /// Sets `key = value` (a TOML literal) in `[section]` of `text`: replaces the key's line, or adds
 /// it at the section's end, or adds the section at the end. Everything else stays as it was.
 pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
+    // A real TOML editor: values over several lines (an array of feeds), quotes, `?&=%` in URLs
+    // and comments all survive. Only a file it can't read falls back to the line edit.
+    if let (Ok(mut doc), Ok(v)) = (
+        text.parse::<toml_edit::DocumentMut>(),
+        value.parse::<toml_edit::Value>(),
+    ) {
+        if !doc.contains_key(section) {
+            doc[section] = toml_edit::table();
+        }
+        if let Some(t) = doc[section].as_table_like_mut() {
+            match t.get_mut(key).and_then(|i| i.as_value_mut()) {
+                Some(old) => {
+                    let decor = old.decor().clone();
+                    *old = v;
+                    *old.decor_mut() = decor;
+                }
+                None => {
+                    t.insert(key, toml_edit::value(v));
+                }
+            }
+            let mut out = doc.to_string();
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            return out;
+        }
+    }
+    set_line_plain(text, section, key, value)
+}
+
+fn set_line_plain(text: &str, section: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let header = format!("[{section}]");
     let is_header = |l: &str| l.trim_start().starts_with('[');
@@ -1337,6 +1375,14 @@ pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Resu
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("can't read config.toml: {e}")),
     };
+    // One writer at a time: settings save on their own threads, and two read-modify-writes at
+    // once would lose one change.
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let old = std::fs::read_to_string(path).unwrap_or(old);
+    if !old.trim().is_empty() && Config::parse(&old).is_err() {
+        return Err("config.toml can't be read, so Kotora leaves it as it is: fix it, or remove it to start over (Kotora keeps a copy as config.toml.broken)".into());
+    }
     let new = set_line(&old, section, key, value);
     // Never write a file the reader would refuse.
     Config::parse(&new)?;
@@ -1658,6 +1704,65 @@ mod tests {
         assert_eq!(c.updates.threshold, 50, "kept at 50 or more");
         assert!(!c.players.get("vlc") && c.players.get("mpv"));
         assert_eq!(c.players.mpv_sockets, ["/tmp/a.sock"]);
+    }
+
+    #[test]
+    fn feed_sources_survive_edits() {
+        let hard = vec![
+            FeedSource {
+                name: "nyaa.si: \"q\" & co".into(),
+                url: "https://nyaa.si/?page=rss&c=1_2&f=0&q=a%20b=c".into(),
+            },
+            FeedSource {
+                name: "back\\slash 'x'".into(),
+                url: "https://x.example/rss?apikey=k&t=search&q=%title%".into(),
+            },
+        ];
+        // The user's shape: comments, other sections, a sources array over several lines.
+        let mut text = String::from(
+            "# mine\n[general]\ntheme = \"dark\" # keep\n\n[feeds]\nenabled = true\nsources = [\n  { name = \"old\", url = \"https://nyaa.si/?page=rss&c=1_2\" },\n]\ninterval_minutes = 30\n\n[notifications]\nnew_release = true\n",
+        );
+        for round in 0..5 {
+            let src = if round % 2 == 0 {
+                hard.clone()
+            } else {
+                hard[..1].to_vec()
+            };
+            text = set_line(&text, "feeds", "sources", &Feeds::sources_toml(&src));
+            text = set_line(
+                &text,
+                "feeds",
+                "search",
+                &quote("https://nyaa.si/?page=rss&c=1_2&f=0&q=%title%"),
+            );
+            let c = Config::parse(&text).unwrap_or_else(|e| panic!("round {round}: {e}\n{text}"));
+            assert_eq!(c.feeds.sources, src);
+            assert!(c.feeds.enabled && c.notifications.new_release);
+        }
+        text = set_line(&text, "feeds", "sources", "[]");
+        let c = Config::parse(&text).unwrap();
+        assert!(c.feeds.sources.is_empty());
+        assert!(
+            text.contains("# mine") && text.contains("theme = \"dark\" # keep"),
+            "{text}"
+        );
+        assert!(!text.contains(" }]"), "{text}");
+    }
+
+    #[test]
+    fn a_broken_file_is_kept_not_rewritten() {
+        let dir = std::env::temp_dir().join(format!("kotora-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        std::fs::write(&p, "[feeds]\nsources = []\n }]\n").unwrap();
+        assert!(Config::load(&p).is_err());
+        assert!(dir.join("config.toml.broken").exists());
+        assert!(write_setting(&p, "feeds", "enabled", "true").is_err());
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "[feeds]\nsources = []\n }]\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

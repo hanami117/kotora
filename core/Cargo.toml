@@ -10,6 +10,7 @@ description = "Kotora's core: data model, store, services, sync queue and recogn
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.2", default-features = false, features = ["std", "serde", "parse"] }
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 # SQLite is compiled in (bundled): the same on Arch and macOS, no system library.
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Blocking HTTP on worker threads (no async runtime of our own).

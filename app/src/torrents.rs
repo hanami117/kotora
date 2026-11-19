@@ -1446,6 +1446,18 @@ fn header(c: &Cols) -> El {
     r
 }
 
+/// Why an item is dimmed: the filter that discarded it, the history, or no anime on the list.
+pub fn reason(e: &Entry) -> Option<String> {
+    if e.state.is_discarded() {
+        return Some(if e.why.is_empty() {
+            "Discarded".into()
+        } else {
+            e.why.clone()
+        });
+    }
+    e.anime_id.is_none().then(|| "Not on your list".into())
+}
+
 /// The Anime column: the list's title, else the parsed one.
 fn anime_text(s: &State, e: &Entry) -> String {
     match e.anime_id {
@@ -1475,6 +1487,16 @@ fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
     );
     if e.category != Category::Anime {
         anime = anime.child(crate::ui::tag(e.category.label(), PAL.dim, false));
+    }
+    if let Some(why) = reason(e) {
+        anime = anime.child(
+            text(why)
+                .key(format!("feeds/why/{}", e.item.key()))
+                .font(theme::LABEL)
+                .color(PAL.faint)
+                .truncate()
+                .min_w(0.0),
+        );
     }
     if busy {
         anime = anime.child(
@@ -1848,8 +1870,8 @@ pub fn page(s: &State, width: f32) -> El {
             let shown: Vec<&Entry> = table
                 .iter()
                 .filter(|e| {
-                    e.state != ItemState::DiscardedHidden
-                        && !(f.hide_discarded && e.state.is_discarded())
+                    // Every item, as in Taiga's list; only "Hide discarded" leaves some out.
+                    !(f.hide_discarded && e.state.is_discarded())
                 })
                 .collect();
             let mut t = col()

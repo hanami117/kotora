@@ -236,6 +236,9 @@ impl State {
         for e in &mut entries {
             if let Some(st) = f.manual.get(&e.item.key()) {
                 e.state = *st;
+                if st.is_discarded() {
+                    e.why = "Discarded by you".into();
+                }
             }
         }
         entries
