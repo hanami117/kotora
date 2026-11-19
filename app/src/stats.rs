@@ -65,7 +65,11 @@ impl State {
             return;
         }
         let Some(h) = self.handle.clone() else { return };
-        let Some(service) = self.account.as_ref().map(|(_, svc)| *svc) else { return };
+        if self.account.is_none() {
+            return;
+        }
+        // The store's name of the active service ("mal"), not the shown one.
+        let service = crate::account::name();
         let kind = self.stats_kind();
         self.stats.loading = true;
         let spawned = std::thread::Builder::new().name("kotora-stats".into()).spawn(move || {

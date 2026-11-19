@@ -100,7 +100,7 @@ fn answer(handle: &Handle, req: Request) -> Reply {
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
         // Read on this thread (its own store connection); the UI only says who is signed in.
-        Request::Stats { manga } => match on_ui(handle, false, |s| s.account.as_ref().map(|(_, svc)| *svc)) {
+        Request::Stats { manga } => match on_ui(handle, false, |s| s.account.is_some().then(crate::account::name)) {
             Ok(Some(service)) => match crate::stats::ctl_text(service, if manga { Kind::Manga } else { Kind::Anime }) {
                 Ok(t) => Reply::Done { message: t.trim_end().to_string() },
                 Err(message) => Reply::Error { message, anyway: false },
