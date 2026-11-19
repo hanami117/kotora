@@ -24,19 +24,7 @@ extension MediaKind {
     var unit: String { self == .manga ? "chapter" : "episode" }
 }
 
-extension Sort: CaseIterable {
-    public static var allCases: [Sort] { [.updated, .title, .score] }
-
-    var label: String {
-        switch self {
-        case .updated: return "Updated"
-        case .title: return "Title"
-        case .score: return "Score"
-        }
-    }
-}
-
-enum TagStyle { case air, wait, plain }
+enum TagStyle { case air, wait, plain, new, hiatus }
 
 extension Row {
     var key: String { "\(kind == .manga ? "m" : "a")\(id)" }

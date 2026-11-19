@@ -791,6 +791,7 @@ pub fn core_version() -> String {
 }
 
 mod search;
+mod listopts;
 pub use search::Hit;
 /// Airing, Publishing and their notifications.
 mod pages;

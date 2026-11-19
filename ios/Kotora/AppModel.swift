@@ -35,8 +35,19 @@ enum Session: Equatable {
 struct ListUi: Equatable {
     var kind: MediaKind = .anime
     var status: ListStatus = .watching
-    var sort: Sort = .updated
+    var sort: ListSort = .updated
+    /// The order's second direction (desktop `sort_rev`).
+    var reverse = false
+    var filter: QuickFilter = .all
+    /// The "Filter your list" box.
+    var query = ""
+    var view: ListViewMode = .list
     var rows: [Row] = []
+    /// The rows with their tags and score, and the empty state (`ListPage`).
+    var lines: [PageLine] = []
+    var empty: ListEmptyKind = .none
+    var emptyTitle = ""
+    var emptyHelp = ""
     var counts: [StatusCount] = []
     var syncedAt: Int64?
     var waiting: UInt32 = 0
@@ -115,7 +126,13 @@ final class AppModel: ObservableObject {
         guard let r = repo, case .signedIn = session else { return }
         var l = list
         do {
-            l.rows = try await r.list(kind: l.kind, status: l.status, sort: l.sort)
+            if let src = r as? ListPageSource {
+                let page = try await src.listPage(kind: l.kind, query: ListQuery(status: l.status, filter: l.filter, query: l.query, sort: l.sort, reverse: l.reverse))
+                l.lines = page.lines
+                l.rows = page.lines.map(\.row)
+                (l.empty, l.emptyTitle, l.emptyHelp) = (page.empty, page.emptyTitle, page.emptyHelp)
+                l.view = await src.listView(kind: l.kind, status: l.status)
+            }
             l.counts = try await r.counts(kind: l.kind)
             l.syncedAt = await r.syncedAt(kind: l.kind)
             l.waiting = await r.waitingCount()
@@ -128,21 +145,38 @@ final class AppModel: ObservableObject {
             l.loaded = true
         }
         // Keep what changed meanwhile (a sync started or ended, another page picked).
-        guard l.kind == list.kind, l.status == list.status, l.sort == list.sort else { return }
+        guard l.kind == list.kind, l.status == list.status, l.sort == list.sort, l.reverse == list.reverse,
+              l.filter == list.filter, l.query == list.query else { return }
         l.syncing = list.syncing
         l.version = list.version + 1
         list = l
     }
 
-    func select(kind: MediaKind? = nil, status: ListStatus? = nil, sort: Sort? = nil) {
+    func select(kind: MediaKind? = nil, status: ListStatus? = nil, sort: ListSort? = nil, reverse: Bool? = nil,
+                filter: QuickFilter? = nil, query: String? = nil) {
         let kind = kind ?? list.kind
         let kindChanged = kind != list.kind
+        let newStatus = kindChanged ? .watching : (status ?? list.status)
+        // A new page starts on All (desktop `go`); a new order starts in its own direction.
+        if kindChanged || newStatus != list.status { list.filter = .all }
+        if let sort, sort != list.sort { list.reverse = false }
         list.kind = kind
-        list.status = kindChanged ? .watching : (status ?? list.status)
+        list.status = newStatus
         list.sort = sort ?? list.sort
+        list.reverse = reverse ?? list.reverse
+        list.filter = filter ?? list.filter
+        list.query = query ?? list.query
         Task {
             if kindChanged && kind == .manga && !mangaEnabled { switchManga(true) } else { await reload() }
         }
+    }
+
+    /// List, Grid or Large for the page's tab (saved per tab).
+    func setView(_ v: ListViewMode) {
+        list.view = v
+        guard let src = repo as? ListPageSource else { return }
+        let (kind, status) = (list.kind, list.status)
+        Task { await src.setListView(kind: kind, status: status, view: v) }
     }
 
     func sync() {

@@ -123,10 +123,12 @@ struct Tag: View {
         case .air: p.air
         case .wait: p.onHold
         case .plain: p.dim
+        case .new: p.accentHi
+        case .hiatus: p.dropped
         }
         Text(text).font(Inter.medium(11.5)).foregroundStyle(c)
             .padding(.horizontal, 7).frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 6).fill(style == .plain ? p.raised : c.opacity(0.14)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(style == .plain ? p.raised : (style == .new ? p.accent : c).opacity(0.14)))
     }
 }
 
@@ -212,6 +214,9 @@ struct ListLine<Leading: View, Trailing: View>: View {
 struct ProgressLine: View {
     @Environment(\.palette) private var p
     let row: Row
+    /// The score in the user's format (list pages); otherwise the raw "★ x".
+    var mark: ScoreMark? = nil
+    var hasMark = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -224,7 +229,9 @@ struct ProgressLine: View {
             }
             .frame(width: 64, height: 4)
             Text("\(row.progress) / \(row.total.map(String.init) ?? "?")").font(Inter.medium(12.5)).monospacedDigit().foregroundStyle(p.dim)
-            Text("★ \(row.score ?? "–")").font(Inter.regular(12.5)).foregroundStyle(p.faint)
+            if hasMark { ScoreView(mark: mark, size: 12.5) } else {
+                Text("★ \(row.score ?? "–")").font(Inter.regular(12.5)).foregroundStyle(p.faint)
+            }
         }
     }
 
