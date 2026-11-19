@@ -39,6 +39,12 @@ pub struct Release {
     pub movie: bool,
     /// "END" or "Final" after the episode: the last one.
     pub last: bool,
+    /// anitomy's anime types ("OP", "ED", "PV", "Movie", …).
+    pub types: Vec<String>,
+    /// The file extension, when the name has one ("mkv").
+    pub extension: Option<String>,
+    /// anitomy's video terms as written ("HEVC", "10bit", …).
+    pub video_terms: Vec<String>,
 }
 
 impl Release {
@@ -146,5 +152,8 @@ pub fn parse_release(title: &str) -> Release {
         checksum: first(ElementKind::FileChecksum).map(|c| c.to_ascii_uppercase()),
         movie,
         last,
+        types: all(ElementKind::Type).collect(),
+        extension: first(ElementKind::FileExtension),
+        video_terms: terms.clone(),
     }
 }

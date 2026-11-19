@@ -17,6 +17,7 @@
 pub mod marks;
 pub mod poll;
 pub mod select;
+pub mod taiga;
 
 use roxmltree::{Document, Node};
 
@@ -51,6 +52,31 @@ pub struct Item {
     pub leechers: Option<u32>,
     /// Unix seconds.
     pub published: Option<i64>,
+    /// Completed downloads, when the feed says (nyaa `downloads`, Torznab `grabs`).
+    pub downloads: Option<u32>,
+    /// The description, without HTML, lines joined with " | " (Taiga's TidyFeedItemDescription).
+    pub description: String,
+    /// The feed's own category ("Anime - English-translated", "Batch", …).
+    pub category: String,
+}
+
+/// Taiga's `TidyFeedItemDescription`: line breaks for `</p>` and `<br>`, no tags, lines joined
+/// with " | ", single spaces.
+pub fn tidy_description(html: &str) -> String {
+    let s = html.replace("</p>", "\n").replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n");
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let out = out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'");
+    let lines: Vec<String> = out.split('\n').map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect();
+    lines.join(" | ")
 }
 
 impl Item {
@@ -231,6 +257,7 @@ fn extras(n: Node, it: &mut Item, torznab: &mut bool) {
                     "size" => it.size = it.size.or_else(|| number(v)),
                     "seeders" => it.seeders = number(v).or(it.seeders),
                     "leechers" => it.leechers = number(v).or(it.leechers),
+                    "grabs" => it.downloads = number(v).or(it.downloads),
                     // Torznab's peers count the seeders too.
                     "peers" if it.leechers.is_none() => {
                         if let (Some(p), Some(s)) = (number::<u32>(v), it.seeders) {
@@ -243,6 +270,7 @@ fn extras(n: Node, it: &mut Item, torznab: &mut bool) {
             "infohash" => it.info_hash = it.info_hash.take().or_else(|| text_of(c).and_then(|t| normalize_hash(&t))),
             "seeders" => it.seeders = it.seeders.or_else(|| text_of(c).and_then(|t| number(&t))),
             "leechers" => it.leechers = it.leechers.or_else(|| text_of(c).and_then(|t| number(&t))),
+            "downloads" => it.downloads = it.downloads.or_else(|| text_of(c).and_then(|t| number(&t))),
             "size" | "contentlength" => it.size = it.size.or_else(|| text_of(c).and_then(|t| parse_size(&t))),
             "magneturi" => {
                 if let Some(t) = text_of(c) {
@@ -297,6 +325,14 @@ fn rss_item(n: Node, torznab: &mut bool) -> Option<Item> {
         it.page = safe_http(&c);
     }
     extras(n, &mut it, torznab);
+    it.description = child_text(n, "description").map(|d| tidy_description(&d)).unwrap_or_default();
+    // nyaa's own category beats the plain RSS one (a Torznab number).
+    it.category = n
+        .children()
+        .filter(|c| c.is_element() && local(c).eq_ignore_ascii_case("category"))
+        .filter_map(text_of)
+        .rfind(|t| !t.chars().all(|c| c.is_ascii_digit()))
+        .unwrap_or_default();
     it.published = child_text(n, "pubDate").or_else(|| child_text(n, "date")).and_then(|d| parse_rfc2822(&d).or_else(|| parse_rfc3339(&d)));
     finish(it)
 }
@@ -314,6 +350,8 @@ fn atom_entry(n: Node, torznab: &mut bool) -> Option<Item> {
     }
     it.guid = child_text(n, "id").unwrap_or_default();
     extras(n, &mut it, torznab);
+    it.description = child_text(n, "summary").or_else(|| child_text(n, "content")).map(|d| tidy_description(&d)).unwrap_or_default();
+    it.category = child(n, "category").and_then(|c| c.attribute("term").map(str::to_string).or_else(|| text_of(c))).unwrap_or_default();
     it.published = child_text(n, "published").or_else(|| child_text(n, "updated")).and_then(|d| parse_rfc3339(&d).or_else(|| parse_rfc2822(&d)));
     finish(it)
 }

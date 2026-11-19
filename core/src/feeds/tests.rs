@@ -156,3 +156,12 @@ fn search_addresses() {
     assert_eq!(search_url("https://x.example/rss", "a"), None, "no %title%");
     assert_eq!(search_url("file:///%title%", "a"), None);
 }
+
+#[test]
+fn descriptions_categories_downloads() {
+    let f = parse(&fixture("nyaa.xml")).unwrap();
+    assert_eq!(f.items[0].category, "Anime - English-translated");
+    assert_eq!(f.items[0].description, "#1000008");
+    assert_eq!(tidy_description("<p>One</p><p>Two <b>2</b></p>"), "One | Two 2");
+    assert_eq!(tidy_description("a<br/>b<br />c &amp; d"), "a | b | c & d");
+}
