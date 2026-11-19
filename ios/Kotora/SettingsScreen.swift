@@ -1,89 +1,72 @@
 import SwiftUI
 
+/// M2's settings, as on Android: the account (sign out), the waiting changes, Manga lists, About.
+/// The rest comes in M5. The theme follows the system on both phones.
 struct SettingsScreen: View {
     @Environment(\.palette) private var p
-    @EnvironmentObject private var model: CoreModel
-    @AppStorage("appearance") private var appearance = 0
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        let _ = model.version
+        let accounts = model.session.accounts
+        let waiting = model.list.waiting
         VStack(spacing: 0) {
-            AppBar(title: "Settings") { EmptyView() }
+            AppBar(title: "Settings") { if let a = model.session.active { Avatar(account: a) } }
             ScrollView {
-                VStack(spacing: 0) {
-                    SectionTitle(text: "Accounts")
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionTitle(text: "Account")
                     Card {
-                        ForEach(model.accounts, id: \.userName) { a in
-                            ListLine(title: "\(a.userName) · \(a.service.label)", subtitle: "Sample account · nothing is sent") {
-                                Avatar(letter: String(a.userName.prefix(1)).uppercased(), anilist: a.service == .aniList)
+                        ForEach(accounts, id: \.service) { a in
+                            ListLine(title: a.service.label, subtitle: a.active ? "\(a.userName) · shown" : a.userName) {
+                                EmptyView()
                             } trailing: {
-                                if a.active { Tag(text: "Main", style: .plain).foregroundStyle(p.watching) }
+                                if model.isSample {
+                                    smallButton("Leave") { model.leaveSample() }
+                                } else {
+                                    smallButton("Sign out") { model.signOut(a.service) }
+                                }
                             }
                         }
-                        ListLine(title: "Sign in to MyAnimeList", subtitle: "Comes later on iPhone (needs an iOS client id)") {
-                            Avatar(letter: "M", size: 32).opacity(0.45)
-                        } trailing: { Image(systemName: "lock").foregroundStyle(p.faint) }
-                        ListLine(title: "Sign in to AniList", subtitle: "Comes later on iPhone") {
-                            Avatar(letter: "A", anilist: true, size: 32).opacity(0.45)
-                        } trailing: { Image(systemName: "lock").foregroundStyle(p.faint) }
-                        ListLine(title: "Sync queue", subtitle: model.waiting == 0 ? "Nothing waiting" : "\(model.waiting) changes waiting · kept on this phone", divider: false) {
-                            Image(systemName: "tray.full").foregroundStyle(p.dim)
-                        } trailing: {
-                            if model.waiting > 0 { Tag(text: "\(model.waiting)", style: .wait) }
-                        }
+                        ListLine(title: "Waiting changes", subtitle: waiting == 0 ? "Everything is sent." : "\(waiting) waiting to sync", divider: false) {
+                            EmptyView()
+                        } trailing: { EmptyView() }
                     }
+                    Text("Sign out removes this phone's copy of the list, its waiting changes and the sign-in.")
+                        .font(Inter.regular(12)).foregroundStyle(p.faint)
+                        .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 4)
 
                     SectionTitle(text: "Lists")
                     Card {
-                        ListLine(title: "Manga lists", subtitle: "Show Anime | Manga on the list page", divider: false) {
+                        ListLine(title: "Manga lists", subtitle: "Also sync your manga list", divider: false) {
                             EmptyView()
                         } trailing: {
-                            Toggle("", isOn: Binding(get: { model.mangaEnabled }, set: { model.setMangaEnabled($0) }))
+                            Toggle("", isOn: Binding(get: { model.mangaEnabled }, set: { model.switchManga($0) }))
                                 .labelsHidden().tint(p.accent)
                         }
                     }
 
-                    SectionTitle(text: "Appearance")
-                    Card {
-                        Segmented(items: [(0, "System"), (1, "Light"), (2, "Dark")], selection: $appearance, height: 28)
-                            .padding(12)
-                    }
-
                     SectionTitle(text: "About")
                     Card {
-                        ListLine(title: "Kotora \(coreVersion())", subtitle: "iOS spike · GPL-3.0-or-later · a tribute to Taiga", divider: false) {
-                            Image("Logo").resizable().frame(width: 36, height: 36)
+                        ListLine(title: "Kotora \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? coreVersion())",
+                                 subtitle: "A tribute to Taiga. GPL-3.0-or-later.") { EmptyView() } trailing: { EmptyView() }
+                        ListLine(title: "Data", subtitle: "From MyAnimeList and AniList, for your own account. No Kotora server.") {
+                            EmptyView()
                         } trailing: { EmptyView() }
+                        ListLine(title: "Font", subtitle: "Inter, SIL Open Font License 1.1", divider: false) { EmptyView() } trailing: { EmptyView() }
                     }
-                    Text("Sample data from the Rust core (kotora-mobile). No account, no network.")
-                        .font(Inter.regular(12)).foregroundStyle(p.faint).multilineTextAlignment(.center)
-                        .padding(24)
+                    .padding(.bottom, 24)
                 }
             }
         }
         .background(p.bg)
     }
-}
 
-struct SearchScreen: View {
-    @Environment(\.palette) private var p
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AppBar(title: "Search") { EmptyView() }
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(p.faint)
-                Text("Search anime").font(Inter.regular(15)).foregroundStyle(p.faint)
-                Spacer()
-            }
-            .padding(.horizontal, 14).frame(height: 46)
-            .background(RoundedRectangle(cornerRadius: 12).fill(p.field))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(p.borderStrong, lineWidth: 1))
-            .padding(.horizontal, 16)
-            Spacer()
-            Text("Search needs the network; the spike has none.").font(Inter.regular(14)).foregroundStyle(p.faint)
-            Spacer()
+    private func smallButton(_ title: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(Inter.medium(13)).foregroundStyle(p.text)
+                .padding(.horizontal, 14).frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 8).fill(p.raised))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
         }
-        .background(p.bg)
+        .buttonStyle(.borderless)
     }
 }

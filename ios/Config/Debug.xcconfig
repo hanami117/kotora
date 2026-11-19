@@ -1,0 +1,4 @@
+#include "Shared.xcconfig"
+// Side by side with a later release build, like the Android debug app.
+PRODUCT_BUNDLE_IDENTIFIER = io.github.hanami117.kotora.debug
+#include? "Local.xcconfig"

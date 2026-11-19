@@ -1,0 +1,3 @@
+#include "Shared.xcconfig"
+PRODUCT_BUNDLE_IDENTIFIER = io.github.hanami117.kotora
+#include? "Local.xcconfig"

@@ -1,10 +1,11 @@
 import SwiftUI
 
 /// The mockup's cover tile: a 160° gradient from two colours picked from the id, with initials
-/// (design-spec §3). No covers are fetched in the spike.
+/// (design-spec §3), and the service's cover over it once loaded (URLCache, as Android's Coil).
 struct CoverTile: View {
     let id: UInt32
     let initials: String
+    var url: String? = nil
     /// `nil`: as wide as the space given (the details page's blurred hero).
     var width: CGFloat? = 52
     var height: CGFloat = 74
@@ -17,6 +18,12 @@ struct CoverTile: View {
             .fill(LinearGradient(colors: [.hsl(h1, 0.55, 0.48), .hsl(h2, 0.50, 0.30)],
                                  startPoint: UnitPoint(x: 0.33, y: 0), endPoint: UnitPoint(x: 0.67, y: 1)))
             .overlay(Text(initials).font(Inter.semibold((width ?? 0) > 80 ? 26 : 15)).foregroundStyle(.white.opacity(0.92)))
+            .overlay {
+                if let url, let u = URL(string: url) {
+                    AsyncImage(url: u) { img in img.resizable().scaledToFill() } placeholder: { Color.clear }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius))
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
     }
@@ -39,21 +46,36 @@ struct AppBar<Trailing: View>: View {
     }
 }
 
+/// The account's picture (or its first letter on the service's colours), with a green dot.
 struct Avatar: View {
-    var letter = "S"
-    var anilist = false
+    @Environment(\.palette) private var p
+    let account: Account
     var size: CGFloat = 32
 
     var body: some View {
+        let anilist = account.service == .aniList
         Circle()
             .fill(LinearGradient(colors: anilist ? [.hex(0x2b9fd8), .hex(0x1d6fa5)] : [.hex(0x3b5ba8), .hex(0x2d4c8f)],
                                  startPoint: .top, endPoint: .bottom))
-            .overlay(Text(letter).font(Inter.semibold(size * 0.4)).foregroundStyle(.white))
+            .overlay(Text(account.userName.prefix(1).uppercased().ifEmpty("?")).font(Inter.semibold(size * 0.4)).foregroundStyle(.white))
+            .overlay {
+                if let url = account.pictureUrl, let u = URL(string: url) {
+                    AsyncImage(url: u) { img in img.resizable().scaledToFill() } placeholder: { Color.clear }
+                }
+            }
+            .clipShape(Circle())
             .frame(width: size, height: size)
+            .overlay(alignment: .bottomTrailing) {
+                Circle().fill(p.watching).frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(p.bg, lineWidth: 2)).offset(x: 2, y: 2)
+            }
+            .accessibilityLabel("\(account.userName) on \(account.service.label)")
     }
 }
 
-enum TagStyle { case new, air, wait, plain }
+extension String {
+    func ifEmpty(_ other: String) -> String { isEmpty ? other : self }
+}
 
 struct Tag: View {
     @Environment(\.palette) private var p
@@ -62,7 +84,6 @@ struct Tag: View {
 
     var body: some View {
         let c: Color = switch style {
-        case .new: p.accentHi
         case .air: p.air
         case .wait: p.onHold
         case .plain: p.dim
@@ -73,7 +94,7 @@ struct Tag: View {
     }
 }
 
-/// Anime | Manga, This week | Season, System | Light | Dark.
+/// Anime | Manga.
 struct Segmented<T: Hashable>: View {
     @Environment(\.palette) private var p
     let items: [(T, String)]
@@ -177,16 +198,16 @@ struct ProgressLine: View {
     }
 }
 
-/// "Episode 6 saved · Undo" at the bottom of the list.
+/// "Hoshikuzu Relay: episode 7 saved · Undo" at the bottom of the page.
 struct SnackBar: View {
-    @EnvironmentObject private var model: CoreModel
-    let snack: CoreModel.Snack
+    @EnvironmentObject private var model: AppModel
+    let snack: Snack
 
     var body: some View {
         HStack(spacing: 12) {
             Text(snack.text).font(Inter.regular(14)).foregroundStyle(Color.hex(0xedf0f7)).lineLimit(2)
             Spacer(minLength: 4)
-            if let edit = snack.edit {
+            if let edit = snack.undo {
                 Button("Undo") { model.undo(edit) }
                     .font(Inter.semibold(14)).foregroundStyle(Color.hex(0xff9d3f))
             }
@@ -196,7 +217,7 @@ struct SnackBar: View {
         .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
         .padding(.horizontal, 12).padding(.bottom, 8)
         .task(id: snack.id) {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(10)) // as Android's long snackbar
             if model.snack?.id == snack.id { withAnimation { model.snack = nil } }
         }
     }

@@ -1,171 +1,133 @@
 import SwiftUI
 
+/// My list: Anime | Manga, the status chips with counts, the sync line with the sort, the rows
+/// with +1. Pull down to sync (the core's sync, after sending the waiting changes).
 struct ListScreen: View {
     @Environment(\.palette) private var p
-    @EnvironmentObject private var model: CoreModel
+    @EnvironmentObject private var model: AppModel
     @Binding var path: [RowRef]
 
     var body: some View {
+        let ui = model.list
         VStack(spacing: 0) {
             AppBar(title: "My list") {
-                Button { model.pretendSync() } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 18)).foregroundStyle(p.dim).frame(width: 40, height: 40)
+                Button { model.sync() } label: {
+                    Group {
+                        if ui.syncing { ProgressView().tint(p.dim) } else { Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 18)) }
+                    }
+                    .foregroundStyle(p.dim).frame(width: 40, height: 40)
                 }
-                Avatar()
+                .disabled(ui.syncing)
+                .accessibilityLabel("Sync now")
+                if let a = model.session.active { Avatar(account: a) }
             }
-            if model.mangaEnabled {
-                Segmented(items: [(MediaKind.anime, "Anime"), (.manga, "Manga")], selection: $model.kind)
-                    .padding(.horizontal, 16)
-            }
-            chips
-            syncLine
+            Segmented(items: [(MediaKind.anime, "Anime"), (.manga, "Manga")],
+                      selection: Binding(get: { ui.kind }, set: { model.select(kind: $0) }))
+                .padding(.horizontal, 16)
+            chips(ui)
+            syncLine(ui)
             List {
-                ForEach(model.rows, id: \.key) { row in
-                    RowView(row: row, unit: model.unit) { model.plusOne(row) }
+                ForEach(ui.rows, id: \.key) { row in
+                    RowView(row: row) { model.plusOne(row) }
                         .contentShape(Rectangle())
                         .onTapGesture { path.append(RowRef(kind: row.kind, id: row.id)) }
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
                         .listRowBackground(p.bg)
                         .listRowSeparatorTint(p.border)
                 }
-                if model.rows.isEmpty {
-                    Text("Nothing here").font(Inter.regular(14)).foregroundStyle(p.faint)
-                        .frame(maxWidth: .infinity).padding(.top, 40).listRowBackground(p.bg).listRowSeparator(.hidden)
+                if ui.loaded && ui.rows.isEmpty {
+                    Text(ui.syncedAt == nil ? "Your list will show here after the first sync. Pull down to sync now."
+                         : "Nothing under \(ui.status.label(ui.kind)).")
+                        .font(Inter.regular(14)).foregroundStyle(p.faint).multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity).padding(.top, 48).padding(.horizontal, 16)
+                        .listRowBackground(p.bg).listRowSeparator(.hidden)
                 }
+                Color.clear.frame(height: 60).listRowBackground(p.bg).listRowSeparator(.hidden)
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .refreshable { model.pretendSync() }
+            .refreshable { await model.refresh() }
         }
         .background(p.bg)
-        .onChange(of: model.kind) { model.reload() }
-        .onChange(of: model.status) { model.reload() }
-        .onChange(of: model.sort) { model.reload() }
     }
 
-    private var chips: some View {
+    private func chips(_ ui: ListUi) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(ListStatus.allCases, id: \.self) { st in
-                    let on = st == model.status
+                    let on = st == ui.status
                     HStack(spacing: 7) {
                         Circle().fill(p.status(st)).frame(width: 8, height: 8)
-                        Text(st.label(model.kind)).font(Inter.medium(13)).foregroundStyle(on ? p.text : p.dim)
-                        Text("\(model.count(st))").font(Inter.regular(13)).monospacedDigit().foregroundStyle(p.faint)
+                        Text(st.label(ui.kind)).font(Inter.medium(13)).foregroundStyle(on ? p.text : p.dim)
+                        Text("\(ui.count(st))").font(Inter.regular(13)).monospacedDigit().foregroundStyle(p.faint)
                     }
                     .padding(.horizontal, 13).frame(height: 34)
                     .background(Capsule().fill(on ? p.tint : .clear))
                     .overlay(Capsule().stroke(on ? p.accent : p.borderStrong, lineWidth: 1))
                     .contentShape(Capsule())
-                    .onTapGesture { model.status = st }
+                    .onTapGesture { model.select(status: st) }
+                    .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
                 }
             }
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
         }
     }
 
-    private var syncLine: some View {
-        HStack(spacing: 6) {
-            Circle().fill(p.watching).frame(width: 7, height: 7)
-            Group {
-                if let at = model.syncedAt {
-                    Text("Sample list · synced \(Self.ago(at))")
-                } else {
-                    Text("Sample list")
-                }
-            }
-            .font(Inter.regular(12.5)).foregroundStyle(p.faint).lineLimit(1)
-            Spacer()
+    private func syncLine(_ ui: ListUi) -> some View {
+        let service = model.session.active?.service.label ?? ""
+        let (dot, text): (Color, String) =
+            if let problem = ui.problem { (p.onHold, problem) }
+            else if ui.syncing { (p.faint, "Syncing with \(service)…") }
+            else if let at = ui.syncedAt { (p.watching, "Synced \(ago(at, nowSeconds())) · \(service)") }
+            else { (p.faint, "Not synced yet · \(service)") }
+        return HStack(spacing: 6) {
+            Circle().fill(dot).frame(width: 8, height: 8)
+            Text(text).font(Inter.regular(12)).foregroundStyle(p.faint).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 4)
             Menu {
-                Picker("Sort", selection: $model.sort) {
-                    Text("Updated").tag(Sort.updated)
-                    Text("Title").tag(Sort.title)
-                    Text("Score").tag(Sort.score)
+                Picker("Sort", selection: Binding(get: { ui.sort }, set: { model.select(sort: $0) })) {
+                    ForEach(Sort.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    Text("Sort: \(sortLabel)").font(Inter.regular(12.5))
+                HStack(spacing: 4) {
+                    Text("Sort: \(ui.sort.label)").font(Inter.regular(12))
                     Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
                 }
-                .foregroundStyle(p.dim)
+                .foregroundStyle(p.dim).padding(.vertical, 6)
             }
         }
-        .padding(.horizontal, 20).padding(.vertical, 8)
-    }
-
-    static func ago(_ d: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .short
-        return f.localizedString(for: d, relativeTo: Date())
-    }
-
-    private var sortLabel: String {
-        switch model.sort {
-        case .updated: return "Updated"
-        case .title: return "Title"
-        case .score: return "Score"
-        }
+        .padding(.leading, 16).padding(.trailing, 14).padding(.top, 4).padding(.bottom, 2)
     }
 }
 
 struct RowView: View {
     @Environment(\.palette) private var p
     let row: Row
-    let unit: String
     let plusOne: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            CoverTile(id: row.id, initials: row.initials)
+            CoverTile(id: row.id, initials: row.initials, url: row.coverUrl, width: 44, height: 64, radius: 5)
             VStack(alignment: .leading, spacing: 6) {
                 Text(row.title).font(Inter.medium(15)).foregroundStyle(p.text).lineLimit(1)
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) { tags(short: false) }
-                    HStack(spacing: 6) { tags(short: true) }
+                    HStack(spacing: 6) { ForEach(row.tags, id: \.0) { Tag(text: $0.0, style: $0.1) } }
+                    HStack(spacing: 6) { ForEach(row.tags.prefix(2), id: \.0) { Tag(text: $0.0, style: $0.1) } }
                 }
                 ProgressLine(row: row)
             }
             Spacer(minLength: 4)
-            if canPlus {
+            if row.canPlusOne {
                 Button(action: plusOne) {
-                    Text("+1").font(Inter.semibold(15))
-                        .foregroundStyle(hot ? p.onAccent : p.accentHi)
-                        .frame(width: 48, height: 40)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(hot ? p.accent : p.tint))
+                    Text("+1").font(Inter.semibold(15)).foregroundStyle(p.text)
+                        .frame(width: 56, height: 40)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(p.raised))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("Plus one \(unit)")
+                .accessibilityLabel("Plus one \(row.kind.unit): \(row.title)")
             }
         }
-        .padding(.vertical, 10)
+        .frame(minHeight: 84)
     }
-
-    private var canPlus: Bool {
-        (row.status == .watching || row.rewatching) && (row.total.map { row.progress < $0 } ?? true)
-    }
-
-    /// Mockup: the +1 glows when a new episode is out.
-    private var hot: Bool {
-        guard let slot = SampleAiring.slots[row.id], row.kind == .anime else { return false }
-        return slot.aired > row.progress
-    }
-
-    @ViewBuilder private func tags(short: Bool) -> some View {
-        if row.kind == .anime, let slot = SampleAiring.slots[row.id] {
-            if slot.aired > row.progress { Tag(text: "Ep \(slot.aired) out", style: .new) }
-            Tag(text: short ? slot.shortWhen : "Airing · \(slot.shortWhen)", style: .air)
-        } else if row.rewatching {
-            Tag(text: row.kind == .manga ? "Rereading" : "Rewatching")
-        } else if row.kind == .manga {
-            Tag(text: row.volumes > 0 ? "Vol \(row.volumes)" : "Manga")
-        } else {
-            Tag(text: row.total.map { "\(row.formatLabel) · \($0) eps" } ?? row.formatLabel)
-        }
-        if row.waiting { Tag(text: short ? "Waiting" : "Waiting to sync", style: .wait) }
-    }
-}
-
-struct RowRef: Hashable {
-    let kind: MediaKind
-    let id: UInt32
 }
