@@ -281,6 +281,9 @@ pub(crate) const MIGRATIONS: &[&str] = &[
 /// progress (`p_*`, episodes or chapters) or volumes (`v_*`), with its time, for the
 /// Statistics page. Not service data: signing out keeps it. kv `activity:since`: when the log
 /// started, so the page can say what it doesn't know.
+///
+/// `feed_marks` (0.6, `feeds/marks.rs`): the user's marks on feed releases, per series and
+/// episodes: got (opened), hidden, not this series. Local only: never synced or exported.
 const ADDITIVE: &str = "CREATE TABLE IF NOT EXISTS activity (
         id INTEGER PRIMARY KEY,
         service TEXT NOT NULL,
@@ -293,7 +296,20 @@ const ADDITIVE: &str = "CREATE TABLE IF NOT EXISTS activity (
         v_to INTEGER NOT NULL DEFAULT 0
      );
      CREATE INDEX IF NOT EXISTS activity_list ON activity (service, kind, at);
-     INSERT OR IGNORE INTO kv (key, value) VALUES ('activity:since', CAST(strftime('%s', 'now') AS TEXT));";
+     INSERT OR IGNORE INTO kv (key, value) VALUES ('activity:since', CAST(strftime('%s', 'now') AS TEXT));
+     CREATE TABLE IF NOT EXISTS feed_marks (
+        service TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        ep_from INTEGER NOT NULL,
+        ep_to INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        rkey TEXT NOT NULL DEFAULT '',
+        info_hash TEXT,
+        version INTEGER,
+        title TEXT NOT NULL DEFAULT '',
+        at INTEGER NOT NULL,
+        PRIMARY KEY (service, media_id, ep_from, ep_to, state, rkey)
+     );";
 
 /// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside
 /// before it is upgraded.
@@ -419,8 +435,8 @@ impl Store {
             tx.commit()?;
         }
         // Only a write when something is missing (most opens just read the schema).
-        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'activity'", [], |r| r.get(0))?;
-        if have == 0 {
+        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('activity', 'feed_marks')", [], |r| r.get(0))?;
+        if have < 2 {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(ADDITIVE)?;
             tx.commit()?;

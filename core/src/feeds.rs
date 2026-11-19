@@ -10,6 +10,9 @@
 //! Nothing here makes a request. URLs that carry a key are masked by [`mask`] wherever they
 //! are shown; [`nyaa_defaults`] fills a name for a pasted nyaa.si URL without asking the site.
 
+pub mod marks;
+pub mod select;
+
 use roxmltree::{Document, Node};
 
 use crate::time::{parse_rfc2822, parse_rfc3339};
