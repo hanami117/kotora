@@ -372,3 +372,140 @@ mod airing_week {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[test]
+fn the_editor_steps_like_the_desktop_and_saves_one_change() {
+    let dir = scratch("editor");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+
+    let ed = k.editor(MediaKind::Anime, 2).unwrap();
+    assert_eq!((ed.progress, ed.total, ed.status), (12, Some(13), ListStatus::Watching));
+    let up = editor_step(ed.clone(), 1);
+    assert_eq!((up.progress, up.status), (13, ListStatus::Completed), "the last episode completes it");
+    let back = editor_step(up.clone(), -1);
+    assert_eq!((back.progress, back.status), (12, ListStatus::Watching), "and stepping back undoes that");
+    assert_eq!(editor_step(up, 5).progress, 13, "never past the count");
+    let done = editor_set_status(ed.clone(), ListStatus::Completed);
+    assert_eq!(done.progress, 13, "Completed fills the progress");
+
+    assert_eq!(k.save_editor(ed.clone()).unwrap(), None, "nothing changed: nothing queued");
+    let scale = k.score_scale().unwrap();
+    assert_eq!(scale.choices.len(), 10);
+    assert_eq!(scale.choices[6], ScoreChoice { points: 70, label: "7".into() });
+    let msg = k.save_editor(EntryEditor { score: Some(90), times_rewatched: 1, ..done }).unwrap().unwrap();
+    assert!(msg.starts_with("Kagerou Bakery: "), "{msg}");
+    let r = k.entry(MediaKind::Anime, 2).unwrap().unwrap();
+    assert_eq!((r.status, r.progress, r.score.as_deref(), r.times_rewatched, r.waiting), (ListStatus::Completed, 13, Some("9"), 1, true));
+    assert_eq!(k.waiting_count(), 1, "one change");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn rewatch_starts_stops_and_the_last_episode_counts_it() {
+    let dir = scratch("rewatch");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+    assert!(k.start_rewatch(MediaKind::Anime, 1).is_err(), "only a completed anime");
+    assert!(k.stop_rewatch(MediaKind::Anime, 1).is_err());
+
+    // Kitsune Postman is being rewatched: stop puts the progress at the last episode.
+    let e = k.stop_rewatch(MediaKind::Anime, 5).unwrap();
+    let r = k.entry(MediaKind::Anime, 5).unwrap().unwrap();
+    assert_eq!((r.rewatching, r.progress, r.status), (false, 12, ListStatus::Completed));
+    k.undo(e).unwrap();
+    assert!(k.entry(MediaKind::Anime, 5).unwrap().unwrap().rewatching);
+    k.stop_rewatch(MediaKind::Anime, 5).unwrap();
+
+    let e = k.start_rewatch(MediaKind::Anime, 5).unwrap();
+    assert_eq!(e.message, "Kitsune Postman: rewatch started");
+    let r = k.entry(MediaKind::Anime, 5).unwrap().unwrap();
+    assert_eq!((r.rewatching, r.progress, r.status), (true, 0, ListStatus::Completed));
+    // The editor to the last episode ends it, one more in the count (the core's rule).
+    let ed = k.editor(MediaKind::Anime, 5).unwrap();
+    k.save_editor(EntryEditor { progress: 12, ..ed }).unwrap().unwrap();
+    let r = k.entry(MediaKind::Anime, 5).unwrap().unwrap();
+    assert_eq!((r.rewatching, r.times_rewatched, r.progress), (false, 1, 12));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_queue_lists_changes_and_discard_puts_the_entry_back() {
+    let dir = scratch("queue");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+    k.plus_one(MediaKind::Anime, 1).unwrap();
+    k.plus_one(MediaKind::Anime, 1).unwrap();
+    let q = k.queue_items();
+    assert_eq!(q.len(), 1);
+    assert_eq!((q[0].state, q[0].edits, q[0].what.as_str(), q[0].service), (QueueState::Waiting, 2, "Progress 6 \u{2192} 8", Service::Mal));
+    assert_eq!(k.conflict_count(), 0);
+    k.discard(Service::Mal, q[0].id).unwrap();
+    assert_eq!(k.entry(MediaKind::Anime, 1).unwrap().unwrap().progress, 6);
+    assert!(k.queue_items().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_conflict_shows_both_sides_in_the_desktop_words() {
+    use kotora_core::queue::{Op, OpState};
+    let old = Values { status: Status::Watching, progress: 6, score: None, rewatching: false, times_rewatched: 0, volumes: 0 };
+    let theirs = Values { progress: 9, score: kotora_core::score::ten(7), ..old };
+    let op = Op {
+        id: 1,
+        kind: Kind::Anime,
+        media_id: 1,
+        title: "Hoshikuzu Relay".into(),
+        episodes: Some(12),
+        change: Change { progress: Some(7), score: Some(kotora_core::score::ten(8)), ..Default::default() },
+        old,
+        base_updated_at: 0,
+        created_at: 0,
+        edited_at: 0,
+        edits: 1,
+        state: OpState::Conflict,
+        attempts: 0,
+        next_try: 0,
+        error: None,
+        sent_at: None,
+        remote: Some(kotora_core::Remote { values: theirs, updated_at: 5 }),
+        added: false,
+        removed: false,
+    };
+    assert_eq!(edit::conflict_values(&op, &op.mine(), ScoreFormat::Point10), "Progress 7 / 12 \u{b7} Score 8");
+    assert_eq!(edit::conflict_values(&op, &theirs, ScoreFormat::Point10), "Progress 9 / 12 \u{b7} Score 7");
+    assert_eq!(edit::remote_text(Kind::Anime, op.remote.as_ref().unwrap(), Some(12), ScoreFormat::Point10), "9 / 12, Watching, score 7");
+}
+
+#[test]
+fn remove_goes_at_once_and_discard_brings_it_back() {
+    let dir = scratch("remove");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+    assert!(k.remove_question(MediaKind::Anime, 1).unwrap().starts_with("Remove Hoshikuzu Relay from your list? It goes from your MyAnimeList list too"));
+    let r = k.remove(MediaKind::Anime, 1).unwrap();
+    assert_eq!(r.message, "Removed Hoshikuzu Relay from your list");
+    assert!(k.entry(MediaKind::Anime, 1).unwrap().is_none());
+    assert!(k.queue_items()[0].removed);
+    k.discard(r.service, r.op_id).unwrap();
+    assert_eq!(k.entry(MediaKind::Anime, 1).unwrap().unwrap().progress, 6);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn minus_one_steps_back_and_undoes() {
+    let dir = scratch("minus");
+    let (k, _) = open(&dir, ids());
+    sign_in_fake(&k, Service::Mal);
+    fill(&k);
+    let e = k.minus_one(MediaKind::Anime, 1).unwrap();
+    assert_eq!(e.message, "Hoshikuzu Relay: episode 5 saved");
+    assert_eq!(k.entry(MediaKind::Anime, 1).unwrap().unwrap().progress, 5);
+    k.undo(e).unwrap();
+    assert_eq!(k.entry(MediaKind::Anime, 1).unwrap().unwrap().progress, 6);
+    let _ = std::fs::remove_dir_all(&dir);
+}

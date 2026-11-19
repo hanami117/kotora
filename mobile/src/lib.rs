@@ -29,6 +29,11 @@ pub use airing::{AiringDay, AiringMine, AiringSlot, AiringType, AiringUntimed, A
 
 uniffi::setup_scaffolding!();
 
+mod edit;
+pub use edit::*;
+mod remove;
+pub use remove::*;
+
 /// The redirect registered with Kotora's MyAnimeList client for Android.
 pub const MAL_REDIRECT_URI: &str = "io.github.hanami117.kotora://oauth/mal";
 /// The redirect registered with Kotora's AniList client for Android (an AniList client has one).
@@ -787,6 +792,9 @@ pub fn anilist_redirect_uri() -> String {
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").into()
 }
+
+mod search;
+pub use search::Hit;
 
 #[cfg(test)]
 mod tests;

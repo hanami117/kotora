@@ -54,6 +54,8 @@ fun DetailsScreen(
     modifier: Modifier = Modifier,
     links: List<ServiceLink> = emptyList(),
     onOpenUrl: (String) -> Unit = {},
+    /** Edit, −1, Rewatch / Stop, Remove (`EntryActions`); `null`: the saved row only. */
+    actions: (@Composable (ListRow) -> Unit)? = null,
 ) {
     val k = Kotora.colors
     if (row == null) {
@@ -134,7 +136,9 @@ fun DetailsScreen(
                             Text("Volumes ${row.volumes} of ${row.totalVolumes ?: "?"}", color = k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
                         }
                     }
-                    if (row.rewatching || row.timesRewatched > 0u) {
+                    if (actions != null) {
+                        actions(row)
+                    } else if (row.rewatching || row.timesRewatched > 0u) {
                         HorizontalDivider(color = k.border)
                         Row(Modifier.fillMaxWidth().padding(16.dp)) {
                             Text(if (manga) "Rereading" else "Rewatching", color = k.text, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
@@ -143,7 +147,7 @@ fun DetailsScreen(
                     }
                 }
             }
-            Text(
+            if (actions == null) Text(
                 "The editor, synopsis and the service's details come in a later build.",
                 color = k.faint,
                 fontSize = 12.sp,

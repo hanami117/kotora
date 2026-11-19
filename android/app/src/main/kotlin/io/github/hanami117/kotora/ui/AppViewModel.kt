@@ -64,8 +64,8 @@ data class AiringUi(
     val error: String? = null,
 )
 
-/** A message at the bottom, with Undo when it is an edit. */
-data class Snack(val text: String, val undo: Edit? = null)
+/** A message at the bottom, with Undo when it is an edit (or `onUndo`: a removal's Discard). */
+data class Snack(val text: String, val undo: Edit? = null, val onUndo: (() -> Unit)? = null)
 
 /**
  * The app's state: the session, the list page, sign-in. One for the Activity. Talks to a
@@ -219,6 +219,14 @@ class AppViewModel(
             }
         }
     }
+
+    /** A message at the bottom (the editor's and the queue's pages, `EditActions.kt`). */
+    fun snack(s: Snack) {
+        snacks.trySend(s)
+    }
+
+    /** The queue may go now (an edit was saved). */
+    fun flushSoon() = requestFlush()
 
     suspend fun entry(kind: MediaKind, id: UInt): Row? = runCatching { repo?.entry(kind, id) }.getOrNull()
 

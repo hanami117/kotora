@@ -32,7 +32,7 @@ import java.util.Locale
 class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, AccountRepository {
     override val isSample = true
 
-    private val rows: MutableList<Row> = sampleRows(now).toMutableList()
+    internal val rows: MutableList<Row> = sampleRows(now).toMutableList()
 
     override fun hasClientId(service: Service) = true
 

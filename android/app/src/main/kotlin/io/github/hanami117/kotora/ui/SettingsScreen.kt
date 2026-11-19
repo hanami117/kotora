@@ -48,6 +48,8 @@ fun SettingsScreen(
     onOpenSystemSettings: () -> Unit = {},
     onProfile: (() -> Unit)? = null,
     onOpenUrl: (String) -> Unit = {},
+    conflicts: UInt = 0u,
+    onQueue: (() -> Unit)? = null,
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg).verticalScroll(rememberScrollState())) {
@@ -71,7 +73,8 @@ fun SettingsScreen(
                     }
                 }
                 HorizontalDivider(color = k.border)
-                Item("Waiting changes", if (waiting == 0u) "Everything is sent." else "$waiting waiting to sync") {}
+                if (onQueue != null) QueueLink(waiting, conflicts, onQueue)
+                else Item("Waiting changes", if (waiting == 0u) "Everything is sent." else "$waiting waiting to sync") {}
             }
         }
         Text(

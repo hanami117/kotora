@@ -38,6 +38,8 @@ object KIcons {
         "M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5c-.8 0-1.5-.7-1.5-1.5z",
         "M20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z",
     )
+    val Close = icon("close", "M6 6l12 12M18 6L6 18")
+    val Home = icon("home", "M4 11l8-6.5 8 6.5", "M6 9.5V20h12V9.5", "M10 20v-5h4v5")
     val Search = icon("search", circle(11f, 11f, 6.5f), "M16 16l4.5 4.5")
     val Settings = icon("set", "M4 7h9M17 7h3M4 17h3M11 17h9", circle(15f, 7f, 2f), circle(9f, 17f, 2f))
     val Back = icon("back", "M15 5l-7 7 7 7")

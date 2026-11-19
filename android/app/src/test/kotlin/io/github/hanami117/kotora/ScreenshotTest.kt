@@ -13,7 +13,16 @@ import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
+import io.github.hanami117.kotora.data.SampleEditing
 import io.github.hanami117.kotora.data.SampleRepository
+import io.github.hanami117.kotora.ui.EntryActions
+import io.github.hanami117.kotora.ui.EntryEditorScreen
+import io.github.hanami117.kotora.ui.HomeScreen
+import io.github.hanami117.kotora.ui.QueueScreen
+import io.github.hanami117.kotora.ui.RemoveDialog
+import io.github.hanami117.kotora.ui.SearchModel
+import io.github.hanami117.kotora.ui.SearchScreen
+import io.github.hanami117.kotora.ui.Shelves
 import io.github.hanami117.kotora.ui.AiringScreen
 import io.github.hanami117.kotora.ui.AiringUi
 import io.github.hanami117.kotora.ui.DetailsScreen
@@ -151,4 +160,69 @@ class ScreenshotTest {
     @Test fun settingsLinksDark() = shot("settings-links", true) {
         SettingsScreen(listOf(account), true, 0u, "0.5.0", false, {}, {}, {}, onProfile = {})
     }
+    // ---- the editor, the sync queue, Search and add, Home (AN-1, AN-2)
+
+    private val editing = io.github.hanami117.kotora.data.SampleEditing(repo, now)
+
+    private fun editor(name: String, dark: Boolean, kind: MediaKind, id: UInt, change: (io.github.hanami117.kotora.core.EntryEditor) -> io.github.hanami117.kotora.core.EntryEditor = { it }) = shot(name, dark) {
+        val ed = runBlocking { change(editing.editor(kind, id)) }
+        val scale = runBlocking { editing.scoreScale() }
+        EntryEditorScreen(ed, scale, null, "MyAnimeList", false, editing::scoreLabel, editing::scoreStep, {}, {}, {})
+    }
+
+    @Test fun editorDark() = editor("editor", true, MediaKind.ANIME, 7u)
+    @Test fun editorLight() = editor("editor", false, MediaKind.ANIME, 7u)
+    @Test fun editorRewatchDark() = editor("editor-rewatch", true, MediaKind.ANIME, 19u)
+    @Test fun editorMangaLight() = editor("editor-manga", false, MediaKind.MANGA, 102u)
+
+    private fun detailsActions(name: String, dark: Boolean, id: UInt) = shot(name, dark) {
+        val row = runBlocking { repo.entry(MediaKind.ANIME, id) }
+        DetailsScreen(row, account, {}, {}, actions = { EntryActions(it, {}, {}, {}, {}) })
+    }
+
+    @Test fun detailsActionsDark() = detailsActions("details-actions", true, 7u)
+    @Test fun detailsActionsRewatchLight() = detailsActions("details-actions-rewatch", false, 19u)
+    @Test fun removeDialogDark() = shot("remove-dialog", true) {
+        RemoveDialog("Remove Hoshikuzu Relay from your list? It goes from your MyAnimeList list too, with its progress and score.", {}, {})
+    }
+
+    private fun queue(name: String, dark: Boolean, empty: Boolean = false) = shot(name, dark) {
+        val items = if (empty) emptyList() else runBlocking { editing.queueItems() }
+        QueueScreen(items, "MyAnimeList", now, null, false, {}, {}, { _, _ -> })
+    }
+
+    @Test fun queueDark() = queue("queue", true)
+    @Test fun queueLight() = queue("queue", false)
+    @Test fun queueEmptyDark() = queue("queue-empty", true, empty = true)
+    @Test fun settingsQueueDark() = shot("settings-queue", true) { SettingsScreen(listOf(account), true, 2u, "0.5.0", false, {}, {}, {}, conflicts = 1u, onQueue = {}) }
+
+    private fun search(name: String, dark: Boolean, text: String, kind: MediaKind = MediaKind.ANIME, pending: Boolean = false) = shot(name, dark) {
+        val s = SearchModel()
+        s.kind = kind
+        s.text = text
+        s.mine = runBlocking { repo.list(kind, null, Sort.TITLE) }
+        if (SearchModel.norm(text).length >= 3) {
+            s.asked = SearchModel.norm(text)
+            if (pending) s.pending = true else s.hits = SampleEditing.sampleHits(kind)
+        }
+        SearchScreen(s, account, true, {}, {}, {}, {}, {}, { _, _ -> })
+    }
+
+    @Test fun searchEmptyDark() = search("search-empty", true, "")
+    @Test fun searchDark() = search("search", true, "lantern")
+    @Test fun searchLight() = search("search", false, "lantern")
+    @Test fun searchShortLight() = search("search-short", false, "la")
+    @Test fun searchPendingDark() = search("search-pending", true, "lantern", pending = true)
+    @Test fun searchMangaDark() = search("search-manga", true, "lantern", MediaKind.MANGA)
+
+    private fun home(name: String, dark: Boolean, manga: Boolean = true, empty: Boolean = false) = shot(name, dark) {
+        val shelves = if (empty) Shelves(loaded = true) else runBlocking {
+            Shelves.of(repo.list(MediaKind.ANIME, null, Sort.UPDATED), repo.list(MediaKind.MANGA, null, Sort.UPDATED))
+        }
+        HomeScreen(shelves, account, manga, false, {}, {}, {}, { _, _ -> })
+    }
+
+    @Test fun homeDark() = home("home", true)
+    @Test fun homeLight() = home("home", false)
+    @Test fun homeEmptyLight() = home("home-empty", false, manga = false, empty = true)
 }

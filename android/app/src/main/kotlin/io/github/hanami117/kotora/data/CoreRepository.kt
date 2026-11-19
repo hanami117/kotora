@@ -39,7 +39,7 @@ import kotlinx.coroutines.withContext
 class CoreRepository(context: Context) : Repository, AccountRepository {
     private val app = context.applicationContext
     private val vault = KeystoreVault(File(app.noBackupFilesDir, "tokens"))
-    private val kotora: Kotora = Kotora(
+    internal val kotora: Kotora = Kotora(
         Paths(
             configDir = File(app.filesDir, "config").path,
             dataDir = app.noBackupFilesDir.path,

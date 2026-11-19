@@ -48,9 +48,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import io.github.hanami117.kotora.core.EntryEditor
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.ProfileInfo
 import io.github.hanami117.kotora.core.Service
+import io.github.hanami117.kotora.core.QueueItem
+import io.github.hanami117.kotora.core.ScoreScale
+import io.github.hanami117.kotora.core.Sort
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.ui.theme.Kotora
 import kotlinx.coroutines.launch
@@ -63,7 +67,7 @@ data class AppPrefs(
     val openSystemSettings: () -> Unit = {},
 )
 
-private enum class Tab(val route: String, val label: String) { LIST("list", "List"), AIRING("airing", "Airing"), SEARCH("search", "Search"), SETTINGS("settings", "Settings") }
+private enum class Tab(val route: String, val label: String) { HOME("home", "Home"), LIST("list", "List"), AIRING("airing", "Airing"), SEARCH("search", "Search"), SETTINGS("settings", "Settings") }
 
 @Composable
 fun KotoraApp(vm: AppViewModel, version: String, nowSeconds: () -> Long, onLookAround: (() -> Unit)?, prefs: AppPrefs = AppPrefs()) {
@@ -91,8 +95,9 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
         vm.snackFlow.collect { snack ->
             snackHost.currentSnackbarData?.dismiss()
             scope.launch {
-                val r = snackHost.showSnackbar(snack.text, actionLabel = snack.undo?.let { "Undo" }, duration = SnackbarDuration.Long)
-                if (r == SnackbarResult.ActionPerformed) snack.undo?.let(vm::undo)
+                val canUndo = snack.undo != null || snack.onUndo != null
+                val r = snackHost.showSnackbar(snack.text, actionLabel = if (canUndo) "Undo" else null, duration = SnackbarDuration.Long)
+                if (r == SnackbarResult.ActionPerformed) snack.undo?.let(vm::undo) ?: snack.onUndo?.invoke()
             }
         }
     }
@@ -103,6 +108,9 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
             nav.navigate("details/${kind.name}/$id") { launchSingleTop = true }
         }
     }
+    val search = remember { SearchModel() }
+    var conflicts by remember { mutableStateOf(0u) }
+    LaunchedEffect(vm.list) { conflicts = runCatching { vm.editing?.conflictCount() }.getOrNull() ?: 0u }
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val topLevel = Tab.entries.any { it.route == route } || route == null
@@ -119,9 +127,36 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 )
             }
         },
-        bottomBar = { if (topLevel) BottomNav(nav, route ?: Tab.LIST.route, vm.list.kind, vm.list.waiting) },
+        bottomBar = { if (topLevel) BottomNav(nav, route ?: Tab.HOME.route, vm.list.kind, vm.list.waiting) },
     ) { pad ->
-        NavHost(nav, startDestination = Tab.LIST.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
+        NavHost(nav, startDestination = Tab.HOME.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
+            composable(Tab.HOME.route) {
+                var shelves by remember { mutableStateOf(Shelves()) }
+                LaunchedEffect(vm.list, vm.mangaEnabled) {
+                    val r = vm.repo ?: return@LaunchedEffect
+                    val anime = runCatching { r.list(MediaKind.ANIME, null, Sort.UPDATED) }.getOrDefault(emptyList())
+                    val manga = if (vm.mangaEnabled) runCatching { r.list(MediaKind.MANGA, null, Sort.UPDATED) }.getOrDefault(emptyList()) else emptyList()
+                    shelves = Shelves.of(anime, manga)
+                }
+                HomeScreen(
+                    shelves = shelves,
+                    account = s.active,
+                    mangaEnabled = vm.mangaEnabled,
+                    syncing = vm.list.syncing,
+                    onSync = vm::sync,
+                    onPlusOne = vm::plusOne,
+                    onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
+                    onSeeAll = { kind, status ->
+                        vm.select(kind = kind)
+                        vm.select(status = status)
+                        nav.navigate(Tab.LIST.route) {
+                            popUpTo(Tab.HOME.route) { saveState = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    modifier = Modifier.statusBarsPadding(),
+                )
+            }
             composable(Tab.LIST.route) {
                 ListScreen(
                     ui = vm.list,
@@ -162,7 +197,27 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 }
             }
             composable(Tab.SEARCH.route) {
-                Placeholder("Search", "Search and add anime and manga: in a later build (M3).", s.active, Modifier.statusBarsPadding())
+                val now = nowSeconds()
+                LaunchedEffect(search.kind, vm.list) { search.loadMine(vm.repo) }
+                LaunchedEffect(vm.mangaEnabled) { if (!vm.mangaEnabled) search.kind = MediaKind.ANIME }
+                SearchScreen(
+                    s = search,
+                    account = s.active,
+                    mangaEnabled = vm.mangaEnabled,
+                    onKind = {
+                        search.kind = it
+                        search.changed(scope, vm.editing, now, force = true)
+                    },
+                    onText = {
+                        search.text = it
+                        search.changed(scope, vm.editing, now)
+                    },
+                    onAgain = { search.changed(scope, vm.editing, now, force = true) },
+                    onPlusOne = vm::plusOne,
+                    onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
+                    onAdd = { hit, status -> vm.add(hit, status) },
+                    modifier = Modifier.statusBarsPadding(),
+                )
             }
             composable(Tab.SETTINGS.route) {
                 SettingsScreen(
@@ -183,6 +238,60 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onOpenSystemSettings = prefs.openSystemSettings,
                     onProfile = { nav.navigate("profile") },
                     onOpenUrl = vm::openUrl,
+                    conflicts = conflicts,
+                    onQueue = { nav.navigate("queue") },
+                )
+            }
+            composable("queue") {
+                var items by remember { mutableStateOf<List<QueueItem>?>(null) }
+                LaunchedEffect(vm.list) { items = vm.editing?.queueItems() ?: emptyList() }
+                QueueScreen(
+                    items = items,
+                    service = s.active?.let { serviceTitle(it.service) } ?: "the service",
+                    now = nowSeconds(),
+                    problem = vm.list.problem,
+                    syncing = vm.list.syncing,
+                    onBack = { nav.popBackStack() },
+                    onSyncNow = vm::syncNow,
+                    onAction = { a, item -> vm.queue(a, item) },
+                    modifier = Modifier.navigationBarsPadding(),
+                )
+            }
+            composable("edit/{kind}/{id}") { back ->
+                val kind = MediaKind.valueOf(back.arguments?.getString("kind") ?: "ANIME")
+                val id = back.arguments?.getString("id")?.toUIntOrNull() ?: 0u
+                val editing = vm.editing
+                var ed by remember { mutableStateOf<EntryEditor?>(null) }
+                var scale by remember { mutableStateOf<ScoreScale?>(null) }
+                var problem by remember { mutableStateOf<String?>(null) }
+                var saving by remember { mutableStateOf(false) }
+                LaunchedEffect(kind, id) {
+                    try {
+                        ed = editing?.editor(kind, id)
+                        scale = editing?.scoreScale()
+                    } catch (e: Exception) {
+                        problem = messageOf(e)
+                    }
+                }
+                EntryEditorScreen(
+                    ed = ed,
+                    scale = scale,
+                    problem = problem,
+                    service = s.active?.let { serviceTitle(it.service) } ?: "the service",
+                    saving = saving,
+                    scoreLabel = { editing?.scoreLabel(it) ?: "" },
+                    scoreStep = { p, d -> editing?.scoreStep(p, d) },
+                    onChange = { ed = it },
+                    onCancel = { nav.popBackStack() },
+                    onSave = {
+                        val e = ed ?: return@EntryEditorScreen
+                        saving = true
+                        scope.launch {
+                            if (vm.saveEditor(e)) nav.popBackStack()
+                            saving = false
+                        }
+                    },
+                    modifier = Modifier.navigationBarsPadding(),
                 )
             }
             composable("profile") {
@@ -204,10 +313,32 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     loaded = true
                 }
                 if (loaded) {
+                    var asking by remember { mutableStateOf<String?>(null) }
                     DetailsScreen(
-                        row, s.active, onBack = { nav.popBackStack() }, onPlusOne = vm::plusOne, modifier = Modifier.navigationBarsPadding(),
-                        links = vm.serviceLinks(kind, id), onOpenUrl = vm::openUrl,
+                        row,
+                        s.active,
+                        onBack = { nav.popBackStack() },
+                        onPlusOne = vm::plusOne,
+                        modifier = Modifier.navigationBarsPadding(),
+                        links = vm.serviceLinks(kind, id),
+                        onOpenUrl = vm::openUrl,
+                        actions = { r ->
+                            EntryActions(
+                                r,
+                                onEdit = { nav.navigate("edit/${r.kind.name}/${r.id}") },
+                                onRewatch = { start -> vm.rewatch(r, start) },
+                                onMinusOne = { vm.minusOne(r) },
+                                onRemove = { scope.launch { asking = runCatching { vm.editing?.removeQuestion(r.kind, r.id) }.getOrNull() ?: "Remove ${r.title} from your list?" } },
+                            )
+                        },
                     )
+                    asking?.let { q ->
+                        RemoveDialog(q, onRemove = {
+                            asking = null
+                            row?.let(vm::remove)
+                            nav.popBackStack()
+                        }, onDismiss = { asking = null })
+                    }
                 } else {
                     Box(Modifier.fillMaxSize().background(k.bg), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = k.accent)
@@ -226,6 +357,7 @@ private fun BottomNav(nav: NavHostController, route: String, kind: MediaKind, wa
         Row(Modifier.fillMaxWidth().height(68.dp).padding(top = 8.dp)) {
             for (tab in Tab.entries) {
                 val (icon, label) = when (tab) {
+                    Tab.HOME -> KIcons.Home to tab.label
                     Tab.LIST -> KIcons.List to tab.label
                     Tab.AIRING -> if (kind == MediaKind.MANGA) KIcons.Book to "Publishing" else KIcons.Calendar to "Airing"
                     Tab.SEARCH -> KIcons.Search to tab.label
@@ -234,7 +366,7 @@ private fun BottomNav(nav: NavHostController, route: String, kind: MediaKind, wa
                 NavItem(icon, label, route == tab.route, if (tab == Tab.SETTINGS && waiting > 0u) waiting.toString() else null, Modifier.weight(1f)) {
                     if (route != tab.route) {
                         nav.navigate(tab.route) {
-                            popUpTo(Tab.LIST.route) { saveState = true }
+                            popUpTo(Tab.HOME.route) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
                         }
