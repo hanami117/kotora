@@ -1,6 +1,8 @@
 package io.github.hanami117.kotora.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,7 +48,7 @@ import java.util.Locale
  * how the user scores (a 1-10 chart from the saved list) and Sign out.
  */
 @Composable
-fun ProfileScreen(info: ProfileInfo?, sample: Boolean, onBack: () -> Unit, onOpenUrl: (String) -> Unit, onSignOut: (Service) -> Unit, modifier: Modifier = Modifier) {
+fun ProfileScreen(info: ProfileInfo?, sample: Boolean, onBack: () -> Unit, onOpenUrl: (String) -> Unit, onSignOut: (Service) -> Unit, modifier: Modifier = Modifier, onStats: (() -> Unit)? = null) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
         Row(Modifier.statusBarsPadding().fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -59,6 +61,19 @@ fun ProfileScreen(info: ProfileInfo?, sample: Boolean, onBack: () -> Unit, onOpe
         }
         Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Head(info, onOpenUrl)
+            if (onStats != null) {
+                val s = RoundedCornerShape(14.dp)
+                Row(
+                    Modifier.fillMaxWidth().clip(s).background(k.surface, s).border(1.dp, k.border, s).clickable(role = Role.Button, onClick = onStats)
+                        .padding(horizontal = 16.dp).height(52.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(KIcons.Stats, null, tint = k.accent, modifier = Modifier.size(22.dp))
+                    Text("Statistics", color = k.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    Icon(KIcons.Chevron, null, tint = k.faint, modifier = Modifier.size(16.dp))
+                }
+            }
             AnimeCard(info)
             ScoresCard(info)
             val shape = RoundedCornerShape(14.dp)

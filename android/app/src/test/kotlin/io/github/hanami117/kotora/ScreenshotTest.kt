@@ -290,6 +290,11 @@ class ScreenshotTest {
         HomeScreen(shelves, account, manga, false, {}, {}, {}, { _, _ -> })
     }
 
+    @Test fun homeStatsDark() = shot("home-stats", true) {
+        val shelves = runBlocking { Shelves.of(repo.list(MediaKind.ANIME, null, Sort.UPDATED), emptyList()) }
+        HomeScreen(shelves.copy(watching = emptyList(), plan = emptyList()), account, false, false, {}, {}, {}, { _, _ -> }, stats = SamplePages.sampleStats(MediaKind.ANIME, now))
+    }
+
     @Test fun homeDark() = home("home", true)
     @Test fun homeLight() = home("home", false)
     @Test fun homeEmptyLight() = home("home-empty", false, manga = false, empty = true)

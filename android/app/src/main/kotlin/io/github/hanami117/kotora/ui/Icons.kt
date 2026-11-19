@@ -43,6 +43,8 @@ object KIcons {
     val Search = icon("search", circle(11f, 11f, 6.5f), "M16 16l4.5 4.5")
     val Settings = icon("set", "M4 7h9M17 7h3M4 17h3M11 17h9", circle(15f, 7f, 2f), circle(9f, 17f, 2f))
     val Back = icon("back", "M15 5l-7 7 7 7")
+    val Stats = icon("stats", "M5 20V11M12 20V5M19 20v-6")
+    val Person = icon("person", circle(12f, 8f, 3.5f), "M5 20c0-3.9 3.1-6 7-6s7 2.1 7 6")
     val Chevron = icon("chev", "M9 6l6 6-6 6")
     val Down = icon("down", "M6 9l6 6 6-6")
     val Sync = icon("sync", "M19.5 12a7.5 7.5 0 0 1-13.3 4.8M4.5 12a7.5 7.5 0 0 1 13.3-4.8", "M18 3.5v3.8h-3.8M6 20.5v-3.8h3.8")

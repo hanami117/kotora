@@ -151,7 +151,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
         },
         bottomBar = { if (topLevel) BottomNav(nav, route ?: Tab.HOME.route, vm.list.kind, vm.list.waiting) },
     ) { pad ->
-        val accounts = Accounts(s.accounts, vm.isSample, vm::hasClientId, vm::setActive, vm::signIn)
+        val accounts = Accounts(s.accounts, vm.isSample, vm::hasClientId, vm::setActive, vm::signIn, { nav.navigate("profile") }, { nav.navigate("stats") })
         CompositionLocalProvider(LocalAccounts provides accounts) {
         NavHost(nav, startDestination = Tab.HOME.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
             composable(Tab.HOME.route) {
@@ -162,8 +162,14 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     val manga = if (vm.mangaEnabled) runCatching { r.list(MediaKind.MANGA, null, Sort.UPDATED) }.getOrDefault(emptyList()) else emptyList()
                     shelves = Shelves.of(anime, manga)
                 }
+                var homeStats by remember { mutableStateOf<io.github.hanami117.kotora.core.StatsData?>(null) }
+                LaunchedEffect(vm.list, vm.list.kind) {
+                    homeStats = runCatching { vm.repo?.pages?.stats(vm.list.kind) }.getOrNull()
+                }
                 HomeScreen(
                     shelves = shelves,
+                    stats = homeStats,
+                    onStats = { nav.navigate("stats") },
                     account = s.active,
                     mangaEnabled = vm.mangaEnabled,
                     syncing = vm.list.syncing,
@@ -360,7 +366,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
             composable("profile") {
                 var info by remember { mutableStateOf<ProfileInfo?>(null) }
                 LaunchedEffect(s.active?.service) { info = s.active?.service?.let { vm.profile(it) } }
-                ProfileScreen(info, vm.isSample, onBack = { nav.popBackStack() }, onOpenUrl = vm::openUrl, onSignOut = {
+                ProfileScreen(info, vm.isSample, onBack = { nav.popBackStack() }, onStats = { nav.navigate("stats") }, onOpenUrl = vm::openUrl, onSignOut = {
                     nav.popBackStack()
                     vm.signOut(it)
                 }, modifier = Modifier.navigationBarsPadding())

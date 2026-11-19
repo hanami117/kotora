@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
+import io.github.hanami117.kotora.core.StatsData
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.ui.theme.Kotora
 
@@ -83,6 +84,9 @@ fun HomeScreen(
     onOpen: (ListRow) -> Unit,
     onSeeAll: (MediaKind, ListStatus) -> Unit,
     modifier: Modifier = Modifier,
+    /** The Statistics page's numbers for the "Your stats" card (null: not read yet). */
+    stats: StatsData? = null,
+    onStats: () -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
@@ -100,6 +104,7 @@ fun HomeScreen(
                 Shelf("Plan to watch", shelves.plan, shelves.loaded, "Your Plan to watch list is empty.", { onSeeAll(MediaKind.ANIME, ListStatus.PLAN_TO_WATCH) }) {
                     PosterCard(it) { onOpen(it) }
                 }
+                StatsCard(stats, onStats)
             }
         }
     }
@@ -181,5 +186,30 @@ private fun PosterCard(row: ListRow, onOpen: () -> Unit) {
         val f = formatLabel(row.format)
         val meta = listOfNotNull(f.takeIf { it.isNotEmpty() }, row.total?.let { "$it ep" }).joinToString(" · ")
         if (meta.isNotEmpty()) Text(meta, color = k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/** Home's last card: this week from the Statistics page (same number and line), and a link to the page. */
+@Composable
+private fun StatsCard(st: StatsData?, onOpen: () -> Unit) {
+    val k = Kotora.colors
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(k.surface, shape).border(1.dp, k.border, shape)
+            .clickable(role = Role.Button, onClick = onOpen).padding(14.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Your stats, see all" },
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Your stats", color = k.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Fill()
+            Text("See all", color = k.dim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Icon(KIcons.Chevron, null, tint = k.dim, modifier = Modifier.padding(start = 4.dp).size(14.dp))
+        }
+        if (st == null) Text(" ", fontSize = 13.sp) else Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("THIS WEEK", color = k.faint, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = .4.sp)
+            Text(StatsText.grouped(st.week.units.toULong()), color = k.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text(periodLine(st, st.week, Words(st.kind)), color = k.dim, fontSize = 12.5.sp)
+        }
     }
 }

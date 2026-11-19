@@ -56,7 +56,7 @@ import kotlin.math.floor
  * the Anime | Manga switch. Local numbers (the list and Kotora's activity log): no request.
  */
 
-private class Words(kind: MediaKind) {
+internal class Words(kind: MediaKind) {
     val unit = if (kind == MediaKind.ANIME) "episode" else "chapter"
     val units = if (kind == MediaKind.ANIME) "episodes" else "chapters"
     val verb = if (kind == MediaKind.ANIME) "watched" else "read"
@@ -118,7 +118,7 @@ private fun StatsContent(st: StatsData) {
     }
 }
 
-private fun periodLine(st: StatsData, p: StatsPeriod, w: Words): String = when {
+internal fun periodLine(st: StatsData, p: StatsPeriod, w: Words): String = when {
     st.kind == MediaKind.ANIME && p.minutes > 0uL -> StatsText.duration(p.minutes)
     st.kind == MediaKind.MANGA && p.volumes > 0u -> "${p.volumes} vol."
     p.titles == 1u -> "1 title"

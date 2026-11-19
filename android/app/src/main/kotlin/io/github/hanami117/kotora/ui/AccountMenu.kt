@@ -35,6 +35,8 @@ class Accounts(
     val canSignIn: (Service) -> Boolean,
     val onShow: (Service) -> Unit,
     val onSignIn: (Service) -> Unit,
+    val onProfile: () -> Unit = {},
+    val onStats: () -> Unit = {},
 ) {
     /** The services not signed in yet, to sign in from the menu and Settings. */
     val others: List<Service> get() = if (sample) emptyList() else Service.entries.filter { s -> accounts.none { it.service == s } }
@@ -76,6 +78,17 @@ fun AccountMenu(active: Account) {
                     onClick = { open = false; a.onSignIn(s) },
                 )
             }
+            HorizontalDivider(color = k.border)
+            DropdownMenuItem(
+                text = { Text("Profile", color = k.text) },
+                leadingIcon = { Icon(KIcons.Person, null, tint = k.dim) },
+                onClick = { open = false; a.onProfile() },
+            )
+            DropdownMenuItem(
+                text = { Text("Statistics", color = k.text) },
+                leadingIcon = { Icon(KIcons.Stats, null, tint = k.dim) },
+                onClick = { open = false; a.onStats() },
+            )
         }
     }
 }
