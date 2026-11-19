@@ -44,6 +44,12 @@ import io.github.hanami117.kotora.ui.EntryActions
 import io.github.hanami117.kotora.ui.EntryEditorScreen
 import io.github.hanami117.kotora.ui.HomeScreen
 import io.github.hanami117.kotora.ui.QueueScreen
+import io.github.hanami117.kotora.ui.MirrorQueuePart
+import io.github.hanami117.kotora.ui.MirrorRow
+import io.github.hanami117.kotora.ui.MirrorScreen
+import io.github.hanami117.kotora.data.sampleMirrorPreview
+import io.github.hanami117.kotora.data.sampleMirrorQueue
+import io.github.hanami117.kotora.data.sampleMirrorState
 import io.github.hanami117.kotora.ui.RemoveDialog
 import io.github.hanami117.kotora.ui.SearchModel
 import io.github.hanami117.kotora.ui.SearchScreen
@@ -395,4 +401,24 @@ class ScreenshotTest {
     @Test fun notOnListLight() = notOnList("details-not-on-list", false, DetailsInfoUi(sampleDetails(MediaKind.ANIME, 9102u, "Lanterns of Kirigaoka 2nd Season" to null, false)))
     @Test fun notOnListLoadingDark() = notOnList("details-loading", true, DetailsInfoUi(loading = true))
     @Test fun notOnListOfflineDark() = notOnList("details-offline", true, DetailsInfoUi(error = "Can't reach MyAnimeList."))
+
+    // Batch F: Mirror edits (Beta), the desktop's mirror.rs scenes in the core's words.
+    private fun settingsMirror(name: String, dark: Boolean, on: Boolean, signedIn: Boolean, note: String? = null, busy: String? = null) = shot(name, dark) {
+        SettingsScreen(listOf(account), false, if (on) 2u else 0u, "0.5.0", false, {}, {}, {}, mirror = {
+            MirrorRow(sampleMirrorState(on, signedIn), busy, note, null, false, {}, {})
+        })
+    }
+    @Test fun settingsMirrorOffDark() = settingsMirror("settings-mirror-off", true, on = false, signedIn = true)
+    @Test fun settingsMirrorSignInLight() = settingsMirror("settings-mirror-sign-in", false, on = false, signedIn = false)
+    @Test fun settingsMirrorReadingDark() = settingsMirror("settings-mirror-reading", true, on = false, signedIn = true, busy = "Reading your AniList list\u2026")
+    @Test fun settingsMirrorOnLight() = settingsMirror("settings-mirror-on", false, on = true, signedIn = true, note = "On. Queued 5 changes for AniList and 2 changes for MyAnimeList.")
+    @Test fun mirrorPreviewDark() = shot("mirror-preview", true) { MirrorScreen(sampleMirrorPreview(), { _, _, _ -> }, { _, _ -> }, {}, {}) }
+    @Test fun mirrorPreviewLight() = shot("mirror-preview", false) { MirrorScreen(sampleMirrorPreview(), { _, _, _ -> }, { _, _ -> }, {}, {}) }
+    private fun queueMirror(name: String, dark: Boolean) = shot(name, dark) {
+        QueueScreen(emptyList(), "MyAnimeList", now, null, false, {}, {}, { _, _ -> }, mirror = {
+            MirrorQueuePart(sampleMirrorQueue(), { _, _, _ -> }, {}, {}, {})
+        })
+    }
+    @Test fun queueMirrorDark() = queueMirror("queue-mirror", true)
+    @Test fun queueMirrorLight() = queueMirror("queue-mirror", false)
 }

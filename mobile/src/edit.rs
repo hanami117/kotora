@@ -327,7 +327,9 @@ impl Kotora {
     pub fn queue_items(&self) -> Vec<QueueItem> {
         let now = time::now_unix();
         let mut out = Vec::new();
-        for service in Service::ALL.into_iter().filter(|s| self.signed_in(*s)) {
+        // The mirror's changes have their own part of the page (`mirror.rs`), as on the desktop.
+        let mirror_to = self.store().mirror_link().ok().flatten().map(|l| l.to.name());
+        for service in Service::ALL.into_iter().filter(|s| self.signed_in(*s) && Some(s.name()) != mirror_to) {
             let fmt = self.service_fmt(service);
             let store = self.store();
             for op in store.queue(service.name(), now).unwrap_or_default() {
@@ -362,7 +364,8 @@ impl Kotora {
     pub fn conflict_count(&self) -> u32 {
         let now = time::now_unix();
         let store = self.store();
-        Service::ALL.into_iter().filter(|s| self.signed_in(*s)).map(|s| store.queue(s.name(), now).unwrap_or_default().iter().filter(|o| o.state == OpState::Conflict).count() as u32).sum()
+        let mirror_to = store.mirror_link().ok().flatten().map(|l| l.to.name());
+        Service::ALL.into_iter().filter(|s| self.signed_in(*s) && Some(s.name()) != mirror_to).map(|s| store.queue(s.name(), now).unwrap_or_default().iter().filter(|o| o.state == OpState::Conflict).count() as u32).sum()
     }
 
     /// A conflict, "Keep mine" ("Remove anyway"): ours goes over the service's version.

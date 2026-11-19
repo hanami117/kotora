@@ -68,8 +68,13 @@ class CoreRepository(context: Context) : Repository, AccountRepository, ListPage
     override suspend fun setMangaEnabled(on: Boolean) = io { kotora.setMangaEnabled(on) }
     override suspend fun plusOne(kind: MediaKind, id: UInt): Edit = io { kotora.plusOne(kind, id) }
     override suspend fun undo(edit: Edit) = io { kotora.undo(edit) }
-    override suspend fun sync(): SyncReport = io { kotora.sync() }
-    override suspend fun flush(): FlushReport = io { kotora.flushQueue() }
+    /** Then the mirror (Mirror edits) reads its list for website edits. */
+    override suspend fun sync(): SyncReport = io { kotora.sync().also { kotora.mirrorRefresh(true) } }
+    /**
+     * The main queue, then the mirror's part (its adds' ids, its queue) in the same run, so the
+     * FlushWorker sends mirrored edits too. The mirror's trouble stays its own.
+     */
+    override suspend fun flush(): FlushReport = io { kotora.flushQueue().also { kotora.mirrorRefresh(false) } }
     override suspend fun signInStart(service: Service): PendingSignIn = io { kotora.signInStart(service) }
     override suspend fun signInFinish(pending: PendingSignIn, redirect: String): Account = io { kotora.signInFinish(pending, redirect) }
     override suspend fun signOut(service: Service) = io { kotora.signOut(service) }

@@ -54,6 +54,8 @@ fun SettingsScreen(
     appearanceExtras: @Composable () -> Unit = {},
     /** Statistics, Startup, Release data, Manga (after Notifications). */
     extras: @Composable () -> Unit = {},
+    /** Mirror edits to the other service, Beta (`MirrorScreen.kt`), in the Account card. */
+    mirror: @Composable () -> Unit = {},
 ) {
     val k = Kotora.colors
     val menu = LocalAccounts.current
@@ -89,6 +91,10 @@ fun SettingsScreen(
                 HorizontalDivider(color = k.border)
                 if (onQueue != null) QueueLink(waiting, conflicts, onQueue)
                 else Item("Waiting changes", if (waiting == 0u) "Everything is sent." else "$waiting waiting to sync") {}
+                if (!sample) {
+                    HorizontalDivider(color = k.border)
+                    mirror()
+                }
             }
         }
         Text(

@@ -59,6 +59,8 @@ fun QueueScreen(
     offline: Boolean = false,
     waiting: UInt = 0u,
     onSignIn: (io.github.hanami117.kotora.core.Service) -> Unit = {},
+    /** The mirror's part (Mirror edits, `MirrorScreen.kt`), under the main queue as on the desktop. */
+    mirror: @Composable () -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
@@ -110,6 +112,7 @@ fun QueueScreen(
             Group("Waiting", all.filter { it.state == QueueState.WAITING || it.state == QueueState.SENDING }, true, now, onAction)
             Group("Failed", all.filter { it.state == QueueState.FAILED }, true, now, onAction)
             Group("Sent today", all.filter { it.state == QueueState.SENT }, false, now, onAction)
+            mirror()
         }
     }
 }

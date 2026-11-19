@@ -290,6 +290,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onOpenUrl = vm::openUrl,
                     conflicts = conflicts,
                     onQueue = { nav.navigate("queue") },
+                    mirror = { MirrorSettings(vm) },
                     appearanceExtras = { AppearanceExtras(vm.settings, vm.titleLanguage, vm::changeSetting, vm::changeTitleLanguage) },
                     extras = {
                         vm.repo?.let { r ->
@@ -324,6 +325,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     offline = vm.list.offline,
                     waiting = vm.list.waiting,
                     onSignIn = vm::signIn,
+                    mirror = { MirrorQueue(vm) },
                 )
             }
             composable("edit/{kind}/{id}") { back ->

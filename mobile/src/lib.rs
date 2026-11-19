@@ -826,6 +826,8 @@ pub(crate) mod testenv {
 
 mod links;
 mod profile;
+/// Mirror edits (Beta) MyAnimeList <-> AniList, as on the desktop.
+mod mirror;
 mod listopts;
 
 /// The background refresh (queue + list), and the activity-log check.
