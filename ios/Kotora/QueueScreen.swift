@@ -12,12 +12,7 @@ struct QueueScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 SignInAgainBanner(queue: true).padding(.top, 6)
-                if let problem = model.list.problem {
-                    Text(problem).font(Inter.regular(13)).foregroundStyle(p.dropped)
-                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(p.dropped.opacity(0.1)))
-                        .padding(.horizontal, 16).padding(.top, 12)
-                }
+                notices
                 if loaded && items.isEmpty {
                     VStack(spacing: 4) {
                         Text("Nothing waiting").font(Inter.semibold(17)).foregroundStyle(p.text)
@@ -45,6 +40,21 @@ struct QueueScreen: View {
         .task(id: model.list.version) {
             items = await model.editing?.queueItems() ?? []
             loaded = true
+        }
+    }
+
+    /// The desktop's notices: an expired sign-in, offline with changes waiting, another problem.
+    @ViewBuilder private var notices: some View {
+        let l = model.list
+        let service = model.session.active?.service.label ?? "the service"
+        let n = l.waiting
+        if !l.signInAgain && l.offline && n > 0 {
+            QueueNotice(text: "You are offline. Your changes are kept here and go out when \(service) answers again.", color: p.onHold) {
+                QueueButton(title: "Try now") { model.syncNow() }
+            }
+        }
+        if let problem = l.problem, !l.offline, !l.signInAgain {
+            QueueNotice(text: problem, color: p.dropped) { EmptyView() }
         }
     }
 
@@ -77,7 +87,7 @@ private struct QueueLine: View {
                         Text(item.what).font(Inter.regular(13)).monospacedDigit().foregroundStyle(p.dim)
                         if item.edits > 1 && item.state != .sent { Text("(\(item.edits) edits merged)").font(Inter.regular(12)).foregroundStyle(p.faint) }
                     }
-                    if let e = item.error {
+                    if let e = item.error, item.state == .failed || item.state == .waiting {
                         Text(item.state == .failed ? e : "\(e); Kotora tries again by itself")
                             .font(Inter.regular(12)).foregroundStyle(item.state == .failed ? p.dropped : p.faint).lineLimit(2)
                     }
@@ -95,7 +105,10 @@ private struct QueueLine: View {
     @ViewBuilder private var end: some View {
         switch item.state {
         case .waiting where item.removed, .failed where item.removed:
-            QueueButton(title: "Undo") { await model.queue(.discard, item) }
+            HStack(spacing: 6) {
+                if item.state == .waiting { QueuePill(text: "Waiting", color: p.onHold) }
+                QueueButton(title: "Undo") { await model.queue(.discard, item) }
+            }
         case .failed:
             QueueButton(title: "Discard") { await model.queue(.discard, item) }
         case .sent:
@@ -185,6 +198,26 @@ private struct QueueButton: View {
         .buttonStyle(.borderless)
         .disabled(busy)
         .accessibilityIdentifier("queue/\(title)")
+    }
+}
+
+/// A notice above the queue, with its action, as the desktop's alerts.
+private struct QueueNotice<Action: View>: View {
+    @Environment(\.palette) private var p
+    let text: String
+    let color: Color
+    @ViewBuilder let action: () -> Action
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(text).font(Inter.regular(13)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            action()
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(color.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.35), lineWidth: 1))
+        .padding(.horizontal, 16).padding(.top, 12)
     }
 }
 

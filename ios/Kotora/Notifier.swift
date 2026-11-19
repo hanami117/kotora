@@ -117,8 +117,8 @@ enum Notifier {
     nonisolated static func backgroundRun() async {
         scheduleRefresh()
         guard let repo = Core.repository, !((try? await repo.accounts()) ?? []).isEmpty else { return }
-        _ = try? await repo.flush()
-        _ = try? await repo.sync()
+        // The waiting changes, then the list once the saved copy is an hour old (kotora-mobile).
+        _ = try? await repo.backgroundRefresh()
         await check(chapters: true)
     }
 }

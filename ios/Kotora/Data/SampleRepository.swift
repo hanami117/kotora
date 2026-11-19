@@ -90,6 +90,9 @@ final class SampleRepository: Repository, @unchecked Sendable {
     }
     func signOut(_ service: Service) async throws {}
     func setActive(_ service: Service) async throws {}
+    func backgroundRefresh() async throws -> BackgroundReport {
+        BackgroundReport(flush: try await flush(), synced: false, signInAgain: false, problem: nil)
+    }
 
     /// As the core: a rewatch (status Completed) shows under Watching too.
     static func showsIn(_ r: Row, _ page: ListStatus) -> Bool { r.status == page || (page == .watching && r.rewatching) }

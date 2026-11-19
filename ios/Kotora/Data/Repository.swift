@@ -34,6 +34,8 @@ protocol Repository: AnyObject, Sendable {
     func signOut(_ service: Service) async throws
     /// Which signed-in account the lists show (the core keeps it).
     func setActive(_ service: Service) async throws
+    /// Network: the background run (the queue, then the list when it is an hour old).
+    func backgroundRefresh() async throws -> BackgroundReport
 }
 
 /// The text to show for an error from the core (its `Display` words) or from the system.

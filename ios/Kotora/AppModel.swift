@@ -55,6 +55,10 @@ struct ListUi: Equatable {
     /// The last sync's problem ("Can't reach MyAnimeList."), shown in the sync line.
     var problem: String?
     var loaded = false
+    /// The last sync or send couldn't reach the service (the queue page's offline notice).
+    var offline = false
+    /// The active service wants a new sign-in (the queue page's "Sign in again").
+    var signInAgain = false
     /// Bumped on every read, so an open details page reads its entry again.
     var version = 0
 
@@ -148,6 +152,8 @@ final class AppModel: ObservableObject {
         guard l.kind == list.kind, l.status == list.status, l.sort == list.sort, l.reverse == list.reverse,
               l.filter == list.filter, l.query == list.query else { return }
         l.syncing = list.syncing
+        l.offline = list.offline
+        l.signInAgain = list.signInAgain
         l.version = list.version + 1
         list = l
     }
@@ -184,14 +190,20 @@ final class AppModel: ObservableObject {
         list.syncing = true
         Task {
             do {
-                _ = try await r.flush()
+                let f = try await r.flush()
                 _ = try await r.sync()
                 list.problem = nil
                 expired = nil
+                list.offline = false
+                list.signInAgain = f.signInAgain
                 if case .signedIn = session { session = .signedIn(accounts: try await r.accounts()) }
             } catch KotoraError.SignInAgain {
                 expired = session.active?.service
                 list.problem = "Sign in again: the service no longer accepts Kotora's sign-in."
+                list.signInAgain = true
+            } catch KotoraError.Offline(let m) {
+                list.problem = m
+                list.offline = true
             } catch {
                 list.problem = message(of: error)
             }

@@ -796,6 +796,10 @@ pub use search::Hit;
 /// Airing, Publishing and their notifications.
 mod pages;
 
+/// The background refresh (queue + list), and the activity-log check.
+mod background;
+pub use background::*;
+
 #[cfg(test)]
 mod tests;
 
