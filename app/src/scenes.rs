@@ -1,7 +1,7 @@
 //! Named states for headless renders (`--scene NAME`), filled with fake, deterministic data.
 //! `--list-scenes` lists them. Every view and state gets one.
 
-use kotora_core::{Score, ScoreFormat, Status};
+use kotora_core::{Kind, Score, ScoreFormat, Status};
 use kotora_core::airing::Season;
 use kotora_core::config::{ListView, Theme, TitleLang};
 
@@ -666,6 +666,16 @@ pub const SCENES: &[Scene] = &[
         }
         s.go(Page::Profile);
     }),
+    // Statistics (sidebar → Kotora): made-up numbers on the fake list's titles.
+    ("stats", |s| stats(s, Kind::Anime, false)),
+    ("stats-manga", |s| {
+        manga(s);
+        s.manga.mode = true;
+        stats(s, Kind::Manga, false);
+    }),
+    // Just upgraded: the list's totals, nothing logged yet.
+    ("stats-empty", |s| stats(s, Kind::Anime, true)),
+    ("stats-loading", |s| s.open_stats()),
     // The token was refused: the saved list shows, with a Sign in button.
     ("list-sign-in-again", |s| s.auth = Auth::Expired),
     // First run: nothing set up yet, so the setup wizard (`setup.rs`), step 1 of 3 (Kotora's own Client ID is built in).
@@ -2262,6 +2272,25 @@ fn playing_file(s: &mut State, file: &str) {
     }
 }
 
+/// The Statistics page with made-up numbers for `kind` (`empty`: nothing logged yet).
+fn stats(s: &mut State, kind: Kind, empty: bool) {
+    use kotora_core::stats::Title;
+    let titles: Vec<Title> = match kind {
+        Kind::Anime => {
+            fake_covers(s);
+            let on = s.entries.iter().filter(|e| e.status == Status::Watching);
+            on.map(|e| Title { media_id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), progress: e.progress, total: e.episodes, units: 0 }).collect()
+        }
+        Kind::Manga => {
+            let on = s.manga.entries.iter().filter(|e| e.status == Status::Watching);
+            on.map(|e| Title { media_id: e.id, title: e.title.clone(), cover_url: e.cover_url.clone(), progress: e.chapters, total: e.chapters_total, units: 0 }).collect()
+        }
+    };
+    let st = crate::stats::fake(kind, &titles, s.clock().div_euclid(86_400), empty);
+    s.open_stats();
+    s.stats.data = Some(std::sync::Arc::new(st));
+}
+
 fn fake_covers(s: &mut State) {
     s.covers.fake();
     for e in s.entries.iter_mut().filter(|e| e.id % 5 != 2) {
@@ -2842,6 +2871,23 @@ mod tests {
         let mut s = State::fake();
         s.go(Page::List(Status::Watching));
         assert!(s.page != Page::Profile);
+    }
+
+    /// Statistics: every part at both sizes, the empty state's line, manga's words, and the
+    /// loading line before the numbers come (headless reads nothing).
+    #[test]
+    fn stats_page_shows_its_parts() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("stats", size);
+            for key in ["page/stats", "stats/tile/units", "stats/tile/time", "stats/tile/streak", "stats/calendar", "stats/since", "stats/cal-total", "stats/when", "stats/lately", "stats/list", "stats/tags", "stats/genres", "stats/makers", "stats/airing", "sb-nav"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            let rt = render("stats-empty", size);
+            assert!(rt.find("stats/empty").is_some() && rt.find("stats/lately-empty").is_some(), "empty at {size:?}");
+            let rt = render("stats-manga", size);
+            assert!(rt.find("stats/tile/volumes").is_some() && rt.find("stats/airing").is_none(), "manga at {size:?}");
+            assert!(render("stats-loading", size).find("stats/loading").is_some());
+        }
     }
 
     /// The grid views: the switch, cards in rows, +1 always on Watching posters; the table's

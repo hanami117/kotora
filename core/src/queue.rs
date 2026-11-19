@@ -412,6 +412,7 @@ impl Store {
         let tx = self.conn.transaction()?;
         let before = entry_values(&tx, sc, media_id)?.map(|(v, _)| v);
         let id = enqueue_tx(&tx, sc, media_id, change, now)?;
+        crate::activity::follow(&tx, sc, media_id, before, now)?;
         crate::mirror::follow(&tx, sc, media_id, before, now)?;
         tx.commit()?;
         Ok(id)
@@ -533,6 +534,7 @@ impl Store {
         let sc = Scope::new(service, op.kind);
         let before = entry_values(&tx, sc, op.media_id)?.map(|(v, _)| v);
         take_theirs_tx(&tx, service, &op)?;
+        crate::activity::follow_down(&tx, sc, op.media_id, before, now)?;
         crate::mirror::follow(&tx, sc, op.media_id, before, now)?;
         tx.commit()?;
         Ok(())
@@ -545,6 +547,7 @@ impl Store {
         let sc = Scope::new(service, op.kind);
         let before = entry_values(&tx, sc, op.media_id)?.map(|(v, _)| v);
         discard_tx(&tx, service, &op)?;
+        crate::activity::follow(&tx, sc, op.media_id, before, now)?;
         crate::mirror::follow(&tx, sc, op.media_id, before, now)?;
         tx.commit()?;
         Ok(())
@@ -588,6 +591,7 @@ impl Store {
         let sc = Scope::new(service, media.kind);
         let before = entry_values(&tx, sc, media.id)?.map(|(v, _)| v);
         let id = add_tx(&tx, service, media, status, progress, now)?;
+        crate::activity::follow(&tx, sc, media.id, before, now)?;
         crate::mirror::follow(&tx, sc, media.id, before, now)?;
         tx.commit()?;
         Ok(id)

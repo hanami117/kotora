@@ -303,6 +303,7 @@ impl State {
     pub fn set_kind(&mut self, kind: Kind) {
         let manga = kind == Kind::Manga;
         let calendar = matches!(self.lit_page(), Page::Airing | Page::Publishing);
+        let stats = self.lit_page() == Page::Stats;
         let st = match self.lit_page() {
             Page::List(st) | Page::Manga(st) => st,
             _ => Status::Watching,
@@ -319,6 +320,8 @@ impl State {
         }
         // Airing and Publishing are one place in the sidebar: the switch keeps it.
         match (calendar, manga) {
+            // Statistics follows the switch.
+            _ if stats => self.open_stats(),
             (true, true) => self.open_publishing(),
             (true, false) => self.open_airing(),
             _ => self.go(self.list_page(st)),

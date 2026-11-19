@@ -46,6 +46,8 @@ pub enum Page {
     Manga(Status),
     /// Manga mode's Airing: the latest chapters of Reading manga (`publishing.rs`).
     Publishing,
+    /// Statistics of the switch's list, from what is saved here (`stats.rs`).
+    Stats,
 }
 
 /// The chips above the list.
@@ -494,6 +496,8 @@ pub struct State {
     /// Started airing and New episode notifications (`airnotes.rs`).
     pub airnotes: crate::airnotes::AirNotes,
     pub publishing: crate::publishing::Publishing,
+    /// The Statistics page's numbers (`stats.rs`).
+    pub stats: crate::stats::StatsView,
     /// The update check and its banner (`update.rs`).
     pub update: crate::update::Updates,
     /// The list's grid views: the keyboard selection (`grid.rs`).
@@ -586,6 +590,7 @@ impl State {
             library: Default::default(),
             airnotes: Default::default(),
             publishing: Default::default(),
+            stats: Default::default(),
             update: Default::default(),
             grid: Default::default(),
             main_size: Default::default(),
@@ -1182,7 +1187,12 @@ impl State {
             Msg::Now(Some(seen)) => crate::library::saw_player(self, &seen.track.playing.player),
             _ => {}
         }
+        // The list changed: the Statistics page, when open, counts again.
+        let list_changed = matches!(&msg, Msg::Cache { .. } | Msg::Synced { .. } | Msg::Queue { .. } | Msg::Manga(_) | Msg::SignedIn { .. });
         let changed = self.apply_msg(msg);
+        if list_changed {
+            self.stats_list_changed();
+        }
         self.sync_tray();
         // Publishing's worker asks nothing while the app is offline.
         self.publishing.note_offline(self.publishing_offline());

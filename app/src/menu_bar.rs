@@ -64,6 +64,7 @@ pub const ENTRIES: &[Entry] = &[
     sep(GO),
     item(GO, "go.now_playing", "Now Playing", None, |s, tx| go(s, tx, Page::NowPlaying)),
     item(GO, "go.airing", "Airing", None, |s, tx| go(s, tx, Page::Airing)),
+    item(GO, "go.stats", "Statistics", None, |s, tx| go(s, tx, Page::Stats)),
     item(GO, "go.queue", "Sync Queue", None, |s, tx| go(s, tx, Page::Queue)),
 ];
 
@@ -230,7 +231,7 @@ mod tests {
         assert_eq!(titles(None), ["About Kotora", "-", "Settings\u{2026}", "-"]);
         assert_eq!(
             titles(GO),
-            ["Search", "Find in List", "-", "Watching", "Plan to Watch", "Completed", "On Hold", "Dropped", "-", "Now Playing", "Airing", "Sync Queue"]
+            ["Search", "Find in List", "-", "Watching", "Plan to Watch", "Completed", "On Hold", "Dropped", "-", "Now Playing", "Airing", "Statistics", "Sync Queue"]
         );
         // Ids are unique (Rune refuses the whole menu otherwise).
         let mut ids: Vec<_> = ENTRIES.iter().filter(|e| e.title != "-").map(|e| e.id).collect();
@@ -271,6 +272,7 @@ mod tests {
             ("go.dropped", Page::List(Status::Dropped)),
             ("go.now_playing", Page::NowPlaying),
             ("go.airing", Page::Airing),
+            ("go.stats", Page::Stats),
             ("go.queue", Page::Queue),
             ("go.watching", Page::List(Status::Watching)),
         ] {
