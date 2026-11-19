@@ -813,3 +813,6 @@ mod listopts;
 /// The background refresh (queue + list), and the activity-log check.
 mod background;
 pub use background::*;
+/// The details page's service information and the add of a title not on the list.
+mod details;
+pub use details::{InfoFact, InfoStat, PastedId, ServiceDetails, TitleStub};

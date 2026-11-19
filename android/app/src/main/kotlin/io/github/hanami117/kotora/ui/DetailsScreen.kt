@@ -56,6 +56,9 @@ fun DetailsScreen(
     onOpenUrl: (String) -> Unit = {},
     /** Edit, −1, Rewatch / Stop, Remove (`EntryActions`); `null`: the saved row only. */
     actions: (@Composable (ListRow) -> Unit)? = null,
+    /** The service's information (stats, other titles, Synopsis, Information). */
+    info: DetailsInfoUi? = null,
+    onRetry: () -> Unit = {},
 ) {
     val k = Kotora.colors
     if (row == null) {
@@ -93,6 +96,10 @@ fun DetailsScreen(
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 airPill(row)?.let { (text, live) -> Pill(text, live) }
                 if (row.waiting) Pill("Waiting to sync", false, k.onHold)
+            }
+            info?.info?.let { i ->
+                DetailsStats(i, Modifier.padding(bottom = 12.dp))
+                DetailsTitles(i, listOfNotNull(row.title, row.titleEn))
             }
             // "Open on MyAnimeList" / "Open on AniList" (desktop details.rs `det/open-mal`).
             if (links.isNotEmpty()) {
@@ -147,7 +154,8 @@ fun DetailsScreen(
                     }
                 }
             }
-            if (actions == null) Text(
+            if (info != null) DetailsBody(info, account?.let { serviceTitle(it.service) } ?: "MyAnimeList", onRetry)
+            if (actions == null && info == null) Text(
                 "The editor, synopsis and the service's details come in a later build.",
                 color = k.faint,
                 fontSize = 12.sp,

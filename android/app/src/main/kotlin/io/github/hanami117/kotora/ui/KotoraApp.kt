@@ -1,5 +1,6 @@
 package io.github.hanami117.kotora.ui
 
+import io.github.hanami117.kotora.data.details
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -228,6 +229,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                         onView = { g -> vm.airingFilter(grid = g) },
                         onOrder = { o -> vm.airingFilter(order = o) },
                         onPick = vm::pickSeason,
+                        onAdd = vm::addTitle,
                         modifier = Modifier.statusBarsPadding(),
                     )
                 }
@@ -252,6 +254,12 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onPlusOne = vm::plusOne,
                     onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
                     onAdd = { hit, status -> vm.add(hit, status) },
+                    onOpenHit = { h ->
+                        Stubs.put(h.stub())
+                        nav.navigate("details/${h.kind.name}/${h.id}")
+                    },
+                    pastedId = { kind, text -> vm.repo?.details()?.pastedId(kind, text)?.id },
+                    onOpenId = { kind, id -> nav.navigate("details/${kind.name}/$id") },
                     modifier = Modifier.statusBarsPadding(),
                 )
             }
@@ -361,12 +369,25 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 val id = back.arguments?.getString("id")?.toUIntOrNull() ?: 0u
                 var row by remember { mutableStateOf<ListRow?>(null) }
                 var loaded by remember { mutableStateOf(false) }
+                var info by remember { mutableStateOf(DetailsInfoUi()) }
+                val loadInfo: () -> Unit = { scope.launch { vm.loadDetails(kind, id, info) { info = it } } }
+                LaunchedEffect(kind, id) { vm.loadDetails(kind, id, info) { info = it } }
                 // Read again whenever the list changes (a +1 here or a sync).
                 LaunchedEffect(vm.list) {
                     row = vm.entry(kind, id)
                     loaded = true
                 }
-                if (loaded) {
+                if (loaded && row == null) {
+                    NotOnListScreen(
+                        kind, id, Stubs.get(kind, id), info, s.active,
+                        onBack = { nav.popBackStack() },
+                        onAdd = vm::addTitle,
+                        onRetry = loadInfo,
+                        modifier = Modifier.navigationBarsPadding(),
+                        links = vm.serviceLinks(kind, id),
+                        onOpenUrl = vm::openUrl,
+                    )
+                } else if (loaded) {
                     var asking by remember { mutableStateOf<String?>(null) }
                     DetailsScreen(
                         row,
@@ -376,6 +397,8 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                         modifier = Modifier.navigationBarsPadding(),
                         links = vm.serviceLinks(kind, id),
                         onOpenUrl = vm::openUrl,
+                        info = info,
+                        onRetry = loadInfo,
                         actions = { r ->
                             EntryActions(
                                 r,

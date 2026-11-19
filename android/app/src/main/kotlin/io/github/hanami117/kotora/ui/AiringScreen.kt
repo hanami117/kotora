@@ -1,5 +1,7 @@
 package io.github.hanami117.kotora.ui
 
+import androidx.compose.ui.semantics.contentDescription
+import io.github.hanami117.kotora.core.TitleStub
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -88,6 +90,8 @@ fun AiringScreen(
     onPick: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     ticking: Boolean = true,
+    /** "+ Watching" / "+ Plan" on a show not on the list. */
+    onAdd: (TitleStub, ListStatus) -> Unit = { _, _ -> },
 ) {
     val k = Kotora.colors
     LaunchedEffect(Unit) { onOpen() }
@@ -121,7 +125,7 @@ fun AiringScreen(
                 !g.hasShows -> Empty(if (ui.error != null) "No season to show" else "Nothing listed", "Kotora shows the season once ${week?.serviceTitle ?: "the service"} answers.")
                 else -> {
                     Filters(ui, onFilter, onOrder)
-                    Grid(g.cards, onShow)
+                    Grid(g.cards, onShow, onAdd)
                 }
             }
             return@Column
@@ -138,7 +142,7 @@ fun AiringScreen(
         }
         Filters(ui, onFilter, onOrder)
         if (ui.grid) {
-            Grid(week.cards, onShow)
+            Grid(week.cards, onShow, onAdd)
             return@Column
         }
         if (week.days.all { it.slots.isEmpty() } && week.untimed.isEmpty()) {
@@ -153,11 +157,11 @@ fun AiringScreen(
                         Text("Nothing airs", color = k.faint, fontSize = 13.sp, modifier = Modifier.height(36.dp).padding(start = 82.dp, top = 8.dp))
                     }
                 }
-                for (s in day.slots) item(key = "slot/$d/${s.id}") { SlotRow(s, onShow) }
+                for (s in day.slots) item(key = "slot/$d/${s.id}") { SlotRow(s, onShow, onAdd) }
             }
             if (week.untimed.isNotEmpty()) {
                 item(key = "untimed") { DayHead("No broadcast time", false, "airing on ${week.serviceTitle}, no time to estimate") }
-                for (u in week.untimed) item(key = "untimed/${u.id}") { UntimedRow(u, onShow) }
+                for (u in week.untimed) item(key = "untimed/${u.id}") { UntimedRow(u, onShow, onAdd) }
             }
             item(key = "foot") {
                 Text(
@@ -247,13 +251,13 @@ private fun StatusTag(status: ListStatus) {
 }
 
 @Composable
-private fun SlotRow(s: AiringSlot, onShow: (UInt) -> Unit) {
+private fun SlotRow(s: AiringSlot, onShow: (UInt) -> Unit, onAdd: (TitleStub, ListStatus) -> Unit) {
     val k = Kotora.colors
     val mine = s.status != null
     val lit = if (mine) Modifier.background(k.accent.copy(alpha = .06f)) else Modifier
     Box(Modifier.fillMaxWidth().then(lit)) {
         Row(
-            Modifier.fillMaxWidth().height(56.dp).then(if (s.status != null) Modifier.clickable { onShow(s.id) } else Modifier).padding(horizontal = 16.dp),
+            Modifier.fillMaxWidth().height(56.dp).clickable { if (s.status == null) Stubs.put(stub(s.id, s.title, s.coverUrl)); onShow(s.id) }.padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -275,6 +279,7 @@ private fun SlotRow(s: AiringSlot, onShow: (UInt) -> Unit) {
                     }
                 }
             }
+            if (s.status == null) AiringAdd(stub(s.id, s.title, s.coverUrl), onAdd)
         }
         if (mine) Box(Modifier.padding(top = 8.dp).size(3.dp, 40.dp).background(k.accent, RoundedCornerShape(1.5.dp)))
     }
@@ -282,10 +287,10 @@ private fun SlotRow(s: AiringSlot, onShow: (UInt) -> Unit) {
 }
 
 @Composable
-private fun UntimedRow(u: AiringUntimed, onShow: (UInt) -> Unit) {
+private fun UntimedRow(u: AiringUntimed, onShow: (UInt) -> Unit, onAdd: (TitleStub, ListStatus) -> Unit) {
     val k = Kotora.colors
     Row(
-        Modifier.fillMaxWidth().height(56.dp).then(if (u.status != null) Modifier.clickable { onShow(u.id) } else Modifier).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().height(56.dp).clickable { if (u.status == null) Stubs.put(stub(u.id, u.title, u.coverUrl)); onShow(u.id) }.padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -295,7 +300,29 @@ private fun UntimedRow(u: AiringUntimed, onShow: (UInt) -> Unit) {
             Text(u.title, color = k.dim, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(u.why, color = k.faint, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        u.status?.let { StatusTag(it) }
+        u.status?.let { StatusTag(it) } ?: AiringAdd(stub(u.id, u.title, u.coverUrl), onAdd)
+    }
+}
+
+private fun stub(id: UInt, title: String, cover: String?) = TitleStub(MediaKind.ANIME, id, title, cover, "", null)
+
+/** "+ Watching" and "+ Plan" for an anime not on the list, as the desktop's Airing page: through the queue, as search does. */
+@Composable
+private fun AiringAdd(stub: TitleStub, onAdd: (TitleStub, ListStatus) -> Unit) {
+    val k = Kotora.colors
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for ((label, st) in listOf("+ Watching" to ListStatus.WATCHING, "+ Plan" to ListStatus.PLAN_TO_WATCH)) {
+            Text(
+                label,
+                color = k.accentHi,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clip(RoundedCornerShape(12.dp)).border(1.dp, k.accent.copy(alpha = .5f), RoundedCornerShape(12.dp))
+                    .clickable(role = Role.Button) { onAdd(stub, st) }
+                    .semantics { contentDescription = if (st == ListStatus.WATCHING) "Add as Watching" else "Add as Plan to watch" }
+                    .padding(horizontal = 9.dp, vertical = 2.dp),
+            )
+        }
     }
 }
 
@@ -363,14 +390,14 @@ private fun SeasonPicker(ui: AiringUi, current: String, onPick: (Int) -> Unit) {
 
 /** The season grid, two cards a row: cover, title, meta, when; the list's shows lit. */
 @Composable
-private fun Grid(cards: List<AiringCard>, onShow: (UInt) -> Unit) {
+private fun Grid(cards: List<AiringCard>, onShow: (UInt) -> Unit, onAdd: (TitleStub, ListStatus) -> Unit = { _, _ -> }) {
     val k = Kotora.colors
     if (cards.isEmpty()) {
         Empty("No anime with these filters", "Try Everything, or All types.")
         return
     }
     LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(cards, key = { it.id.toLong() }) { c -> SeasonCard(c, onShow) }
+        items(cards, key = { it.id.toLong() }) { c -> SeasonCard(c, onShow, onAdd) }
         item(span = { GridItemSpan(maxLineSpan) }) {
             Text("Times are estimated; ~ marks estimated counts", color = k.faint, fontSize = 11.sp, modifier = Modifier.fillMaxWidth().padding(8.dp), textAlign = TextAlign.Center)
         }
@@ -378,12 +405,12 @@ private fun Grid(cards: List<AiringCard>, onShow: (UInt) -> Unit) {
 }
 
 @Composable
-private fun SeasonCard(c: AiringCard, onShow: (UInt) -> Unit) {
+private fun SeasonCard(c: AiringCard, onShow: (UInt) -> Unit, onAdd: (TitleStub, ListStatus) -> Unit) {
     val k = Kotora.colors
     val shape = RoundedCornerShape(10.dp)
     Column(
         Modifier.clip(shape).background(k.surface, shape).border(1.dp, if (c.lit) k.accent.copy(alpha = .55f) else k.border, shape)
-            .then(if (c.status != null) Modifier.clickable { onShow(c.id) } else Modifier),
+            .clickable { if (c.status == null) Stubs.put(stub(c.id, c.title, c.coverUrl)); onShow(c.id) },
     ) {
         Box(Modifier.fillMaxWidth().height(120.dp).background(tileBrush(c.id.toInt())), contentAlignment = Alignment.Center) {
             Text(initials(c.title), color = Color.White.copy(alpha = .92f), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
@@ -395,6 +422,25 @@ private fun SeasonCard(c: AiringCard, onShow: (UInt) -> Unit) {
             Text(c.meta, color = k.faint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (c.`when`.isNotEmpty()) Text(c.`when`, color = if (c.lit) k.accentHi else k.dim, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             c.toWatch?.let { Text(it, color = if (it.contains("to watch")) k.text else k.faint, fontSize = 11.sp) }
+            if (c.status == null) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) { AiringAddRow(stub(c.id, c.title, c.coverUrl), onAdd) }
         }
+    }
+}
+
+/** The season card's "+ Watching" / "+ Plan", side by side. */
+@Composable
+private fun AiringAddRow(stub: TitleStub, onAdd: (TitleStub, ListStatus) -> Unit) {
+    val k = Kotora.colors
+    for ((label, st) in listOf("+ Watching" to ListStatus.WATCHING, "+ Plan" to ListStatus.PLAN_TO_WATCH)) {
+        Text(
+            label,
+            color = k.accentHi,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.clip(RoundedCornerShape(12.dp)).border(1.dp, k.accent.copy(alpha = .5f), RoundedCornerShape(12.dp))
+                .clickable(role = Role.Button) { onAdd(stub, st) }
+                .semantics { contentDescription = if (st == ListStatus.WATCHING) "Add as Watching" else "Add as Plan to watch" }
+                .padding(horizontal = 9.dp, vertical = 3.dp),
+        )
     }
 }

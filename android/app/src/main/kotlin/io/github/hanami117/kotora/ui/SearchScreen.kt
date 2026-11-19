@@ -1,5 +1,6 @@
 package io.github.hanami117.kotora.ui
 
+import io.github.hanami117.kotora.core.TitleStub
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -168,6 +169,11 @@ fun SearchScreen(
     onPlusOne: (ListRow) -> Unit,
     onOpen: (ListRow) -> Unit,
     onAdd: (Hit, ListStatus) -> Unit,
+    /** A service result: its details page. */
+    onOpenHit: (Hit) -> Unit = {},
+    /** A pasted MyAnimeList/AniList link or a bare id in the box (the active service's). */
+    pastedId: (MediaKind, String) -> UInt? = { _, _ -> null },
+    onOpenId: (MediaKind, UInt) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val k = Kotora.colors
@@ -197,6 +203,23 @@ fun SearchScreen(
                 }
                 return@LazyColumn
             }
+            pastedId(s.kind, q)?.let { id ->
+                item(key = "id-line") {
+                    val known = s.mine.firstOrNull { it.id == id }?.title ?: s.hits.firstOrNull { it.id == id }?.title
+                    val what = known?.let { "$service #$id: $it" } ?: "$service #$id"
+                    Row(
+                        Modifier.fillMaxWidth().height(44.dp).clickable {
+                            s.hits.firstOrNull { it.id == id }?.let { Stubs.put(it.stub()) }
+                            onOpenId(s.kind, id)
+                        }.semantics { contentDescription = "Open $service ${if (s.kind == MediaKind.MANGA) "manga" else "anime"} $id" }.padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("→", color = k.accentHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Open $what", color = k.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
             val mine = s.onList
             item { Head("On your list · ${mine.size}", null) }
             if (mine.isEmpty()) item { Note("Nothing on your list matches “$q”.") }
@@ -224,7 +247,7 @@ fun SearchScreen(
                     Note(if (s.hits.isEmpty()) "$service found nothing for “$q”." else "Everything $service found is on your list already.")
                 }
                 else -> items(fresh, key = { "hit-${it.kind}-${it.id}" }) { h ->
-                    HitRow(h) { onAdd(h, it) }
+                    Box(Modifier.clickable { onOpenHit(h) }) { HitRow(h) { onAdd(h, it) } }
                     HorizontalDivider(color = k.border)
                 }
             }
@@ -336,3 +359,6 @@ fun HitRow(hit: Hit, add: (ListStatus) -> Unit) {
         }
     }
 }
+
+/** What the details page shows before the service answers. */
+fun Hit.stub() = TitleStub(kind, id, title, coverUrl, format, episodes)

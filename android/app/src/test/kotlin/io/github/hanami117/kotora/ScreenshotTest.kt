@@ -42,6 +42,10 @@ import io.github.hanami117.kotora.ui.Shelves
 import io.github.hanami117.kotora.ui.AiringScreen
 import io.github.hanami117.kotora.ui.AiringUi
 import io.github.hanami117.kotora.ui.DetailsScreen
+import io.github.hanami117.kotora.ui.DetailsInfoUi
+import io.github.hanami117.kotora.ui.NotOnListScreen
+import io.github.hanami117.kotora.data.sampleDetails
+import io.github.hanami117.kotora.core.TitleStub
 import io.github.hanami117.kotora.ui.IntroOverlay
 import io.github.hanami117.kotora.ui.ListScreen
 import io.github.hanami117.kotora.ui.ProfileScreen
@@ -339,4 +343,19 @@ class ScreenshotTest {
     @Test fun fillPreviewDark() = shot("fill-preview", true) { FillVolumesPreview(fillPreview) }
     @Test fun fillPreviewLight() = shot("fill-preview", false) { FillVolumesPreview(fillPreview) }
     @Test fun fillDoneLight() = shot("fill-done", false) { FillVolumesPreview(fillPreview, queued = 2u) }
+
+    // Batch B: the service's details, and a title not on the list.
+    private fun detailsInfo(name: String, dark: Boolean, id: UInt) = shot(name, dark) {
+        val row = runBlocking { repo.entry(MediaKind.ANIME, id) }
+        DetailsScreen(row, account, {}, {}, info = DetailsInfoUi(sampleDetails(MediaKind.ANIME, id, row?.let { it.title to it.coverUrl }, true)))
+    }
+    @Test fun detailsInfoDark() = detailsInfo("details-info", true, 7u)
+    @Test fun detailsInfoLight() = detailsInfo("details-info", false, 7u)
+    private fun notOnList(name: String, dark: Boolean, ui: DetailsInfoUi) = shot(name, dark) {
+        NotOnListScreen(MediaKind.ANIME, 9102u, TitleStub(MediaKind.ANIME, 9102u, "Lanterns of Kirigaoka 2nd Season", null, "tv", 12u), ui, account, {}, { _, _ -> }, {})
+    }
+    @Test fun notOnListDark() = notOnList("details-not-on-list", true, DetailsInfoUi(sampleDetails(MediaKind.ANIME, 9102u, "Lanterns of Kirigaoka 2nd Season" to null, false)))
+    @Test fun notOnListLight() = notOnList("details-not-on-list", false, DetailsInfoUi(sampleDetails(MediaKind.ANIME, 9102u, "Lanterns of Kirigaoka 2nd Season" to null, false)))
+    @Test fun notOnListLoadingDark() = notOnList("details-loading", true, DetailsInfoUi(loading = true))
+    @Test fun notOnListOfflineDark() = notOnList("details-offline", true, DetailsInfoUi(error = "Can't reach MyAnimeList."))
 }
