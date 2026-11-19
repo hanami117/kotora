@@ -1,6 +1,7 @@
 package io.github.hanami117.kotora.data
 
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.BackgroundReport
 import io.github.hanami117.kotora.core.AiringMine
 import io.github.hanami117.kotora.core.AiringType
 import io.github.hanami117.kotora.core.AiringWeek
@@ -50,6 +51,10 @@ interface Repository {
     /** Network. */
     suspend fun signInFinish(pending: PendingSignIn, redirect: String): Account
     suspend fun signOut(service: Service)
+    /** Show the lists of another signed-in account (MyAnimeList and AniList can both be signed in). */
+    suspend fun setActive(service: Service)
+    /** Network: the background run (the queue, then the list when it is an hour old). */
+    suspend fun backgroundRefresh(): BackgroundReport
 
     /** The Airing page's week, from the saved seasons and the list. Local. */
     suspend fun airingWeek(type: AiringType, mine: AiringMine): AiringWeek

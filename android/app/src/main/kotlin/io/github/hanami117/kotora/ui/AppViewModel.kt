@@ -67,6 +67,8 @@ data class ListUi(
     /** The last sync's problem ("Can't reach MyAnimeList."), shown in the sync line. */
     val problem: String? = null,
     val loaded: Boolean = false,
+    /** The last sync couldn't reach the service (the queue page's offline notice). */
+    val offline: Boolean = false,
 )
 
 /** The Airing page: the week (local, from the saved seasons), its filters, the fetch. */
@@ -229,12 +231,14 @@ class AppViewModel(
             try {
                 r.flush()
                 r.sync()
-                list = list.copy(problem = null)
+                list = list.copy(problem = null, offline = false)
                 expired = null
                 (session as? Session.SignedIn)?.let { session = Session.SignedIn(r.accounts()) }
             } catch (e: KotoraException.SignInAgain) {
                 expired = (session as? Session.SignedIn)?.active?.service
                 list = list.copy(problem = "Sign in again: the service no longer accepts Kotora's sign-in.")
+            } catch (e: KotoraException.Offline) {
+                list = list.copy(problem = message(e), offline = true)
             } catch (e: Exception) {
                 list = list.copy(problem = message(e))
             }
@@ -368,10 +372,10 @@ class AppViewModel(
                 saved[PENDING_URL] = p.url
                 saved[PENDING_STATE] = p.state
                 saved[PENDING_VERIFIER] = p.verifier
-                session = Session.SignedOut()
+                if (!signedIn) session = Session.SignedOut()
                 urls.send(p.url)
             } catch (e: Exception) {
-                session = Session.SignedOut(error = message(e))
+                fail(message(e))
             }
         }
     }
@@ -397,18 +401,42 @@ class AppViewModel(
         val p = pending()?.takeIf { it.service == service }
             ?: if (service == Service.ANI_LIST) PendingSignIn(service, "", "", "") else null
         if (p == null) {
-            session = Session.SignedOut(error = "That sign-in was started before Kotora restarted. Sign in again.")
+            fail("That sign-in was started before Kotora restarted. Sign in again.")
             return
         }
         clearPending()
-        session = Session.SignedOut(busy = true)
+        val adding = signedIn
+        if (adding) viewModelScope.launch { snacks.send(Snack("Signing in to ${serviceTitle(service)}…")) } else session = Session.SignedOut(busy = true)
         viewModelScope.launch {
             try {
-                r.signInFinish(p, redirect)
+                val a = r.signInFinish(p, redirect)
                 if (expired == service) expired = null
+                if (adding) snacks.send(Snack("Signed in to ${serviceTitle(service)} as ${a.userName}."))
                 start()
             } catch (e: Exception) {
-                session = Session.SignedOut(error = message(e))
+                fail(message(e))
+            }
+        }
+    }
+
+    private val signedIn: Boolean get() = session is Session.SignedIn
+
+    /** A sign-in problem: on the sign-in page when signed out, at the bottom when adding an account or signing in again. */
+    private fun fail(text: String) {
+        if (signedIn) viewModelScope.launch { snacks.send(Snack(text)) } else session = Session.SignedOut(error = text)
+    }
+
+    /** Show the lists of another signed-in account (MyAnimeList and AniList can both be signed in). */
+    fun setActive(service: Service) {
+        val r = repo ?: return
+        if (service == (session as? Session.SignedIn)?.active?.service) return
+        viewModelScope.launch {
+            try {
+                r.setActive(service)
+                list = ListUi(kind = if (list.kind == MediaKind.MANGA && mangaEnabled) MediaKind.MANGA else MediaKind.ANIME)
+                start()
+            } catch (e: Exception) {
+                snacks.send(Snack(message(e)))
             }
         }
     }

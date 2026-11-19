@@ -52,6 +52,7 @@ fun SettingsScreen(
     onQueue: (() -> Unit)? = null,
 ) {
     val k = Kotora.colors
+    val menu = LocalAccounts.current
     Column(modifier.fillMaxSize().background(k.bg).verticalScroll(rememberScrollState())) {
         TopBar("Settings", accounts.firstOrNull { it.active }, false, null)
         SectionLabel("Account")
@@ -61,7 +62,16 @@ fun SettingsScreen(
                     if (i > 0) HorizontalDivider(color = k.border)
                     Item(serviceTitle(a.service), if (a.active) "${a.userName} · shown" else a.userName) {
                         if (sample) KButton("Leave", onLeaveSample, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
-                        else KButton("Sign out", { onSignOut(a.service) }, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
+                        else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (!a.active && menu != null) KButton("Show", { menu.onShow(a.service) }, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
+                            KButton("Sign out", { onSignOut(a.service) }, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
+                        }
+                    }
+                }
+                for (other in menu?.others.orEmpty()) {
+                    HorizontalDivider(color = k.border)
+                    Item(serviceTitle(other), "Not signed in") {
+                        KButton("Sign in", { menu?.onSignIn(other) }, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp, enabled = menu?.canSignIn(other) == true)
                     }
                 }
                 if (onProfile != null && accounts.isNotEmpty()) {

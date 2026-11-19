@@ -55,6 +55,10 @@ fun QueueScreen(
     onSyncNow: () -> Unit,
     onAction: (QueueAction, QueueItem) -> Unit,
     modifier: Modifier = Modifier,
+    expired: io.github.hanami117.kotora.core.Service? = null,
+    offline: Boolean = false,
+    waiting: UInt = 0u,
+    onSignIn: (io.github.hanami117.kotora.core.Service) -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
@@ -68,7 +72,23 @@ fun QueueScreen(
         }
         HorizontalDivider(color = k.border)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
-            if (problem != null) {
+            // The desktop's notices: an expired sign-in, offline with changes waiting.
+            if (expired != null) {
+                SignInAgainBanner(expired, onSignIn, Modifier.padding(top = 6.dp), waiting = waiting)
+            } else if (offline && waiting > 0u) {
+                val shape = RoundedCornerShape(10.dp)
+                Row(
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth()
+                        .background(k.onHold.copy(alpha = .10f), shape).border(1.dp, k.onHold.copy(alpha = .4f), shape)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("You are offline. Your changes are kept here and go out when $service answers again.", color = k.text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    KButton("Try now", onSyncNow, height = 34.dp, fontSize = 13.sp)
+                }
+            }
+            if (problem != null && expired == null && !offline) {
                 Text(
                     problem,
                     color = k.dropped,
@@ -138,7 +158,10 @@ private fun QueueLine(item: QueueItem, now: Long, onAction: (QueueAction, QueueI
         }
         Box(Modifier.align(Alignment.CenterVertically)) {
             when {
-                item.removed && (item.state == QueueState.WAITING || item.state == QueueState.FAILED) -> QueueButton("Undo") { onAction(QueueAction.DISCARD, item) }
+                item.removed && (item.state == QueueState.WAITING || item.state == QueueState.FAILED) -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (item.state == QueueState.WAITING) QueuePill("Waiting", k.onHold)
+                    QueueButton("Undo") { onAction(QueueAction.DISCARD, item) }
+                }
                 item.state == QueueState.FAILED -> QueueButton("Discard") { onAction(QueueAction.DISCARD, item) }
                 item.state == QueueState.SENT -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Icon(KIcons.Check, null, tint = k.watching, modifier = Modifier.size(14.dp))

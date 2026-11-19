@@ -218,6 +218,25 @@ class ScreenshotTest {
     @Test fun queueDark() = queue("queue", true)
     @Test fun queueLight() = queue("queue", false)
     @Test fun queueEmptyDark() = queue("queue-empty", true, empty = true)
+    @Test fun queueOfflineDark() = shot("queue-offline", true) {
+        QueueScreen(runBlocking { editing.queueItems() }, "MyAnimeList", now, "Can't reach MyAnimeList. Showing your saved list.", false, {}, {}, { _, _ -> }, offline = true, waiting = 2u)
+    }
+    @Test fun queueExpiredLight() = shot("queue-expired", false) {
+        QueueScreen(runBlocking { editing.queueItems() }, "MyAnimeList", now, "Sign in again.", false, {}, {}, { _, _ -> }, expired = Service.MAL, waiting = 2u)
+    }
+
+    // AN-5: both accounts signed in, Show / Sign in in Settings.
+    private val two = listOf(account, Account(Service.ANI_LIST, "sample-ani", null, false))
+    @Test fun settingsTwoAccountsDark() = shot("settings-accounts", true) {
+        androidx.compose.runtime.CompositionLocalProvider(io.github.hanami117.kotora.ui.LocalAccounts provides io.github.hanami117.kotora.ui.Accounts(two, false, { true }, {}, {})) {
+            SettingsScreen(two, true, 3u, "0.5.0", false, {}, {}, {})
+        }
+    }
+    @Test fun settingsOneAccountLight() = shot("settings-signin", false) {
+        androidx.compose.runtime.CompositionLocalProvider(io.github.hanami117.kotora.ui.LocalAccounts provides io.github.hanami117.kotora.ui.Accounts(listOf(account), false, { true }, {}, {})) {
+            SettingsScreen(listOf(account), true, 0u, "0.5.0", false, {}, {}, {})
+        }
+    }
     @Test fun settingsQueueDark() = shot("settings-queue", true) { SettingsScreen(listOf(account), true, 2u, "0.5.0", false, {}, {}, {}, conflicts = 1u, onQueue = {}) }
 
     private fun search(name: String, dark: Boolean, text: String, kind: MediaKind = MediaKind.ANIME, pending: Boolean = false) = shot(name, dark) {

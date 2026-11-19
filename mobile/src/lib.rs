@@ -802,3 +802,7 @@ mod tests;
 mod links;
 mod profile;
 mod listopts;
+
+/// The background refresh (queue + list), and the activity-log check.
+mod background;
+pub use background::*;

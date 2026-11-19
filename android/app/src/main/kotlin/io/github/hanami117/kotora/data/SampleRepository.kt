@@ -1,6 +1,7 @@
 package io.github.hanami117.kotora.data
 
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.BackgroundReport
 import io.github.hanami117.kotora.core.AiringDay
 import io.github.hanami117.kotora.core.AiringMine
 import io.github.hanami117.kotora.core.AiringSlot
@@ -88,6 +89,8 @@ class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, Acc
     override suspend fun signInStart(service: Service): PendingSignIn = throw KotoraException.NoClientId("Sample data: no sign-in.")
     override suspend fun signInFinish(pending: PendingSignIn, redirect: String): Account = throw KotoraException.NoClientId("Sample data: no sign-in.")
     override suspend fun signOut(service: Service) {}
+    override suspend fun setActive(service: Service) {}
+    override suspend fun backgroundRefresh() = BackgroundReport(flush(), false, false, null)
 
     private var notify = NotifySettings(startedAiring = true, newEpisode = true, newChapter = false)
 

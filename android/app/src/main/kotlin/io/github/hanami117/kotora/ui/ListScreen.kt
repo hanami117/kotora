@@ -154,7 +154,7 @@ fun TopBar(title: String, account: Account?, syncing: Boolean, onSync: (() -> Un
                 }
             }
         }
-        if (account != null) Avatar(account)
+        if (account != null) AccountMenu(account)
     }
 }
 

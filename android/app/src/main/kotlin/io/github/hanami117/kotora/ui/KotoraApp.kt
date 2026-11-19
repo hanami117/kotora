@@ -25,6 +25,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -129,6 +130,8 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
         },
         bottomBar = { if (topLevel) BottomNav(nav, route ?: Tab.HOME.route, vm.list.kind, vm.list.waiting) },
     ) { pad ->
+        val accounts = Accounts(s.accounts, vm.isSample, vm::hasClientId, vm::setActive, vm::signIn)
+        CompositionLocalProvider(LocalAccounts provides accounts) {
         NavHost(nav, startDestination = Tab.HOME.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
             composable(Tab.HOME.route) {
                 var shelves by remember { mutableStateOf(Shelves()) }
@@ -259,6 +262,10 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onSyncNow = vm::syncNow,
                     onAction = { a, item -> vm.queue(a, item) },
                     modifier = Modifier.navigationBarsPadding(),
+                    expired = vm.expired,
+                    offline = vm.list.offline,
+                    waiting = vm.list.waiting,
+                    onSignIn = vm::signIn,
                 )
             }
             composable("edit/{kind}/{id}") { back ->
@@ -349,6 +356,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     }
                 }
             }
+        }
         }
     }
 }

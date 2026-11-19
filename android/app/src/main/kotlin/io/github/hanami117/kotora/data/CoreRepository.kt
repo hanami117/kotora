@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import io.github.hanami117.kotora.BuildConfig
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.BackgroundReport
 import io.github.hanami117.kotora.core.AiringMine
 import io.github.hanami117.kotora.core.AiringType
 import io.github.hanami117.kotora.core.AiringWeek
@@ -77,6 +78,8 @@ class CoreRepository(context: Context) : Repository, AccountRepository, ListPage
     override suspend fun signInStart(service: Service): PendingSignIn = io { kotora.signInStart(service) }
     override suspend fun signInFinish(pending: PendingSignIn, redirect: String): Account = io { kotora.signInFinish(pending, redirect) }
     override suspend fun signOut(service: Service) = io { kotora.signOut(service) }
+    override suspend fun setActive(service: Service) = io { kotora.setActiveService(service) }
+    override suspend fun backgroundRefresh(): BackgroundReport = io { kotora.backgroundRefresh() }
     override suspend fun airingWeek(type: AiringType, mine: AiringMine): AiringWeek = io { kotora.airingWeek(type, mine) }
     override suspend fun airingFetch(force: Boolean): Boolean = io { kotora.airingFetch(force) }
     override suspend fun notifySettings(): NotifySettings = io { kotora.notifySettings() }

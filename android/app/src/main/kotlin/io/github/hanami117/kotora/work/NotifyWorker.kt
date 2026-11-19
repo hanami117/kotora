@@ -25,11 +25,25 @@ import java.util.concurrent.TimeUnit
  *   older than their 4 hours.
  *
  * Each is announced once, whatever the switches say; the switches only decide what shows.
+ *
+ * It is also the app's one periodic background job for the list (no second scheduler): with a
+ * network, the waiting changes go and the list is fetched again once the saved copy is an hour
+ * old (`background_refresh` in kotora-mobile), before the notes look at it. The desktop fetches
+ * the list each time it starts; a suspended phone app gets this instead. [FlushWorker] still
+ * sends each edit at once.
  */
 class NotifyWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val repo = (applicationContext as KotoraApplication).repository ?: return Result.success()
         if (repo.isSample) return Result.success()
+        if (online(applicationContext)) {
+            try {
+                val r = repo.backgroundRefresh()
+                Log.i("kotora", "background: sent ${r.flush.sent}, waiting ${r.flush.waiting}, list ${if (r.synced) "fetched" else "kept"}${r.problem?.let { " ($it)" } ?: ""}")
+            } catch (e: Exception) {
+                Log.w("kotora", "background refresh: ${e.message}")
+            }
+        }
         try {
             Notifier.show(applicationContext, repo.airNotes())
         } catch (e: Exception) {
