@@ -89,6 +89,7 @@ final class SampleRepository: Repository, @unchecked Sendable {
         throw KotoraError.NoClientId(message: "Sample data: no sign-in.")
     }
     func signOut(_ service: Service) async throws {}
+    func setActive(_ service: Service) async throws {}
 
     /// As the core: a rewatch (status Completed) shows under Watching too.
     static func showsIn(_ r: Row, _ page: ListStatus) -> Bool { r.status == page || (page == .watching && r.rewatching) }

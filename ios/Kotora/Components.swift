@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// The mockup's cover tile: a 160° gradient from two colours picked from the id, with initials
@@ -43,6 +44,37 @@ struct AppBar<Trailing: View>: View {
             trailing
         }
         .padding(.leading, 16).padding(.trailing, 12).frame(height: 56)
+    }
+}
+
+/// The profile button in the app bars: the active account's avatar, opening a menu to switch to
+/// the other signed-in account or sign in to the other service (both can be signed in, as on the desktop).
+struct AccountMenu: View {
+    @Environment(\.webAuthenticationSession) private var auth
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let active = model.session.active {
+            let accounts = model.session.accounts
+            Menu {
+                Section("Accounts") {
+                    ForEach(accounts, id: \.service) { a in
+                        Button { model.setActive(a.service) } label: {
+                            Label("\(a.userName) · \(a.service.label)", systemImage: a.active ? "checkmark" : "person.crop.circle")
+                        }
+                    }
+                }
+                if !model.isSample {
+                    ForEach([Service.mal, .aniList].filter { s in !accounts.contains { $0.service == s } }, id: \.self) { s in
+                        Button { model.signIn(s, with: auth) } label: { Label("Sign in with \(s.label)", systemImage: "plus") }
+                            .disabled(!model.hasClientId(s))
+                    }
+                }
+            } label: {
+                Avatar(account: active).contentShape(Circle()).frame(width: 44, height: 44)
+            }
+            .accessibilityIdentifier("accountMenu")
+        }
     }
 }
 

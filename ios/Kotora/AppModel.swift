@@ -221,14 +221,14 @@ final class AppModel: ObservableObject {
             do {
                 let p = try await r.signInStart(service)
                 pending = p
-                session = .signedOut()
+                if !signedIn { session = .signedOut() }
                 guard let url = URL(string: p.url) else { throw KotoraError.Other(message: "The sign-in page's address is broken.") }
                 let back = try await auth.authenticate(using: url, callbackURLScheme: Self.redirectScheme, preferredBrowserSession: .shared)
                 finishSignIn(back.absoluteString)
             } catch let e as ASWebAuthenticationSessionError where e.code == .canceledLogin {
                 pending = nil // closed by the user: back to the buttons, no message
             } catch {
-                session = .signedOut(error: message(of: error))
+                fail(message(of: error))
             }
         }
     }
@@ -242,17 +242,39 @@ final class AppModel: ObservableObject {
         let p = pending.flatMap { $0.service == service ? $0 : nil }
             ?? (service == .aniList ? PendingSignIn(service: .aniList, url: "", state: "", verifier: "") : nil)
         guard let p else {
-            session = .signedOut(error: "That sign-in was started before Kotora restarted. Sign in again.")
+            fail("That sign-in was started before Kotora restarted. Sign in again.")
             return
         }
         pending = nil
-        session = .signedOut(busy: true)
+        if signedIn { snack = Snack(text: "Signing in to \(service.label)…") } else { session = .signedOut(busy: true) }
         Task {
             do {
-                _ = try await r.signInFinish(p, redirect: redirect)
+                let a = try await r.signInFinish(p, redirect: redirect)
+                if signedIn { snack = Snack(text: "Signed in to \(service.label) as \(a.userName).") }
                 await start()
             } catch {
-                session = .signedOut(error: message(of: error))
+                fail(message(of: error))
+            }
+        }
+    }
+
+    private var signedIn: Bool { if case .signedIn = session { return true } else { return false } }
+
+    /// A sign-in problem: on the sign-in page when signed out, at the bottom when adding a second account.
+    private func fail(_ text: String) {
+        if signedIn { snack = Snack(text: text) } else { session = .signedOut(error: text) }
+    }
+
+    /// Show the lists of another signed-in account (MyAnimeList and AniList can both be signed in).
+    func setActive(_ service: Service) {
+        guard let r = repo, service != session.active?.service else { return }
+        Task {
+            do {
+                try await r.setActive(service)
+                list = ListUi(kind: list.kind == .manga && mangaEnabled ? .manga : .anime)
+                await start()
+            } catch {
+                snack = Snack(text: message(of: error))
             }
         }
     }

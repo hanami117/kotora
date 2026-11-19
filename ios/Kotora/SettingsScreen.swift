@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// M2's settings, as on Android: the account (sign out), the waiting changes, Manga lists, About.
@@ -5,12 +6,13 @@ import SwiftUI
 struct SettingsScreen: View {
     @Environment(\.palette) private var p
     @EnvironmentObject private var model: AppModel
+    @Environment(\.webAuthenticationSession) private var auth
 
     var body: some View {
         let accounts = model.session.accounts
         let waiting = model.list.waiting
         VStack(spacing: 0) {
-            AppBar(title: "Settings") { if let a = model.session.active { Avatar(account: a) } }
+            AppBar(title: "Settings") { AccountMenu() }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionTitle(text: "Account")
@@ -22,7 +24,17 @@ struct SettingsScreen: View {
                                 if model.isSample {
                                     smallButton("Leave") { model.leaveSample() }
                                 } else {
-                                    smallButton("Sign out") { model.signOut(a.service) }
+                                    HStack(spacing: 8) {
+                                        if !a.active { smallButton("Show") { model.setActive(a.service) } }
+                                        smallButton("Sign out") { model.signOut(a.service) }
+                                    }
+                                }
+                            }
+                        }
+                        if !model.isSample {
+                            ForEach([Service.mal, .aniList].filter { s in !accounts.contains { $0.service == s } }, id: \.self) { s in
+                                ListLine(title: s.label, subtitle: "Not signed in") { EmptyView() } trailing: {
+                                    smallButton("Sign in") { model.signIn(s, with: auth) }.disabled(!model.hasClientId(s))
                                 }
                             }
                         }

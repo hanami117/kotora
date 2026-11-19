@@ -167,7 +167,7 @@ struct Placeholder: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppBar(title: title) { if let account { Avatar(account: account) } }
+            AppBar(title: title) { AccountMenu() }
             Text(text).font(Inter.regular(15)).foregroundStyle(p.faint).multilineTextAlignment(.center)
                 .padding(.horizontal, 32).padding(.top, 48)
             Spacer()

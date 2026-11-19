@@ -19,7 +19,7 @@ struct ListScreen: View {
                 }
                 .disabled(ui.syncing)
                 .accessibilityLabel("Sync now")
-                if let a = model.session.active { Avatar(account: a) }
+                AccountMenu()
             }
             Segmented(items: [(MediaKind.anime, "Anime"), (.manga, "Manga")],
                       selection: Binding(get: { ui.kind }, set: { model.select(kind: $0) }))

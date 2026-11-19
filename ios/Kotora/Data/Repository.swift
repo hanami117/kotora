@@ -32,6 +32,8 @@ protocol Repository: AnyObject, Sendable {
     /// Network.
     func signInFinish(_ pending: PendingSignIn, redirect: String) async throws -> Account
     func signOut(_ service: Service) async throws
+    /// Which signed-in account the lists show (the core keeps it).
+    func setActive(_ service: Service) async throws
 }
 
 /// The text to show for an error from the core (its `Display` words) or from the system.

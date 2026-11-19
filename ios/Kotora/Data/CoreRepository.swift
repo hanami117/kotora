@@ -79,6 +79,7 @@ final class CoreRepository: Repository, @unchecked Sendable {
     func signInFinish(_ pending: PendingSignIn, redirect: String) async throws -> Account {
         try await io { try self.kotora.signInFinish(pending: pending, redirect: redirect) }
     }
+    func setActive(_ service: Service) async throws { try await io { try self.kotora.setActiveService(service: service) } }
     func signOut(_ service: Service) async throws {
         try await io { try self.kotora.signOut(service: service) }
         URLCache.shared.removeAllCachedResponses() // the covers and the avatar
