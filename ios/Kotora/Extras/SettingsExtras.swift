@@ -74,6 +74,9 @@ struct SettingsExtras: View {
                 .padding(.horizontal, 16).padding(.top, 6)
             }
 
+            // Export / Import MyAnimeList XML (TransferScreen.swift).
+            TransferSection()
+
             if model.mangaEnabled && !model.isSample {
                 SectionTitle(text: "Manga")
                 Card {
