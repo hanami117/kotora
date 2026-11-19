@@ -4,3 +4,8 @@
 .DS_Store
 .idea/
 .vscode/
+
+# Android release signing: never in the repo
+*.jks
+*.keystore
+signing.properties

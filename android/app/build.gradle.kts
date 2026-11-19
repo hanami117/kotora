@@ -1,4 +1,5 @@
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
+import java.util.Properties
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
 
@@ -31,6 +32,23 @@ fun clientId(prop: String, env: String): String =
 val malClientId = clientId("kotora.malClientId", "KOTORA_ANDROID_MAL_CLIENT_ID")
 val anilistClientId = clientId("kotora.anilistClientId", "KOTORA_ANDROID_ANILIST_CLIENT_ID")
 
+// Release signing, never in the repo. Either the environment (CI: the keystore decoded from a
+// secret) or a properties file outside the checkout given with -Pkotora.signing=/path/signing.properties
+// (keys storeFile, storePassword, keyAlias, keyPassword). Neither: the release APK is unsigned.
+val signingProps: Map<String, String> = run {
+    val env = mapOf(
+        "storeFile" to System.getenv("KOTORA_ANDROID_KEYSTORE"),
+        "storePassword" to System.getenv("KOTORA_ANDROID_KEYSTORE_PASSWORD"),
+        "keyAlias" to System.getenv("KOTORA_ANDROID_KEY_ALIAS"),
+        "keyPassword" to System.getenv("KOTORA_ANDROID_KEY_PASSWORD"),
+    )
+    if (env.values.all { !it.isNullOrBlank() }) return@run env.mapValues { it.value!! }
+    val file = (findProperty("kotora.signing") as String?)?.let(::File) ?: return@run emptyMap()
+    val p = Properties().apply { file.inputStream().use { load(it) } }
+    p.stringPropertyNames().associateWith { p.getProperty(it).trim() }
+}
+val canSignRelease = listOf("storeFile", "storePassword", "keyAlias", "keyPassword").all { !signingProps[it].isNullOrBlank() }
+
 // The ABIs the Rust library is built for: arm64-v8a (phones) and x86_64 (emulators, Chromebooks).
 // -Pkotora.abis=arm64-v8a builds one, for a faster local build.
 val rustAbis: List<String> =
@@ -62,6 +80,20 @@ android {
         localeFilters += "en"
     }
 
+    signingConfigs {
+        if (canSignRelease) {
+            create("release") {
+                storeFile = file(signingProps.getValue("storeFile"))
+                storePassword = signingProps.getValue("storePassword")
+                keyAlias = signingProps.getValue("keyAlias")
+                keyPassword = signingProps.getValue("keyPassword")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -70,6 +102,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (canSignRelease) signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
