@@ -398,3 +398,94 @@ fn the_match_is_logged_once_per_open() {
     let other = LogKey { path: "/m/Dragon Ball Z v13.cbz".into(), ..first.clone() };
     assert!(log_due(Some(&first), &other), "another file");
 }
+
+// ------------------------------------------------------------------------------------ rereads
+
+#[test]
+fn a_completed_manga_read_again_asks_and_never_starts_by_itself() {
+    let mut s = state();
+    s.prefs.auto = true;
+    fake(&mut s, "Cobalt Postman v04 c031.cbz", 14);
+    assert!(s.reading_offer().is_none(), "everything is read already");
+    assert_eq!(s.reread_offer().map(|(_, o)| o), Some(Offer { chapter: Some(31), volume: Some(3) }));
+    assert!(!s.reading_banner(), "page 14 of 40: not yet");
+    fake(&mut s, "Cobalt Postman v04 c031.cbz", 40);
+    assert!(s.reading_banner() && s.reading.current.as_ref().unwrap().acted, "asked once");
+    let e = entry(&s, 9);
+    assert_eq!((e.status, e.chapters, e.volumes, e.rereading), (Status::Completed, 96, 10, false), "asking changes nothing, even with auto on");
+    assert!(s.reading.current.as_ref().unwrap().marked.is_none());
+    let r = s.ctl_reading().unwrap();
+    assert_eq!((r.offer.as_deref(), r.reread), (Some("Ch 31 and Vol 3"), true));
+}
+
+#[test]
+fn yes_starts_the_reread_there_and_undo_puts_it_back() {
+    let mut s = state();
+    fake(&mut s, "Cobalt Postman v04 c031.cbz", 40);
+    let (title, o) = s.confirm_reading().unwrap();
+    assert_eq!((title.as_str(), o.chapter), ("Cobalt Postman", Some(31)));
+    let e = entry(&s, 9);
+    assert_eq!((e.status, e.chapters, e.volumes, e.rereading, e.times_reread), (Status::Completed, 31, 3, true, 0));
+    assert!(s.reading_banner(), "Undo stays");
+    assert!(s.reread_offer().is_none(), "being reread now");
+    s.undo_reading();
+    let e = entry(&s, 9);
+    assert_eq!((e.status, e.chapters, e.volumes, e.rereading, e.times_reread), (Status::Completed, 96, 10, false, 0));
+    assert!(!s.reading_banner());
+}
+
+#[test]
+fn during_the_reread_chapters_count_and_the_last_ends_it() {
+    let mut s = state();
+    fake(&mut s, "Cobalt Postman c001.cbz", 40);
+    s.confirm_reading().unwrap();
+    assert_eq!((entry(&s, 9).chapters, entry(&s, 9).volumes, entry(&s, 9).rereading), (1, 0, true));
+    s.dismiss_reading();
+    // +1 works, and a chapter read goes through the normal offer.
+    s.manga_plus_one(9).unwrap();
+    assert_eq!(entry(&s, 9).chapters, 2);
+    fake(&mut s, "Cobalt Postman c003.cbz", 40);
+    assert_eq!(s.reading_offer().map(|(_, o)| o.chapter), Some(Some(3)));
+    s.confirm_reading().unwrap();
+    assert_eq!(entry(&s, 9).chapters, 3);
+    // The last chapter: the reread ends, one more in the count, still Completed.
+    fake(&mut s, "Cobalt Postman c096.cbz", 40);
+    s.confirm_reading().unwrap();
+    let e = entry(&s, 9);
+    assert_eq!((e.status, e.chapters, e.rereading, e.times_reread), (Status::Completed, 96, false, 1));
+    // Undo of that last chapter puts the reread back, uncounted.
+    s.undo_reading();
+    let e = entry(&s, 9);
+    assert_eq!((e.chapters, e.rereading, e.times_reread), (3, true, 0));
+}
+
+#[test]
+fn a_reread_of_one_chapter_starts_and_ends_at_once() {
+    let mut s = state();
+    fake(&mut s, "Kumo Atelier.cbz", 40);
+    assert!(s.reread_offer().is_none(), "reading, not completed");
+    s.manga_edit(7, Change { status: Some(Status::Completed), ..Default::default() }).unwrap();
+    s.reading.current = None;
+    fake(&mut s, "Kumo Atelier.cbz", 40);
+    assert_eq!(s.reread_offer().map(|(_, o)| o.chapter), Some(Some(1)), "a one-shot is chapter 1");
+    s.confirm_reading().unwrap();
+    let e = entry(&s, 7);
+    assert_eq!((e.status, e.rereading, e.times_reread), (Status::Completed, false, 1), "the last chapter ends it, counted");
+}
+
+#[test]
+fn not_now_to_a_reread_holds_and_a_manga_not_completed_is_never_asked() {
+    let mut s = state();
+    fake(&mut s, "Cobalt Postman c031.cbz", 40);
+    assert!(s.dismiss_reading());
+    assert!(!s.reading_banner());
+    assert_eq!((entry(&s, 9).chapters, entry(&s, 9).rereading), (96, false));
+    // Reading, on hold, dropped: no reread.
+    fake(&mut s, "Ferris Wheel Diaries c010.cbz", 40);
+    assert!(s.reread_offer().is_none());
+    fake(&mut s, "Rust Belt Saints c010.cbz", 40);
+    assert!(s.reread_offer().is_none());
+    // A chapter past the known count is no reread.
+    fake(&mut s, "Cobalt Postman c200.cbz", 40);
+    assert!(s.reread_offer().is_none() && !s.reading_banner());
+}

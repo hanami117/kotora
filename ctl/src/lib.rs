@@ -495,6 +495,8 @@ pub struct ReadingInfo {
     /// Kotora sends none: open.
     #[serde(default = "yes")]
     pub open: bool,
+    /// `offer` is a reread of a Completed manga ("Reading it again?"), not a chapter to mark.
+    pub reread: bool,
 }
 
 fn yes() -> bool {
@@ -517,6 +519,7 @@ impl Default for ReadingInfo {
             recorded: None,
             dismissed: false,
             open: true,
+            reread: false,
         }
     }
 }

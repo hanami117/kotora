@@ -2,6 +2,16 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Rereads (manga):** when a comic of a manga that is already Completed is read to the end, Kotora asks
+  "Reading it again?" (banner, Now Reading, notification, `kot confirm`) and never starts a reread by itself, even
+  with "Update automatically" on. Yes puts the manga into a reread from that chapter (MyAnimeList `is_rereading`,
+  AniList `REPEATING`), the next chapters count as usual, and the last chapter ends it and adds one to the reread
+  count. Undo puts the entry back. It uses the "Chapter read offered" notification switch. Anime already had this
+  ("Watching it again?").
+
 ## [0.4.4] - 2026-11-18
 
 Small release: you choose what Discord shows in the compact status line. No database change.

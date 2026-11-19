@@ -324,6 +324,14 @@ impl Offer {
     }
 }
 
+impl Offer {
+    /// Where a reread starts, said once: the chapter, else the volume ("Ch 21", "Vol 3"). The
+    /// volume before a chapter's is only kept in the counts.
+    pub fn start_label(&self) -> String {
+        Offer { volume: self.chapter.is_none().then_some(self.volume).flatten(), ..*self }.label()
+    }
+}
+
 /// The offer for `read` on the entry with these counts, if any. Only forward: a chapter above
 /// the chapters read (and not past the known count), a volume above the volumes read (and not
 /// past its count). A whole-volume file gives its volume; a chapter in volume N gives N - 1 (the
@@ -334,6 +342,12 @@ pub fn offer(chapters: u32, chapters_total: Option<u32>, volumes: u32, volumes_t
     let done_volume = if read.volume_file { read.volume } else { read.volume.and_then(|v| v.checked_sub(1)) };
     let volume = done_volume.filter(|v| *v > 0 && *v > volumes && volumes_total.is_none_or(|n| n == 0 || *v <= n));
     (chapter.is_some() || volume.is_some()).then_some(Offer { chapter, volume })
+}
+
+/// What a reread of a Completed manga would start at: the file's chapter (or volume), wherever it
+/// is, as [`offer`] with nothing read yet. Asked about, never marked by itself.
+pub fn reread_offer(chapters_total: Option<u32>, volumes_total: Option<u32>, read: &Read) -> Option<Offer> {
+    offer(0, chapters_total, 0, volumes_total, read)
 }
 
 /// The chapters an offer of `chapter` would skip (first and last), when it is two or more ahead:

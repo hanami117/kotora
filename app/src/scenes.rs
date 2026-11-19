@@ -283,6 +283,18 @@ pub const SCENES: &[Scene] = &[
         reading(s, "Inkwell Cartographers v12 c120.cbz", 40);
         s.go(Page::NowPlaying);
     }),
+    // A completed manga read again: the banner asks "Reading it again?", Now Playing offers the reread.
+    ("now-reading-reread-offer", |s| reading(s, "Cobalt Postman v04 c031.cbz", 40)),
+    ("now-reading-reread-offer-page", |s| {
+        reading(s, "Cobalt Postman v04 c031.cbz", 40);
+        s.go(Page::NowPlaying);
+    }),
+    // "Start reread" pressed: rereading from chapter 31, Undo in the banner.
+    ("now-reading-reread-started", |s| {
+        reading(s, "Cobalt Postman v04 c031.cbz", 40);
+        let _ = s.confirm_reading();
+        s.go(Page::NowPlaying);
+    }),
     // Auto on, but chapter 122 at 119 read: it asks and says what it skips.
     ("now-reading-skip", |s| {
         s.prefs.auto = true;
@@ -3366,6 +3378,10 @@ mod tests {
         let rt = render("now-playing-rewatch-offer", (960.0, 600.0));
         assert!(rt.find("banner/rewatch").is_some() && rt.find("banner/rewatch-ask").is_some() && rt.find("banner/update").is_none());
         assert!(render("now-playing-rewatch-started", (1280.0, 800.0)).find("banner/undo").is_some());
+        let rt = render("now-reading-reread-offer", (960.0, 600.0));
+        assert!(rt.find("rd-banner/reread").is_some() && rt.find("rd-banner/reread-ask").is_some() && rt.find("rd-banner/mark").is_none());
+        assert!(render("now-reading-reread-offer-page", (1280.0, 800.0)).find("rd/reread").is_some());
+        assert!(render("now-reading-reread-started", (1280.0, 800.0)).find("rd-banner/undo").is_some());
         assert!(render("list-rewatching", (1280.0, 800.0)).find("top/extra").is_some());
         assert!(render("list-editor-rewatch", (1280.0, 800.0)).find("ed/rewatch").is_some());
         let rt = render("details-rewatch", (1280.0, 800.0));

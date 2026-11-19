@@ -673,6 +673,9 @@ fn reading_text(r: &ReadingInfo) -> String {
     let mut out = format!("{lead} {}: {} {}{pages}\n  {}\n  {}\n", r.reader, r.title, r.label, r.file, r.matched);
     out.push_str(&match (&r.recorded, &r.offer) {
         (Some(what), _) => format!("  Marked {what} as read.\n"),
+        (None, Some(what)) if r.reread && r.dismissed => format!("  Reading it again? You said not now (kot confirm starts a reread at {what}).\n"),
+        (None, Some(what)) if r.reread && r.finished => format!("  Reading it again? Start a reread at {what}: kot confirm\n"),
+        (None, Some(what)) if r.reread => format!("  A reread at {what} is offered once it is read to the end (kot confirm starts it now).\n"),
         (None, Some(what)) if r.dismissed => format!("  {what} offered; you said not now (kot confirm marks it).\n"),
         (None, Some(what)) if r.finished => format!("  Mark {what} as read? kot confirm\n"),
         (None, Some(what)) => format!("  {what} is offered once it is read to the end (kot confirm marks it now).\n"),
