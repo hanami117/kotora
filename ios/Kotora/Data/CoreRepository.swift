@@ -74,8 +74,23 @@ final class CoreRepository: Repository, @unchecked Sendable {
     func setMangaEnabled(_ on: Bool) async throws { try await io { try self.kotora.setMangaEnabled(on: on) } }
     func plusOne(kind: MediaKind, id: UInt32) async throws -> Edit { try await io { try self.kotora.plusOne(kind: kind, id: id) } }
     func undo(_ edit: Edit) async throws { try await io { try self.kotora.undo(edit: edit) } }
-    func sync() async throws -> SyncReport { try await io { try self.kotora.sync() } }
-    func flush() async throws -> FlushReport { try await io { try self.kotora.flushQueue() } }
+    /// Then the mirror (Mirror edits) reads its list for website edits, at its own pace.
+    func sync() async throws -> SyncReport {
+        try await io {
+            let r = try self.kotora.sync()
+            _ = self.kotora.mirrorRefresh(readList: true)
+            return r
+        }
+    }
+    /// The main queue, then the mirror's part (its adds' ids, its queue): the same run, so the
+    /// Flusher's BGAppRefresh task sends mirrored edits too. The mirror's trouble stays its own.
+    func flush() async throws -> FlushReport {
+        try await io {
+            let r = try self.kotora.flushQueue()
+            _ = self.kotora.mirrorRefresh(readList: false)
+            return r
+        }
+    }
     func signInStart(_ service: Service) async throws -> PendingSignIn { try await io { try self.kotora.signInStart(service: service) } }
     func signInFinish(_ pending: PendingSignIn, redirect: String) async throws -> Account {
         try await io { try self.kotora.signInFinish(pending: pending, redirect: redirect) }

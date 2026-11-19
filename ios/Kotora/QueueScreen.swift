@@ -25,6 +25,8 @@ struct QueueScreen: View {
                 group("Waiting", items.filter { $0.state == .waiting || $0.state == .sending }, count: true)
                 group("Failed", items.filter { $0.state == .failed }, count: true)
                 group("Sent today", items.filter { $0.state == .sent }, count: false)
+                // The mirror's part (Mirror edits), under the main queue as on the desktop.
+                MirrorQueueSection()
             }
             .padding(.bottom, 32)
         }

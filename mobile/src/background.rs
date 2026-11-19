@@ -5,7 +5,8 @@
 //!
 //! One run per wake-up, for every job the app does in the background: the platform's single
 //! periodic task calls [`Kotora::background_refresh`] first, then its own checks (Airing and
-//! Publishing notifications) over the fresh list. No second scheduler.
+//! Publishing notifications) over the fresh list. No second scheduler: the mirror's queue
+//! (Mirror edits) goes in the same run.
 
 use kotora_core::time;
 
@@ -45,15 +46,17 @@ impl Kotora {
             report.flush = self.flush_queue()?;
             report.sign_in_again = report.flush.sign_in_again;
         }
-        if !self.list_sync_due() {
-            return Ok(report);
+        if self.list_sync_due() {
+            match self.sync() {
+                Ok(_) => report.synced = true,
+                Err(KotoraError::SignInAgain) => report.sign_in_again = true,
+                Err(e @ (KotoraError::Offline { .. } | KotoraError::RateLimited)) => report.problem = Some(e.to_string()),
+                Err(e) => return Err(e),
+            }
         }
-        match self.sync() {
-            Ok(_) => report.synced = true,
-            Err(KotoraError::SignInAgain) => report.sign_in_again = true,
-            Err(e @ (KotoraError::Offline { .. } | KotoraError::RateLimited)) => report.problem = Some(e.to_string()),
-            Err(e) => return Err(e),
-        }
+        // The mirror's part (Mirror edits, `mirror.rs`), in the same run: its adds' ids, its
+        // queue, and after a fetch its list (website edits). Its trouble stays its own.
+        let _ = self.mirror_refresh(report.synced);
         Ok(report)
     }
 }

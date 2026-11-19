@@ -40,6 +40,8 @@ struct SettingsScreen: View {
                             }
                         }
                         QueueLink(waiting: waiting)
+                        // Mirror edits to the other service, Beta (MirrorScreen.swift).
+                        MirrorSettingsRow()
                     }
                     Text("Sign out removes this phone's copy of the list, its waiting changes and the sign-in.")
                         .font(Inter.regular(12)).foregroundStyle(p.faint)

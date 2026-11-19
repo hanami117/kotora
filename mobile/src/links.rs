@@ -55,11 +55,13 @@ pub fn support_url() -> String {
 
 #[uniffi::export]
 impl Kotora {
-    /// "Open on …" for an entry of the active service: its page there. (The desktop adds the
-    /// mirror service's page when the mirror is on; phones have no mirror yet.)
+    /// "Open on …" for an entry of the active service: its page there, and with the mirror on
+    /// the mirror service's page too when its id is known (`mirror.rs`).
     pub fn service_links(&self, kind: MediaKind, id: u32) -> Vec<ServiceLink> {
         let Some(service) = self.active() else { return Vec::new() };
-        vec![ServiceLink { service, label: format!("Open on {}", service.id().title()), url: media_url(service, kind, id) }]
+        let mut out = vec![ServiceLink { service, label: format!("Open on {}", service.id().title()), url: media_url(service, kind, id) }];
+        out.extend(self.mirror_service_link(kind, id));
+        out
     }
 }
 

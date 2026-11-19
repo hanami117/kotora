@@ -823,6 +823,8 @@ pub(crate) mod testenv {
 
 mod links;
 mod profile;
+/// Mirror edits (Beta) MyAnimeList <-> AniList, as on the desktop.
+mod mirror;
 /// The details page's service information and the add of a title not on the list.
 mod details;
 pub use details::{InfoFact, InfoStat, PastedId, ServiceDetails, TitleStub};
