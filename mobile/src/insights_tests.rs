@@ -12,7 +12,7 @@ struct Fake(Mutex<HashMap<String, Vec<u8>>>);
 
 impl Platform for Fake {
     fn utc_offset(&self, _at: i64) -> i32 {
-        0
+        crate::testenv::OFFSET
     }
     fn log(&self, _level: LogLevel, _message: String) {}
     fn token_load(&self, s: String) -> Option<Vec<u8>> {
@@ -87,6 +87,7 @@ fn the_desktops_words() {
 #[test]
 fn settings_use_the_desktops_keys() {
     let k = open("settings");
+    let _config = crate::testenv::fresh_config();
     let s = k.settings();
     assert_eq!((s.theme.as_str(), s.intro, s.open_on.as_str(), s.start_mode.as_str()), ("system", true, "home", "last"));
     assert!(s.notify_new_episode && s.notify_started_airing && !s.notify_new_chapter, "the desktop's defaults");

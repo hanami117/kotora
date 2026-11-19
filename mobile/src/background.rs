@@ -76,7 +76,7 @@ mod tests {
 
     impl Platform for Vault {
         fn utc_offset(&self, _at_unix: i64) -> i32 {
-            0
+            crate::testenv::OFFSET
         }
         fn log(&self, _level: LogLevel, _message: String) {}
         fn token_load(&self, service: String) -> Option<Vec<u8>> {
