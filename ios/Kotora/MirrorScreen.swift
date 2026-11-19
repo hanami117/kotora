@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Mirror edits (Beta), as the desktop's Settings → Account row and its Queue part (mirror.rs):
-/// - `MirrorSettingsRow`: "Mirror edits to AniList" with the Beta tag, its state line, the switch.
+/// Mirror edits, as the desktop's Settings → Account row and its Queue part (mirror.rs):
+/// - `MirrorSettingsRow`: "Mirror edits to AniList", its state line, the switch.
 ///   On reads the other list and opens `MirrorScreen` (the preview and the three choices);
 ///   nothing is saved until one is picked. Off drops what still waits for the mirror.
 /// - `MirrorQueueSection`: the Sync queue's mirror part (website edits, conflicts, waiting,
@@ -28,10 +28,7 @@ struct MirrorSettingsRow: View {
                     Rectangle().fill(p.border).frame(height: 1).padding(.leading, 16)
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 6) {
-                                Text(s.title).font(Inter.medium(15)).foregroundStyle(p.text)
-                                Tag(text: s.tag, style: .new)
-                            }
+                            Text(s.title).font(Inter.medium(15)).foregroundStyle(p.text)
                             Text(busy ?? s.note).font(Inter.regular(12.5)).foregroundStyle(p.faint)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

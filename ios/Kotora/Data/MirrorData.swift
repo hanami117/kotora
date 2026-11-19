@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mirror edits (Beta), the desktop's mirror.rs through `kotora-mobile` (`mobile/src/mirror.rs`).
+/// Mirror edits, the desktop's mirror.rs through `kotora-mobile` (`mobile/src/mirror.rs`).
 /// Its own protocol, next to `Repository`, so the two repositories gain it in this file. The
 /// words come from the core, the same on both phones and the desktop.
 protocol MirrorRepository: AnyObject, Sendable {
@@ -42,7 +42,7 @@ extension CoreRepository: MirrorRepository {
 /// Sample data has one account: the row says to sign in to the other service, as the desktop.
 extension SampleRepository: MirrorRepository {
     func mirrorState() async -> MirrorState? {
-        MirrorState(main: .mal, to: .aniList, on: false, title: "Mirror edits to AniList", tag: "Beta",
+        MirrorState(main: .mal, to: .aniList, on: false, title: "Mirror edits to AniList",
                     note: "Sign in to AniList too: choose Use AniList above, sign in, then come back to MyAnimeList. Your MyAnimeList list stays the main one.",
                     canTurnOn: false, otherSignedIn: false, alignManga: nil, waiting: 0, attention: 0, badge: 0, trouble: nil,
                     accountLine: "MyAnimeList", accountTip: nil, reading: "Reading your AniList list…",
