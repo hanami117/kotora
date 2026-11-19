@@ -107,6 +107,8 @@ enum Tab: String { case home, list, airing, search, settings }
 struct RowRef: Hashable {
     let kind: MediaKind
     let id: UInt32
+    /// A title not on the list: what is known before its details come (title, cover).
+    var stub: TitleStub? = nil
 }
 
 struct SignedInView: View {
@@ -179,6 +181,11 @@ struct SignedInView: View {
         }
         .tint(p.accent)
         .modifier(StartupState(tab: tab.rawValue))
+        .onReceive(NotificationCenter.default.publisher(for: .kotoraOpenEntry)) { n in
+            guard let ref = n.object as? RowRef else { return }
+            listPath = [ref]
+            tab = .list
+        }
         .animation(.easeOut(duration: 0.2), value: model.snack)
     }
 

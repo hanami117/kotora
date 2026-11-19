@@ -182,6 +182,7 @@ struct SearchScreen: View {
                     .frame(maxWidth: .infinity).padding(.top, 40).padding(.horizontal, 16)
                     .plain(p)
             } else {
+                if let pid = (model.repo as? DetailsRepository)?.pastedId(kind: s.kind, text: q) { idLine(pid.id) }
                 let mine = s.onList
                 head("On your list · \(mine.count)", nil)
                 if mine.isEmpty {
@@ -223,10 +224,34 @@ struct SearchScreen: View {
         } else {
             ForEach(fresh, id: \.id) { h in
                 HitView(hit: h) { s.add(h, $0, model) }
+                    .contentShape(Rectangle())
+                    .onTapGesture { path.append(RowRef(kind: h.kind, id: h.id, stub: h.stub)) }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
                     .listRowBackground(p.bg).listRowSeparatorTint(p.border)
             }
         }
+    }
+
+    /// "Open MyAnimeList #41590: Title": a pasted link or a bare number may be an id (the desktop's
+    /// id line).
+    private func idLine(_ id: UInt32) -> some View {
+        let known = s.mine.first { $0.id == id }?.title ?? s.hits.first { $0.id == id }?.title
+        let what = known.map { "\(service) #\(id): \($0)" } ?? "\(service) #\(id)"
+        return Button {
+            let hit = s.hits.first { $0.id == id }
+            path.append(RowRef(kind: s.kind, id: id, stub: hit?.stub))
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(p.accentHi)
+                Text("Open \(what)").font(Inter.medium(15)).foregroundStyle(p.text).lineLimit(1)
+                Spacer()
+            }
+            .frame(height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Open \(service) \(s.kind == .manga ? "manga" : "anime") \(id)")
+        .accessibilityIdentifier("search/id-line")
+        .plain(p)
     }
 
     /// Why the service isn't searched now, if it isn't (the desktop's words).
@@ -310,5 +335,12 @@ struct HitView: View {
         let words = hit.title.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == ":" })
             .filter { $0.first.map { $0.isLetter || $0.isNumber } == true }
         return String(words.prefix(2).compactMap(\.first)).uppercased()
+    }
+}
+
+extension Hit {
+    /// What the details page shows before the service answers.
+    var stub: TitleStub {
+        TitleStub(kind: kind, id: id, title: title, coverUrl: coverUrl, format: format, episodes: episodes)
     }
 }

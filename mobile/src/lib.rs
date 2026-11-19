@@ -801,3 +801,6 @@ mod tests;
 
 mod links;
 mod profile;
+/// The details page's service information and the add of a title not on the list.
+mod details;
+pub use details::{InfoFact, InfoStat, PastedId, ServiceDetails, TitleStub};

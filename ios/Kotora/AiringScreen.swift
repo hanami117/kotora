@@ -150,11 +150,11 @@ struct AiringScreen: View {
                 under()
             }
             Spacer(minLength: 4)
-            if let status { StatusTag(status: status) }
+            if let status { StatusTag(status: status) } else { AiringAdd(stub: stub(id, title, cover)) }
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .onTapGesture { if status != nil { path.append(RowRef(kind: .anime, id: id)) } }
+        .onTapGesture { path.append(RowRef(kind: .anime, id: id, stub: status == nil ? stub(id, title, cover) : nil)) }
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
         .listRowBackground(mine ? p.accent.opacity(0.06) : p.bg)
         .listRowSeparatorTint(p.border)
@@ -176,11 +176,11 @@ struct AiringScreen: View {
                     if let w = c.toWatch { Text(w).font(Inter.medium(12.5)).foregroundStyle(w.contains("to watch") ? p.text : p.faint) }
                 }
                 Spacer(minLength: 4)
-                if let s = c.status { StatusTag(status: s) }
+                if let s = c.status { StatusTag(status: s) } else { AiringAdd(stub: stub(c.id, c.title, c.coverUrl)) }
             }
             .padding(.vertical, 8)
             .contentShape(Rectangle())
-            .onTapGesture { if c.status != nil { path.append(RowRef(kind: .anime, id: c.id)) } }
+            .onTapGesture { path.append(RowRef(kind: .anime, id: c.id, stub: c.status == nil ? stub(c.id, c.title, c.coverUrl) : nil)) }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 12))
             .listRowBackground(p.bg)
             .listRowSeparatorTint(p.border)
@@ -188,6 +188,10 @@ struct AiringScreen: View {
     }
 
     // ---------------------------------------------------------------------------------- parts
+
+    private func stub(_ id: UInt32, _ title: String, _ cover: String?) -> TitleStub {
+        TitleStub(kind: .anime, id: id, title: title, coverUrl: cover, format: "", episodes: nil)
+    }
 
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -310,5 +314,31 @@ struct Banner: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(p.dropped.opacity(0.10)))
         .padding(.horizontal, 16).padding(.bottom, 8)
+    }
+}
+
+/// "+ Watching" and "+ Plan" for an anime not on the list, as the desktop's Airing page: through
+/// the queue, as search does.
+struct AiringAdd: View {
+    @Environment(\.palette) private var p
+    @EnvironmentObject private var model: AppModel
+    let stub: TitleStub
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            button("+ Watching", .watching, id: "add")
+            button("+ Plan", .planToWatch, id: "plan")
+        }
+    }
+
+    private func button(_ title: String, _ status: ListStatus, id: String) -> some View {
+        Button { model.addTitle(stub, status) } label: {
+            Text(title).font(Inter.medium(12)).foregroundStyle(p.accentHi)
+                .padding(.horizontal, 9).frame(height: 24)
+                .overlay(Capsule().stroke(p.accent.opacity(0.5), lineWidth: 1))
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(status == .watching ? "Add as Watching" : "Add as Plan to watch")
+        .accessibilityIdentifier("airing/\(id)/\(stub.id)")
     }
 }

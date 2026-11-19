@@ -1,20 +1,24 @@
 import SwiftUI
 
-/// One entry: the header and the "Your list" card from the saved list, as on Android M2. The
-/// service's own details (synopsis, score, rank, the editor) come in M3.
+/// One entry, as the desktop's details page: the header and the "Your list" card from the saved
+/// list, then the service's information (stats, other titles, Synopsis, Information). A title not
+/// on the list (from Search, Airing, a notification, a pasted id) gets the add buttons instead.
 struct DetailsScreen: View {
     @Environment(\.palette) private var p
     @EnvironmentObject private var model: AppModel
     let ref: RowRef
     @State private var row: Row?
     @State private var loaded = false
+    @StateObject private var info = DetailsInfo()
+
+    private var service: String { model.session.active?.service.label ?? "MyAnimeList" }
 
     var body: some View {
         Group {
             if let row {
                 content(row)
             } else if loaded {
-                Text("That entry isn't on your list any more.").font(Inter.regular(15)).foregroundStyle(p.faint).padding(24)
+                notOnList
             } else {
                 ProgressView().tint(p.accent)
             }
@@ -30,6 +34,45 @@ struct DetailsScreen: View {
             row = await model.entry(ref.kind, ref.id)
             loaded = true
         }
+        .task(id: ref) { await info.load(model, kind: ref.kind, id: ref.id) }
+    }
+
+    /// The details of a title that is not on the list: the service's information and the add.
+    private var notOnList: some View {
+        let i = info.info
+        let title = i?.title ?? ref.stub?.title ?? ""
+        let cover = i?.coverUrl ?? ref.stub?.coverUrl
+        let stub = TitleStub(kind: ref.kind, id: ref.id, title: title, coverUrl: cover,
+                             format: i?.format ?? ref.stub?.format ?? "", episodes: i?.episodes ?? ref.stub?.episodes)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                hero(id: ref.id, title: title, titleEn: nil, meta: "", cover: cover, initials: title.initialsOfTitle)
+                if let i {
+                    tagsRow(i)
+                    DetailsStats(info: i).padding(.bottom, 12)
+                    DetailsTitles(info: i, shown: [title])
+                }
+                HStack(spacing: 8) {
+                    ForEach(model.serviceLinks(ref.kind, ref.id), id: \.url) { OpenOnButton(label: $0.label, url: $0.url) }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 12)
+                AddToListCard(kind: ref.kind, service: service) { model.addTitle(stub, $0) }
+                    .padding(.bottom, 16)
+                DetailsBody(state: info, service: service) { Task { await info.load(model, kind: ref.kind, id: ref.id) } }
+                Spacer(minLength: 80)
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+    }
+
+    /// The service's tags: type, episodes, airing (lit), season.
+    private func tagsRow(_ i: ServiceDetails) -> some View {
+        FlowLayout(spacing: 6) {
+            ForEach(i.tags, id: \.self) { t in
+                Tag(text: t, style: i.running && (t == "Airing" || t == "Publishing") ? .air : .plain)
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
     }
 
     private func content(_ row: Row) -> some View {
@@ -47,6 +90,10 @@ struct DetailsScreen: View {
                 }
                 .padding(.horizontal, 16).padding(.bottom, 12)
                 .accessibilityIdentifier("detailsOpenOn")
+                if let i = info.info {
+                    DetailsStats(info: i).padding(.bottom, 12)
+                    DetailsTitles(info: i, shown: [row.title, row.titleEn ?? ""])
+                }
 
                 Card {
                     HStack {
@@ -88,6 +135,8 @@ struct DetailsScreen: View {
                     .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 14)
                     EntryActions(row: row)
                 }
+                DetailsBody(state: info, service: service) { Task { await info.load(model, kind: ref.kind, id: ref.id) } }
+                    .padding(.top, 16)
                 Spacer(minLength: 80)
             }
         }
@@ -95,18 +144,22 @@ struct DetailsScreen: View {
     }
 
     private func hero(_ row: Row) -> some View {
+        hero(id: row.id, title: row.title, titleEn: row.titleEn, meta: row.meta, cover: row.coverUrl, initials: row.initials)
+    }
+
+    private func hero(id: UInt32, title: String, titleEn: String?, meta: String, cover: String?, initials: String) -> some View {
         ZStack(alignment: .bottomLeading) {
-            CoverTile(id: row.id, initials: "", url: row.coverUrl, width: nil, height: 250, radius: 0)
+            CoverTile(id: id, initials: "", url: cover, width: nil, height: 250, radius: 0)
                 .blur(radius: 30).opacity(0.55)
                 .clipped()
                 .overlay(LinearGradient(stops: [.init(color: p.bg.opacity(0), location: 0.3), .init(color: p.bg, location: 1)], startPoint: .top, endPoint: .bottom))
             HStack(alignment: .bottom, spacing: 16) {
-                CoverTile(id: row.id, initials: row.initials, url: row.coverUrl, width: 120, height: 170, radius: 12)
+                CoverTile(id: id, initials: initials, url: cover, width: 120, height: 170, radius: 12)
                     .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.title).font(Inter.semibold(22)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
-                    if let en = row.titleEn, en != row.title { Text(en).font(Inter.regular(13)).foregroundStyle(p.dim) }
-                    Text(row.meta).font(Inter.regular(12)).foregroundStyle(p.faint).padding(.top, 2)
+                    Text(title).font(Inter.semibold(22)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
+                    if let en = titleEn, en != title { Text(en).font(Inter.regular(13)).foregroundStyle(p.dim) }
+                    if !meta.isEmpty { Text(meta).font(Inter.regular(12)).foregroundStyle(p.faint).padding(.top, 2) }
                 }
                 .padding(.bottom, 4)
             }
@@ -135,5 +188,14 @@ struct DetailsScreen: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(p.field))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.borderStrong, lineWidth: 1))
         }
+    }
+}
+
+extension String {
+    /// Two initials for a cover tile, as `Row.initials`.
+    var initialsOfTitle: String {
+        let words = split(whereSeparator: { $0 == " " || $0 == "-" || $0 == ":" })
+            .filter { $0.first.map { $0.isLetter || $0.isNumber } == true }
+        return String(words.prefix(2).compactMap(\.first)).uppercased()
     }
 }

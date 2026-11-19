@@ -130,4 +130,13 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
     }
+
+    /// A tap on a notification: its entry's details (on the list or not).
+    @MainActor
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        guard let id = info["id"] as? Int, id > 0 else { return }
+        let kind: MediaKind = info["kind"] as? String == "manga" ? .manga : .anime
+        NotificationCenter.default.post(name: .kotoraOpenEntry, object: RowRef(kind: kind, id: UInt32(id)))
+    }
 }
