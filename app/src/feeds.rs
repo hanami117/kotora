@@ -1,3 +1,7 @@
+// Portions ported from Taiga (https://github.com/erengy/taiga), Copyright (C) Eren Okka and
+// contributors, GPL-3.0: the torrent feeds' behaviour (sources checked on an interval, the search
+// address with %title% and its nyaa.si default from Taiga's settings_keys.cpp).
+
 //! Torrent / RSS feeds (Settings → Feeds, the Feeds page, the `↓ Ep N` badge). Off by default,
 //! no sources: until the user turns feeds on and adds a feed nothing runs and nothing is asked.
 //!

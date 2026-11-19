@@ -204,8 +204,10 @@ kot show | kot quit
 
 ## Credits and notices
 
-Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. Kotora shares no
-code with Taiga.
+Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. The torrent feeds
+follow Taiga's (GPL-3.0, Copyright (C) Eren Okka and contributors): their behaviour and the search address
+with `%title%` are ported from it; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Nothing else is
+taken from Taiga's code.
 
 Kotora is not affiliated with or endorsed by MyAnimeList, AniList, MangaDex or MangaUpdates. Third-party licences are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -218,7 +220,7 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
 
 ## Credits
 
-- [Taiga](https://taiga.moe/) by erengy, which Kotora follows.
+- [Taiga](https://taiga.moe/) by erengy, which Kotora follows; the torrent feeds port parts of it (GPL-3.0).
 - [anime-relations](https://github.com/erengy/anime-relations) (public domain, CC0): the episode
   redirection rules, built in and refreshed from GitHub at most once a week.
 - [anitomy](https://github.com/erengy/anitomy) (MPL-2.0), through

@@ -1,3 +1,7 @@
+// Portions ported from Taiga (https://github.com/erengy/taiga), Copyright (C) Eren Okka and
+// contributors, GPL-3.0: the torrent feeds' behaviour (sources checked on an interval, the search
+// address with %title% and its nyaa.si default from Taiga's settings_keys.cpp).
+
 //! Torrent / RSS feeds (desktop, opt-in, no default sources): reading a feed body.
 //!
 //! [`parse`] reads RSS 2.0 (and RSS 1.0), Atom 1.0 and Torznab/Newznab (RSS with

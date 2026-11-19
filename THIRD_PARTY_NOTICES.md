@@ -8,9 +8,19 @@ licence. All of them are compatible with the GPL-3.0. The Rust crates are checke
 `cargo deny check licenses` (see `deny.toml`); the list further down comes from `cargo metadata --locked`
 (2026-11-15) and covers every target, so it includes crates that only build on macOS or Windows.
 
-Kotora shares no code with Taiga (https://taiga.moe/, by erengy); it is a tribute to it.
+Kotora is a tribute to Taiga (https://taiga.moe/, by erengy).
 
 ## Notes
+
+### Taiga (GPL-3.0)
+
+The torrent feeds (`core/src/feeds.rs`, `app/src/feeds.rs`) port parts of Taiga
+(https://github.com/erengy/taiga), Copyright (C) Eren Okka and contributors, licensed under the
+GNU General Public License version 3: the feeds' behaviour (sources checked on an interval, "Search
+for torrents" with a search address in which `%title%` is the anime's title) and that address's
+default for nyaa.si (`https://nyaa.si/?page=rss&c=1_2&f=0&q=%title%`, from Taiga's
+`src/taiga/settings_keys.cpp`). Each of those files says so in its header. Nothing else in Kotora
+comes from Taiga's code.
 
 ### anitomy-ng (MPL-2.0 and MIT)
 
