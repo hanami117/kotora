@@ -78,6 +78,7 @@ pub fn start(s: &mut State) {
     crate::discord::apply(&s.prefs.discord);
     crate::settings::load(s, &c);
     crate::reading::load(s, &c);
+    s.feeds_load(&c);
     s.prefs.login = crate::autostart::read();
     s.worker.ask_on_higher.store(!c.updates.keep_higher_progress, std::sync::atomic::Ordering::Relaxed);
     #[cfg(not(windows))]

@@ -286,6 +286,12 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
             nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)
         })
         .child(if s.has_list() { nav_item("stats", NavMark::Icon(&icons::CHART), "Statistics", None, lit == Page::Stats, Page::Stats) } else { el() })
+        .child(if s.has_list() && s.feeds.cfg.enabled && !manga {
+            let n = s.feeds_count();
+            nav_item("feeds", NavMark::Icon(&icons::DOWNLOAD), "Feeds", (n > 0).then(|| NavEnd::Badge(n.to_string())), lit == Page::Feeds, Page::Feeds)
+        } else {
+            el()
+        })
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -621,6 +627,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::Publishing => crate::publishing::page(s),
         Page::Stats if !s.has_list() => welcome(s),
         Page::Stats => crate::stats::page(s, width),
+        Page::Feeds if !s.has_list() => welcome(s),
+        Page::Feeds => crate::feeds::page(s, width),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).
@@ -1163,6 +1171,9 @@ fn list_row(s: &State, e: &Entry, wide: bool) -> El {
     }
     if let Some(n) = e.new_episode {
         sub = sub.child(tag_tinted(&format!("Ep {n} out"), PAL.accent_hi, PAL.tint(PAL.accent, 0.14)));
+    }
+    if let Some(b) = crate::feeds::badge(s, e.id) {
+        sub = sub.child(b);
     }
     // The title opens the details page; the rest of the row opens the editor.
     let name = text(e.title.clone()).font(theme::ROW_TITLE).color(PAL.text).group_color(PAL.accent_hi).truncate();

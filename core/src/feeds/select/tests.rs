@@ -121,6 +121,9 @@ fn one_row_per_episode_best_first() {
     assert_eq!(rows(&w.select(&items)), vec![(1, (8, 8), vec![3, 4, 2, 0, 1])]);
     w.filter.groups_preferred.clear();
     assert_eq!(rows(&w.select(&items))[0].2, vec![4, 1, 2, 0, 3]);
+    // A preferred resolution comes first, and the others still show.
+    w.filter.prefer_resolution = Some(720);
+    assert_eq!(rows(&w.select(&items))[0].2, vec![0, 3, 4, 1, 2]);
 }
 
 #[test]

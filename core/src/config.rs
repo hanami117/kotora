@@ -125,6 +125,59 @@ pub struct Config {
     pub keys: Keys,
     pub release_data: ReleaseData,
     pub reading: Reading,
+    pub feeds: Feeds,
+}
+
+/// One feed the user added (`[feeds] sources`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct FeedSource {
+    pub name: String,
+    /// May carry a key: shown and logged only through `feeds::mask`.
+    pub url: String,
+}
+
+/// `[feeds]`: torrent / RSS feeds. Off by default, no sources: nothing runs and nothing is
+/// asked until the user turns it on and adds a feed.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Feeds {
+    pub enabled: bool,
+    pub sources: Vec<FeedSource>,
+    /// Minutes between checks (at least [`Feeds::MIN_MINUTES`]).
+    pub interval_minutes: u32,
+    /// Words that must all appear in a release name, and words none may.
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    /// Preferred resolution (1080, 720, …); 0: any, the highest first.
+    pub resolution: u32,
+}
+
+impl Feeds {
+    pub const MIN_MINUTES: u32 = 10;
+    pub const DEFAULT_MINUTES: u32 = 30;
+
+    /// The interval in force, in minutes.
+    pub fn minutes(&self) -> u32 {
+        self.interval_minutes.max(Self::MIN_MINUTES)
+    }
+
+    /// Whether anything should run: on, with a feed.
+    pub fn active(&self) -> bool {
+        self.enabled && self.sources.iter().any(|s| !s.url.trim().is_empty())
+    }
+
+    /// The `sources` value as a TOML inline array.
+    pub fn sources_toml(sources: &[FeedSource]) -> String {
+        let items: Vec<String> = sources.iter().map(|s| format!("{{ name = {}, url = {} }}", quote(&s.name), quote(&s.url))).collect();
+        format!("[{}]", items.join(", "))
+    }
+}
+
+impl Default for Feeds {
+    fn default() -> Self {
+        Feeds { enabled: false, sources: Vec::new(), interval_minutes: Self::DEFAULT_MINUTES, include: Vec::new(), exclude: Vec::new(), resolution: 0 }
+    }
 }
 
 /// `[reading]`: reading detection (Manga). It runs only with Manga on.
@@ -268,11 +321,13 @@ pub struct Notifications {
     pub read_offer: bool,
     /// Reading detection: a chapter was marked, with Undo (as `recorded` for anime).
     pub read_recorded: bool,
+    /// Feeds: a new release of a show on the list (only while feeds are on).
+    pub new_release: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true }
+        Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true, new_release: true }
     }
 }
 
@@ -817,6 +872,8 @@ impl std::fmt::Debug for Config {
 #[derive(Deserialize, Default)]
 struct File {
     #[serde(default)]
+    feeds: Feeds,
+    #[serde(default)]
     account: Account,
     #[serde(default)]
     mal: Mal,
@@ -897,6 +954,7 @@ impl Config {
             // Both off is not a choice: MangaUpdates comes back on.
             release_data: if f.release_data.mangaupdates || f.release_data.mangadex { f.release_data } else { ReleaseData::default() },
             reading: f.reading,
+            feeds: f.feeds,
         })
     }
 
@@ -1263,9 +1321,21 @@ mod tests {
     }
 
     #[test]
+    fn feeds_are_off_with_no_sources() {
+        let f = Config::parse("").unwrap().feeds;
+        assert_eq!((f.enabled, f.sources.len(), f.minutes(), f.active()), (false, 0, 30, false));
+        let src = vec![FeedSource { name: "A \"b\"".into(), url: "https://x.example/rss?apikey=k".into() }];
+        let text = set_line("", "feeds", "sources", &Feeds::sources_toml(&src));
+        let text = set_line(&text, "feeds", "enabled", "true");
+        let text = set_line(&text, "feeds", "interval_minutes", "3");
+        let f = Config::parse(&text).unwrap().feeds;
+        assert_eq!((f.active(), f.minutes(), f.sources), (true, 10, src));
+    }
+
+    #[test]
     fn notifications_offer_and_recorded_on_detected_off() {
         let n = Config::parse("").unwrap().notifications;
-        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true });
+        assert_eq!(n, Notifications { detected: false, offer: true, recorded: true, started_airing: true, new_episode: true, new_chapter: false, read_offer: true, read_recorded: true, new_release: true });
         // The manga reading switches are their own: turning the anime ones off leaves them on.
         assert!(Config::parse("[notifications]\noffer = false\nrecorded = false\n").unwrap().notifications.read_offer);
         let r = Config::parse("[reading]\nfind_libraries = false\nopen_files = true\nopen_minutes = 4\n").unwrap().reading;

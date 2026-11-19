@@ -32,11 +32,12 @@ pub enum Section {
     Library,
     Notifications,
     Manga,
+    Feeds,
     About,
 }
 
 impl Section {
-    pub const ALL: [Section; 8] = [Section::General, Section::Appearance, Section::Account, Section::Detection, Section::Library, Section::Notifications, Section::Manga, Section::About];
+    pub const ALL: [Section; 9] = [Section::General, Section::Appearance, Section::Account, Section::Detection, Section::Library, Section::Notifications, Section::Manga, Section::Feeds, Section::About];
 
     /// The `config.toml` value, also the end of the section's keys.
     pub fn key(self) -> &'static str {
@@ -48,6 +49,7 @@ impl Section {
             Section::Library => "library",
             Section::Notifications => "notifications",
             Section::Manga => "manga",
+            Section::Feeds => "feeds",
             Section::About => "about",
         }
     }
@@ -65,6 +67,7 @@ impl Section {
             Section::Library => "Library",
             Section::Notifications => "Notifications",
             Section::Manga => "Manga",
+            Section::Feeds => "Feeds",
             Section::About => "About",
         }
     }
@@ -78,6 +81,7 @@ impl Section {
             Section::Library => &icons::FOLDER,
             Section::Notifications => &icons::BELL,
             Section::Manga => &icons::BOOK,
+            Section::Feeds => &icons::DOWNLOAD,
             Section::About => &icons::INFO,
         }
     }
@@ -106,6 +110,7 @@ impl Section {
                 (Some("Manga"), vec![Row::NotifyReadOffer, Row::NotifyReadRecorded, Row::NotifyChapter]),
             ],
             Section::Manga => vec![(Some("Release data"), vec![Row::ReleaseMu, Row::ReleaseMd]), (Some("Reading detection"), vec![Row::ReadingYac, Row::ReadingFind, Row::ReadingLibs, Row::ReadingOpen, Row::ReadingMinutes, Row::ReadingFolders])],
+            Section::Feeds => vec![(Some("Torrent feeds"), vec![Row::FeedsOn, Row::FeedsList, Row::FeedsMinutes]), (Some("Releases"), vec![Row::FeedsWords, Row::FeedsResolution, Row::FeedsNotify])],
             Section::About => vec![(None, vec![Row::About, Row::Licences, Row::Links]), (None, vec![Row::Support])],
         }
     }
@@ -180,6 +185,12 @@ pub enum Row {
     ReadingFolders,
     NotifyReadOffer,
     NotifyReadRecorded,
+    FeedsOn,
+    FeedsList,
+    FeedsMinutes,
+    FeedsWords,
+    FeedsResolution,
+    FeedsNotify,
     About,
     Licences,
     Links,
@@ -241,6 +252,12 @@ impl Row {
             Row::ReadingFolders => "reading-folders",
             Row::NotifyReadOffer => "notify-read-offer",
             Row::NotifyReadRecorded => "notify-read-recorded",
+            Row::FeedsOn => "feeds",
+            Row::FeedsList => "feeds-list",
+            Row::FeedsMinutes => "feeds-minutes",
+            Row::FeedsWords => "feeds-words",
+            Row::FeedsResolution => "feeds-resolution",
+            Row::FeedsNotify => "feeds-notify",
             Row::About => "about",
             Row::Licences => "licences",
             Row::Links => "links",
@@ -317,6 +334,12 @@ const SPECS: &[Spec] = &[
     spec(Row::ReadingLibs, Section::Manga, "YACReader libraries", "Found in YACReader\u{2019}s settings, or added here.", "reading library libraries folder comics yacreader ydb database path"),
     spec(Row::NotifyChapter, Section::Notifications, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates.", "notification notifications alert manga chapter new chapter release publishing mangaupdates"),
     spec(Row::NotifyEpisode, Section::Notifications, "New episode", "When the next episode of a show you're watching is out.", "notification notifications alert popup new episode aired out broadcast"),
+    spec(Row::FeedsOn, Section::Feeds, "Torrent feeds", crate::feeds::SWITCH_NOTE, "torrent torrents feed feeds rss atom nyaa magnet release releases download new episode subs fansub"),
+    spec(Row::FeedsList, Section::Feeds, "Feeds", "The RSS feeds Kotora checks. None is built in.", "feed feeds rss url address add remove nyaa source sources key passkey apikey"),
+    spec(Row::FeedsMinutes, Section::Feeds, "Check every", "How often Kotora checks your feeds while it runs.", "interval minutes poll check every often refresh"),
+    spec(Row::FeedsWords, Section::Feeds, "Words", "Words a release name must have, and words it must not have.", "words include exclude filter dub raw subs keyword keywords"),
+    spec(Row::FeedsResolution, Section::Feeds, "Preferred resolution", "Which release comes first when there are several.", "resolution quality 1080p 720p 2160p 4k 480p prefer"),
+    spec(Row::FeedsNotify, Section::Feeds, "New release", "A notification when a feed has a new episode for your list.", "notification notifications alert popup release feed torrent new episode"),
     spec(Row::About, Section::About, "About Kotora", "Version, and a tribute to Taiga.", "version about taiga credits thanks"),
     spec(Row::Licences, Section::About, "Licences", "GPL-3.0-or-later, anitomy, anime-relations, Noto Sans JP.", "licence license licences licenses gpl mpl cc0 ofl anitomy anime-relations noto copyright"),
     spec(Row::Links, Section::About, "Links", "kotora.moe and the source code.", "website site github source code links kotora.moe"),
@@ -1058,6 +1081,27 @@ fn row_el(s: &State, r: Row) -> El {
         }
         Row::Folders => block("Folders", crate::library::FOLDERS_NOTE, crate::library::folders_block(s)),
         Row::OpenWith => block("Open with", crate::library::OPEN_WITH_NOTE, crate::library::open_with_choice(s)),
+        Row::FeedsOn => line("Torrent feeds", crate::feeds::SWITCH_NOTE, switch("set/feeds".into(), "Torrent feeds", s.feeds.cfg.enabled, State::set_feeds)),
+        Row::FeedsList => {
+            let b = block(
+                "Feeds",
+                "RSS or Atom feeds of releases. None is built in, and nothing is asked until you add one. An address with a key or password shows with it hidden.",
+                crate::feeds::sources_block(s),
+            );
+            if s.feeds.cfg.enabled { b } else { b.opacity(0.4) }
+        }
+        Row::FeedsMinutes => line(
+            "Check every",
+            "While Kotora runs (also in the background). A feed can ask for longer.",
+            choice_if("set/feeds-minutes", &crate::feeds::MINUTES, s.feeds.cfg.minutes(), s.feeds.cfg.enabled, crate::feeds::minutes_label, crate::feeds::minutes_slug, State::set_feeds_minutes),
+        ),
+        Row::FeedsWords => block("Words", "Plain words, separated by commas, any case, whole words only. A release with a \u{201c}never\u{201d} word, or without every \u{201c}must have\u{201d} word, is hidden.", crate::feeds::words_block(s)),
+        Row::FeedsResolution => line(
+            "Preferred resolution",
+            "Shown first when an episode has several releases; the others stay one click away.",
+            choice_if("set/feeds-resolution", &crate::feeds::RESOLUTIONS, s.feeds.cfg.resolution, s.feeds.cfg.enabled, crate::feeds::resolution_label, crate::feeds::resolution_slug, State::set_feeds_resolution),
+        ),
+        Row::FeedsNotify => line("New release", "\u{201c}New release: Title Ep 8\u{201d}, one notification per check. Never for unsure matches.", switch_if("set/feeds-notify".into(), "New release", p.notify.new_release, s.feeds.cfg.enabled, State::set_feeds_notify)),
         Row::NotifyDetected => notify(
             "Episode detected",
             "When a recognised episode starts playing: \u{201c}Title \u{b7} Ep 6\u{201d}. Off by default.",

@@ -29,6 +29,8 @@ pub fn page_key(page: Page, detail: Option<(Kind, u32)>) -> Option<String> {
         Page::Airing => "airing".into(),
         Page::Publishing => "publishing".into(),
         Page::Stats => "stats".into(),
+        // Feeds may be off by the next start: Home.
+        Page::Feeds => "home".into(),
         Page::List(st) => format!("list:{}", st.mal_name()),
         Page::Manga(st) => format!("manga:{}", st.mal_name()),
         Page::Details => match detail {

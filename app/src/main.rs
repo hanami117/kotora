@@ -60,6 +60,7 @@ mod transfer;
 mod tray;
 mod ui;
 mod startup;
+mod feeds;
 mod stats;
 mod update;
 #[cfg(windows)]

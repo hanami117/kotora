@@ -437,6 +437,45 @@ pub const SCENES: &[Scene] = &[
     // Manga off: the switch is greyed and says why.
     ("settings-reading-manga-off", |s| crate::settings::open(s, Section::Manga)),
     // Settings → Manga → Release data.
+    // Settings → Feeds: off (the first look), on with two feeds (one keyed, masked), a nyaa.si
+    // address typed.
+    ("feeds-settings-off", |s| crate::settings::open(s, Section::Feeds)),
+    ("feeds-settings", |s| {
+        crate::feeds::fake(s);
+        s.feeds.include.text = "multi sub".into();
+        s.feeds.exclude.text = "dub, raw".into();
+        s.feeds.cfg.resolution = 1080;
+        crate::settings::open(s, Section::Feeds);
+    }),
+    ("feeds-settings-nyaa", |s| {
+        crate::feeds::fake(s);
+        s.feeds.draft.text = "https://nyaa.si/?f=0&q=lanterns+of+kirigaoka".into();
+        s.feeds_draft_changed();
+        crate::settings::open(s, Section::Feeds);
+    }),
+    // The Feeds page: new episodes, best release first; one row opened; no feeds yet.
+    ("feeds", |s| {
+        crate::feeds::fake(s);
+        s.open_feeds();
+    }),
+    ("feeds-open", |s| {
+        crate::feeds::fake(s);
+        if let Some(r) = s.feeds.sel.rows.first() {
+            s.feeds.open.insert((r.media_id, r.episodes.0, r.episodes.1));
+        }
+        s.open_feeds();
+    }),
+    ("feeds-empty", |s| {
+        s.feeds.cfg.enabled = true;
+        s.open_feeds();
+    }),
+    // The ↓ Ep N badge on Watching, and the details' Available card.
+    ("feeds-list-badge", |s| crate::feeds::fake(s)),
+    ("feeds-details", |s| {
+        crate::feeds::fake(s);
+        let id = s.feeds.sel.rows.first().map_or(0, |r| r.media_id);
+        details(s, id, true);
+    }),
     ("settings-manga", |s| {
         crate::manga::fake(s);
         crate::settings::open(s, Section::Manga);
@@ -2883,6 +2922,37 @@ mod tests {
         let mut s = State::fake();
         s.go(Page::List(Status::Watching));
         assert!(s.page != Page::Profile);
+    }
+
+    /// Feeds: off shows only the switch's row and no sidebar item; on, the page has one row per
+    /// episode with Download, the list and details show the badge, and a keyed URL never shows.
+    #[test]
+    fn feeds_scenes_show_their_parts() {
+        for size in [(1280.0, 800.0), (960.0, 600.0)] {
+            let rt = render("feeds-settings-off", size);
+            assert!(rt.find("set/feeds").is_some() && rt.find("nav/feeds").is_none(), "off at {size:?}");
+            let rt = render("feeds", size);
+            for key in ["page/feeds", "feeds/new", "feeds/sources", "nav/feeds"] {
+                assert!(rt.find(key).is_some(), "{key} at {size:?}");
+            }
+            assert!(render("feeds-empty", size).find("feeds/empty").is_some());
+            assert!(render("feeds-settings-nyaa", size).find("set/feeds/note").is_some());
+        }
+        let mut s = State::fake();
+        crate::feeds::fake(&mut s);
+        assert!(!s.feeds.sel.rows.is_empty() && s.feeds.sel.rows.iter().all(|r| r.releases.len() == 3));
+        // Hoshi 1080p first (highest, most seeders), then Kumo-Subs 1080p, then 720p.
+        let r = &s.feeds.sel.rows[0];
+        assert!(s.feeds.items[r.releases[0]].1.title.starts_with("[Hoshi]"));
+        let id = r.media_id;
+        assert!(s.feeds_badge(id).is_some());
+        let tree = format!("{:?}", render("feeds-settings", (1280.0, 800.0)).find("set/feeds/list").is_some());
+        assert_eq!(tree, "true");
+        // Download marks it got (headless: nothing opens) and the row goes.
+        let (item, eps) = (r.releases[0], r.episodes);
+        s.feeds_download(item, id, eps);
+        assert!(s.feeds.sel.rows.iter().all(|r| !(r.media_id == id && r.episodes == eps)));
+        assert!(s.feeds_badge(id) != Some(eps));
     }
 
     /// Statistics: every part at both sizes, the empty state's line, manga's words, and the

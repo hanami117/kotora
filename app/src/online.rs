@@ -360,6 +360,12 @@ pub fn open_link(s: &mut State, url: &'static str) {
     });
 }
 
+/// A magnet link or a .torrent file to the system's handler (the user's torrent app). Blocking:
+/// call it on a worker thread.
+pub fn open_system(target: &str) -> Result<(), String> {
+    open_browser(target).map_err(|e| e.replace("your browser", "it"))
+}
+
 /// [`open_link`] for a URL made at run time (an anime's MyAnimeList page).
 pub fn open_url(s: &mut State, url: String) {
     if s.handle.is_none() {

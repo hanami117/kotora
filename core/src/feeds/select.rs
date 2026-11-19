@@ -45,6 +45,8 @@ pub struct Filter {
     pub resolutions: Vec<u32>,
     /// The higher resolution first (else the order of `resolutions`, else any).
     pub prefer_highest: bool,
+    /// This height first (then by `prefer_highest`); shows the others too.
+    pub prefer_resolution: Option<u32>,
     /// `None`: any codec.
     pub codec: Option<Codec>,
     pub ten_bit: bool,
@@ -68,6 +70,7 @@ impl Default for Filter {
             groups_never: Vec::new(),
             resolutions: Vec::new(),
             prefer_highest: true,
+            prefer_resolution: None,
             codec: None,
             ten_bit: true,
             include: Vec::new(),
@@ -108,6 +111,7 @@ impl Filter {
             groups_never: s.groups_never.clone().unwrap_or(f.groups_never),
             resolutions: s.resolutions.clone().unwrap_or(f.resolutions),
             prefer_highest: s.prefer_highest.unwrap_or(f.prefer_highest),
+            prefer_resolution: f.prefer_resolution,
             codec: s.codec.unwrap_or(f.codec),
             ten_bit: s.ten_bit.unwrap_or(f.ten_bit),
             include: s.include.clone().unwrap_or(f.include),
@@ -318,7 +322,7 @@ impl Selection {
 }
 
 /// The best release first: preferred group order, resolution, version, seeders.
-fn rank(f: &Filter, rel: &Release, item: &Item) -> (usize, i64, u32, u32) {
+fn rank(f: &Filter, rel: &Release, item: &Item) -> (usize, bool, i64, u32, u32) {
     let group = rel.parsed.group.as_deref().unwrap_or("");
     let g = f.groups_preferred.iter().position(|p| same_group(p, group)).unwrap_or(f.groups_preferred.len());
     let h = i64::from(rel.height().unwrap_or(0));
@@ -327,7 +331,8 @@ fn rank(f: &Filter, rel: &Release, item: &Item) -> (usize, i64, u32, u32) {
     } else {
         f.resolutions.iter().position(|r| i64::from(*r) == h).unwrap_or(f.resolutions.len()) as i64
     };
-    (g, res, u32::MAX - rel.version.unwrap_or(1), u32::MAX - item.seeders.unwrap_or(0))
+    let not_preferred = f.prefer_resolution.is_some_and(|p| rel.height() != Some(p));
+    (g, not_preferred, res, u32::MAX - rel.version.unwrap_or(1), u32::MAX - item.seeders.unwrap_or(0))
 }
 
 /// The match of one release name: `Some((media, sure, why))` on the list's counting entries.

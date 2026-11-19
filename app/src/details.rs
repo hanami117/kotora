@@ -635,7 +635,16 @@ fn compact_editor(e: &Entry, ed: &crate::model::Editor, fmt: kotora_core::ScoreF
 
 /// The user's entry (or Add to list), then the files on disk. `glass`: the panel on the narrow
 /// banner card, see-through over the cover's tint.
+/// "Your list", and under it the feeds' next release (anime, while feeds are on).
 fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
+    let mine = mine_card(s, d, glass);
+    match (!d.is_manga()).then(|| crate::feeds::details_card(s, d.id())).flatten() {
+        Some(f) => col().key("det-mine-col").gap(16.0).child(mine.w_full()).child(f.w_full()),
+        None => mine,
+    }
+}
+
+fn mine_card(s: &State, d: &Detail, glass: bool) -> El {
     let id = d.id();
     let mut c = card("det-mine", "Your list");
     if glass {
@@ -658,6 +667,9 @@ fn mine_column(s: &State, d: &Detail, glass: bool) -> El {
             }
             if let Some(w) = e.waiting {
                 head = head.child(tag(w, PAL.warn(), false));
+            }
+            if let Some(b) = crate::feeds::badge(s, id) {
+                head = head.child(b);
             }
             c = c.child(head);
             let plus = e.episodes.is_none_or(|n| e.progress < n);

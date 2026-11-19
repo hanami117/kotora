@@ -349,6 +349,13 @@ impl State {
     /// A notification's button (or the notification itself) was clicked. Buttons act only on
     /// the episode they are about and while it still asks; an old one opens Kotora instead.
     pub fn note_action(&mut self, id: &str, act: Act) -> bool {
+        if id == "kotora-feeds" {
+            self.open_from_note();
+            if self.feeds.cfg.enabled {
+                self.open_feeds();
+            }
+            return true;
+        }
         let current = self.note_id().as_deref() == Some(id);
         // Started airing and New episode: Play, or the click opens the anime's page.
         if !current && let Some(media) = self.air_note_media(id) {

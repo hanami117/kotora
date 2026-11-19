@@ -48,6 +48,8 @@ pub enum Page {
     Publishing,
     /// Statistics of the switch's list, from what is saved here (`stats.rs`).
     Stats,
+    /// New releases in the user's torrent feeds (`feeds.rs`; only while feeds are on).
+    Feeds,
 }
 
 /// The chips above the list.
@@ -498,6 +500,8 @@ pub struct State {
     pub publishing: crate::publishing::Publishing,
     /// The Statistics page's numbers (`stats.rs`).
     pub stats: crate::stats::StatsView,
+    /// Torrent / RSS feeds (`feeds.rs`).
+    pub feeds: crate::feeds::FeedsUi,
     /// The update check and its banner (`update.rs`).
     pub update: crate::update::Updates,
     /// The list's grid views: the keyboard selection (`grid.rs`).
@@ -591,6 +595,7 @@ impl State {
             airnotes: Default::default(),
             publishing: Default::default(),
             stats: Default::default(),
+            feeds: Default::default(),
             update: Default::default(),
             grid: Default::default(),
             main_size: Default::default(),
@@ -1170,6 +1175,7 @@ impl State {
         let lang = self.prefs.titles;
         let before = self.entry_ids();
         self.entries = items.iter().map(|it| Entry::from_item(it, lang)).collect();
+        self.feeds_list(items);
         self.list_changed_under_now(&before);
         self.queue_changed();
         self.recheck_now();

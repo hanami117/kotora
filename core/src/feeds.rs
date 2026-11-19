@@ -11,6 +11,7 @@
 //! are shown; [`nyaa_defaults`] fills a name for a pasted nyaa.si URL without asking the site.
 
 pub mod marks;
+pub mod poll;
 pub mod select;
 
 use roxmltree::{Document, Node};
