@@ -205,8 +205,8 @@ kot show | kot quit
 ## Credits and notices
 
 Kotora is a tribute to [Taiga](https://taiga.moe/) by erengy, the anime tracker for Windows. The torrent feeds
-follow Taiga's (GPL-3.0, Copyright (C) Eren Okka and contributors): their behaviour and the search address
-with `%title%` are ported from it; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Nothing else is
+are ported from Taiga's (GPL-3.0, Copyright (C) Eren Okka and contributors): the Torrents page, the feed
+filters and their presets, the torrent history, the download options and the search address with `%title%`; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Nothing else is
 taken from Taiga's code.
 
 Kotora is not affiliated with or endorsed by MyAnimeList, AniList, MangaDex or MangaUpdates. Third-party licences are in

@@ -14,13 +14,18 @@ Kotora is a tribute to Taiga (https://taiga.moe/, by erengy).
 
 ### Taiga (GPL-3.0)
 
-The torrent feeds (`core/src/feeds.rs`, `app/src/feeds.rs`) port parts of Taiga
-(https://github.com/erengy/taiga), Copyright (C) Eren Okka and contributors, licensed under the
-GNU General Public License version 3: the feeds' behaviour (sources checked on an interval, "Search
-for torrents" with a search address in which `%title%` is the anime's title) and that address's
-default for nyaa.si (`https://nyaa.si/?page=rss&c=1_2&f=0&q=%title%`, from Taiga's
-`src/taiga/settings_keys.cpp`). Each of those files says so in its header. Nothing else in Kotora
-comes from Taiga's code.
+The torrent feeds (`core/src/feeds.rs`, `core/src/feeds/taiga.rs`, `core/src/feeds/download.rs`,
+`app/src/feeds.rs`, `app/src/torrents.rs`) port parts of Taiga (https://github.com/erengy/taiga),
+Copyright (C) Eren Okka and contributors, licensed under the GNU General Public License version 3:
+the torrent engine (item states and categories, the feed filters with their elements, operators,
+actions, options and presets, preference filters, new episodes, the archive of downloaded torrents,
+the download order and Taiga's filter XML, from `src/track/feed*.cpp`), the Torrents page and the
+filter dialog (`src/ui/dlg/dlg_torrent.cpp`, `dlg_feed_filter.cpp`), the torrent settings
+(auto-check, the new-episode action, the torrent application, the download folder with a folder per
+anime, from `dlg_settings_page.cpp` and `feed_aggregator.cpp`), "Search for torrents" with a search
+address in which `%title%` is the anime's title, and that address's default for nyaa.si
+(`https://nyaa.si/?page=rss&c=1_2&f=0&q=%title%`, from Taiga's `src/taiga/settings_keys.cpp`).
+Each of those files says so in its header. Nothing else in Kotora comes from Taiga's code.
 
 ### anitomy-ng (MPL-2.0 and MIT)
 
