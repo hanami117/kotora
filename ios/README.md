@@ -21,7 +21,18 @@ core's queue, a background flush. The screens, words and data layer mirror `andr
 - **Debug builds** have "Look around with sample data" (made-up lists in memory, nothing sent).
 - **Home**: Continue watching (and Continue reading with Manga on) with +1, Plan to watch, as on the desktop.
 - **Search**: the list's matches, then MyAnimeList's or AniList's results (3 letters or more, after a 400 ms pause, kept 10 min), "+ Watching" or another status: added through the queue. `-query <words>` searches at launch (debug).
-- Airing, the editor and the service's details pages come later (M3/M4), on both phones.
+- **Airing** (the week by estimated broadcast time, and the season) and **Publishing** (Manga
+  mode: Reading manga with MangaUpdates / MangaDex releases) mirror the desktop pages; the data
+  and words come from `mobile/src/pages.rs`.
+- **Notifications** (the switches in Settings → Notifications, the desktop's `config.toml` keys):
+  New episode is scheduled ahead as local notifications at each Watching show's next estimated
+  slot (next 7 days), rescheduled when the app opens or refreshes. Started airing and New chapter
+  come from a `BGAppRefreshTask` (`io.github.hanami117.kotora.refresh`: flush, sync, check) or
+  from opening the app. **iOS limits:** iOS alone decides when (and whether) a background refresh
+  runs: often a few times a day, hours late, never after the app is swiped away or with
+  Background App Refresh off. Episode times are estimates anyway (breaks and delays unknown).
+  Permission is asked on the first visit to Airing/Publishing or when a switch is turned on.
+- The editor and the service's details pages come later (M3), on both phones.
 
 ## Build and run (macOS, Xcode, no paid account)
 

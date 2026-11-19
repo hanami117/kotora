@@ -26,7 +26,7 @@
 	<key>KotoraAniListClientId</key><string>$(KOTORA_ANILIST_CLIENT_ID)</string>
 	<!-- Sends the waiting changes (the core's queue) in the background, as Android's FlushWorker. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array><string>io.github.hanami117.kotora.flush</string></array>
+	<array><string>io.github.hanami117.kotora.flush</string><string>io.github.hanami117.kotora.refresh</string></array>
 	<key>UIBackgroundModes</key>
 	<array><string>fetch</string></array>
 	<key>LSRequiresIPhoneOS</key><true/>

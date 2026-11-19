@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct KotoraApp: App {
@@ -10,6 +11,7 @@ struct KotoraApp: App {
         // most, as the Android app's Coil disk cache.
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("kotora/covers", isDirectory: true)
         URLCache.shared = URLCache(memoryCapacity: 16 << 20, diskCapacity: 100 << 20, directory: dir)
+        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
     }
 
     var body: some Scene {
@@ -21,12 +23,17 @@ struct KotoraApp: App {
         }
         .onChange(of: phase) { _, now in
             switch now {
-            case .active: if model.list.waiting > 0, let r = model.repo { model.flusher.request(r) }
-            case .background: if model.list.waiting > 0 && !model.isSample { Flusher.schedule() }
+            case .active:
+                if model.list.waiting > 0, let r = model.repo { model.flusher.request(r) }
+                if case .signedIn = model.session, !model.isSample { Task { await Notifier.check(chapters: false) } }
+            case .background:
+                if model.list.waiting > 0 && !model.isSample { Flusher.schedule() }
+                if case .signedIn = model.session, !model.isSample { Notifier.scheduleRefresh() }
             default: break
             }
         }
         .backgroundTask(.appRefresh(Flusher.taskId)) { await Flusher.backgroundRun() }
+        .backgroundTask(.appRefresh(Notifier.taskId)) { await Notifier.backgroundRun() }
     }
 }
 
@@ -108,6 +115,7 @@ struct SignedInView: View {
     @State private var tab: Tab
     @State private var listPath: [RowRef]
     @State private var homePath: [RowRef] = []
+    @State private var airingPath: [RowRef] = []
 
     /// Debug launch arguments for screenshots: `-screen list|details|airing|search|settings`, `-id 7`.
     init() {
@@ -148,10 +156,14 @@ struct SignedInView: View {
             .tabItem { Label("List", systemImage: "list.bullet") }
             .tag(Tab.list)
 
-            Placeholder(title: manga ? "Publishing" : "Airing",
-                        text: manga ? "New chapters of what you read, from MangaUpdates: in a later build (M4)."
-                            : "This week's episodes of what you watch, with notifications: in a later build (M4).",
-                        account: account)
+            NavigationStack(path: $airingPath) {
+                Group {
+                    if manga { PublishingScreen(path: $airingPath) } else { AiringScreen(path: $airingPath) }
+                }
+                .overlay(alignment: .bottom) { snack }
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: RowRef.self) { DetailsScreen(ref: $0) }
+            }
                 .tabItem { Label(manga ? "Publishing" : "Airing", systemImage: manga ? "book" : "calendar") }
                 .tag(Tab.airing)
 
