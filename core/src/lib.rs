@@ -5,6 +5,7 @@
 //! file, the token file, the AniList client (`anilist.rs`), and the MyAnimeList client (list, one entry, `PATCH my_list_status`,
 //! search, seasons), the Airing timetable (`airing.rs`), the update check (`update.rs`). Nothing here touches a UI or starts a thread of its own.
 
+pub mod activity;
 pub mod airing;
 pub mod anilist;
 pub mod airnotes;
@@ -27,6 +28,7 @@ pub mod ratelimit;
 pub mod recognize;
 pub mod score;
 pub mod service;
+pub mod stats;
 pub mod store;
 pub mod sync;
 pub mod time;

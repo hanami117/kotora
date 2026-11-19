@@ -383,3 +383,16 @@ fn an_old_cached_answer_is_checked_again() {
     assert!(!title_fits("Dragon Ball Z", "Dragon Ball Super"));
     assert!(title_fits("Glass Lantern Club", "Glass Lantern Club"));
 }
+
+#[test]
+fn a_reread_starts_wherever_the_file_is() {
+    // A completed manga: every chapter and volume is read already, so `offer` has nothing to say,
+    // but a reread starts at the file's chapter, inside the known counts.
+    let r = read_of("Glass Lantern Club v35 c362.cbz");
+    assert_eq!(offer(400, Some(400), 40, Some(40), &r), None);
+    assert_eq!(reread_offer(Some(400), Some(40), &r), Some(Offer { chapter: Some(362), volume: Some(34) }));
+    assert_eq!(reread_offer(Some(300), None, &r).and_then(|o| o.chapter), None, "past the count");
+    assert_eq!(reread_offer(None, None, &read_of("Tsuki no Niwa v04.cbz")), Some(Offer { chapter: None, volume: Some(4) }));
+    assert_eq!(reread_offer(Some(1), None, &read_of("Hoshi (Oneshot).cbz")), Some(Offer { chapter: Some(1), volume: None }), "a one-shot");
+    assert_eq!(reread_offer(None, None, &read_of("Hoshi (Oneshot).cbz")), None);
+}

@@ -2,6 +2,30 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Statistics** (sidebar → Kotora → Statistics; follows the Anime | Manga switch): episodes watched and time
+  watched (chapters and volumes read), this week, this month, this year, a calendar of the last year, the streak,
+  when you watch (by weekday and hour), what you watched most in the last 30 days, the list's statuses and
+  scores, top genres and studios (authors for manga), and the airing shows you are watching. Everything comes
+  from what Kotora saved on your computer, so it works offline and the same on MyAnimeList and AniList; the
+  Profile page keeps the service's own numbers. Also in the Go menu (macOS) and as `kot stats [--manga]`.
+- **Activity log:** Kotora now notes when you record an episode, a chapter or a volume (by hand, with `kot`,
+  or from your player), for the Statistics page. Activity from before this version is not known, and the page
+  says from when it counts. Undo takes it back; imports, website edits and titles marked Completed from Plan to
+  watch are not activity. The log stays on your computer, also after signing out.
+- **Rereads (manga):** when a comic of a manga that is already Completed is read to the end, Kotora asks
+  "Reading it again?" (banner, Now Reading, notification, `kot confirm`) and never starts a reread by itself, even
+  with "Update automatically" on. Yes puts the manga into a reread from that chapter (MyAnimeList `is_rereading`,
+  AniList `REPEATING`), the next chapters count as usual, and the last chapter ends it and adds one to the reread
+  count. Undo puts the entry back. It uses the "Chapter read offered" notification switch. Anime already had this
+  ("Watching it again?").
+
+### Changed
+- Database: a new `activity` table, added without a schema change (still schema 12), so 0.4.4 can still open
+  the database.
+
 ## [0.4.4] - 2026-11-18
 
 Small release: you choose what Discord shows in the compact status line. No database change.
