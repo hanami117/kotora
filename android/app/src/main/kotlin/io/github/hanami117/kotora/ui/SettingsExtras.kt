@@ -94,12 +94,25 @@ fun SettingsExtras(
     val scope = rememberCoroutineScope()
     var sources by remember { mutableStateOf<ReleaseSources?>(null) }
     var sourceNote by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(pages) { sources = runCatching { pages.releaseSources() }.getOrNull() }
+    var keepHigher by remember { mutableStateOf(true) }
+    LaunchedEffect(pages) {
+        sources = runCatching { pages.releaseSources() }.getOrNull()
+        keepHigher = runCatching { pages.keepHigherProgress() }.getOrDefault(true)
+    }
 
     SectionLabel("Kotora")
     Card {
         ExtraItem("Statistics", "What you watched and read, by Kotora's count.", Modifier.clickable(role = Role.Button, onClick = onStats)) {
             Icon(KIcons.Chevron, null, tint = k.faint, modifier = Modifier.size(18.dp))
+        }
+    }
+    SectionLabel("Sync")
+    Card {
+        ExtraItem("Keep the higher progress in conflicts", "When only the progress differs and yours is higher, Kotora sends yours.") {
+            ExtraSwitch(keepHigher) { on ->
+                keepHigher = on
+                scope.launch { runCatching { pages.setKeepHigherProgress(on) }.onFailure { keepHigher = !on } }
+            }
         }
     }
     SectionLabel("Startup")

@@ -58,16 +58,20 @@ fun KotoraLogo(size: Dp, modifier: Modifier = Modifier) {
 
 /** The cover, or, until it loads (and when there is none), a tile: a 160° gradient from the id and the initials. */
 @Composable
-fun Cover(row: ListRow, width: Dp, height: Dp, radius: Dp, fontSize: TextUnit, modifier: Modifier = Modifier) {
+fun Cover(row: ListRow, width: Dp, height: Dp, radius: Dp, fontSize: TextUnit, modifier: Modifier = Modifier) =
+    Cover(row.id, row.title, row.coverUrl, width, height, radius, fontSize, modifier)
+
+@Composable
+fun Cover(id: UInt, title: String, coverUrl: String?, width: Dp, height: Dp, radius: Dp, fontSize: TextUnit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(radius)
-    Box(modifier.size(width, height).clip(shape).background(tileBrush(row.id.toInt()), shape), contentAlignment = Alignment.Center) {
+    Box(modifier.size(width, height).clip(shape).background(tileBrush(id.toInt()), shape), contentAlignment = Alignment.Center) {
         Text(
-            initials(row.title),
+            initials(title),
             color = Color.White.copy(alpha = .92f),
             style = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = fontSize, shadow = Shadow(Color.Black.copy(alpha = .35f), Offset(0f, 1f), 2f)),
         )
-        if (row.coverUrl != null) {
-            AsyncImage(model = row.coverUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (coverUrl != null) {
+            AsyncImage(model = coverUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }

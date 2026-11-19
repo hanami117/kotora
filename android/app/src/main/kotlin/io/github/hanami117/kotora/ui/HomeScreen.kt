@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.HomeAiring
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.StatsData
@@ -48,6 +50,8 @@ data class Shelves(
     val watching: List<ListRow> = emptyList(),
     val reading: List<ListRow> = emptyList(),
     val plan: List<ListRow> = emptyList(),
+    /** Airing this week: the next episode of the list's airing shows (the core's `home_airing`). */
+    val airing: List<HomeAiring> = emptyList(),
     val loaded: Boolean = false,
 ) {
     companion object {
@@ -58,10 +62,11 @@ data class Shelves(
         fun continuing(r: ListRow) = (r.status == ListStatus.WATCHING || r.rewatching) && (r.total?.let { r.progress < it } ?: true)
 
         /** From the whole lists, last updated first. */
-        fun of(anime: List<ListRow>, manga: List<ListRow>) = Shelves(
+        fun of(anime: List<ListRow>, manga: List<ListRow>, airing: List<HomeAiring> = emptyList()) = Shelves(
             watching = anime.filter(::continuing),
             reading = manga.filter(::continuing),
             plan = anime.filter { it.status == ListStatus.PLAN_TO_WATCH },
+            airing = airing,
             loaded = true,
         )
     }
@@ -69,7 +74,8 @@ data class Shelves(
 
 /**
  * Home, as the desktop's (`app/src/home.rs`) and iOS's: Continue watching (wide cards with the
- * next episode's +1), Continue reading with Manga on, and Plan to watch. Each shelf scrolls
+ * next episode's +1), Continue reading with Manga on, Airing this week (today's chip filled) and
+ * Plan to watch. Each shelf scrolls
  * sideways and links to its full page ("See all"). Only reads the saved list.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +93,10 @@ fun HomeScreen(
     /** The Statistics page's numbers for the "Your stats" card (null: not read yet). */
     stats: StatsData? = null,
     onStats: () -> Unit = {},
+    /** An Airing this week card (the details of that show). */
+    onOpenAiring: (HomeAiring) -> Unit = {},
+    /** Airing this week's "See all": the Airing page. */
+    onAiring: () -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg)) {
@@ -101,6 +111,9 @@ fun HomeScreen(
                         WideCard(it, { onPlusOne(it) }, { onOpen(it) })
                     }
                 }
+                Shelf("Airing this week", shelves.airing, shelves.loaded, "None of your shows airs in the next seven days.", onAiring, { "air-${it.id}" }) {
+                    AiringCard(it) { onOpenAiring(it) }
+                }
                 Shelf("Plan to watch", shelves.plan, shelves.loaded, "Your Plan to watch list is empty.", { onSeeAll(MediaKind.ANIME, ListStatus.PLAN_TO_WATCH) }) {
                     PosterCard(it) { onOpen(it) }
                 }
@@ -111,7 +124,11 @@ fun HomeScreen(
 }
 
 @Composable
-private fun Shelf(title: String, rows: List<ListRow>, loaded: Boolean, none: String, onSeeAll: () -> Unit, card: @Composable (ListRow) -> Unit) {
+private fun Shelf(title: String, rows: List<ListRow>, loaded: Boolean, none: String, onSeeAll: () -> Unit, card: @Composable (ListRow) -> Unit) =
+    Shelf(title, rows, loaded, none, onSeeAll, { "${it.kind}-${it.id}" }, card)
+
+@Composable
+private fun <T> Shelf(title: String, rows: List<T>, loaded: Boolean, none: String, onSeeAll: () -> Unit, key: (T) -> Any, card: @Composable (T) -> Unit) {
     val k = Kotora.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -132,7 +149,7 @@ private fun Shelf(title: String, rows: List<ListRow>, loaded: Boolean, none: Str
             Text(if (loaded) none else " ", color = k.faint, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp))
         } else {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(rows.take(Shelves.MAX), key = { "${it.kind}-${it.id}" }) { card(it) }
+                items(rows.take(Shelves.MAX), key = key) { card(it) }
             }
         }
     }
@@ -186,6 +203,27 @@ private fun PosterCard(row: ListRow, onOpen: () -> Unit) {
         val f = formatLabel(row.format)
         val meta = listOfNotNull(f.takeIf { it.isNotEmpty() }, row.total?.let { "$it ep" }).joinToString(" · ")
         if (meta.isNotEmpty()) Text(meta, color = k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/** Airing this week: the poster with the episode chip (filled today), the title and when. */
+@Composable
+private fun AiringCard(a: HomeAiring, onOpen: () -> Unit) {
+    val k = Kotora.colors
+    Column(Modifier.width(112.dp).clickable(onClick = onOpen).semantics(mergeDescendants = true) { contentDescription = "${a.title}, ${a.episode}, ${a.`when`}" }) {
+        Box {
+            Cover(a.id, a.title, a.coverUrl, 112.dp, 160.dp, 8.dp, 24.sp)
+            val shape = RoundedCornerShape(6.dp)
+            Text(
+                a.episode,
+                color = if (a.today) Color.White else k.text,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(6.dp).clip(shape).background(if (a.today) k.accent else k.bg.copy(alpha = .75f), shape).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+        Text(a.title, color = k.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        Text(a.`when`, color = if (a.today) k.accent else k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
     }
 }
 

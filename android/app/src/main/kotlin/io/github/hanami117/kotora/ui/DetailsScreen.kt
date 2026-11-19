@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
+import io.github.hanami117.kotora.core.PublishingCard
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.core.ServiceLink
 import io.github.hanami117.kotora.ui.theme.Kotora
@@ -59,6 +61,8 @@ fun DetailsScreen(
     /** The service's information (stats, other titles, Synopsis, Information). */
     info: DetailsInfoUi? = null,
     onRetry: () -> Unit = {},
+    /** A Reading manga's releases (desktop `publishing.rs` `details_card`), under "Your list". */
+    publishing: PublishingCard? = null,
 ) {
     val k = Kotora.colors
     if (row == null) {
@@ -154,6 +158,7 @@ fun DetailsScreen(
                     }
                 }
             }
+            if (publishing != null) PublishingDetailsCard(publishing)
             if (info != null) DetailsBody(info, account?.let { serviceTitle(it.service) } ?: "MyAnimeList", onRetry)
             if (actions == null && info == null) Text(
                 "The editor, synopsis and the service's details come in a later build.",
@@ -161,6 +166,27 @@ fun DetailsScreen(
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             )
+        }
+    }
+}
+
+/** "Publishing": Latest, To read, Next (estimate), and the source credit, as the desktop's. */
+@Composable
+private fun PublishingDetailsCard(c: PublishingCard) {
+    val k = Kotora.colors
+    Box(Modifier.padding(top = 16.dp)) {
+        Card {
+            Column(Modifier.padding(16.dp).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Publishing", color = k.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                c.error?.let { Text(it, color = k.dropped, fontSize = 12.sp) }
+                for ((label, value) in listOf("Latest" to c.latest, "To read" to c.toRead, "Next (estimate)" to c.next)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(label, color = k.faint, fontSize = 13.sp, modifier = Modifier.width(120.dp))
+                        Text(value, color = k.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+                Text(c.credit, color = k.faint, fontSize = 11.5.sp, modifier = Modifier.padding(top = 6.dp))
+            }
         }
     }
 }

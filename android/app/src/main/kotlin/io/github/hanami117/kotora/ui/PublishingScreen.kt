@@ -208,6 +208,7 @@ private fun PubRow(r: PublishingRow, busy: Boolean, onPanel: () -> Unit, onOpen:
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(r.title, color = k.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (r.look == PublishingLook.GUESS) Tag("Check match", TagKind.WAIT)
+                if (r.error != null) Tag("Couldn’t check", TagKind.WAIT)
             }
             if (r.latest.isEmpty()) {
                 val t = when (r.look) {

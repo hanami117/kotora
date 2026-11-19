@@ -8,6 +8,7 @@ import io.github.hanami117.kotora.core.AiringPage
 import io.github.hanami117.kotora.core.AiringSlot
 import io.github.hanami117.kotora.core.AiringType
 import io.github.hanami117.kotora.core.AiringUntimed
+import io.github.hanami117.kotora.core.HomeAiring
 import io.github.hanami117.kotora.core.Kotora
 import io.github.hanami117.kotora.core.KotoraSettings
 import io.github.hanami117.kotora.core.ListStatus
@@ -16,6 +17,7 @@ import io.github.hanami117.kotora.core.NamedCount
 import io.github.hanami117.kotora.core.Notice
 import io.github.hanami117.kotora.core.NoticeKind
 import io.github.hanami117.kotora.core.NotifySettings
+import io.github.hanami117.kotora.core.PublishingCard
 import io.github.hanami117.kotora.core.PublishingLook
 import io.github.hanami117.kotora.core.PublishingPage
 import io.github.hanami117.kotora.core.PublishingRelease
@@ -77,6 +79,14 @@ interface PagesSource {
     suspend fun setReleaseSources(sources: ReleaseSources)
     /** `null`: not available (sample data). */
     suspend fun volumeFill(): VolumeFill?
+
+    /** Home's "Airing this week": the next episode of the list's airing shows. Local. */
+    suspend fun homeAiring(): List<HomeAiring>
+    /** The Publishing card of a Reading manga's details; `null`: not Reading. Local. */
+    suspend fun publishingCard(id: UInt): PublishingCard?
+    /** Settings: "Keep the higher progress in conflicts" (`[updates] keep_higher_progress`). */
+    suspend fun keepHigherProgress(): Boolean
+    suspend fun setKeepHigherProgress(on: Boolean)
 }
 
 class CorePages(private val k: Kotora) : PagesSource {
@@ -103,6 +113,10 @@ class CorePages(private val k: Kotora) : PagesSource {
     override suspend fun releaseSources() = io { k.releaseSources() }
     override suspend fun setReleaseSources(sources: ReleaseSources) = io { k.setReleaseSources(sources) }
     override suspend fun volumeFill(): VolumeFill? = io { k.volumeFill() }
+    override suspend fun homeAiring() = io { k.homeAiring() }
+    override suspend fun publishingCard(id: UInt) = io { k.publishingCard(id) }
+    override suspend fun keepHigherProgress() = io { k.keepHigherProgress() }
+    override suspend fun setKeepHigherProgress(on: Boolean) = io { k.setKeepHigherProgress(on) }
 }
 
 /** Made-up pages for the screenshot tests and "Look around" (the texts made by hand in the core's words). */
@@ -162,6 +176,28 @@ class SamplePages(private val now: Long, private val rows: () -> List<Row>) : Pa
     override suspend fun releaseSources() = sources
     override suspend fun setReleaseSources(sources: ReleaseSources) { this.sources = sources }
     override suspend fun volumeFill(): VolumeFill? = null
+    private var keepHigher = true
+    override suspend fun homeAiring(): List<HomeAiring> {
+        val today = now - Math.floorMod(now, 86_400L)
+        return samplePage(now, rows(), AiringType.ALL, AiringMine.ON, AiringOrder.POPULAR).days.flatMap { it.slots }
+            .filter { it.at > now && it.status != null }.distinctBy { it.id }.sortedBy { it.at }
+            .map { s ->
+                val d = ((s.at - today) / 86_400L).toInt()
+                val day = when (d) { 0 -> "Today"; 1 -> "Tomorrow"; else -> Instant.ofEpochSecond(s.at).atZone(ZoneOffset.UTC).dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.ENGLISH) }
+                HomeAiring(s.id, s.title, s.coverUrl, "Ep ${s.episode}", d == 0, "$day ${s.time}", s.at, s.status!!)
+            }
+    }
+    override suspend fun publishingCard(id: UInt): PublishingCard? = samplePublishing(now, PublishingSort.NEXT).rows.firstOrNull { it.id == id }?.let { r ->
+        PublishingCard(
+            if (r.latest.isEmpty()) "–" else "${r.latest} · ${r.`when`}",
+            when (val b = r.behind) { null -> "–"; 0u -> "Caught up"; else -> "$b to read" },
+            if (r.pace.isEmpty()) "–" else if (r.next.isEmpty()) r.pace else "${r.pace}, ${r.next}",
+            null,
+            "Release data: MangaUpdates, MangaDex. Next dates are estimates from past releases.",
+        )
+    }
+    override suspend fun keepHigherProgress() = keepHigher
+    override suspend fun setKeepHigherProgress(on: Boolean) { keepHigher = on }
 
     companion object {
         /** A made-up week and season in UTC: the sample list's Watching shows and a few others. */

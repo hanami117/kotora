@@ -160,7 +160,8 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     val r = vm.repo ?: return@LaunchedEffect
                     val anime = runCatching { r.list(MediaKind.ANIME, null, Sort.UPDATED) }.getOrDefault(emptyList())
                     val manga = if (vm.mangaEnabled) runCatching { r.list(MediaKind.MANGA, null, Sort.UPDATED) }.getOrDefault(emptyList()) else emptyList()
-                    shelves = Shelves.of(anime, manga)
+                    val airing = runCatching { r.pages.homeAiring() }.getOrDefault(emptyList())
+                    shelves = Shelves.of(anime, manga, airing)
                 }
                 var homeStats by remember { mutableStateOf<io.github.hanami117.kotora.core.StatsData?>(null) }
                 LaunchedEffect(vm.list, vm.list.kind) {
@@ -176,6 +177,13 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onSync = vm::sync,
                     onPlusOne = vm::plusOne,
                     onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
+                    onOpenAiring = { a -> nav.navigate("details/${MediaKind.ANIME.name}/${a.id}") },
+                    onAiring = {
+                        nav.navigate(Tab.AIRING.route) {
+                            popUpTo(Tab.HOME.route) { saveState = true }
+                            launchSingleTop = true
+                        }
+                    },
                     onSeeAll = { kind, status ->
                         vm.select(kind = kind)
                         vm.select(status = status)
@@ -382,9 +390,11 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 val loadInfo: () -> Unit = { scope.launch { vm.loadDetails(kind, id, info) { info = it } } }
                 LaunchedEffect(kind, id) { vm.loadDetails(kind, id, info) { info = it } }
                 // Read again whenever the list changes (a +1 here or a sync).
+                var publishing by remember { mutableStateOf<io.github.hanami117.kotora.core.PublishingCard?>(null) }
                 LaunchedEffect(vm.list) {
                     row = vm.entry(kind, id)
                     loaded = true
+                    publishing = if (kind == MediaKind.MANGA) runCatching { vm.repo?.pages?.publishingCard(id) }.getOrNull() else null
                 }
                 if (loaded && row == null) {
                     NotOnListScreen(
@@ -408,6 +418,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                         onOpenUrl = vm::openUrl,
                         info = info,
                         onRetry = loadInfo,
+                        publishing = publishing,
                         actions = { r ->
                             EntryActions(
                                 r,
