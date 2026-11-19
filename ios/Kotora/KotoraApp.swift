@@ -94,7 +94,7 @@ struct RootView: View {
     }
 }
 
-enum Tab: String { case list, airing, search, settings }
+enum Tab: String { case home, list, airing, search, settings }
 
 struct RowRef: Hashable {
     let kind: MediaKind
@@ -106,17 +106,18 @@ struct SignedInView: View {
     @EnvironmentObject private var model: AppModel
     @State private var tab: Tab
     @State private var listPath: [RowRef]
+    @State private var homePath: [RowRef] = []
 
     /// Debug launch arguments for screenshots: `-screen list|details|airing|search|settings`, `-id 7`.
     init() {
-        var screen = "list"
+        var screen = "home"
         var id: UInt32 = 7
         #if DEBUG
         let d = UserDefaults.standard
-        screen = d.string(forKey: "screen") ?? "list"
+        screen = d.string(forKey: "screen") ?? "home"
         if d.integer(forKey: "id") > 0 { id = UInt32(d.integer(forKey: "id")) }
         #endif
-        _tab = State(initialValue: screen == "details" ? .list : Tab(rawValue: screen) ?? .list)
+        _tab = State(initialValue: screen == "details" ? .list : Tab(rawValue: screen) ?? .home)
         _listPath = State(initialValue: screen == "details" ? [RowRef(kind: .anime, id: id)] : [])
     }
 
@@ -124,6 +125,19 @@ struct SignedInView: View {
         let manga = model.list.kind == .manga
         let account = model.session.active
         TabView(selection: $tab) {
+            NavigationStack(path: $homePath) {
+                HomeScreen(path: $homePath) { kind, status in
+                    model.select(kind: kind, status: status)
+                    listPath = []
+                    tab = .list
+                }
+                .overlay(alignment: .bottom) { snack }
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: RowRef.self) { DetailsScreen(ref: $0) }
+            }
+            .tabItem { Label("Home", systemImage: "house") }
+            .tag(Tab.home)
+
             NavigationStack(path: $listPath) {
                 ListScreen(path: $listPath)
                     .overlay(alignment: .bottom) { snack }
@@ -140,7 +154,8 @@ struct SignedInView: View {
                 .tabItem { Label(manga ? "Publishing" : "Airing", systemImage: manga ? "book" : "calendar") }
                 .tag(Tab.airing)
 
-            Placeholder(title: "Search", text: "Search and add anime and manga: in a later build (M3).", account: account)
+            SearchScreen()
+                .overlay(alignment: .bottom) { snack }
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(Tab.search)
 

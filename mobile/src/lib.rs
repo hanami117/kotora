@@ -785,5 +785,8 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").into()
 }
 
+mod search;
+pub use search::Hit;
+
 #[cfg(test)]
 mod tests;

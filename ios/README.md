@@ -19,7 +19,9 @@ core's queue, a background flush. The screens, words and data layer mirror `andr
   into the core's queue and are sent at once, when the network comes back, and by a
   `BGAppRefreshTask` (`io.github.hanami117.kotora.flush`) while changes wait.
 - **Debug builds** have "Look around with sample data" (made-up lists in memory, nothing sent).
-- Airing, Search, the editor and the service's details pages come later (M3/M4), on both phones.
+- **Home**: Continue watching (and Continue reading with Manga on) with +1, Plan to watch, as on the desktop.
+- **Search**: the list's matches, then MyAnimeList's or AniList's results (3 letters or more, after a 400 ms pause, kept 10 min), "+ Watching" or another status: added through the queue. `-query <words>` searches at launch (debug).
+- Airing, the editor and the service's details pages come later (M3/M4), on both phones.
 
 ## Build and run (macOS, Xcode, no paid account)
 

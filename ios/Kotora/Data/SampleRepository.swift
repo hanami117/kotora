@@ -5,16 +5,16 @@ import Foundation
 /// screenshots and by "Look around" in debug builds.
 final class SampleRepository: Repository, @unchecked Sendable {
     let isSample = true
-    private let now: Int64
+    let now: Int64
     private let lock = NSLock()
-    private var rows: [Row]
+    var rows: [Row]
 
     init(now: Int64 = Int64(Date().timeIntervalSince1970)) {
         self.now = now
         rows = Self.sampleRows(now)
     }
 
-    private func locked<T>(_ f: () throws -> T) rethrows -> T {
+    func locked<T>(_ f: () throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
         return try f()

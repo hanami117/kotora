@@ -11,7 +11,7 @@ import Security
 /// - `Caches/kotora`: caches (never backed up; the system may clear it).
 /// - The tokens: the Keychain (`KeychainVault`), this device only, not synchronised.
 final class CoreRepository: Repository, @unchecked Sendable {
-    private let kotora: Kotora
+    let kotora: Kotora
 
     let isSample = false
 
