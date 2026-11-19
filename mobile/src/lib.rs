@@ -24,15 +24,14 @@ use kotora_core::store::Store;
 use kotora_core::tokens::{TokenStore, TokenVault};
 use kotora_core::{Change, Kind, ListItem, Scope, ScoreFormat, Status, paths, time};
 
-mod airing;
-pub use airing::{AiringDay, AiringMine, AiringSlot, AiringType, AiringUntimed, AiringWeek, Note, NoteKind, NotifySettings};
-
 uniffi::setup_scaffolding!();
 
 mod edit;
 pub use edit::*;
 mod remove;
 pub use remove::*;
+mod insights;
+pub use insights::*;
 
 /// The redirect registered with Kotora's MyAnimeList client for Android.
 pub const MAL_REDIRECT_URI: &str = "io.github.hanami117.kotora://oauth/mal";
@@ -795,6 +794,14 @@ pub fn core_version() -> String {
 
 mod search;
 pub use search::Hit;
+/// Airing, Publishing and their notifications.
+mod pages;
+/// Title language and release sources (Android; the desktop's keys).
+mod prefs;
+/// The season picker's other seasons (Android).
+mod seasons;
+pub use seasons::{SeasonGrid, SeasonPick};
+pub use prefs::{ReleaseSources, ShownTitle};
 
 #[cfg(test)]
 mod tests;

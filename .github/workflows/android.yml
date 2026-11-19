@@ -55,8 +55,12 @@ jobs:
           cargo clippy -p kotora-core --no-default-features --all-targets --locked -- -D warnings
       - name: Mobile crate (tests, clippy)
         working-directory: mobile
+        # pages:: and insights:: each want the process's first Kotora (its folders and time
+        # zone are global): one process per group.
         run: |
-          cargo test --locked
+          cargo test --locked -- --skip pages:: --skip insights::
+          cargo test --locked pages::
+          cargo test --locked insights::
           cargo clippy --all-targets --locked -- -D warnings
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - name: Debug APK, unit and screenshot tests, lint

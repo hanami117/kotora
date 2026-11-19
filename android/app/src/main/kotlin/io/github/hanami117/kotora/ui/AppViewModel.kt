@@ -9,7 +9,13 @@ import androidx.lifecycle.viewModelScope
 import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.AiringMine
 import io.github.hanami117.kotora.core.AiringType
-import io.github.hanami117.kotora.core.AiringWeek
+import io.github.hanami117.kotora.core.AiringOrder
+import io.github.hanami117.kotora.core.AiringPage
+import io.github.hanami117.kotora.core.KotoraSettings
+import io.github.hanami117.kotora.core.NoticeKind
+import io.github.hanami117.kotora.core.SeasonGrid
+import io.github.hanami117.kotora.core.SeasonPick
+import io.github.hanami117.kotora.core.Setting
 import io.github.hanami117.kotora.core.Edit
 import io.github.hanami117.kotora.core.KotoraException
 import io.github.hanami117.kotora.core.ListStatus
@@ -71,11 +77,19 @@ data class ListUi(
     val offline: Boolean = false,
 )
 
-/** The Airing page: the week (local, from the saved seasons), its filters, the fetch. */
+/** The Airing page: the week and the season grid (local, from the saved seasons), filters, fetch. */
 data class AiringUi(
-    val week: AiringWeek? = null,
+    val week: AiringPage? = null,
     val type: AiringType = AiringType.ALL,
     val mine: AiringMine = AiringMine.ALL,
+    /** This week, or the season grid. */
+    val grid: Boolean = false,
+    val order: AiringOrder = AiringOrder.POPULAR,
+    /** The picked season, from the current one (0 now, 1 next, -1 the one before). */
+    val offset: Int = 0,
+    /** The picked season's grid when it isn't the current one. */
+    val other: SeasonGrid? = null,
+    val picks: List<SeasonPick> = emptyList(),
     /** The seasons are being asked for. */
     val loading: Boolean = false,
     /** The last fetch's problem ("Can't reach MyAnimeList."). */
@@ -109,6 +123,13 @@ class AppViewModel(
         private set
     var notify by mutableStateOf(NotifySettings(startedAiring = true, newEpisode = true, newChapter = false))
         private set
+    /** The desktop's settings in `config.toml` (theme, startup, …). */
+    var settings by mutableStateOf<KotoraSettings?>(null)
+        private set
+    /** `romaji`, `english`, `japanese`; the list's titles follow it. */
+    var titleLanguage by mutableStateOf("romaji")
+        private set
+    private var shownTitles: Map<UInt, String> = emptyMap()
 
     /** A notification was tapped: the page to open (kind, id). */
     private val opens = Channel<Pair<MediaKind, UInt>>(Channel.CONFLATED)
@@ -148,7 +169,18 @@ class AppViewModel(
         }
         session = Session.SignedIn(accounts)
         mangaEnabled = runCatching { r.mangaEnabled() }.getOrDefault(false)
-        notify = runCatching { r.notifySettings() }.getOrDefault(notify)
+        notify = runCatching { r.pages.notifySettings() }.getOrDefault(notify)
+        settings = runCatching { r.pages.settings() }.getOrNull()
+        titleLanguage = runCatching { r.pages.titleLanguage() }.getOrDefault("romaji")
+        settings?.let { st ->
+            // Settings → Startup → Mode: the list opens on Anime, Manga or the last one.
+            val kind = when (st.startMode) {
+                "anime" -> MediaKind.ANIME
+                "manga" -> if (mangaEnabled) MediaKind.MANGA else MediaKind.ANIME
+                else -> if (st.listKind == MediaKind.MANGA && !mangaEnabled) MediaKind.ANIME else st.listKind
+            }
+            if (!list.loaded) list = list.copy(kind = kind)
+        }
         if (!r.isSample) onSignedIn(true)
         reload()
         if (list.syncedAt == null && !r.isSample) sync() else if (!r.isSample) requestFlush()
@@ -165,6 +197,7 @@ class AppViewModel(
         val r = repo ?: return
         val l = list
         try {
+            shownTitles = if (titleLanguage == "romaji") emptyMap() else runCatching { r.pages.shownTitles(l.kind) }.getOrDefault(emptyList()).associate { it.mediaId to it.title }
             val src = r as? ListPageSource
             val page = src?.listPage(l.kind, ListQuery(l.status, l.filter, l.query, l.sort, l.reverse))
             val view = src?.listView(l.kind, l.status) ?: ListViewMode.LIST
@@ -172,8 +205,8 @@ class AppViewModel(
             // Keep what changed meanwhile (another page, order, chip or filter picked).
             if (now.kind != l.kind || now.status != l.status || now.sort != l.sort || now.reverse != l.reverse || now.filter != l.filter || now.query != l.query) return
             list = now.copy(
-                rows = page?.lines?.map { it.row } ?: emptyList(),
-                lines = page?.lines ?: emptyList(),
+                rows = page?.lines?.map { shown(it.row) } ?: emptyList(),
+                lines = page?.lines?.map { it.copy(row = shown(it.row)) } ?: emptyList(),
                 empty = page?.empty ?: ListEmptyKind.NONE,
                 emptyTitle = page?.emptyTitle ?: "",
                 emptyHelp = page?.emptyHelp ?: "",
@@ -189,6 +222,9 @@ class AppViewModel(
             list = l.copy(problem = message(e), loaded = true)
         }
     }
+
+    /** A row with its title in the chosen language. */
+    private fun shown(row: Row): Row = shownTitles[row.id]?.takeIf { it != row.title }?.let { row.copy(title = it) } ?: row
 
     fun select(
         kind: MediaKind = list.kind,
@@ -211,6 +247,7 @@ class AppViewModel(
             query = query,
         )
         viewModelScope.launch {
+            if (kindChanged) runCatching { repo?.pages?.setSetting(Setting.ListKind(kind)) }
             if (kindChanged && kind == MediaKind.MANGA && !mangaEnabled) switchManga(true) else reload()
         }
     }
@@ -284,7 +321,7 @@ class AppViewModel(
     /** The queue may go now (an edit was saved). */
     fun flushSoon() = requestFlush()
 
-    suspend fun entry(kind: MediaKind, id: UInt): Row? = runCatching { repo?.entry(kind, id) }.getOrNull()
+    suspend fun entry(kind: MediaKind, id: UInt): Row? = runCatching { repo?.entry(kind, id) }.getOrNull()?.let { if (kind == list.kind) shown(it) else it }
 
     fun switchManga(on: Boolean) {
         val r = repo ?: return
@@ -299,9 +336,12 @@ class AppViewModel(
 
     /** The page opened: the saved week at once, then the seasons when they are missing or old. */
     fun openAiring() {
+        val r = repo ?: return
+        if (airing.picks.isEmpty()) airing = airing.copy(picks = runCatching { r.pages.seasonPicks(PICKER_BACK) }.getOrDefault(emptyList()))
         viewModelScope.launch {
             reloadAiring()
             if (airing.week?.stale != false) fetchAiring(false)
+            else if (airing.offset != 0 && airing.other?.stale != false) fetchAiring(false)
         }
     }
 
@@ -312,9 +352,11 @@ class AppViewModel(
         val r = repo ?: return
         if (airing.loading) return
         airing = airing.copy(loading = true, error = null)
+        val offset = airing.offset
         viewModelScope.launch {
             val error = try {
-                r.airingFetch(force)
+                r.pages.airingRefresh(force)
+                if (offset != 0) r.pages.seasonFetch(offset, force)
                 null
             } catch (e: Exception) {
                 message(e)
@@ -324,11 +366,14 @@ class AppViewModel(
         }
     }
 
-    /** The week again from what is saved (a filter, the minute, the list changed). Local. */
+    /** The week and grid again from what is saved (a filter, the minute, the list changed). Local. */
     suspend fun reloadAiring() {
         val r = repo ?: return
         try {
-            airing = airing.copy(week = r.airingWeek(airing.type, airing.mine))
+            val a = airing
+            val week = r.pages.airingPage(a.type, a.mine, a.order)
+            val other = if (a.offset != 0) r.pages.seasonGrid(a.offset, a.type, a.mine, a.order) else null
+            airing = airing.copy(week = week, other = other)
         } catch (e: KotoraException.NotSignedIn) {
             session = Session.SignedOut()
         } catch (e: Exception) {
@@ -336,20 +381,77 @@ class AppViewModel(
         }
     }
 
-    fun airingFilter(type: AiringType = airing.type, mine: AiringMine = airing.mine) {
-        airing = airing.copy(type = type, mine = mine)
+    fun airingFilter(type: AiringType = airing.type, mine: AiringMine = airing.mine, order: AiringOrder = airing.order, grid: Boolean = airing.grid) {
+        airing = airing.copy(type = type, mine = mine, order = order, grid = grid)
         viewModelScope.launch { reloadAiring() }
+    }
+
+    /** The season picker: a season's grid (asked for when it isn't saved or is old). */
+    fun pickSeason(offset: Int) {
+        airing = airing.copy(offset = offset, grid = true, other = null, error = null)
+        viewModelScope.launch {
+            reloadAiring()
+            if (offset != 0 && airing.other?.stale != false) fetchAiring(false)
+        }
     }
 
     // ------------------------------------------------------------------------- notifications
 
     fun changeNotify(settings: NotifySettings) {
         val r = repo ?: return
+        val old = notify
         notify = settings
         viewModelScope.launch {
-            runCatching { r.setNotifySettings(settings) }
+            runCatching {
+                if (settings.startedAiring != old.startedAiring) r.pages.setNotify(NoticeKind.STARTED_AIRING, settings.startedAiring)
+                if (settings.newEpisode != old.newEpisode) r.pages.setNotify(NoticeKind.NEW_EPISODE, settings.newEpisode)
+                if (settings.newChapter != old.newChapter) r.pages.setNotify(NoticeKind.NEW_CHAPTER, settings.newChapter)
+            }
+            this@AppViewModel.settings = runCatching { r.pages.settings() }.getOrDefault(this@AppViewModel.settings)
             if (!r.isSample) requestNotes()
         }
+    }
+
+    // ----------------------------------------------------------------------- desktop settings
+
+    /** One setting of `config.toml` (Theme, Open on, Mode, …). */
+    fun changeSetting(setting: Setting) {
+        val r = repo ?: return
+        viewModelScope.launch {
+            try {
+                settings = r.pages.setSetting(setting)
+            } catch (e: Exception) {
+                snacks.send(Snack(message(e)))
+            }
+        }
+    }
+
+    /** Settings → Titles: the list (and the pages) show this language from now on. */
+    fun changeTitleLanguage(value: String) {
+        val r = repo ?: return
+        viewModelScope.launch {
+            try {
+                r.pages.setTitleLanguage(value)
+                titleLanguage = value
+                reload()
+            } catch (e: Exception) {
+                snacks.send(Snack(message(e)))
+            }
+        }
+    }
+
+    /** The page left (for Open on: Last page). */
+    fun leftOn(page: String) {
+        val r = repo ?: return
+        if (settings?.lastPage == page) return
+        settings = settings?.copy(lastPage = page)
+        viewModelScope.launch { runCatching { r.pages.setSetting(Setting.LastPage(page)) } }
+    }
+
+    /** After Fill volumes or its Undo: the list and the queue changed. */
+    fun listChanged() {
+        viewModelScope.launch { reload() }
+        requestFlush()
     }
 
     /** A notification was tapped (the Activity's intent). */
@@ -497,5 +599,7 @@ class AppViewModel(
         const val PENDING_URL = "signin.url"
         const val PENDING_STATE = "signin.state"
         const val PENDING_VERIFIER = "signin.verifier"
+        /** How far back the season picker goes (about ten years). */
+        const val PICKER_BACK = 40u
     }
 }

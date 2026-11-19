@@ -50,6 +50,10 @@ fun SettingsScreen(
     onOpenUrl: (String) -> Unit = {},
     conflicts: UInt = 0u,
     onQueue: (() -> Unit)? = null,
+    /** Theme and Titles rows (in Appearance). */
+    appearanceExtras: @Composable () -> Unit = {},
+    /** Statistics, Startup, Release data, Manga (after Notifications). */
+    extras: @Composable () -> Unit = {},
 ) {
     val k = Kotora.colors
     val menu = LocalAccounts.current
@@ -126,11 +130,15 @@ fun SettingsScreen(
                 }
             }
         }
+        extras()
         SectionLabel("Appearance")
         Card {
+          Column {
+            appearanceExtras()
             Item("Startup animation", "Claw marks when Kotora opens. Coming back to it doesn\u2019t play it; with Remove animations it is a short fade.") {
                 KSwitch(intro, onCheckedChange = onIntro)
             }
+          }
         }
         SectionLabel("About")
         Card {

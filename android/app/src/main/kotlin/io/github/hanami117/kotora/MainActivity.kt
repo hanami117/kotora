@@ -36,6 +36,7 @@ import io.github.hanami117.kotora.ui.IntroOverlay
 import io.github.hanami117.kotora.ui.KotoraApp
 import io.github.hanami117.kotora.ui.Session
 import io.github.hanami117.kotora.ui.theme.KotoraTheme
+import io.github.hanami117.kotora.ui.theme.ThemeMode
 import io.github.hanami117.kotora.work.FlushWorker
 import io.github.hanami117.kotora.work.NotifyWorker
 import kotlinx.coroutines.launch
@@ -97,7 +98,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             var intro by remember { mutableStateOf(uiPrefs.intro) }
             var introUp by remember { mutableStateOf(playIntro) }
-            KotoraTheme {
+            // Settings → Appearance → Theme (the desktop's `[display] theme`).
+            val mode = when (vm.settings?.theme) { "light" -> ThemeMode.LIGHT; "dark" -> ThemeMode.DARK; else -> ThemeMode.SYSTEM }
+            KotoraTheme(mode) {
                 Box(Modifier.fillMaxSize()) {
                     val prefs = AppPrefs(
                         intro = intro,

@@ -7,6 +7,18 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.AiringMine
+import io.github.hanami117.kotora.core.AiringOrder
+import io.github.hanami117.kotora.core.FillPreview
+import io.github.hanami117.kotora.core.FillRow
+import io.github.hanami117.kotora.core.KotoraSettings
+import io.github.hanami117.kotora.core.PublishingSort
+import io.github.hanami117.kotora.data.SamplePages
+import io.github.hanami117.kotora.ui.AppearanceExtras
+import io.github.hanami117.kotora.ui.FillVolumesPreview
+import io.github.hanami117.kotora.ui.PublishingPanelBody
+import io.github.hanami117.kotora.ui.PublishingScreen
+import io.github.hanami117.kotora.ui.SettingsExtras
+import io.github.hanami117.kotora.ui.StatsScreen
 import io.github.hanami117.kotora.core.AiringType
 import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.ListStatus
@@ -135,14 +147,14 @@ class ScreenshotTest {
         AiringScreen(ui, account, {}, {}, {}, { _, _ -> }, {}, ticking = false)
     }
 
-    private fun week(type: AiringType = AiringType.ALL, mine: AiringMine = AiringMine.ALL) = runBlocking { repo.airingWeek(type, mine) }
+    private fun week(type: AiringType = AiringType.ALL, mine: AiringMine = AiringMine.ALL, order: AiringOrder = AiringOrder.POPULAR) = runBlocking { repo.pages.airingPage(type, mine, order) }
 
     @Test fun airingDark() = airing("airing", true, AiringUi(week()))
     @Test fun airingLight() = airing("airing", false, AiringUi(week()))
     @Test fun airingMineDark() = airing("airing-mine", true, AiringUi(week(mine = AiringMine.ON), mine = AiringMine.ON))
     @Test fun airingUpdatingErrorLight() = airing("airing-error", false, AiringUi(week(), loading = false, error = "Can\u2019t reach MyAnimeList."))
-    @Test fun airingLoadingDark() = airing("airing-loading", true, AiringUi(week().copy(shows = 0u, fetchedAt = null, days = emptyList(), untimed = emptyList()), loading = true))
-    @Test fun airingNothingFilteredLight() = airing("airing-filtered", false, AiringUi(week().copy(days = week().days.map { it.copy(slots = emptyList(), onList = 0u) }, untimed = emptyList()), type = AiringType.MOVIE))
+    @Test fun airingLoadingDark() = airing("airing-loading", true, AiringUi(week().copy(hasShows = false, fetchedAt = null, days = emptyList(), untimed = emptyList(), cards = emptyList()), loading = true))
+    @Test fun airingNothingFilteredLight() = airing("airing-filtered", false, AiringUi(week().copy(days = week().days.map { it.copy(slots = emptyList(), onList = "") }, untimed = emptyList()), type = AiringType.MOVIE))
 
     // ---- the startup intro, held at points of its run (the desktop's `Intro::frozen` scenes)
 
@@ -268,4 +280,63 @@ class ScreenshotTest {
     @Test fun homeDark() = home("home", true)
     @Test fun homeLight() = home("home", false)
     @Test fun homeEmptyLight() = home("home-empty", false, manga = false, empty = true)
+    // ---- Airing's season grid and picker
+
+    private val picks = SamplePages(now) { emptyList() }.seasonPicks(8u)
+
+    @Test fun airingSeasonDark() = airing("airing-season", true, AiringUi(week(), grid = true, picks = picks))
+    @Test fun airingSeasonToWatchLight() = airing("airing-season-towatch", false, AiringUi(week(order = AiringOrder.TO_WATCH), grid = true, order = AiringOrder.TO_WATCH, picks = picks))
+    @Test fun airingSeasonPickedDark() = airing("airing-season-picked", true, runBlocking {
+        AiringUi(week(), grid = true, offset = -4, other = repo.pages.seasonGrid(-4, AiringType.ALL, AiringMine.ALL, AiringOrder.POPULAR), picks = picks)
+    })
+
+    // ---- Publishing
+
+    private fun publishing(name: String, dark: Boolean, sort: PublishingSort = PublishingSort.NEXT) = shot(name, dark) {
+        PublishingScreen(repo.pages, account, now, null, {}, {}, {}, {}, initial = SamplePages.samplePublishing(now, sort), refreshOnOpen = false)
+    }
+
+    @Test fun publishingDark() = publishing("publishing", true)
+    @Test fun publishingLight() = publishing("publishing", false)
+    @Test fun publishingPanelDark() = shot("publishing-panel", true) {
+        PublishingPanelBody(SamplePages.samplePublishing(now, PublishingSort.NEXT).rows[1], repo.pages, {}, {})
+    }
+
+    // ---- Statistics
+
+    @Test fun statsDark() = shot("stats", true) { StatsScreen(repo.pages, MediaKind.ANIME, true, null, {}, initial = SamplePages.sampleStats(MediaKind.ANIME, now)) }
+    @Test fun statsLight() = shot("stats", false) { StatsScreen(repo.pages, MediaKind.ANIME, true, null, {}, initial = SamplePages.sampleStats(MediaKind.ANIME, now)) }
+    @Test fun statsMangaDark() = shot("stats-manga", true) { StatsScreen(repo.pages, MediaKind.MANGA, true, null, {}, initial = SamplePages.sampleStats(MediaKind.MANGA, now)) }
+
+    // ---- advanced settings, Fill volumes
+
+    private val desk = KotoraSettings("dark", true, "last", "anime", "airing", MediaKind.ANIME, true, true, false)
+
+    @Test fun settingsAdvancedDark() = shot("settings-advanced", true) {
+        SettingsScreen(
+            listOf(account), true, 0u, "0.5.0", false, {}, {}, {},
+            appearanceExtras = { AppearanceExtras(desk, "english", {}, {}) },
+            extras = { SettingsExtras(repo.pages, desk, true, false, {}, {}, {}) },
+        )
+    }
+    @Test fun settingsAdvancedLight() = shot("settings-advanced", false) {
+        SettingsScreen(
+            listOf(account), true, 0u, "0.5.0", false, {}, {}, {},
+            appearanceExtras = { AppearanceExtras(desk.copy(theme = "system"), "romaji", {}, {}) },
+            extras = { SettingsExtras(repo.pages, desk, true, false, {}, {}, {}) },
+        )
+    }
+
+    private val fillPreview = FillPreview(
+        fill = listOf(FillRow(101u, "Paper Lanterns", 21u, 1u, 3u), FillRow(102u, "Umibe no Atelier", 44u, 2u, 5u)),
+        notFound = listOf("Tsuki to Kamome"),
+        same = listOf(FillRow(104u, "Hoshi no Tegami", 60u, 7u, 7u)),
+        higher = emptyList(),
+        stopped = false,
+    )
+
+    @Test fun fillIdleDark() = shot("fill-idle", true) { FillVolumesPreview(null) }
+    @Test fun fillPreviewDark() = shot("fill-preview", true) { FillVolumesPreview(fillPreview) }
+    @Test fun fillPreviewLight() = shot("fill-preview", false) { FillVolumesPreview(fillPreview) }
+    @Test fun fillDoneLight() = shot("fill-done", false) { FillVolumesPreview(fillPreview, queued = 2u) }
 }

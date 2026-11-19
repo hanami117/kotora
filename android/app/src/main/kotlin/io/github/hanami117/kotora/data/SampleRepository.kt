@@ -2,19 +2,11 @@ package io.github.hanami117.kotora.data
 
 import io.github.hanami117.kotora.core.Account
 import io.github.hanami117.kotora.core.BackgroundReport
-import io.github.hanami117.kotora.core.AiringDay
-import io.github.hanami117.kotora.core.AiringMine
-import io.github.hanami117.kotora.core.AiringSlot
-import io.github.hanami117.kotora.core.AiringType
-import io.github.hanami117.kotora.core.AiringUntimed
-import io.github.hanami117.kotora.core.AiringWeek
 import io.github.hanami117.kotora.core.Edit
 import io.github.hanami117.kotora.core.FlushReport
 import io.github.hanami117.kotora.core.KotoraException
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
-import io.github.hanami117.kotora.core.Note
-import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.PendingSignIn
 import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
@@ -26,10 +18,6 @@ import io.github.hanami117.kotora.ui.ListPageSource
 import io.github.hanami117.kotora.ui.samplePage
 import io.github.hanami117.kotora.core.StatusCount
 import io.github.hanami117.kotora.core.SyncReport
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.TextStyle
-import java.util.Locale
 
 /**
  * Made-up lists in memory (the mockup's titles; nothing real). Edits change the rows here only;
@@ -92,75 +80,14 @@ class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, Acc
     override suspend fun setActive(service: Service) {}
     override suspend fun backgroundRefresh() = BackgroundReport(flush(), false, false, null)
 
-    private var notify = NotifySettings(startedAiring = true, newEpisode = true, newChapter = false)
-
-    override suspend fun airingWeek(type: AiringType, mine: AiringMine): AiringWeek = sampleWeek(now, rows, type, mine)
-    override suspend fun airingFetch(force: Boolean) = false
-    override suspend fun notifySettings() = notify
-    override suspend fun setNotifySettings(settings: NotifySettings) {
-        notify = settings
-    }
-    override suspend fun airNotes(): List<Note> = emptyList()
-    override suspend fun chapterNotes(): List<Note> = emptyList()
     override suspend fun profile(service: Service) = sampleProfile()
     override fun serviceLinks(kind: MediaKind, id: UInt) =
         listOf(io.github.hanami117.kotora.core.ServiceLink(Service.MAL, "Open on MyAnimeList", Links.media(Service.MAL, kind, id)))
     override suspend fun signInWithToken(raw: String): Account = throw io.github.hanami117.kotora.core.KotoraException.NoClientId("Sample data: no sign-in.")
 
-    companion object {
-        /**
-         * A made-up week in UTC: the sample list's Watching shows and a few others, a slot a day
-         * or two, as the core lays it out (the texts are the core's words, made here by hand).
-         */
-        fun sampleWeek(now: Long, rows: List<Row>, type: AiringType, mine: AiringMine): AiringWeek {
-            val day0 = now - Math.floorMod(now, 86_400L)
-            val others = listOf(
-                Triple(201u, "Garasu no Umi", "tv"), Triple(202u, "Mizuiro Signal", "ona"), Triple(203u, "Ryuusei Kitchen", "tv"),
-                Triple(204u, "Hanabi Courier", "tv"), Triple(205u, "Kurenai Archive", "movie"), Triple(206u, "Tenbin Academy", "tv"),
-            )
-            val watching = rows.filter { it.kind == MediaKind.ANIME && it.status == ListStatus.WATCHING && it.airStatus == "currently_airing" }
-            val plan = listOf(19 * 60 + 30, 23 * 60, 22 * 60 + 30, 16 * 60, 1 * 60 + 5, 21 * 60, 0 * 60 + 30)
-            fun hhmm(m: Int) = "%02d:%02d".format(m / 60, m % 60)
-            fun countdown(secs: Long): String {
-                val m = maxOf(secs, 0) / 60
-                return when {
-                    m == 0L -> "now"
-                    m < 60 -> "$m min"
-                    m < 1440 -> if (m % 60 == 0L) "${m / 60} h" else "${m / 60} h ${m % 60} min"
-                    (m % 1440) / 60 == 0L -> "${m / 1440} d"
-                    else -> "${m / 1440} d ${(m % 1440) / 60} h"
-                }
-            }
-            fun label(f: String) = when (f) { "tv" -> "TV"; "ona" -> "ONA"; "movie" -> "Movie"; else -> "" }
-            fun keeps(f: String) = when (type) {
-                AiringType.ALL -> true
-                AiringType.TV -> f == "tv" || f == "tv_special"
-                AiringType.ONA -> f == "ona"
-                AiringType.MOVIE -> f == "movie"
-            }
-            val days = (0 until 7).map { d ->
-                val slots = mutableListOf<AiringSlot>()
-                watching.getOrNull(d)?.let { r ->
-                    val at = day0 + d * 86_400L + plan[d] * 60L
-                    val note = if (at <= now) "aired" else "in ${countdown(at - now)}"
-                    val behind = if (d == 0 && at <= now) "~1 to watch" else "Caught up"
-                    slots += AiringSlot(r.id, r.title, r.coverUrl, label(r.format), r.progress + 1u, at, hhmm(plan[d]), true, r.status, note, behind)
-                }
-                others.getOrNull(d)?.let { (id, t, f) ->
-                    val m = plan[(d + 3) % 7]
-                    val at = day0 + d * 86_400L + m * 60L
-                    slots += AiringSlot(id, t, null, label(f), (3 + d).toUInt(), at, hhmm(m), false, null, if (at <= now) "aired" else "", null)
-                }
-                val kept = slots.filter { keeps(when (it.formatLabel) { "TV" -> "tv"; "ONA" -> "ona"; "Movie" -> "movie"; else -> "" }) && (mine == AiringMine.ALL || (mine == AiringMine.ON) == it.mine) }.sortedBy { it.at }
-                val date = Instant.ofEpochSecond(day0 + d * 86_400L + 12 * 3600).atZone(ZoneOffset.UTC)
-                val name = "${date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)} ${date.month.getDisplayName(TextStyle.SHORT, Locale.ENGLISH)} ${date.dayOfMonth}"
-                val dayLabel = when (d) { 0 -> "Today · $name"; 1 -> "Tomorrow · $name"; else -> name }
-                AiringDay(dayLabel, d == 0, kept.count { it.mine }.toUInt(), kept)
-            }
-            val untimed = if (mine == AiringMine.ON) emptyList() else listOf(AiringUntimed(207u, "Kumo Kujira Radio", null, "Sundays in Japan, time not known", null))
-            return AiringWeek("Fall 2026", "MyAnimeList", now - 3_600, 40u, false, days, untimed)
-        }
+    override val pages: PagesSource by lazy { SamplePages(now) { rows.toList() } }
 
+    companion object {
         /** As the core: a rewatch (status Completed) shows under Watching too. */
         fun showsIn(r: Row, page: ListStatus) = r.status == page || (page == ListStatus.WATCHING && r.rewatching)
 

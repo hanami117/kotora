@@ -14,8 +14,8 @@ import androidx.core.content.ContextCompat
 import io.github.hanami117.kotora.MainActivity
 import io.github.hanami117.kotora.R
 import io.github.hanami117.kotora.core.MediaKind
-import io.github.hanami117.kotora.core.Note
-import io.github.hanami117.kotora.core.NoteKind
+import io.github.hanami117.kotora.core.Notice
+import io.github.hanami117.kotora.core.NoticeKind
 
 /**
  * Kotora's notifications on Android: one channel per desktop switch (Started airing, New
@@ -39,7 +39,7 @@ object Notifier {
             listOf(
                 ch(CH_STARTED, "Started airing", "When a show on Plan to watch starts airing."),
                 ch(CH_EPISODE, "New episode", "When the next episode of a show you're watching is out, by the estimated broadcast time."),
-                ch(CH_CHAPTER, "New chapter", "When a manga you're reading gets a new chapter (MangaUpdates, MangaDex)."),
+                ch(CH_CHAPTER, "New chapter", "When a manga you're reading gets a new chapter on MangaUpdates or MangaDex."),
             ),
         )
     }
@@ -50,7 +50,7 @@ object Notifier {
         return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
-    fun show(context: Context, notes: List<Note>) {
+    fun show(context: Context, notes: List<Notice>) {
         if (notes.isEmpty() || !allowed(context)) return
         ensureChannels(context)
         val nm = NotificationManagerCompat.from(context)
@@ -61,14 +61,14 @@ object Notifier {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val pending = PendingIntent.getActivity(context, n.id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val channel = when (n.kind) {
-                NoteKind.STARTED -> CH_STARTED
-                NoteKind.EPISODE -> CH_EPISODE
-                NoteKind.CHAPTER -> CH_CHAPTER
+                NoticeKind.STARTED_AIRING -> CH_STARTED
+                NoticeKind.NEW_EPISODE -> CH_EPISODE
+                NoticeKind.NEW_CHAPTER -> CH_CHAPTER
             }
             val b = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_stat_kotora)
                 .setColor(0xFFF28A22.toInt())
-                .setContentTitle(n.summary)
+                .setContentTitle(n.title)
                 .setContentText(n.body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(n.body))
                 .setContentIntent(pending)

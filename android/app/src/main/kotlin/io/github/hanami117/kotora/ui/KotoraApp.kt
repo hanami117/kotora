@@ -56,6 +56,8 @@ import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.QueueItem
 import io.github.hanami117.kotora.core.ScoreScale
 import io.github.hanami117.kotora.core.Sort
+import io.github.hanami117.kotora.notify.Notifier
+import androidx.compose.ui.platform.LocalContext
 import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.ui.theme.Kotora
 import kotlinx.coroutines.launch
@@ -112,8 +114,26 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
     val search = remember { SearchModel() }
     var conflicts by remember { mutableStateOf(0u) }
     LaunchedEffect(vm.list) { conflicts = runCatching { vm.editing?.conflictCount() }.getOrNull() ?: 0u }
+    val context = LocalContext.current
+    var fill by remember { mutableStateOf(false) }
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
+    // Settings → Startup → Open on: Last page (once, at the start), and the page left, kept.
+    LaunchedEffect(vm.settings != null) {
+        val st = vm.settings ?: return@LaunchedEffect
+        if (st.openOn == "last") {
+            val tab = when (st.lastPage) { "airing", "publishing" -> Tab.AIRING; "search" -> Tab.SEARCH; "settings", "stats" -> Tab.SETTINGS; else -> null }
+            if (tab != null) nav.navigate(tab.route) { popUpTo(Tab.LIST.route) { saveState = true }; launchSingleTop = true }
+        }
+    }
+    LaunchedEffect(route) {
+        when (route) {
+            Tab.LIST.route -> vm.leftOn("list")
+            Tab.AIRING.route -> vm.leftOn(if (vm.list.kind == MediaKind.MANGA) "publishing" else "airing")
+            Tab.SEARCH.route -> vm.leftOn("search")
+            Tab.SETTINGS.route -> vm.leftOn("settings")
+        }
+    }
     val topLevel = Tab.entries.any { it.route == route } || route == null
     Scaffold(
         containerColor = k.bg,
@@ -184,11 +204,17 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
             }
             composable(Tab.AIRING.route) {
                 if (vm.list.kind == MediaKind.MANGA) {
-                    Placeholder(
-                        "Publishing",
-                        "New chapters of what you read, from MangaUpdates: in a later build (M4). New chapter notifications already work (Settings).",
-                        s.active,
-                        Modifier.statusBarsPadding(),
+                    val repo = vm.repo
+                    if (repo != null) PublishingScreen(
+                        pages = repo.pages,
+                        account = s.active,
+                        now = nowSeconds(),
+                        listKey = vm.list.rows,
+                        onOpen = { id -> nav.navigate("details/${MediaKind.MANGA.name}/$id") },
+                        onPlusOne = { id -> scope.launch { vm.entry(MediaKind.MANGA, id)?.let(vm::plusOne) } },
+                        onUrl = vm::openUrl,
+                        onNotices = { n -> Notifier.show(context, n) },
+                        modifier = Modifier.statusBarsPadding(),
                     )
                 } else {
                     AiringScreen(
@@ -199,6 +225,9 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                         onTick = vm::reloadAiring,
                         onFilter = { t, m -> vm.airingFilter(type = t ?: vm.airing.type, mine = m ?: vm.airing.mine) },
                         onShow = { id -> nav.navigate("details/${MediaKind.ANIME.name}/$id") },
+                        onView = { g -> vm.airingFilter(grid = g) },
+                        onOrder = { o -> vm.airingFilter(order = o) },
+                        onPick = vm::pickSeason,
                         modifier = Modifier.statusBarsPadding(),
                     )
                 }
@@ -247,7 +276,21 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onOpenUrl = vm::openUrl,
                     conflicts = conflicts,
                     onQueue = { nav.navigate("queue") },
+                    appearanceExtras = { AppearanceExtras(vm.settings, vm.titleLanguage, vm::changeSetting, vm::changeTitleLanguage) },
+                    extras = {
+                        vm.repo?.let { r ->
+                            SettingsExtras(r.pages, vm.settings, vm.mangaEnabled, vm.isSample, vm::changeSetting, { nav.navigate("stats") }, { fill = true })
+                        }
+                    },
                 )
+                if (fill) vm.repo?.let { r ->
+                    FillVolumesSheet(r.pages, s.active?.service?.let(::serviceTitle) ?: "the service", vm::listChanged) { fill = false }
+                }
+            }
+            composable("stats") {
+                vm.repo?.let { r ->
+                    StatsScreen(r.pages, vm.list.kind, vm.mangaEnabled, vm.list.rows, onBack = { nav.popBackStack() }, modifier = Modifier.statusBarsPadding())
+                }
             }
             composable("queue") {
                 var items by remember { mutableStateOf<List<QueueItem>?>(null) }

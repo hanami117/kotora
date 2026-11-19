@@ -44,14 +44,18 @@ class NotifyWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 Log.w("kotora", "background refresh: ${e.message}")
             }
         }
+        val pages = repo.pages
         try {
-            Notifier.show(applicationContext, repo.airNotes())
+            Notifier.show(applicationContext, pages.noticesDue())
         } catch (e: Exception) {
             Log.w("kotora", "airing notifications: ${e.message}")
         }
-        if (online(applicationContext)) {
+        // New chapter: Publishing's refresh (only what is older than four hours), as the desktop's
+        // Publishing timer; its notices come under the switch.
+        val chapters = runCatching { repo.mangaEnabled() && pages.notifySettings().newChapter }.getOrDefault(false)
+        if (chapters && online(applicationContext)) {
             try {
-                Notifier.show(applicationContext, repo.chapterNotes())
+                Notifier.show(applicationContext, pages.publishingRefresh(false).notices)
             } catch (e: Exception) {
                 Log.w("kotora", "chapter notifications: ${e.message}")
             }
