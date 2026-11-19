@@ -21,7 +21,12 @@ impl Kotora {
     pub fn remove_question(&self, kind: MediaKind, id: u32) -> Result<String, KotoraError> {
         let service = self.active_or_err()?;
         let item = self.store().load_item(Scope::new(service.name(), kind.into()), id)?.ok_or(KotoraError::NotFound)?;
-        Ok(format!("Remove {} from your list? It goes from your {} list too, with its progress and score.", item.media.title, service.id().title()))
+        let mut q = format!("Remove {} from your list? It goes from your {} list too, with its progress and score.", item.media.title, service.id().title());
+        // With the mirror on, the other service loses it too (desktop `remove_question`).
+        if let Some(other) = self.mirror_target() {
+            q.push_str(&format!(" Also removes it from {other}."));
+        }
+        Ok(q)
     }
 
     /// Remove from list: off the saved list now, the removal waits in the sync queue.

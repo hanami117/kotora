@@ -54,7 +54,7 @@ fun SettingsScreen(
     appearanceExtras: @Composable () -> Unit = {},
     /** Statistics, Startup, Release data, Manga (after Notifications). */
     extras: @Composable () -> Unit = {},
-    /** Mirror edits to the other service, Beta (`MirrorScreen.kt`), in the Account card. */
+    /** Mirror edits to the other service (`MirrorScreen.kt`), in the Account card. */
     mirror: @Composable () -> Unit = {},
 ) {
     val k = Kotora.colors

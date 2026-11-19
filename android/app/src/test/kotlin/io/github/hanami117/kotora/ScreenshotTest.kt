@@ -241,6 +241,10 @@ class ScreenshotTest {
         RemoveDialog("Remove Hoshikuzu Relay from your list? It goes from your MyAnimeList list too, with its progress and score.", {}, {})
     }
 
+    @Test fun removeDialogMirrorLight() = shot("remove-dialog-mirror", false) {
+        RemoveDialog("Remove Hoshikuzu Relay from your list? It goes from your MyAnimeList list too, with its progress and score. Also removes it from AniList.", {}, {})
+    }
+
     private fun queue(name: String, dark: Boolean, empty: Boolean = false) = shot(name, dark) {
         val items = if (empty) emptyList() else runBlocking { editing.queueItems() }
         QueueScreen(items, "MyAnimeList", now, null, false, {}, {}, { _, _ -> })

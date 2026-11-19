@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Mirror edits (Beta), the desktop's mirror.rs through `kotora-mobile` (`mobile/src/mirror.rs`).
+ * Mirror edits, the desktop's mirror.rs through `kotora-mobile` (`mobile/src/mirror.rs`).
  * Next to [Repository], so other batches can grow that one without touching this. The words come
  * from the core, the same on both phones and the desktop.
  */
@@ -80,7 +80,6 @@ fun sampleMirrorState(on: Boolean, signedIn: Boolean = on): MirrorState = Mirror
     to = Service.ANI_LIST,
     on = on,
     title = "Mirror edits to AniList",
-    tag = "Beta",
     note = when {
         on -> "On. Every change you make here also goes to AniList. Changes made on its website are never overwritten: they show in the Queue. 2 changes waiting for AniList. 2 things to look at in the Queue."
         !signedIn -> "Sign in to AniList too: choose Use AniList above, sign in, then come back to MyAnimeList. Your MyAnimeList list stays the main one."

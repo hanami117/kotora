@@ -1,4 +1,4 @@
-//! Mirror edits (Beta), as on the desktop (`app/src/mirror.rs`; the work is core's
+//! Mirror edits, as on the desktop (`app/src/mirror.rs`; the work is core's
 //! `kotora_core::mirror`). One main service (the active one) and the other as its mirror,
 //! matched by MyAnimeList id.
 //!
@@ -140,8 +140,6 @@ pub struct MirrorState {
     pub on: bool,
     /// "Mirror edits to AniList".
     pub title: String,
-    /// "Beta".
-    pub tag: String,
     /// The line under the title (what it does, why it can't be turned on, or its state).
     pub note: String,
     /// The switch can be turned on now (both services signed in).
@@ -613,7 +611,6 @@ impl Kotora {
             to: service_of(link.to),
             on: link_on.is_some(),
             title: format!("Mirror edits to {to}"),
-            tag: "Beta".into(),
             note,
             can_turn_on: other_signed_in,
             other_signed_in,
@@ -1001,7 +998,7 @@ mod tests {
         assert!(k.mirror_state().is_none(), "signed out: no row");
         sign_in(&k, Service::Mal);
         let s = k.mirror_state().unwrap();
-        assert_eq!((s.title.as_str(), s.tag.as_str(), s.on, s.can_turn_on), ("Mirror edits to AniList", "Beta", false, false));
+        assert_eq!((s.title.as_str(), s.on, s.can_turn_on), ("Mirror edits to AniList", false, false));
         assert_eq!(s.note, "Sign in to AniList too: choose Use AniList above, sign in, then come back to MyAnimeList. Your MyAnimeList list stays the main one.");
         sign_in(&k, Service::AniList);
         let s = k.mirror_state().unwrap();

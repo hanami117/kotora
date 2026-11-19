@@ -56,8 +56,8 @@ import io.github.hanami117.kotora.ui.theme.Kotora
 import kotlinx.coroutines.launch
 
 /*
- * Mirror edits (Beta), as the desktop's Settings → Account row and its Queue part (mirror.rs):
- * - [MirrorRow]: "Mirror edits to AniList" with the Beta tag, its state line, the switch. On reads
+ * Mirror edits, as the desktop's Settings → Account row and its Queue part (mirror.rs):
+ * - [MirrorRow]: "Mirror edits to AniList", its state line, the switch. On reads
  *   the other list and opens [MirrorScreen] (the preview and the three choices); nothing is saved
  *   until one is picked. Off drops what still waits for the mirror.
  * - [MirrorQueuePart]: the Sync queue's mirror part (website edits, conflicts, waiting, failed,
@@ -131,7 +131,7 @@ fun MirrorSettings(vm: AppViewModel) {
 
 private fun message(e: Throwable): String = e.message?.takeIf { it.isNotBlank() } ?: "Something went wrong."
 
-/** The row itself: title + Beta, the state line (or what is going on), the switch; then the note,
+/** The row itself: title, the state line (or what is going on), the switch; then the note,
  *  the error, and "Align manga lists" when Manga was turned on after the mirror. */
 @Composable
 fun MirrorRow(
@@ -151,10 +151,7 @@ fun MirrorRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(s.title, color = k.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    Tag(s.tag, TagKind.NEW)
-                }
+                Text(s.title, color = k.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 Text(busy ?: s.note, color = k.faint, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
             }
             Switch(
