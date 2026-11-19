@@ -20,9 +20,23 @@ struct MirrorSettingsRow: View {
     @State private var note: String?
     @State private var error: String?
     @State private var preview: MirrorPreview?
+    @State private var loaded = false
 
     var body: some View {
-        Group {
+        // A VStack, not a Group: `.task` on a Group with no child (state still nil) never runs,
+        // so the row never loaded. The placeholder below keeps the row there while it loads.
+        VStack(spacing: 0) {
+            if state == nil {
+                Rectangle().fill(p.border).frame(height: 1).padding(.leading, 16)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mirror edits").font(Inter.medium(15)).foregroundStyle(p.text)
+                    Text(loaded ? "Couldn't read the mirror setting. Reopen Settings to try again." : "Loading…")
+                        .font(Inter.regular(12.5)).foregroundStyle(loaded ? p.dropped : p.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+            }
             if let s = state {
                 VStack(alignment: .leading, spacing: 0) {
                     Rectangle().fill(p.border).frame(height: 1).padding(.leading, 16)
@@ -62,7 +76,10 @@ struct MirrorSettingsRow: View {
                 }
             }
         }
-        .task(id: model.list.version) { state = await model.mirror?.mirrorState() }
+        .task(id: model.list.version) {
+            state = await model.mirror?.mirrorState()
+            loaded = true
+        }
         .sheet(item: Binding(get: { preview.map(PreviewBox.init) }, set: { if $0 == nil { preview = nil } })) { box in
             NavigationStack {
                 MirrorScreen(view: box.preview.view(), pick: { kind, mal, theirs in box.preview.pickStatus(kind: kind, malId: mal, mirrorStatus: theirs) },
@@ -239,7 +256,7 @@ struct MirrorQueueSection: View {
     @State private var q: MirrorQueue?
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) { // not a Group: its .task would never run while q is nil
             if let q {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
