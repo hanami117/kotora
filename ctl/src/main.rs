@@ -59,6 +59,9 @@ Commands:
   --anyway              with +1 and set: mark an episode that hasn't
                         aired yet (by the estimate) without asking
   queue                 changes waiting to sync
+  stats [--manga]       statistics of your anime (manga) list: totals, this
+                        week, month and year, streak, genres. From what
+                        Kotora saved; activity counts from Kotora 0.4.5 on
   sync                  send the queue now, then read the list again
   now                   what plays, and the episode Kotora offers
   airing, schedule      your anime airing in the next 7 days (estimated)
@@ -119,6 +122,8 @@ fn main() -> ExitCode {
         ["show"] => Request::Show,
         ["quit"] => Request::Quit,
         ["queue"] => Request::Queue,
+        ["stats"] => Request::Stats { manga: false },
+        ["stats", "--manga"] => Request::Stats { manga: true },
         ["sync"] => Request::Sync,
         ["now"] => Request::Now,
         ["airing" | "schedule"] => Request::Airing,

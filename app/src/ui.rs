@@ -227,6 +227,7 @@ pub(crate) fn go_to(s: &mut State, page: Page, tx: &mut Tx) {
         // Manga mode has Publishing in Airing's place (also the Go menu's Airing).
         Page::Airing | Page::Publishing if s.manga.mode => s.open_publishing(),
         Page::Airing | Page::Publishing => s.open_airing(),
+        Page::Stats => s.open_stats(),
         _ => s.go(page),
     }
 }
@@ -284,6 +285,7 @@ fn sidebar(s: &State, chrome_top: f32, height: f32) -> El {
         } else {
             nav_item("airing", NavMark::Icon(&icons::CALENDAR), "Airing", None, lit == Page::Airing, Page::Airing)
         })
+        .child(if s.has_list() { nav_item("stats", NavMark::Icon(&icons::CHART), "Statistics", None, lit == Page::Stats, Page::Stats) } else { el() })
         .child(nav_item(
             "queue",
             NavMark::Icon(&icons::SYNC),
@@ -617,6 +619,8 @@ fn main(s: &State, wide: bool, size: [f32; 2]) -> El {
         Page::Airing => crate::airing::page(s, width),
         Page::Publishing if !s.has_list() => welcome(s),
         Page::Publishing => crate::publishing::page(s),
+        Page::Stats if !s.has_list() => welcome(s),
+        Page::Stats => crate::stats::page(s, width),
     };
     let mut m = col().key("main").grow(1.0).min_w(0.0).h_full();
     // The Now Playing banner sits on top of every page (design-spec §4).

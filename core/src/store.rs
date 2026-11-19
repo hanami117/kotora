@@ -273,6 +273,28 @@ pub(crate) const MIGRATIONS: &[&str] = &[
      ALTER TABLE pending_op ADD COLUMN removed INTEGER NOT NULL DEFAULT 0;",
 ];
 
+/// Tables added without a schema step, so that an older Kotora (which ignores them) can still
+/// open the database: they only hold Kotora's own records, never something an older version
+/// must understand. Created at open when missing.
+///
+/// `activity` (0.4.5, `activity.rs`): one row per edit made in Kotora that raised an entry's
+/// progress (`p_*`, episodes or chapters) or volumes (`v_*`), with its time, for the
+/// Statistics page. Not service data: signing out keeps it. kv `activity:since`: when the log
+/// started, so the page can say what it doesn't know.
+const ADDITIVE: &str = "CREATE TABLE IF NOT EXISTS activity (
+        id INTEGER PRIMARY KEY,
+        service TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        media_id INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        p_from INTEGER NOT NULL,
+        p_to INTEGER NOT NULL,
+        v_from INTEGER NOT NULL DEFAULT 0,
+        v_to INTEGER NOT NULL DEFAULT 0
+     );
+     CREATE INDEX IF NOT EXISTS activity_list ON activity (service, kind, at);
+     INSERT OR IGNORE INTO kv (key, value) VALUES ('activity:since', CAST(strftime('%s', 'now') AS TEXT));";
+
 /// The schema of Kotora 0.1.x (before manga): a database at this version is copied aside
 /// before it is upgraded.
 pub const SCHEMA_0_1: usize = 9;
@@ -394,6 +416,13 @@ impl Store {
             }
             tx.execute_batch(MIGRATIONS[version])?;
             tx.pragma_update(None, "user_version", (version + 1) as u32)?;
+            tx.commit()?;
+        }
+        // Only a write when something is missing (most opens just read the schema).
+        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'activity'", [], |r| r.get(0))?;
+        if have == 0 {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(ADDITIVE)?;
             tx.commit()?;
         }
         Ok(Store { conn })
@@ -918,7 +947,8 @@ pub(crate) mod tests {
     fn counts(c: &Connection) -> Vec<i64> {
         ["account", "media", "entry", "pending_op", "recognition", "details", "kv", "season", "library_file", "air_seen", "announced"]
             .iter()
-            .map(|t| c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap())
+            // The activity log's start (schema 13) is new in every upgrade.
+            .map(|t| c.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE {}", if *t == "kv" { "key != 'activity:since'" } else { "1" }), [], |r| r.get(0)).unwrap())
             .collect()
     }
 
@@ -1099,6 +1129,33 @@ pub(crate) mod tests {
         assert_eq!(std::fs::read(&bak).unwrap(), first, "the first copy is kept");
     }
 
+    /// The activity log (0.4.5) comes without a schema step, empty, with the day it started:
+    /// a 0.4.4 database stays schema 12 (0.4.4 can still open it) and nothing else changes.
+    #[test]
+    fn the_activity_log_comes_without_a_schema_step() {
+        let conn = Connection::open_in_memory().unwrap();
+        for (i, m) in MIGRATIONS[..12].iter().enumerate() {
+            conn.execute_batch(m).unwrap();
+            conn.pragma_update(None, "user_version", (i + 1) as u32).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO media (service, id, title, fetched_at) VALUES ('mal', 1, 'A', 0);
+             INSERT INTO entry (service, media_id, status, progress, score, updated_at) VALUES ('mal', 1, 'watching', 3, 70, 0);
+             INSERT INTO kv (key, value) VALUES ('mal:synced_at', '5');",
+        )
+        .unwrap();
+        let before = counts(&conn);
+        let s = Store::from_connection(conn).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 12);
+        assert_eq!(counts(&s.conn), before);
+        assert!(s.activity("mal").unwrap().is_empty());
+        let since = s.activity_since().unwrap();
+        assert!(since.is_some_and(|t| t > 1_700_000_000));
+        // Opening again keeps the start.
+        let s = Store::from_connection(s.conn).unwrap();
+        assert_eq!(s.activity_since().unwrap(), since);
+    }
+
     /// Schema 11 (0.2.0) to 12: every saved score goes from 1-10 to the 100-point scale (the
     /// list, the queue's new, old and service values, and the saved details' entry); no score
     /// stays none and 0 stays "removes".
@@ -1124,7 +1181,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let s = Store::from_connection(conn).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 12);
+        assert_eq!(s.schema_version().unwrap(), MIGRATIONS.len());
         let e: Vec<Option<i64>> = s.conn.prepare("SELECT score FROM entry ORDER BY media_id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(e, [Some(70), None]);
         let q = s.queue("anilist", 0).unwrap();

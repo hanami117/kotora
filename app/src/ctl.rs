@@ -99,6 +99,15 @@ fn answer(handle: &Handle, req: Request) -> Reply {
             Ok(Reply::Edited { entry: s.entries[i].ctl(s.score_format()) })
         })),
         Request::Queue => reply(on_ui(handle, false, |s| Ok(Reply::Queue { ops: s.ctl_queue() }))),
+        // Read on this thread (its own store connection); the UI only says who is signed in.
+        Request::Stats { manga } => match on_ui(handle, false, |s| s.account.is_some().then(crate::account::name)) {
+            Ok(Some(service)) => match crate::stats::ctl_text(service, if manga { Kind::Manga } else { Kind::Anime }) {
+                Ok(t) => Reply::Done { message: t.trim_end().to_string() },
+                Err(message) => Reply::Error { message, anyway: false },
+            },
+            Ok(None) => Reply::Error { message: "Not signed in.".into(), anyway: false },
+            Err(message) => Reply::Error { message, anyway: false },
+        },
         Request::Now => reply(on_ui(handle, false, |s| Ok(Reply::Now { now: s.ctl_now(), reading: s.ctl_reading() }))),
         Request::Airing => reply(on_ui(handle, false, |s| {
             if !s.has_list() {

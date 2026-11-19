@@ -210,6 +210,12 @@ fn link_of(c: &Connection) -> Result<Option<Link>> {
     Ok(kv_get(c, LINK)?.as_deref().and_then(Link::parse))
 }
 
+/// Whether `service` is the mirror of the main list (its edits come from the mirror, not the
+/// user: the activity log leaves them out).
+pub(crate) fn is_mirror(c: &Connection, service: &str) -> Result<bool> {
+    Ok(link_of(c)?.is_some_and(|l| l.to.name() == service))
+}
+
 fn list_of<T: for<'de> Deserialize<'de>>(c: &Connection, key: &str) -> Result<Vec<T>> {
     Ok(kv_get(c, key)?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
 }
