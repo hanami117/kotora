@@ -69,7 +69,10 @@ class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, Acc
 
     override suspend fun undo(edit: Edit) {
         val i = rows.indexOfFirst { it.kind == edit.kind && it.id == edit.id }
-        if (i >= 0) rows[i] = rows[i].copy(status = edit.beforeStatus, progress = edit.beforeProgress, rewatching = edit.beforeRewatching, waiting = false)
+        if (i >= 0) rows[i] = rows[i].copy(
+            status = edit.beforeStatus, progress = edit.beforeProgress, rewatching = edit.beforeRewatching, volumes = edit.beforeVolumes,
+            score = if (edit.restoreScore) edit.beforeScore?.let { ((it + 5u) / 10u).toString() } else rows[i].score, waiting = false,
+        )
     }
 
     override suspend fun sync() = SyncReport(Service.MAL, rows.count { it.kind == MediaKind.ANIME }.toUInt(), rows.count { it.kind == MediaKind.MANGA }.toUInt(), now)

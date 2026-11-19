@@ -13,6 +13,7 @@ import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.ScoreChoice
 import io.github.hanami117.kotora.core.ScoreScale
 import io.github.hanami117.kotora.core.Service
+import io.github.hanami117.kotora.ui.statusLabel
 import java.util.Collections
 import java.util.WeakHashMap
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,11 @@ interface Editing {
     suspend fun startRewatch(kind: MediaKind, id: UInt): Edit
     suspend fun stopRewatch(kind: MediaKind, id: UInt): Edit
     suspend fun minusOne(kind: MediaKind, id: UInt): Edit
+    /** Move to › / Score › (the desktop's right-click menu); null: nothing changed. */
+    suspend fun moveTo(kind: MediaKind, id: UInt, status: ListStatus): Edit?
+    suspend fun setScore(kind: MediaKind, id: UInt, points: UInt?): Edit?
+    /** "Episode 9 of X hasn't aired yet (expected …)." before a +1; null: +1 at once. */
+    suspend fun notAiredQuestion(kind: MediaKind, id: UInt): String?
     suspend fun removeQuestion(kind: MediaKind, id: UInt): String
     suspend fun remove(kind: MediaKind, id: UInt): Removal
 
@@ -72,6 +78,9 @@ private class CoreEditing(private val repo: CoreRepository) : Editing {
     override suspend fun startRewatch(kind: MediaKind, id: UInt) = io { k.startRewatch(kind, id) }
     override suspend fun stopRewatch(kind: MediaKind, id: UInt) = io { k.stopRewatch(kind, id) }
     override suspend fun minusOne(kind: MediaKind, id: UInt) = io { k.minusOne(kind, id) }
+    override suspend fun moveTo(kind: MediaKind, id: UInt, status: ListStatus) = io { k.moveTo(kind, id, status) }
+    override suspend fun setScore(kind: MediaKind, id: UInt, points: UInt?) = io { k.setScore(kind, id, points) }
+    override suspend fun notAiredQuestion(kind: MediaKind, id: UInt) = io { k.notAiredQuestion(kind, id) }
     override suspend fun removeQuestion(kind: MediaKind, id: UInt) = io { k.removeQuestion(kind, id) }
     override suspend fun remove(kind: MediaKind, id: UInt) = io { k.remove(kind, id) }
     override suspend fun queueItems() = io { k.queueItems() }
@@ -154,6 +163,28 @@ class SampleEditing(private val repo: SampleRepository, private val now: Long = 
         if (r.progress == 0u) throw KotoraException.Other("${r.title} is at ${SampleRepository.unit(kind)} 0.")
         rows[i] = r.copy(progress = r.progress - 1u, status = if (r.status == ListStatus.COMPLETED && !r.rewatching) ListStatus.WATCHING else r.status, waiting = true)
         return edit(r, "${r.title}: ${SampleRepository.unit(kind)} ${r.progress - 1u} saved")
+    }
+
+    override suspend fun moveTo(kind: MediaKind, id: UInt, status: ListStatus): Edit? {
+        val i = index(kind, id)
+        val r = rows[i]
+        if (r.status == status) return null
+        rows[i] = r.copy(status = status, progress = if (status == ListStatus.COMPLETED) r.total ?: r.progress else r.progress, waiting = true)
+        return edit(r, "Moved ${r.title} to ${statusLabel(status, kind)}").copy(beforeScore = r.score?.toUIntOrNull()?.let { it * 10u }, restoreScore = true)
+    }
+
+    override suspend fun setScore(kind: MediaKind, id: UInt, points: UInt?): Edit? {
+        val i = index(kind, id)
+        val r = rows[i]
+        val score = points?.let { ((it + 5u) / 10u).toString() }
+        if (r.score == score) return null
+        rows[i] = r.copy(score = score, waiting = true)
+        return edit(r, score?.let { "Scored ${r.title} $it" } ?: "Removed the score of ${r.title}").copy(beforeScore = r.score?.toUIntOrNull()?.let { it * 10u }, restoreScore = true)
+    }
+
+    override suspend fun notAiredQuestion(kind: MediaKind, id: UInt): String? {
+        val r = rows.firstOrNull { it.kind == kind && it.id == id } ?: return null
+        return if (r.airStatus == "not_yet_aired") "Episode ${r.progress + 1u} of ${r.title} hasn't aired yet." else null
     }
 
     override suspend fun removeQuestion(kind: MediaKind, id: UInt): String =

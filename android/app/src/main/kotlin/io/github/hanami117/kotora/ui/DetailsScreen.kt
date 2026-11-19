@@ -99,7 +99,7 @@ fun DetailsScreen(
         Column(Modifier.offset(y = (-170).dp)) {
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 airPill(row)?.let { (text, live) -> Pill(text, live) }
-                if (row.waiting) Pill("Waiting to sync", false, k.onHold)
+                if (row.waiting) Pill(row.waitingText, false, if (row.waitingProblem) k.dropped else k.onHold)
             }
             info?.info?.let { i ->
                 DetailsStats(i, Modifier.padding(bottom = 12.dp))
@@ -133,11 +133,11 @@ fun DetailsScreen(
                             ) {
                                 Text("${row.progress} of ${row.total ?: "?"}", color = k.text, fontWeight = FontWeight.Medium)
                             }
-                            val canPlus = row.total?.let { row.progress >= it } != true && (row.status == ListStatus.WATCHING || row.rewatching)
+                            val canPlus = row.canPlusOne
                             KButton(
-                                "+1 ${unit.replaceFirstChar { it.uppercase() }} ${row.progress + 1u}",
+                                if (row.plusVolumes) "+1 Volume ${row.volumes + 1u}" else "+1 ${unit.replaceFirstChar { it.uppercase() }} ${row.progress + 1u}",
                                 { onPlusOne(row) },
-                                Modifier.weight(1f).semantics { contentDescription = "Plus one $unit" },
+                                Modifier.weight(1f).semantics { contentDescription = row.plusOneText },
                                 ButtonKind.PRIMARY,
                                 44.dp,
                                 canPlus,

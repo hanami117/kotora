@@ -174,6 +174,8 @@ fun SearchScreen(
     /** A pasted MyAnimeList/AniList link or a bare id in the box (the active service's). */
     pastedId: (MediaKind, String) -> UInt? = { _, _ -> null },
     onOpenId: (MediaKind, UInt) -> Unit = { _, _ -> },
+    /** Why the service isn't searched now (signed out of it, offline): the desktop's `blocked`. */
+    blocked: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val k = Kotora.colors
@@ -230,11 +232,12 @@ fun SearchScreen(
             val fresh = s.newHits
             val end = when {
                 s.pending -> "Searching…"
-                s.error == null && s.asked.length >= 3 && s.hits.isNotEmpty() -> "${s.hits.size} found"
+                blocked == null && s.error == null && s.asked.length >= 3 && s.hits.isNotEmpty() -> "${s.hits.size} found"
                 else -> null
             }
             item { Head("On $service", end) }
             when {
+                blocked != null -> item { Note(blocked) }
                 s.query.length < 3 -> item { Note("Type 3 letters or more to search $service too.") }
                 s.pending -> item { Note("Searching $service…") }
                 s.error != null -> item {

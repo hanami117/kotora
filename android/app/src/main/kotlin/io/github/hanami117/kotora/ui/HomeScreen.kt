@@ -160,8 +160,8 @@ private fun <T> Shelf(title: String, rows: List<T>, loaded: Boolean, none: Strin
 private fun WideCard(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit) {
     val k = Kotora.colors
     val manga = row.kind == MediaKind.MANGA
-    val unit = if (manga) "Ch" else "Ep"
-    val next = row.progress + 1u
+    val unit = if (row.plusVolumes) "Vol" else if (manga) "Ch" else "Ep"
+    val next = if (row.plusVolumes) row.volumes + 1u else row.progress + 1u
     val shape = RoundedCornerShape(14.dp)
     Box(
         Modifier.size(300.dp, 124.dp).clip(shape).background(k.surface, shape).border(1.dp, k.border, shape)
@@ -172,7 +172,7 @@ private fun WideCard(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit) {
             Cover(row, 70.dp, 104.dp, 6.dp, 20.sp)
             Column(Modifier.weight(1f).height(104.dp)) {
                 Text(row.title, color = k.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("$unit ${row.progress} / ${row.total ?: "?"}", color = k.dim, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+                Text(if (row.plusVolumes) "$unit ${row.volumes} / ${row.totalVolumes ?: "?"}" else "$unit ${row.progress} / ${row.total ?: "?"}", color = k.dim, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
                 Box(Modifier.weight(1f))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val total = row.total
@@ -182,7 +182,7 @@ private fun WideCard(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit) {
                     Box(
                         Modifier.height(30.dp).clip(bshape).background(k.bg.copy(alpha = .7f), bshape).border(1.dp, k.borderStrong, bshape)
                             .clickable(role = Role.Button, onClick = onPlusOne).padding(horizontal = 10.dp)
-                            .semantics { contentDescription = "+1, ${if (manga) "chapter" else "episode"} $next" },
+                            .semantics { contentDescription = "+1, ${if (row.plusVolumes) "volume" else if (manga) "chapter" else "episode"} $next" },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text("+1  $unit $next", color = k.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

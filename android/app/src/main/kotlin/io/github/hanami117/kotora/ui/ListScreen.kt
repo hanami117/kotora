@@ -115,13 +115,14 @@ fun ListScreen(
         }
         SyncLine(ui, account, now, onSort, onReverse)
         if (expired != null) SignInAgainBanner(expired, onSignIn)
+        else ui.problem?.let { ErrorNotice(it, onSync) }
         FilterBox(ui, onQuery)
         if (ui.query.isBlank()) QuickChips(ui, onFilter, onView)
         PullToRefreshBox(isRefreshing = ui.syncing, onRefresh = onSync, modifier = Modifier.weight(1f)) {
             if (ui.loaded && ui.lines.isEmpty()) {
                 EmptyList(ui)
             } else if (ui.view != ListViewMode.LIST) {
-                PosterGrid(ui.lines, ui.view == ListViewMode.LARGE, onOpen, onPlusOne)
+                PosterGrid(ui.lines, ui.view == ListViewMode.LARGE, onOpen, onPlusOne, links = linksFor, onOpenUrl = onOpenUrl)
             } else {
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 80.dp)) {
                     items(ui.lines, key = { "${it.row.kind}-${it.row.id}" }) { line ->
@@ -344,10 +345,10 @@ private fun EmptyList(ui: ListUi) {
 fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit, links: () -> List<ServiceLink> = { emptyList() }, onOpenUrl: (String) -> Unit = {}, line: PageLine? = null) {
     val k = Kotora.colors
     // Long press: the desktop context menu's "Open on {service}" items (ctxmenu.rs `open_items`).
-    var menu by remember { mutableStateOf<List<ServiceLink>>(emptyList()) }
+    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().heightIn(min = 84.dp)
-            .combinedClickable(onClick = onOpen, onLongClick = { menu = links() })
+            .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -371,21 +372,9 @@ fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit, links: 
                 if (line != null) ScoreMarkView(line.scoreMark, 12.sp) else Text("★ ${row.score ?: "–"}", color = k.faint, fontSize = 12.sp, modifier = Modifier.width(34.dp))
             }
         }
-        val atEnd = row.total?.let { row.progress >= it } == true
-        val canPlus = !atEnd && (row.status == ListStatus.WATCHING || row.rewatching)
-        if (canPlus) PlusButton(onPlusOne, row)
-        DropdownMenu(expanded = menu.isNotEmpty(), onDismissRequest = { menu = emptyList() }, containerColor = k.raised) {
-            for (l in menu) {
-                DropdownMenuItem(
-                    text = { Text(l.label, color = k.text) },
-                    trailingIcon = { Icon(KIcons.External, null, tint = k.dim, modifier = Modifier.size(16.dp)) },
-                    onClick = {
-                        menu = emptyList()
-                        onOpenUrl(l.url)
-                    },
-                )
-            }
-        }
+        if (row.canPlusOne) PlusButton(onPlusOne, row)
+        // Long press: Move to › / Score › and the Open on links (desktop `ctxmenu.rs`).
+        QuickMenu(row, menu, if (menu) links() else emptyList(), onOpenUrl) { menu = false }
     }
 }
 
@@ -393,11 +382,10 @@ fun ListRowItem(row: ListRow, onPlusOne: () -> Unit, onOpen: () -> Unit, links: 
 private fun PlusButton(onClick: () -> Unit, row: ListRow) {
     val k = Kotora.colors
     val shape = RoundedCornerShape(8.dp)
-    val unit = if (row.kind == MediaKind.MANGA) "chapter" else "episode"
     Box(
         Modifier.size(56.dp, 40.dp).clip(shape).background(k.raised, shape).border(1.dp, k.borderStrong, shape)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = "Plus one $unit: ${row.title}" },
+            .semantics { contentDescription = "${row.plusOneText}: ${row.title}" },
         contentAlignment = Alignment.Center,
     ) {
         Text("+1", color = k.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -413,7 +401,7 @@ private fun tags(row: ListRow): List<Pair<String, TagKind>> {
         "currently_publishing" -> out += "Publishing" to TagKind.AIR
         "not_yet_aired", "NOT_YET_RELEASED", "not_yet_published" -> out += "Not aired yet" to TagKind.PLAIN
     }
-    if (row.waiting) out += "Waiting to sync" to TagKind.WAIT
+    if (row.waiting) out += row.waitingText to (if (row.waitingProblem) TagKind.HIATUS else TagKind.WAIT)
     if (out.size < 2) {
         val f = formatLabel(row.format)
         val total = row.total
@@ -430,5 +418,24 @@ fun Placeholder(title: String, text: String, account: Account?, modifier: Modifi
         TopBar(title, account, false, null)
         Spacer(Modifier.height(48.dp))
         Text(text, color = k.faint, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp))
+    }
+}
+
+/** The bar above the list after a failed sync, with Retry (the desktop's `status_alert`; an
+ * expired sign-in has its own bar with Sign in, [SignInAgainBanner]). */
+@Composable
+fun ErrorNotice(text: String, onRetry: () -> Unit) {
+    val k = Kotora.colors
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(shape)
+            .background(k.dropped.copy(alpha = .08f), shape).border(1.dp, k.dropped.copy(alpha = .3f), shape)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(k.dropped))
+        Text(text, color = k.text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        KButton("Retry", onRetry, kind = ButtonKind.GHOST, height = 34.dp)
     }
 }

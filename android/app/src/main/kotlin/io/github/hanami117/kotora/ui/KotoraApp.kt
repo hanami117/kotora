@@ -164,7 +164,9 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
         bottomBar = { if (topLevel) BottomNav(nav, route ?: Tab.HOME.route, vm.list.kind, vm.list.waiting) },
     ) { pad ->
         val accounts = Accounts(s.accounts, vm.isSample, vm::hasClientId, vm::setActive, vm::signIn, { nav.navigate("profile") }, { nav.navigate("stats") })
-        CompositionLocalProvider(LocalAccounts provides accounts) {
+        val quick = QuickActions(vm.scoreChoices, vm::moveTo, vm::setScore)
+        vm.markAnyway?.let { m -> MarkAnywayDialog(m, { vm.plusOneNow(m.row) }, { vm.markAnyway = null }) }
+        CompositionLocalProvider(LocalAccounts provides accounts, LocalQuickActions provides quick) {
         NavHost(nav, startDestination = Tab.HOME.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
             composable(Tab.HOME.route) {
                 var shelves by remember { mutableStateOf(Shelves()) }
@@ -264,19 +266,26 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 val now = nowSeconds()
                 LaunchedEffect(search.kind, vm.list) { search.loadMine(vm.repo) }
                 LaunchedEffect(vm.mangaEnabled) { if (!vm.mangaEnabled) search.kind = MediaKind.ANIME }
+                val svc = s.active?.let { serviceTitle(it.service) } ?: "MyAnimeList"
+                val blocked = when {
+                    vm.expired != null -> "Sign in again to search $svc."
+                    vm.list.offline -> "Offline: searching $svc needs the network. Your list is searched above."
+                    else -> null
+                }
+                val asker = if (blocked == null) vm.editing else null
                 SearchScreen(
                     s = search,
                     account = s.active,
                     mangaEnabled = vm.mangaEnabled,
                     onKind = {
                         search.kind = it
-                        search.changed(scope, vm.editing, now, force = true)
+                        search.changed(scope, asker, now, force = true)
                     },
                     onText = {
                         search.text = it
-                        search.changed(scope, vm.editing, now)
+                        search.changed(scope, asker, now)
                     },
-                    onAgain = { search.changed(scope, vm.editing, now, force = true) },
+                    onAgain = { search.changed(scope, asker, now, force = true) },
                     onPlusOne = vm::plusOne,
                     onOpen = { r -> nav.navigate("details/${r.kind.name}/${r.id}") },
                     onAdd = { hit, status -> vm.add(hit, status) },
@@ -286,6 +295,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     },
                     pastedId = { kind, text -> vm.repo?.details()?.pastedId(kind, text)?.id },
                     onOpenId = { kind, id -> nav.navigate("details/${kind.name}/$id") },
+                    blocked = blocked,
                     modifier = Modifier.statusBarsPadding(),
                 )
             }

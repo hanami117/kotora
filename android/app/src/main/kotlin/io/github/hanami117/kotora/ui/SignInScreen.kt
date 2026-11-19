@@ -1,5 +1,6 @@
 package io.github.hanami117.kotora.ui
 
+import io.github.hanami117.kotora.core.welcomeNote
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +93,13 @@ fun SignInScreen(
         if (onLookAround != null) {
             KButton("Look around with sample data", onLookAround, Modifier.padding(top = 12.dp), ButtonKind.GHOST)
         }
+        Text(
+            coreOr("Kotora is a tribute to Taiga, the Windows anime tracker. It is not affiliated with MyAnimeList or AniList.") { welcomeNote() },
+            color = k.faint,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+        )
         Spacer(Modifier.weight(1f).height(24.dp))
         Box(Modifier.fillMaxWidth().padding(bottom = 18.dp), contentAlignment = Alignment.Center) {
             Text("No account with Kotora · no ads · no tracking", color = k.faint, fontSize = 12.sp)

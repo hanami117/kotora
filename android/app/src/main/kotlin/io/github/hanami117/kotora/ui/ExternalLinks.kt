@@ -14,7 +14,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import io.github.hanami117.kotora.core.licenceLines
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +61,19 @@ fun OpenOnButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifi
 @Composable
 fun AboutLinks(onOpenUrl: (String) -> Unit) {
     val k = Kotora.colors
+    var licences by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().clickable(role = Role.Button) { licences = true }.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Licences", color = k.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Text("Kotora, the fonts and the parts it is built from", color = k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+        Text("›", color = k.dim, fontSize = 18.sp)
+    }
+    if (licences) LicencesDialog { licences = false }
+    HorizontalDivider(color = k.border)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Text("Links", color = k.text, fontWeight = FontWeight.Medium, fontSize = 14.sp)
         Text("The website, and the source code on GitHub.", color = k.faint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
@@ -103,3 +123,25 @@ private val HeartIcon: ImageVector = ImageVector.Builder("heart", 24.dp, 24.dp, 
         strokeLineJoin = StrokeJoin.Round,
     )
 }.build()
+
+/** About → Licences: every part the app ships, in the desktop's words (the core's list). */
+@Composable
+private fun LicencesDialog(onClose: () -> Unit) {
+    val k = Kotora.colors
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Licences", color = k.text) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                for (l in licenceLines(true)) {
+                    Column {
+                        Text(l.name, color = k.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        if (l.licence.isNotEmpty()) Text(l.licence, color = k.faint, fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onClose) { Text("Close", color = k.accentHi) } },
+        containerColor = k.raised,
+    )
+}

@@ -49,6 +49,16 @@ fun AppViewModel.minusOne(row: Row) = act {
     Snack(edit.message, edit)
 }
 
+/** Move to › (the desktop's right-click menu): at once, with Undo. */
+fun AppViewModel.moveTo(row: Row, status: ListStatus) = act { e ->
+    e.moveTo(row.kind, row.id, status)?.let { Snack(it.message, it) }
+}
+
+/** Score › a score or "No score": at once, with Undo. */
+fun AppViewModel.setScore(row: Row, points: UInt?) = act { e ->
+    e.setScore(row.kind, row.id, points)?.let { Snack(it.message, it) }
+}
+
 /** Remove from list (asked first by the page): Undo discards the waiting removal. */
 fun AppViewModel.remove(row: Row) = act { e ->
     val r = e.remove(row.kind, row.id)

@@ -2,7 +2,14 @@ package io.github.hanami117.kotora.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import io.github.hanami117.kotora.core.ServiceLink
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -99,13 +106,13 @@ private fun Badges(line: PageLine) {
             line.onHiatus -> Badge("On hiatus", k.dropped)
         }
         line.newEpisode?.let { Badge("Ep $it out", null, filled = true) }
-        if (r.waiting) Badge("Waiting to sync", k.onHold)
+        if (r.waiting) Badge(r.waitingText, if (r.waitingProblem) k.dropped else k.onHold)
     }
 }
 
-private fun canPlus(r: ListRow) = !(r.total?.let { r.progress >= it } ?: false) && (r.status == ListStatus.WATCHING || r.rewatching)
+private fun canPlus(r: ListRow) = r.canPlusOne
 
-private fun epText(r: ListRow) = "${if (r.kind == MediaKind.MANGA) "Ch" else "Ep"} ${r.progress} / ${r.total ?: "?"}"
+private fun epText(r: ListRow) = if (r.plusVolumes) "Vol ${r.volumes} / ${r.totalVolumes ?: "?"}" else "${if (r.kind == MediaKind.MANGA) "Ch" else "Ep"} ${r.progress} / ${r.total ?: "?"}"
 
 private fun fraction(r: ListRow): Float {
     val t = r.total
@@ -114,7 +121,16 @@ private fun fraction(r: ListRow): Float {
 
 /** Grid (dense posters, three across) and Large (cards, two across): desktop `grid.rs`/`mgrid.rs`. */
 @Composable
-fun PosterGrid(lines: List<PageLine>, large: Boolean, onOpen: (ListRow) -> Unit, onPlusOne: (ListRow) -> Unit, footer: @Composable () -> Unit = {}) {
+@OptIn(ExperimentalFoundationApi::class)
+fun PosterGrid(
+    lines: List<PageLine>,
+    large: Boolean,
+    onOpen: (ListRow) -> Unit,
+    onPlusOne: (ListRow) -> Unit,
+    footer: @Composable () -> Unit = {},
+    links: (ListRow) -> List<ServiceLink> = { emptyList() },
+    onOpenUrl: (String) -> Unit = {},
+) {
     val k = Kotora.colors
     LazyVerticalGrid(
         columns = GridCells.Fixed(if (large) 2 else 3),
@@ -126,9 +142,12 @@ fun PosterGrid(lines: List<PageLine>, large: Boolean, onOpen: (ListRow) -> Unit,
         items(lines, key = { "${it.row.kind}-${it.row.id}" }) { line ->
             val r = line.row
             val shape = RoundedCornerShape(if (large) 12.dp else 8.dp)
+            // Long press: Move to › / Score › and the Open on links (`QuickMenu.kt`).
+            var menu by remember { mutableStateOf(false) }
+            QuickMenu(r, menu, if (menu) links(r) else emptyList(), onOpenUrl) { menu = false }
             Column(
                 Modifier.clip(shape).then(if (large) Modifier.background(k.surface).border(1.dp, k.border, shape) else Modifier)
-                    .clickable(role = Role.Button) { onOpen(r) }
+                    .combinedClickable(role = Role.Button, onClick = { onOpen(r) }, onLongClick = { menu = true })
                     .semantics { contentDescription = "About ${r.title}" },
             ) {
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -140,7 +159,7 @@ fun PosterGrid(lines: List<PageLine>, large: Boolean, onOpen: (ListRow) -> Unit,
                             Modifier.align(Alignment.BottomEnd).padding(6.dp).height(28.dp).clip(CircleShape)
                                 .background(k.bg.copy(alpha = .88f)).border(1.dp, k.borderStrong, CircleShape)
                                 .clickable(role = Role.Button) { onPlusOne(r) }
-                                .semantics { contentDescription = "Plus one ${if (r.kind == MediaKind.MANGA) "chapter" else "episode"}: ${r.title}" }
+                                .semantics { contentDescription = "${r.plusOneText}: ${r.title}" }
                                 .padding(horizontal = 11.dp),
                             contentAlignment = Alignment.Center,
                         ) { Text("+1", color = k.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
@@ -165,7 +184,7 @@ fun PosterGrid(lines: List<PageLine>, large: Boolean, onOpen: (ListRow) -> Unit,
                             Box(
                                 Modifier.size(44.dp, 30.dp).clip(s).background(k.raised).border(1.dp, k.borderStrong, s)
                                     .clickable(role = Role.Button) { onPlusOne(r) }
-                                    .semantics { contentDescription = "Plus one ${if (r.kind == MediaKind.MANGA) "chapter" else "episode"}: ${r.title}" },
+                                    .semantics { contentDescription = "${r.plusOneText}: ${r.title}" },
                                 contentAlignment = Alignment.Center,
                             ) { Text("+1", color = k.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
                         }

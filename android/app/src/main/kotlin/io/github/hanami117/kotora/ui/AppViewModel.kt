@@ -97,6 +97,9 @@ data class AiringUi(
 )
 
 /** A message at the bottom, with Undo when it is an edit (or `onUndo`: a removal's Discard). */
+/** "Mark anyway?": the +1 and the core's words ("Episode 9 of X hasn't aired yet (expected …)."). */
+data class MarkAnyway(val row: Row, val question: String)
+
 data class Snack(val text: String, val undo: Edit? = null, val onUndo: (() -> Unit)? = null)
 
 /**
@@ -136,6 +139,10 @@ class AppViewModel(
     val openFlow = opens.receiveAsFlow()
     /** The service that asked to sign in again (the "Sign in again" banner); the list stays. */
     var expired by mutableStateOf<Service?>(null)
+    /** A +1 of an episode not aired yet by the estimate, waiting for "Mark anyway" or Cancel. */
+    var markAnyway by mutableStateOf<MarkAnyway?>(null)
+    /** The Score › menu's choices in the active account's format, high to low. */
+    var scoreChoices by mutableStateOf<List<io.github.hanami117.kotora.core.ScoreChoice>>(emptyList())
         private set
     /** The service of the last sign-in started (AniList shows the token paste after a problem). */
     var lastSignIn by mutableStateOf<Service?>(null)
@@ -216,6 +223,7 @@ class AppViewModel(
                 waiting = r.waitingCount(),
                 loaded = true,
             )
+            editing?.let { e -> scoreChoices = runCatching { e.scoreScale().choices.reversed() }.getOrDefault(scoreChoices) }
         } catch (e: KotoraException.NotSignedIn) {
             session = Session.SignedOut()
         } catch (e: Exception) {
@@ -286,7 +294,16 @@ class AppViewModel(
         }
     }
 
+    /** +1, after "Mark anyway?" when the episode hasn't aired yet by the estimate (desktop `plus_one_or_ask`). */
     fun plusOne(row: Row) {
+        viewModelScope.launch {
+            val q = runCatching { editing?.notAiredQuestion(row.kind, row.id) }.getOrNull()
+            if (q != null) markAnyway = MarkAnyway(row, q) else plusOneNow(row)
+        }
+    }
+
+    fun plusOneNow(row: Row) {
+        markAnyway = null
         val r = repo ?: return
         viewModelScope.launch {
             try {
