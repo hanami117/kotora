@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window before Compose draws: Kotora's background, so the first frame doesn't flash. -->
+    <style name="Theme.Kotora" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/kotora_bg</item>
+    </style>
+    <color name="kotora_bg">#F6F7FB</color>
+    <color name="kotora_icon_bg">#1B2640</color>
+</resources>
