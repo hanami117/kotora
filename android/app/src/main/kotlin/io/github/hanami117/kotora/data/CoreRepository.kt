@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import io.github.hanami117.kotora.BuildConfig
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.AiringMine
+import io.github.hanami117.kotora.core.AiringType
+import io.github.hanami117.kotora.core.AiringWeek
 import io.github.hanami117.kotora.core.ClientIds
 import io.github.hanami117.kotora.core.Edit
 import io.github.hanami117.kotora.core.FlushReport
@@ -11,6 +14,8 @@ import io.github.hanami117.kotora.core.Kotora
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.LogLevel
 import io.github.hanami117.kotora.core.MediaKind
+import io.github.hanami117.kotora.core.Note
+import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.Paths
 import io.github.hanami117.kotora.core.PendingSignIn
 import io.github.hanami117.kotora.core.Platform
@@ -65,6 +70,12 @@ class CoreRepository(context: Context) : Repository {
     override suspend fun signInStart(service: Service): PendingSignIn = io { kotora.signInStart(service) }
     override suspend fun signInFinish(pending: PendingSignIn, redirect: String): Account = io { kotora.signInFinish(pending, redirect) }
     override suspend fun signOut(service: Service) = io { kotora.signOut(service) }
+    override suspend fun airingWeek(type: AiringType, mine: AiringMine): AiringWeek = io { kotora.airingWeek(type, mine) }
+    override suspend fun airingFetch(force: Boolean): Boolean = io { kotora.airingFetch(force) }
+    override suspend fun notifySettings(): NotifySettings = io { kotora.notifySettings() }
+    override suspend fun setNotifySettings(settings: NotifySettings) = io { kotora.setNotifySettings(settings) }
+    override suspend fun airNotes(): List<Note> = io { kotora.airNotes() }
+    override suspend fun chapterNotes(): List<Note> = io { kotora.chapterNotes() }
 }
 
 /** The core's window on Android: the user's time zone, the log, the Keystore-wrapped tokens. */

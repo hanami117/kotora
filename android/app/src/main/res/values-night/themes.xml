@@ -4,4 +4,6 @@
         <item name="android:windowBackground">@color/kotora_bg</item>
     </style>
     <color name="kotora_bg">#0F1626</color>
+    <!-- 小虎 over the orange: cream in the dark theme. -->
+    <color name="kotora_intro_name">#FFF7EC</color>
 </resources>

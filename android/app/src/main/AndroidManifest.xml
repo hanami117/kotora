@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Started airing, New episode and New chapter notifications (asked for on Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Sign-in opens in the user's browser (a Custom Tab when it has them). -->
     <queries>
@@ -36,6 +38,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:theme="@style/Theme.Kotora.Starting"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -50,6 +53,7 @@
             </intent-filter>
         </activity>
 
-        <!-- WorkManager starts itself; FlushWorker is enqueued after each edit. -->
+        <!-- WorkManager starts itself; FlushWorker is enqueued after each edit, NotifyWorker every
+             15 minutes while signed in. -->
     </application>
 </manifest>

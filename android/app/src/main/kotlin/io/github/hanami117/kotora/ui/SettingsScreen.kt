@@ -21,10 +21,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.ui.theme.Kotora
 
-/** M2's settings: the account (sign out), Manga lists, About. The rest comes in M5. */
+/** Settings: the account (sign out), Manga lists, Notifications, the startup animation, About. */
 @Composable
 fun SettingsScreen(
     accounts: List<Account>,
@@ -36,6 +37,12 @@ fun SettingsScreen(
     onSignOut: (Service) -> Unit,
     onLeaveSample: () -> Unit,
     modifier: Modifier = Modifier,
+    notify: NotifySettings = NotifySettings(startedAiring = true, newEpisode = true, newChapter = false),
+    onNotify: (NotifySettings) -> Unit = {},
+    intro: Boolean = true,
+    onIntro: (Boolean) -> Unit = {},
+    systemNotificationsOff: Boolean = false,
+    onOpenSystemSettings: () -> Unit = {},
 ) {
     val k = Kotora.colors
     Column(modifier.fillMaxSize().background(k.bg).verticalScroll(rememberScrollState())) {
@@ -63,11 +70,40 @@ fun SettingsScreen(
         SectionLabel("Lists")
         Card {
             Item("Manga lists", "Also sync your manga list") {
-                Switch(
-                    checked = mangaEnabled,
-                    onCheckedChange = onMangaEnabled,
-                    colors = SwitchDefaults.colors(checkedTrackColor = k.accent, checkedThumbColor = androidx.compose.ui.graphics.Color.White, uncheckedTrackColor = k.borderStrong, uncheckedBorderColor = k.borderStrong, uncheckedThumbColor = k.text),
-                )
+                KSwitch(mangaEnabled, onCheckedChange = onMangaEnabled)
+            }
+        }
+        SectionLabel("Notifications")
+        Card {
+            Column {
+                if (systemNotificationsOff) {
+                    Item("Notifications are off", "Android doesn't let Kotora show them. Turn them on in Android's settings.") {
+                        KButton("Open", onOpenSystemSettings, kind = ButtonKind.SECONDARY, height = 34.dp, fontSize = 13.sp)
+                    }
+                    HorizontalDivider(color = k.border)
+                }
+                Item("Started airing", "When a show on Plan to watch starts airing: \u201cTitle started airing\u201d.") {
+                    KSwitch(notify.startedAiring) { onNotify(notify.copy(startedAiring = it)) }
+                }
+                HorizontalDivider(color = k.border)
+                Item("New episode", "When the next episode of a show you\u2019re watching is out, by the estimated broadcast time: \u201cTitle \u00b7 Ep 7 is out\u201d.") {
+                    KSwitch(notify.newEpisode) { onNotify(notify.copy(newEpisode = it)) }
+                }
+                HorizontalDivider(color = k.border)
+                val chapterNote = if (mangaEnabled) {
+                    "When a manga you\u2019re reading gets a new chapter: \u201cNew chapter of Title: Ch 75\u201d. Kotora checks MangaUpdates every few hours while this is on. Off by default."
+                } else {
+                    "For manga you\u2019re reading, from MangaUpdates. Turn Manga lists on first."
+                }
+                Item("New chapter", chapterNote) {
+                    KSwitch(notify.newChapter && mangaEnabled, enabled = mangaEnabled) { onNotify(notify.copy(newChapter = it)) }
+                }
+            }
+        }
+        SectionLabel("Appearance")
+        Card {
+            Item("Startup animation", "Claw marks when Kotora opens. Coming back to it doesn\u2019t play it; with Remove animations it is a short fade.") {
+                KSwitch(intro, onCheckedChange = onIntro)
             }
         }
         SectionLabel("About")
@@ -78,6 +114,8 @@ fun SettingsScreen(
                 Item("Data", "From MyAnimeList and AniList, for your own account. No Kotora server.") {}
                 HorizontalDivider(color = k.border)
                 Item("Font", "Inter, SIL Open Font License 1.1") {}
+                HorizontalDivider(color = k.border)
+                Item("小虎", "Noto Sans JP outlines, SIL Open Font License 1.1") {}
             }
         }
     }
@@ -97,4 +135,15 @@ private fun Item(title: String, sub: String?, trailing: @Composable () -> Unit) 
         }
         trailing()
     }
+}
+
+@Composable
+private fun KSwitch(checked: Boolean, enabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
+    val k = Kotora.colors
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(checkedTrackColor = k.accent, checkedThumbColor = androidx.compose.ui.graphics.Color.White, uncheckedTrackColor = k.borderStrong, uncheckedBorderColor = k.borderStrong, uncheckedThumbColor = k.text),
+    )
 }

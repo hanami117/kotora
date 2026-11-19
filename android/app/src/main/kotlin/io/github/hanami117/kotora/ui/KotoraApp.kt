@@ -53,10 +53,18 @@ import io.github.hanami117.kotora.core.Row as ListRow
 import io.github.hanami117.kotora.ui.theme.Kotora
 import kotlinx.coroutines.launch
 
+/** The phone's settings the Activity keeps (the startup animation, the system's notification switch). */
+data class AppPrefs(
+    val intro: Boolean = true,
+    val onIntro: (Boolean) -> Unit = {},
+    val notificationsOff: Boolean = false,
+    val openSystemSettings: () -> Unit = {},
+)
+
 private enum class Tab(val route: String, val label: String) { LIST("list", "List"), AIRING("airing", "Airing"), SEARCH("search", "Search"), SETTINGS("settings", "Settings") }
 
 @Composable
-fun KotoraApp(vm: AppViewModel, version: String, nowSeconds: () -> Long, onLookAround: (() -> Unit)?) {
+fun KotoraApp(vm: AppViewModel, version: String, nowSeconds: () -> Long, onLookAround: (() -> Unit)?, prefs: AppPrefs = AppPrefs()) {
     val k = Kotora.colors
     when (val s = vm.session) {
         Session.Loading -> Box(Modifier.fillMaxSize().background(k.bg))
@@ -64,12 +72,12 @@ fun KotoraApp(vm: AppViewModel, version: String, nowSeconds: () -> Long, onLookA
             Text(s.message, color = k.dropped, textAlign = TextAlign.Center)
         }
         is Session.SignedOut -> SignInScreen(s.error, s.busy, vm::hasClientId, vm::signIn, onLookAround)
-        is Session.SignedIn -> SignedIn(vm, s, version, nowSeconds)
+        is Session.SignedIn -> SignedIn(vm, s, version, nowSeconds, prefs)
     }
 }
 
 @Composable
-private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, nowSeconds: () -> Long) {
+private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, nowSeconds: () -> Long, prefs: AppPrefs) {
     val k = Kotora.colors
     val nav = rememberNavController()
     val snackHost = remember { SnackbarHostState() }
@@ -81,6 +89,13 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 val r = snackHost.showSnackbar(snack.text, actionLabel = snack.undo?.let { "Undo" }, duration = SnackbarDuration.Long)
                 if (r == SnackbarResult.ActionPerformed) snack.undo?.let(vm::undo)
             }
+        }
+    }
+    // A notification was tapped: its anime's or manga's page.
+    LaunchedEffect(vm, nav) {
+        vm.openFlow.collect { (kind, id) ->
+            if (kind != vm.list.kind) vm.select(kind = kind)
+            nav.navigate("details/${kind.name}/$id") { launchSingleTop = true }
         }
     }
     val entry by nav.currentBackStackEntryAsState()
@@ -117,14 +132,25 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 )
             }
             composable(Tab.AIRING.route) {
-                val manga = vm.list.kind == MediaKind.MANGA
-                Placeholder(
-                    if (manga) "Publishing" else "Airing",
-                    if (manga) "New chapters of what you read, from MangaUpdates: in a later build (M4)."
-                    else "This week's episodes of what you watch, with notifications: in a later build (M4).",
-                    s.active,
-                    Modifier.statusBarsPadding(),
-                )
+                if (vm.list.kind == MediaKind.MANGA) {
+                    Placeholder(
+                        "Publishing",
+                        "New chapters of what you read, from MangaUpdates: in a later build (M4). New chapter notifications already work (Settings).",
+                        s.active,
+                        Modifier.statusBarsPadding(),
+                    )
+                } else {
+                    AiringScreen(
+                        ui = vm.airing,
+                        account = s.active,
+                        onOpen = vm::openAiring,
+                        onRefresh = vm::refreshAiring,
+                        onTick = vm::reloadAiring,
+                        onFilter = { t, m -> vm.airingFilter(type = t ?: vm.airing.type, mine = m ?: vm.airing.mine) },
+                        onShow = { id -> nav.navigate("details/${MediaKind.ANIME.name}/$id") },
+                        modifier = Modifier.statusBarsPadding(),
+                    )
+                }
             }
             composable(Tab.SEARCH.route) {
                 Placeholder("Search", "Search and add anime and manga: in a later build (M3).", s.active, Modifier.statusBarsPadding())
@@ -140,6 +166,12 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onSignOut = vm::signOut,
                     onLeaveSample = vm::leaveSample,
                     modifier = Modifier.statusBarsPadding(),
+                    notify = vm.notify,
+                    onNotify = vm::changeNotify,
+                    intro = prefs.intro,
+                    onIntro = prefs.onIntro,
+                    systemNotificationsOff = prefs.notificationsOff,
+                    onOpenSystemSettings = prefs.openSystemSettings,
                 )
             }
             composable("details/{kind}/{id}") { back ->

@@ -4,6 +4,16 @@
     <style name="Theme.Kotora" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/kotora_bg</item>
     </style>
+    <!-- The launch screen: the intro's start pose (tiger orange with 小虎), so the intro takes over
+         without a seam. Android 12+ draws it itself; core-splashscreen does the same before. -->
+    <style name="Theme.Kotora.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/kotora_accent</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_kotora</item>
+        <item name="postSplashScreenTheme">@style/Theme.Kotora</item>
+    </style>
     <color name="kotora_bg">#F6F7FB</color>
     <color name="kotora_icon_bg">#1B2640</color>
+    <color name="kotora_accent">#F28A22</color>
+    <!-- 小虎 over the orange: the dark brown text on the accent in the light theme. -->
+    <color name="kotora_intro_name">#1D1208</color>
 </resources>

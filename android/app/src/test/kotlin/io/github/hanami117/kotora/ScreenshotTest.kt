@@ -6,12 +6,18 @@ import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.AiringMine
+import io.github.hanami117.kotora.core.AiringType
+import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
 import io.github.hanami117.kotora.data.SampleRepository
+import io.github.hanami117.kotora.ui.AiringScreen
+import io.github.hanami117.kotora.ui.AiringUi
 import io.github.hanami117.kotora.ui.DetailsScreen
+import io.github.hanami117.kotora.ui.IntroOverlay
 import io.github.hanami117.kotora.ui.ListScreen
 import io.github.hanami117.kotora.ui.ListUi
 import io.github.hanami117.kotora.ui.SettingsScreen
@@ -88,4 +94,43 @@ class ScreenshotTest {
 
     @Test fun settingsDark() = shot("settings", true) { SettingsScreen(listOf(account), true, 2u, "0.5.0", false, {}, {}, {}) }
     @Test fun settingsLight() = shot("settings", false) { SettingsScreen(listOf(account), false, 0u, "0.5.0", false, {}, {}, {}) }
+
+    // ---- Airing
+
+    private fun airing(name: String, dark: Boolean, ui: AiringUi) = shot(name, dark) {
+        AiringScreen(ui, account, {}, {}, {}, { _, _ -> }, {}, ticking = false)
+    }
+
+    private fun week(type: AiringType = AiringType.ALL, mine: AiringMine = AiringMine.ALL) = runBlocking { repo.airingWeek(type, mine) }
+
+    @Test fun airingDark() = airing("airing", true, AiringUi(week()))
+    @Test fun airingLight() = airing("airing", false, AiringUi(week()))
+    @Test fun airingMineDark() = airing("airing-mine", true, AiringUi(week(mine = AiringMine.ON), mine = AiringMine.ON))
+    @Test fun airingUpdatingErrorLight() = airing("airing-error", false, AiringUi(week(), loading = false, error = "Can\u2019t reach MyAnimeList."))
+    @Test fun airingLoadingDark() = airing("airing-loading", true, AiringUi(week().copy(shows = 0u, fetchedAt = null, days = emptyList(), untimed = emptyList()), loading = true))
+    @Test fun airingNothingFilteredLight() = airing("airing-filtered", false, AiringUi(week().copy(days = week().days.map { it.copy(slots = emptyList(), onList = 0u) }, untimed = emptyList()), type = AiringType.MOVIE))
+
+    // ---- the startup intro, held at points of its run (the desktop's `Intro::frozen` scenes)
+
+    private fun intro(name: String, dark: Boolean, at: Float, reduced: Boolean = false) = shot(name, dark) {
+        androidx.compose.foundation.layout.Box {
+            ListScreen(listUi(), account, now, {}, {}, {}, {}, {}, {})
+            IntroOverlay(reduced, onDone = {}, frozenAt = at)
+        }
+    }
+
+    @Test fun introStartDark() = intro("intro-0-start", true, 0f)
+    @Test fun introSlashDark() = intro("intro-1-slash", true, 0.3f)
+    @Test fun introSplitDark() = intro("intro-2-split", true, 0.55f)
+    @Test fun introAwayDark() = intro("intro-3-away", true, 0.8f)
+    @Test fun introSlashLight() = intro("intro-1-slash", false, 0.3f)
+    @Test fun introReducedLight() = intro("intro-reduced", false, 0.5f, reduced = true)
+
+    @Test fun settingsNotificationsLight() = shot("settings-notifications", false) {
+        SettingsScreen(
+            listOf(account), false, 0u, "0.5.0", false, {}, {}, {},
+            notify = NotifySettings(startedAiring = true, newEpisode = false, newChapter = false),
+            systemNotificationsOff = true,
+        )
+    }
 }

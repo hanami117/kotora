@@ -7,10 +7,14 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.hanami117.kotora.core.Account
+import io.github.hanami117.kotora.core.AiringMine
+import io.github.hanami117.kotora.core.AiringType
+import io.github.hanami117.kotora.core.AiringWeek
 import io.github.hanami117.kotora.core.Edit
 import io.github.hanami117.kotora.core.KotoraException
 import io.github.hanami117.kotora.core.ListStatus
 import io.github.hanami117.kotora.core.MediaKind
+import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.PendingSignIn
 import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
@@ -46,6 +50,17 @@ data class ListUi(
     val loaded: Boolean = false,
 )
 
+/** The Airing page: the week (local, from the saved seasons), its filters, the fetch. */
+data class AiringUi(
+    val week: AiringWeek? = null,
+    val type: AiringType = AiringType.ALL,
+    val mine: AiringMine = AiringMine.ALL,
+    /** The seasons are being asked for. */
+    val loading: Boolean = false,
+    /** The last fetch's problem ("Can't reach MyAnimeList."). */
+    val error: String? = null,
+)
+
 /** A message at the bottom, with Undo when it is an edit. */
 data class Snack(val text: String, val undo: Edit? = null)
 
@@ -58,6 +73,10 @@ class AppViewModel(
     private val brokenMessage: () -> String?,
     private val requestFlush: () -> Unit,
     private val saved: SavedStateHandle,
+    /** The saved list changed (a sync): the notifications look again. */
+    private val requestNotes: () -> Unit = {},
+    /** Signed in (true: the notifications' periodic look starts) or out. */
+    private val onSignedIn: (Boolean) -> Unit = {},
 ) : ViewModel() {
     var session by mutableStateOf<Session>(Session.Loading)
         private set
@@ -65,6 +84,14 @@ class AppViewModel(
         private set
     var mangaEnabled by mutableStateOf(false)
         private set
+    var airing by mutableStateOf(AiringUi())
+        private set
+    var notify by mutableStateOf(NotifySettings(startedAiring = true, newEpisode = true, newChapter = false))
+        private set
+
+    /** A notification was tapped: the page to open (kind, id). */
+    private val opens = Channel<Pair<MediaKind, UInt>>(Channel.CONFLATED)
+    val openFlow = opens.receiveAsFlow()
 
     private val snacks = Channel<Snack>(Channel.BUFFERED)
     val snackFlow = snacks.receiveAsFlow()
@@ -89,10 +116,13 @@ class AppViewModel(
         val accounts = runCatching { r.accounts() }.getOrElse { emptyList() }
         if (accounts.isEmpty()) {
             session = Session.SignedOut()
+            if (!r.isSample) onSignedIn(false)
             return
         }
         session = Session.SignedIn(accounts)
         mangaEnabled = runCatching { r.mangaEnabled() }.getOrDefault(false)
+        notify = runCatching { r.notifySettings() }.getOrDefault(notify)
+        if (!r.isSample) onSignedIn(true)
         reload()
         if (list.syncedAt == null && !r.isSample) sync() else if (!r.isSample) requestFlush()
     }
@@ -147,6 +177,8 @@ class AppViewModel(
             }
             list = list.copy(syncing = false)
             reload()
+            if (airing.week != null) reloadAiring()
+            if (!r.isSample) requestNotes()
         }
     }
 
@@ -186,6 +218,68 @@ class AppViewModel(
             mangaEnabled = on
             if (on && !r.isSample) sync() else reload()
         }
+    }
+
+    // ------------------------------------------------------------------------------- airing
+
+    /** The page opened: the saved week at once, then the seasons when they are missing or old. */
+    fun openAiring() {
+        viewModelScope.launch {
+            reloadAiring()
+            if (airing.week?.stale != false) fetchAiring(false)
+        }
+    }
+
+    /** The Refresh button (and Retry): asks the service again. */
+    fun refreshAiring() = fetchAiring(true)
+
+    private fun fetchAiring(force: Boolean) {
+        val r = repo ?: return
+        if (airing.loading) return
+        airing = airing.copy(loading = true, error = null)
+        viewModelScope.launch {
+            val error = try {
+                r.airingFetch(force)
+                null
+            } catch (e: Exception) {
+                message(e)
+            }
+            airing = airing.copy(loading = false, error = error)
+            reloadAiring()
+        }
+    }
+
+    /** The week again from what is saved (a filter, the minute, the list changed). Local. */
+    suspend fun reloadAiring() {
+        val r = repo ?: return
+        try {
+            airing = airing.copy(week = r.airingWeek(airing.type, airing.mine))
+        } catch (e: KotoraException.NotSignedIn) {
+            session = Session.SignedOut()
+        } catch (e: Exception) {
+            airing = airing.copy(error = message(e))
+        }
+    }
+
+    fun airingFilter(type: AiringType = airing.type, mine: AiringMine = airing.mine) {
+        airing = airing.copy(type = type, mine = mine)
+        viewModelScope.launch { reloadAiring() }
+    }
+
+    // ------------------------------------------------------------------------- notifications
+
+    fun changeNotify(settings: NotifySettings) {
+        val r = repo ?: return
+        notify = settings
+        viewModelScope.launch {
+            runCatching { r.setNotifySettings(settings) }
+            if (!r.isSample) requestNotes()
+        }
+    }
+
+    /** A notification was tapped (the Activity's intent). */
+    fun open(kind: MediaKind, id: UInt) {
+        opens.trySend(kind to id)
     }
 
     // ------------------------------------------------------------------------------- sign-in
@@ -251,6 +345,7 @@ class AppViewModel(
         viewModelScope.launch {
             runCatching { r.signOut(service) }
             list = ListUi()
+            airing = AiringUi()
             start()
         }
     }
@@ -258,12 +353,14 @@ class AppViewModel(
     /** Debug builds: the made-up lists, without signing in. */
     fun lookAround(sample: Repository) {
         repoOverride = sample
+        airing = AiringUi()
         viewModelScope.launch { start() }
     }
 
     fun leaveSample() {
         repoOverride = null
         list = ListUi()
+        airing = AiringUi()
         viewModelScope.launch { start() }
     }
 

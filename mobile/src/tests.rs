@@ -222,3 +222,153 @@ fn values_round_trip_for_undo() {
     let back = Change { status: Some(v.status), progress: Some(v.progress), rewatching: Some(v.rewatching), times_rewatched: Some(v.times_rewatched), ..Default::default() };
     assert_eq!(back.apply(Values::new(Status::Watching, 9, None)).progress, 3);
 }
+
+// ------------------------------------------------------------------- airing and notifications
+
+mod airing_week {
+    use kotora_core::airing::{Broadcast, SeasonAnime, WEEK};
+    use kotora_core::airnotes::What;
+    use kotora_core::mangaupdates::Sources;
+    use kotora_core::time::Clock;
+
+    use super::*;
+    use crate::airing::{air_note, chapter_note, week};
+
+    /// Saturday 2026-10-03 23:30 JST (14:30 UTC): episode 1.
+    const EP1: i64 = 1_791_037_800;
+    const JST: i64 = 9 * 3600;
+
+    fn show(id: u32, title: &str, format: &str) -> SeasonAnime {
+        SeasonAnime {
+            id,
+            title: title.into(),
+            format: format.into(),
+            episodes: Some(12),
+            air_status: "currently_airing".into(),
+            start_date: Some("2026-10-03".into()),
+            broadcast: Broadcast::parse("saturday", Some("23:30")),
+            members: Some(1000 - id),
+            ..Default::default()
+        }
+    }
+
+    fn tokyo(t: i64) -> Clock {
+        Clock::at(t, JST)
+    }
+
+    #[test]
+    fn the_week_has_seven_days_with_the_desktops_texts() {
+        // Friday 2026-10-23 12:00 JST: episode 4 is tomorrow at 23:30.
+        let now = EP1 + 3 * WEEK - 86_400 - 11 * 3600 - 1800;
+        let shows = vec![show(1, "Hoshikuzu Relay", "tv"), show(2, "Kagerou Bakery", "ona"), SeasonAnime { broadcast: Broadcast::parse("monday", None), ..show(3, "No Time", "tv") }];
+        let list = vec![item(1, "Hoshikuzu Relay", Status::Watching, 2, Some(12), 1)];
+        let (days, untimed) = week(&shows, &list, Service::Mal, AiringType::All, AiringMine::All, now, &tokyo);
+        assert_eq!(days.len(), 7);
+        assert_eq!(days[0].label, "Today \u{b7} Friday Oct 23");
+        assert!(days[0].today && days[0].slots.is_empty());
+        assert_eq!(days[1].label, "Tomorrow \u{b7} Saturday Oct 24");
+        assert_eq!(days[2].label, "Sunday Oct 25");
+        let s = &days[1].slots;
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].id, s[0].episode, s[0].time.as_str(), s[0].mine), (1, 4, "23:30", true), "mine first at the same time");
+        assert_eq!(s[0].note, "in 1 d 11 h");
+        assert_eq!(s[0].to_watch.as_deref(), Some("~1 to watch"), "episode 3 is out, the user is at 2");
+        assert_eq!((s[1].note.as_str(), s[1].format_label.as_str(), s[1].status), ("", "ONA", None), "not on the list: no countdown");
+        assert_eq!(days[1].on_list, 1);
+        assert_eq!(untimed, vec![AiringUntimed { id: 3, title: "No Time".into(), cover_url: None, why: "Mondays in Japan, time not known".into(), status: None }]);
+        // The filters.
+        let (days, _) = week(&shows, &list, Service::Mal, AiringType::Ona, AiringMine::All, now, &tokyo);
+        assert_eq!(days[1].slots.iter().map(|s| s.id).collect::<Vec<_>>(), vec![2]);
+        let (days, untimed) = week(&shows, &list, Service::Mal, AiringType::All, AiringMine::On, now, &tokyo);
+        assert_eq!(days[1].slots.iter().map(|s| s.id).collect::<Vec<_>>(), vec![1]);
+        assert!(untimed.is_empty());
+    }
+
+    #[test]
+    fn an_aired_slot_today_says_aired_and_a_progress_ahead_moves_it() {
+        // Saturday 2026-10-24 23:40 JST: episode 4 aired ten minutes ago.
+        let now = EP1 + 3 * WEEK + 600;
+        let list = vec![item(1, "Hoshikuzu Relay", Status::Watching, 4, Some(12), 1)];
+        let (days, _) = week(&[show(1, "Hoshikuzu Relay", "tv")], &list, Service::Mal, AiringType::All, AiringMine::All, now, &tokyo);
+        assert_eq!((days[0].slots[0].episode, days[0].slots[0].note.as_str()), (4, "aired"));
+        assert_eq!(days[0].slots[0].to_watch.as_deref(), Some("Caught up"));
+        // Watched 5 already: the estimate moves forward, today's slot is episode 5.
+        let list = vec![item(1, "Hoshikuzu Relay", Status::Watching, 5, Some(12), 1)];
+        let (days, _) = week(&[show(1, "Hoshikuzu Relay", "tv")], &list, Service::Mal, AiringType::All, AiringMine::All, now, &tokyo);
+        assert_eq!(days[0].slots[0].episode, 5);
+    }
+
+    #[test]
+    fn notification_texts_and_switches_are_the_desktops() {
+        let on = NotifySettings::default();
+        assert_eq!(on, NotifySettings { started_airing: true, new_episode: true, new_chapter: false });
+        let ptw = item(4, "Neko Tantei Rin", Status::PlanToWatch, 0, None, 1);
+        let n = air_note(&ptw, What::Started, on).unwrap();
+        assert_eq!((n.id.as_str(), n.summary.as_str(), n.body.as_str()), ("kotora-4-started", "Neko Tantei Rin started airing", "It\u{2019}s on your Plan to watch list."));
+        let w = item(1, "Hoshikuzu Relay", Status::Watching, 6, Some(12), 1);
+        let n = air_note(&w, What::Episode(7), on).unwrap();
+        assert_eq!((n.id.as_str(), n.kind, n.summary.as_str()), ("kotora-1-ep7", NoteKind::Episode, "Hoshikuzu Relay \u{b7} Ep 7 is out"));
+        assert_eq!(n.body, "Estimated from the broadcast time. You\u{2019}re at episode 6.");
+        assert_eq!(air_note(&w, What::Episode(6), on), None, "already watched");
+        assert_eq!(air_note(&w, What::Started, on), None, "not Plan to watch any more");
+        let off = NotifySettings { started_airing: false, new_episode: false, new_chapter: false };
+        assert_eq!((air_note(&ptw, What::Started, off), air_note(&w, What::Episode(7), off)), (None, None));
+        let mut m = item(9, "Kaze no Shoten", Status::Watching, 70, None, 1);
+        m.media.kind = Kind::Manga;
+        let both = Sources { mu: true, md: true };
+        let n = chapter_note(&m, 72, "Ch 72", both).unwrap();
+        assert_eq!((n.id.as_str(), n.summary.as_str(), n.body.as_str()), ("kotora-m9-ch72", "New chapter of Kaze no Shoten: Ch 72", "2 chapters to read. Release data: MangaUpdates, MangaDex."));
+        assert_eq!(chapter_note(&m, 71, "Ch 71", both).unwrap().body, "Release data: MangaUpdates, MangaDex.");
+        assert_eq!(chapter_note(&m, 70, "Ch 70", both), None);
+    }
+
+    #[test]
+    fn settings_are_kept_and_signed_out_there_is_nothing() {
+        let dir = scratch("notify");
+        let (k, _) = open(&dir, ids());
+        assert_eq!(k.air_notes(), Ok(vec![]));
+        assert_eq!(k.chapter_notes(), Ok(vec![]));
+        assert!(matches!(k.airing_week(AiringType::All, AiringMine::All), Err(KotoraError::NotSignedIn)));
+        let s = NotifySettings { started_airing: false, new_episode: true, new_chapter: true };
+        k.set_notify_settings(s).unwrap();
+        assert_eq!(k.notify_settings(), s);
+        // Signed in with nothing saved: an empty, stale week (the page asks for the season).
+        sign_in_fake(&k, Service::Mal);
+        fill(&k);
+        let w = k.airing_week(AiringType::All, AiringMine::All).unwrap();
+        assert!(w.stale && w.fetched_at.is_none() && w.shows == 0 && w.service_title == "MyAnimeList");
+        // Chapters: Manga is off, so no request is made.
+        assert_eq!(k.chapter_notes(), Ok(vec![]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_saved_season_shows_and_an_episode_out_is_announced_once() {
+        let dir = scratch("air-notes");
+        let (k, _) = open(&dir, ids());
+        sign_in_fake(&k, Service::Mal);
+        let now = kotora_core::time::now_unix();
+        // A show whose episode came out an hour ago (by the weekly estimate, in JST).
+        let at = now - 3600;
+        let c = Clock::at(at, JST);
+        let (y, m, d) = kotora_core::time::civil_from_days(c.day - 14);
+        let days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+        let slot = format!("{:02}:{:02}", c.minute / 60, c.minute % 60);
+        let mut it = item(1, "Hoshikuzu Relay", Status::Watching, 2, Some(12), 1);
+        it.media.start_date = Some(format!("{y}-{m:02}-{d:02}"));
+        it.media.broadcast = Broadcast::parse(days[usize::from(c.weekday)], Some(&slot));
+        k.store().replace_list("mal", &[it.clone()], 1_000).unwrap();
+        let notes = k.air_notes().unwrap();
+        assert_eq!(notes.iter().map(|n| n.summary.as_str()).collect::<Vec<_>>(), vec!["Hoshikuzu Relay \u{b7} Ep 3 is out"]);
+        assert_eq!(k.air_notes(), Ok(vec![]), "once");
+        // The season saved by an earlier fetch shows in the week.
+        let cur = kotora_core::airing::Season::of(now);
+        let sa = kotora_core::airing::SeasonAnime::from_item(&it);
+        k.store().save_season("mal", cur, &[sa], now, &[]).unwrap();
+        let w = k.airing_week(AiringType::All, AiringMine::On).unwrap();
+        assert_eq!(w.shows, 1);
+        assert_eq!(w.fetched_at, Some(now));
+        assert!(w.stale, "the previous season isn't saved");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

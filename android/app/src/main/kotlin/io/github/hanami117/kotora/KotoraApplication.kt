@@ -15,6 +15,9 @@ import io.github.hanami117.kotora.data.Repository
  * it, so the core's rate budgets cover both.
  */
 class KotoraApplication : Application(), SingletonImageLoader.Factory {
+    /** The startup animation played (or was passed over) in this process: never again in it. */
+    var introPlayed = false
+
     /** Why the core couldn't start, when it couldn't. */
     var brokenMessage: String? = null
         private set

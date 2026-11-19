@@ -24,6 +24,9 @@ use kotora_core::store::Store;
 use kotora_core::tokens::{TokenStore, TokenVault};
 use kotora_core::{Change, Kind, ListItem, Scope, ScoreFormat, Status, paths, time};
 
+mod airing;
+pub use airing::{AiringDay, AiringMine, AiringSlot, AiringType, AiringUntimed, AiringWeek, Note, NoteKind, NotifySettings};
+
 uniffi::setup_scaffolding!();
 
 /// The redirect registered with Kotora's MyAnimeList client for Android.
