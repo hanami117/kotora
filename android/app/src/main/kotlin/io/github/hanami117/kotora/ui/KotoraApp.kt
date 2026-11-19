@@ -69,6 +69,8 @@ data class AppPrefs(
     val onIntro: (Boolean) -> Unit = {},
     val notificationsOff: Boolean = false,
     val openSystemSettings: () -> Unit = {},
+    /** The update check (release builds only: a debug build is another app id). */
+    val updater: io.github.hanami117.kotora.update.Updater? = null,
 )
 
 private enum class Tab(val route: String, val label: String) { HOME("home", "Home"), LIST("list", "List"), AIRING("airing", "Airing"), SEARCH("search", "Search"), SETTINGS("settings", "Settings") }
@@ -103,6 +105,16 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                 val r = snackHost.showSnackbar(snack.text, actionLabel = if (canUndo) "Undo" else null, duration = SnackbarDuration.Long)
                 if (r == SnackbarResult.ActionPerformed) snack.undo?.let(vm::undo) ?: snack.onUndo?.invoke()
             }
+        }
+    }
+    // The quiet update check: at start, at most once a day, a snackbar when a new version is out.
+    LaunchedEffect(prefs.updater) {
+        val u = prefs.updater ?: return@LaunchedEffect
+        val found = u.quietCheck(nowSeconds()) ?: return@LaunchedEffect
+        val r = snackHost.showSnackbar("Kotora ${found.version} is available", actionLabel = "Download", duration = SnackbarDuration.Long)
+        if (r == SnackbarResult.ActionPerformed) {
+            u.download(scope, found)
+            nav.navigate(Tab.SETTINGS.route) { launchSingleTop = true }
         }
     }
     // A notification was tapped: its anime's or manga's page.
@@ -299,6 +311,22 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     conflicts = conflicts,
                     onQueue = { nav.navigate("queue") },
                     mirror = { MirrorSettings(vm) },
+                    updates = {
+                        prefs.updater?.let { u ->
+                            UpdateRows(
+                                UpdateUi(
+                                    u.enabled, u.lastCheck, u.result, u.available, u.step,
+                                    onEnabled = u::changeEnabled,
+                                    onCheckNow = { u.checkNow(scope, nowSeconds()) },
+                                    onDownload = { u.download(scope, it) },
+                                    onSkip = u::skip,
+                                    onNotes = { vm.openUrl(it.pageUrl) },
+                                    onAllowInstall = u::openInstallPermission,
+                                ),
+                                nowSeconds(),
+                            )
+                        }
+                    },
                     appearanceExtras = { AppearanceExtras(vm.settings, vm.titleLanguage, vm::changeSetting, vm::changeTitleLanguage) },
                     extras = {
                         vm.repo?.let { r ->

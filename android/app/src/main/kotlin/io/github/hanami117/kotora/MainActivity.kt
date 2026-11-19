@@ -107,6 +107,7 @@ class MainActivity : ComponentActivity() {
                         onIntro = { intro = it; uiPrefs.intro = it },
                         notificationsOff = notificationsOff,
                         openSystemSettings = ::openNotificationSettings,
+                        updater = (application as KotoraApplication).updater,
                     )
                     KotoraApp(vm, BuildConfig.VERSION_NAME, { System.currentTimeMillis() / 1000 }, lookAround, prefs)
                     if (introUp) IntroOverlay(reduced, onDone = { introUp = false })

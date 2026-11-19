@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Started airing, New episode and New chapter notifications (asked for on Android 13+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Settings → Updates → Download: opens Android's installer on the APK from GitHub Releases. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Sign-in opens in the user's browser (a Custom Tab when it has them). -->
     <queries>
@@ -52,6 +54,17 @@
                 <data android:scheme="io.github.hanami117.kotora" android:host="oauth" />
             </intent-filter>
         </activity>
+
+        <!-- The downloaded update (cache/updates), shared read-only with the package installer. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
 
         <!-- WorkManager starts itself; FlushWorker is enqueued after each edit, NotifyWorker every
              15 minutes while signed in. -->

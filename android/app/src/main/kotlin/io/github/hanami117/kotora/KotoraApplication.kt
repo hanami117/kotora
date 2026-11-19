@@ -32,6 +32,11 @@ class KotoraApplication : Application(), SingletonImageLoader.Factory {
         }
     }
 
+    /** Settings → Updates (none in a debug build: it is another app id, so no APK would fit). */
+    val updater: io.github.hanami117.kotora.update.Updater? by lazy {
+        if (BuildConfig.DEBUG) null else io.github.hanami117.kotora.update.Updater(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+    }
+
     /** Covers: Coil's cache in `cacheDir/covers`, 100 MB at most (the OS may clear it any time). */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
