@@ -6,6 +6,14 @@ repository.workspace = true
 edition.workspace = true
 description = "Kotora's core: data model, store, services, sync queue and recognition (no UI)"
 
+# `desktop` (on by default): what only the desktop app needs: recognition (anitomy), the library
+# scan, the loopback sign-in page, Discord, the update check and reading detection. Kotora for
+# Android (`mobile/`) builds the core with `default-features = false`: lists, store, queue, sync,
+# mirror, the services, Airing and Publishing.
+[features]
+default = ["desktop"]
+desktop = ["dep:anitomy-ng"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,7 +24,7 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 ureq = "3"
 # File-name parsing (recognition): a pure-Rust port of anitomy, MPL-2.0 (decided
 # 2026-11-15). It brings `regex` without its Unicode tables and fast paths.
-anitomy-ng = { version = "1.0.10", default-features = false }
+anitomy-ng = { version = "1.0.10", default-features = false, optional = true }
 # MyAnimeList XML export and import (`listxml.rs`): MyAnimeList ships its export gzipped. Both
 # are already in the tree (rune's SVG stack); MIT / Apache-2.0.
 flate2 = "1"

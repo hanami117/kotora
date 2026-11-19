@@ -107,8 +107,23 @@ impl Clock {
     }
 }
 
+/// Where the UTC offset comes from when the app knows better than the C library (Android: the
+/// zone the user picked, from `java.time`). Unix seconds in, seconds east of UTC out.
+pub type OffsetSource = Box<dyn Fn(i64) -> i64 + Send + Sync>;
+
+static OFFSET_SOURCE: std::sync::OnceLock<OffsetSource> = std::sync::OnceLock::new();
+
+/// Sets the [`OffsetSource`] for the whole process, once (later calls are ignored). The desktop
+/// app never sets one.
+pub fn set_offset_source(source: OffsetSource) {
+    let _ = OFFSET_SOURCE.set(source);
+}
+
 /// The user's UTC offset at `t`, in seconds east (DST included). 0 when the C library can't say.
 pub fn local_offset(t: i64) -> i64 {
+    if let Some(source) = OFFSET_SOURCE.get() {
+        return source(t);
+    }
     #[cfg(unix)]
     {
         let tt = t as libc::time_t;
