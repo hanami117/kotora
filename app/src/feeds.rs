@@ -81,9 +81,17 @@ pub struct FeedsUi {
     pub query: TextEdit,
     pub sort: (crate::torrents::SortCol, bool),
     pub visible: Vec<usize>,
+    /// The table's lines (groups, items, the open row's actions) for the virtual list.
+    pub slots: Vec<crate::torrents::Slot>,
     /// The page's tab: 0 Your shows, 1 All releases, 2 History.
     pub tab: u8,
     pub editor: crate::torrents::FilterEditor,
+    /// The page's "Search for torrents" box (Taiga's main toolbar search on Torrents).
+    pub search_box: TextEdit,
+    /// The right-click menu: the item's key and where.
+    pub ctx: Option<(String, f32, f32)>,
+    /// "Marked N torrents." and the like (Taiga's status bar).
+    pub status: Option<String>,
     /// Torrents → Your shows: the per-show searches.
     pub shows: crate::shows::Shows,
     pub app_edit: TextEdit,
@@ -682,6 +690,18 @@ impl State {
             return;
         };
         let title = e.main_title.clone();
+        self.feeds_search_title(title, id);
+    }
+
+    /// Taiga's `TorrentDialog::Search`: the search address with `%title%`, its results replace
+    /// All releases (the box on the page shows the title). `id` 0: typed, no anime.
+    pub fn feeds_search_title(&mut self, title: String, id: u32) {
+        let title = title.trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        self.feeds.search_box.text = title.clone();
+        self.feeds.open_row = None;
         let Some(url) = search_url(&self.feeds.cfg.search, &title) else {
             self.feeds.search = Some(SearchView {
                 media_id: id,

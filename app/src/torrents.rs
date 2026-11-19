@@ -281,12 +281,82 @@ impl State {
         let Some(e) = self.feeds_table().iter().find(|e| e.item.key() == key) else {
             return;
         };
+        // Taiga's LVN_ITEMCHANGED: checked = Selected, unchecked = DiscardedNormal.
         let to = if e.state == ItemState::Selected {
-            ItemState::Blank
+            ItemState::DiscardedNormal
         } else {
             ItemState::Selected
         };
         self.feeds_mark(vec![key.to_string()], to);
+        let n = self.feeds_checked().len();
+        self.feeds.status = Some(if n == 1 {
+            "Marked 1 torrent.".into()
+        } else {
+            format!("Marked {n} torrents.")
+        });
+    }
+
+    /// Taiga's Discard (menu) and Discard all (the checked ones): discarded and into the
+    /// archive, so they stay discarded.
+    pub fn feeds_discard_into_archive(&mut self, keys: Vec<String>) {
+        let titles: Vec<String> = self
+            .feeds_table()
+            .iter()
+            .filter(|e| keys.contains(&e.item.key()))
+            .map(|e| e.item.title.clone())
+            .collect();
+        let a = self.feeds.archive.get_or_insert_with(Default::default);
+        for t in &titles {
+            a.add(t);
+        }
+        self.feeds_save_archive();
+        self.feeds_mark(keys, ItemState::DiscardedNormal);
+    }
+
+    /// Taiga's "Select this fansub group for this anime": the anime's items of other groups (or
+    /// another resolution) are discarded, and a fansub filter remembers it.
+    pub fn feeds_select_fansub(&mut self, key: &str) {
+        let Some(e) = self
+            .feeds_table()
+            .iter()
+            .find(|e| e.item.key() == key)
+            .cloned()
+        else {
+            return;
+        };
+        let (Some(id), Some(group)) = (
+            e.anime_id,
+            e.release.parsed.group.clone().filter(|g| !g.is_empty()),
+        ) else {
+            return;
+        };
+        let res = e.release.parsed.resolution.clone().unwrap_or_default();
+        let others: Vec<String> = self
+            .feeds_table()
+            .iter()
+            .filter(|x| x.anime_id == Some(id))
+            .filter(|x| {
+                !x.release
+                    .parsed
+                    .group
+                    .as_deref()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(&group)
+                    || (!res.is_empty()
+                        && !x
+                            .release
+                            .parsed
+                            .resolution
+                            .as_deref()
+                            .unwrap_or("")
+                            .eq_ignore_ascii_case(&res))
+            })
+            .map(|x| x.item.key())
+            .collect();
+        let title = self.feeds_title(id);
+        taiga::set_fansub_filter(&mut self.feeds.filters, id, &title, &group, &res);
+        self.feeds_filters_changed();
+        self.feeds_mark(others, ItemState::DiscardedNormal);
     }
 
     pub fn feeds_mark(&mut self, keys: Vec<String>, to: ItemState) {
@@ -316,9 +386,10 @@ impl State {
         self.feeds_download(keys);
     }
 
+    /// Taiga's "Discard all": the checked items, into the archive.
     pub fn feeds_discard_marked(&mut self) {
         let keys = self.feeds_checked();
-        self.feeds_mark(keys, ItemState::DiscardedNormal);
+        self.feeds_discard_into_archive(keys);
     }
 
     /// "Select all new": every new episode of an anime on the list.
@@ -330,17 +401,6 @@ impl State {
             .map(|e| e.item.key())
             .collect();
         self.feeds_mark(keys, ItemState::Selected);
-    }
-
-    /// Discard everything not checked (Taiga's "Discard all" leaves the selected ones).
-    pub fn feeds_discard_rest(&mut self) {
-        let keys = self
-            .feeds_table()
-            .iter()
-            .filter(|e| e.state == ItemState::Blank)
-            .map(|e| e.item.key())
-            .collect();
-        self.feeds_mark(keys, ItemState::DiscardedNormal);
     }
 
     // -------------------------------------------------------------- per-anime filters
@@ -1378,14 +1438,15 @@ fn editor(s: &State) -> El {
 // ---------------------------------------------------------------------------- the page
 
 const W_CHECK: f32 = 22.0;
-const W_EP: f32 = 58.0;
+const W_EP: f32 = 64.0;
 const W_GROUP: f32 = 110.0;
 const W_SIZE: f32 = 70.0;
-const W_VIDEO: f32 = 110.0;
-const W_PEERS: f32 = 70.0;
+const W_VIDEO: f32 = 120.0;
+const W_NUM: f32 = 34.0;
+const W_DATE: f32 = 96.0;
 const ROW_H: f32 = 34.0;
 
-/// The quick chips over the table (Taiga's toolbar filter), remembered in `[feeds] view`.
+/// The quick chips over the table, remembered in `[feeds] view` (Kotora's, beside Taiga's search).
 pub const VIEWS: [&str; 5] = ["all", "list", "new", "selected", "discarded"];
 
 pub fn view_label(v: &str) -> &'static str {
@@ -1408,23 +1469,48 @@ fn in_view(v: &str, e: &Entry) -> bool {
     }
 }
 
-/// The columns a header click sorts by.
+/// Taiga's columns (`TorrentListColumn`); `State` is its own order (Selected, blank, discarded).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortCol {
-    /// Taiga's own order (selected, blank, discarded).
     #[default]
     State,
-    Anime,
+    Release,
     Episode,
     Group,
     Size,
     Video,
     Seeders,
+    Leechers,
+    Downloads,
     Description,
+    Date,
 }
 
-/// Whether the typed words all appear in the anime title, the release title, the group or the
-/// episode (any case).
+impl SortCol {
+    /// Taiga starts these descending (`LVN_COLUMNCLICK`).
+    fn starts_descending(self) -> bool {
+        matches!(
+            self,
+            SortCol::Episode
+                | SortCol::Size
+                | SortCol::Seeders
+                | SortCol::Leechers
+                | SortCol::Downloads
+                | SortCol::Date
+        )
+    }
+}
+
+/// A line of the table: a category header (Taiga's list groups), an anime header (Kotora: the
+/// anime once), an item, or the open item's actions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Category(Category, usize),
+    Anime(String, usize),
+    Item(usize),
+    Actions(usize),
+}
+
 fn matches_query(s: &State, e: &Entry, words: &[String]) -> bool {
     if words.is_empty() {
         return true;
@@ -1440,9 +1526,18 @@ fn matches_query(s: &State, e: &Entry, words: &[String]) -> bool {
     words.iter().all(|w| hay.contains(w.as_str()))
 }
 
+/// Taiga's `RefreshList`: unidentified items with no anime title go to Other.
+fn category(e: &Entry) -> Category {
+    if e.anime_id.is_none() && e.anime_title.is_empty() {
+        Category::Other
+    } else {
+        e.category
+    }
+}
+
 impl State {
-    /// The rows shown: chip, words, then the sort. Kept in `feeds.visible`, so the virtual rows
-    /// read an index instead of filtering again per row.
+    /// The table's lines: chip and filter words, Taiga's groups (Anime, Batch, Other), the anime
+    /// once inside them while in Taiga's order or by release, the sort, the open row's actions.
     pub fn feeds_refilter(&mut self) {
         let words: Vec<String> = self
             .feeds
@@ -1454,49 +1549,100 @@ impl State {
         let view = self.feeds.cfg.view.clone();
         let t = self.feeds_table();
         let mut v: Vec<usize> = (0..t.len())
-            .filter(|&i| in_view(&view, &t[i]) && matches_query(self, &t[i], &words))
+            .filter(|&i| {
+                t[i].state != ItemState::DiscardedHidden
+                    && in_view(&view, &t[i])
+                    && matches_query(self, &t[i], &words)
+            })
             .collect();
         let (col, desc) = self.feeds.sort;
-        if col != SortCol::State || desc {
-            let key = |e: &Entry| -> (String, u64) {
-                match col {
-                    SortCol::State => (String::new(), 0),
-                    SortCol::Anime => (anime_text(self, e).to_lowercase(), 0),
-                    SortCol::Episode => (
-                        anime_text(self, e).to_lowercase(),
-                        u64::from(e.release.episodes.map_or(0, |x| x.0)),
-                    ),
-                    SortCol::Group => (
-                        e.release
-                            .parsed
-                            .group
-                            .clone()
-                            .unwrap_or_default()
-                            .to_lowercase(),
-                        0,
-                    ),
-                    SortCol::Size => (String::new(), e.item.size.unwrap_or(0)),
-                    SortCol::Video => (
-                        String::new(),
-                        u64::from(
-                            e.release
-                                .parsed
-                                .resolution
-                                .as_deref()
-                                .and_then(taiga::resolution_height)
-                                .unwrap_or(0),
-                        ),
-                    ),
-                    SortCol::Seeders => (String::new(), u64::from(e.item.seeders.unwrap_or(0))),
-                    SortCol::Description => (e.item.description.to_lowercase(), 0),
+        let by_anime = matches!(col, SortCol::State | SortCol::Release);
+        let num = |e: &Entry| -> u64 {
+            match col {
+                SortCol::Episode => {
+                    u64::from(e.release.episodes.map_or(0, |x| x.0)) * 100
+                        + u64::from(e.release.version.unwrap_or(1))
                 }
-            };
-            v.sort_by(|&a, &b| {
-                let o = key(&t[a]).cmp(&key(&t[b]));
-                if desc { o.reverse() } else { o }
-            });
+                SortCol::Size => e.item.size.unwrap_or(0),
+                SortCol::Seeders => u64::from(e.item.seeders.unwrap_or(0)),
+                SortCol::Leechers => u64::from(e.item.leechers.unwrap_or(0)),
+                SortCol::Downloads => u64::from(e.item.downloads.unwrap_or(0)),
+                SortCol::Date => e.item.published.unwrap_or(0) as u64,
+                SortCol::Video => u64::from(
+                    e.release
+                        .parsed
+                        .resolution
+                        .as_deref()
+                        .and_then(taiga::resolution_height)
+                        .unwrap_or(0),
+                ),
+                _ => 0,
+            }
+        };
+        let text = |e: &Entry| -> String {
+            match col {
+                SortCol::Release => e.item.title.to_lowercase(),
+                SortCol::Group => e
+                    .release
+                    .parsed
+                    .group
+                    .clone()
+                    .unwrap_or_default()
+                    .to_lowercase(),
+                SortCol::Description => e.item.description.to_lowercase(),
+                _ => String::new(),
+            }
+        };
+        let cat_rank = |c: Category| Category::ALL.iter().position(|x| *x == c).unwrap_or(0);
+        // Stable: Taiga's state order stays inside equal keys.
+        v.sort_by(|&a, &b| {
+            let (x, y) = (&t[a], &t[b]);
+            let mut o = cat_rank(category(x)).cmp(&cat_rank(category(y)));
+            if by_anime {
+                o = o.then_with(|| {
+                    anime_text(self, x)
+                        .to_lowercase()
+                        .cmp(&anime_text(self, y).to_lowercase())
+                });
+            }
+            if col != SortCol::State {
+                let k = (text(x), num(x)).cmp(&(text(y), num(y)));
+                o = o.then(if desc { k.reverse() } else { k });
+            }
+            o
+        });
+        let mut slots = Vec::with_capacity(v.len() + 8);
+        let mut last_cat = None;
+        let mut last_anime = None;
+        for &i in &v {
+            let e = &t[i];
+            let c = category(e);
+            if last_cat != Some(c) {
+                slots.push(Slot::Category(
+                    c,
+                    v.iter().filter(|&&j| category(&t[j]) == c).count(),
+                ));
+                last_cat = Some(c);
+                last_anime = None;
+            }
+            if by_anime && c != Category::Other {
+                let a = anime_text(self, e);
+                if last_anime.as_deref() != Some(a.as_str()) {
+                    let n = v
+                        .iter()
+                        .filter(|&&j| category(&t[j]) == c && anime_text(self, &t[j]) == a)
+                        .count();
+                    slots.push(Slot::Anime(a.clone(), n));
+                    last_anime = Some(a);
+                }
+            }
+            slots.push(Slot::Item(i));
+            if self.feeds.open_row.as_deref() == Some(e.item.key().as_str()) {
+                slots.push(Slot::Actions(i));
+            }
         }
         self.feeds.visible = v;
+        self.feeds.slots = slots;
     }
 
     pub fn set_feeds_view(&mut self, v: &'static str) {
@@ -1505,66 +1651,273 @@ impl State {
         self.feeds_refilter();
     }
 
-    /// A header click: that column ascending, again descending, a third time Taiga's order.
+    /// A header click (Taiga's `LVN_COLUMNCLICK`): the column in its first order, again the
+    /// other way.
     pub fn feeds_sort_by(&mut self, c: SortCol) {
         self.feeds.sort = match self.feeds.sort {
-            (x, false) if x == c && c != SortCol::State => (c, true),
-            (x, true) if x == c => (SortCol::State, false),
-            _ => (c, false),
+            (x, d) if x == c => (c, !d),
+            _ => (c, c.starts_descending()),
         };
         self.feeds_refilter();
     }
 
-    /// Escape in the filter box: the words go.
     pub fn feeds_clear_query(&mut self) {
         self.feeds.query = TextEdit::default();
         self.feeds_refilter();
     }
+
+    /// A row click opens its actions under it; again (or Esc) closes them.
+    pub fn feeds_open_row(&mut self, key: &str) {
+        self.feeds.open_row = if self.feeds.open_row.as_deref() == Some(key) {
+            None
+        } else {
+            Some(key.to_string())
+        };
+        self.feeds.ctx = None;
+        self.feeds_refilter();
+    }
+
+    pub fn feeds_close_row(&mut self) -> bool {
+        if self.feeds.ctx.take().is_some() {
+            return true;
+        }
+        if self.feeds.open_row.take().is_some() {
+            self.feeds_refilter();
+            return true;
+        }
+        false
+    }
+
+    /// Check new torrents (Taiga: clears the search box and reads the source).
+    pub fn feeds_check_new(&mut self) {
+        self.feeds.search_box = TextEdit::default();
+        if self.feeds.search.take().is_some() {
+            self.feeds_reselect();
+        }
+        self.feeds_check_now();
+        self.shows_refresh(true);
+    }
+
+    /// One of the right-click menu's (or the action row's) actions, by Taiga's names.
+    pub fn feeds_act(&mut self, key: &str, action: &str) {
+        let Some(e) = self
+            .feeds_table()
+            .iter()
+            .find(|e| e.item.key() == key)
+            .cloned()
+        else {
+            return;
+        };
+        self.feeds.ctx = None;
+        match action {
+            "DownloadTorrent" => self.feeds_download(vec![key.to_string()]),
+            "Info" => {
+                if let Some(x) = e
+                    .anime_id
+                    .and_then(|id| self.entries.iter().find(|x| x.id == id))
+                {
+                    let stub = crate::details::Stub::from_entry(x);
+                    self.open_details(stub);
+                }
+            }
+            "TorrentInfo" => {
+                if let Some(p) = e.item.page.clone() {
+                    crate::online::open_url(self, p);
+                }
+            }
+            "DiscardTorrent" => self.feeds_discard_into_archive(vec![key.to_string()]),
+            "DiscardTorrents" => {
+                if let Some(id) = e.anime_id {
+                    let keys = self
+                        .feeds_table()
+                        .iter()
+                        .filter(|x| x.anime_id == Some(id))
+                        .map(|x| x.item.key())
+                        .collect();
+                    self.feeds_discard_anime(id);
+                    self.feeds_mark(keys, ItemState::DiscardedNormal);
+                }
+            }
+            "SelectFansub" => self.feeds_select_fansub(key),
+            "MoreTorrents" => {
+                let t = e
+                    .anime_id
+                    .map(|id| self.feeds_title(id))
+                    .unwrap_or(e.anime_title.clone());
+                self.feeds_search_title(t, e.anime_id.unwrap_or(0));
+            }
+            "SearchService" => {
+                let t = if e.anime_title.is_empty() {
+                    e.item.title.clone()
+                } else {
+                    e.anime_title.clone()
+                };
+                self.find.replace_text(&t);
+                self.open_search();
+            }
+            "Select" => self.feeds_mark(vec![key.to_string()], ItemState::Selected),
+            _ => {}
+        }
+    }
 }
 
-/// The filter box and the chips with their counts.
-fn filter_bar(s: &State) -> El {
-    let f = &s.feeds;
-    let input = row()
-        .key("feeds/filter/box")
-        .role("textbox")
-        .w(260.0)
-        .min_w(0.0)
-        .h(28.0)
-        .px(10.0)
-        .center_y()
-        .radius(theme::R_SM)
-        .fill(PAL.field)
+/// Taiga's right-click menu (`res/menu.xml` TorrentListRightClick), its order and enabling.
+pub fn menu_items(e: &Entry) -> Vec<Option<(&'static str, &'static str, bool)>> {
+    let id = e.anime_id.is_some();
+    let group = e
+        .release
+        .parsed
+        .group
+        .as_deref()
+        .is_some_and(|g| !g.is_empty());
+    vec![
+        Some(("DownloadTorrent", "Download torrent", true)),
+        Some(("Info", "View anime information", id)),
+        Some((
+            "TorrentInfo",
+            "View torrent information",
+            e.item.page.is_some(),
+        )),
+        None,
+        Some(("DiscardTorrent", "Discard", true)),
+        Some((
+            "DiscardTorrents",
+            "Quick filters: Discard all torrents for this anime",
+            id,
+        )),
+        Some((
+            "SelectFansub",
+            "Quick filters: Select this fansub group for this anime",
+            id && group,
+        )),
+        None,
+        Some((
+            "MoreTorrents",
+            "Search for more torrents with this title",
+            true,
+        )),
+        Some(("SearchService", "Search for anime with this title", true)),
+    ]
+}
+
+/// The right-click menu as an overlay (drawn over the page, closed by a click outside).
+pub fn ctx_view(s: &State) -> Option<El> {
+    let (key, x, y) = s.feeds.ctx.clone()?;
+    let e = s.feeds_table().iter().find(|e| e.item.key() == key)?;
+    let mut m = col()
+        .key("feeds/ctx")
+        .w(330.0)
+        .py(4.0)
+        .radius(theme::R_MD)
+        .fill(PAL.raised)
         .border(1.0, PAL.border_strong)
-        .child(
-            text_input(&f.query, TextStyle::new(12.0, 400.0))
-                .key("feeds/filter")
-                .grow(1.0)
-                .min_w(0.0)
-                .single_line()
-                .color(PAL.text)
-                .placeholder(
-                    field_hint(
-                        &f.query,
-                        if cfg!(target_os = "macos") {
-                            "Filter  \u{2318}F"
-                        } else {
-                            "Filter  Ctrl+F"
-                        },
-                    ),
-                    PAL.faint,
-                )
-                .on_edit(|s: &mut State| &mut s.feeds.query)
-                .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
-                    if k.key == rune::Key::Escape {
-                        s.feeds_clear_query();
-                        tx.blur();
-                        return true;
-                    }
-                    false
+        .absolute(x, y);
+    m = m.child(
+        text(e.item.title.clone())
+            .font(theme::CAPTION.tracking(0.0))
+            .color(PAL.faint)
+            .truncate()
+            .px(10.0)
+            .py(4.0),
+    );
+    for it in menu_items(e) {
+        m = match it {
+            None => m.child(el().h(1.0).w_full().my(4.0).fill(PAL.border)),
+            Some((action, label, on)) => {
+                let k = key.clone();
+                let r = row()
+                    .key(format!("feeds/ctx/{action}"))
+                    .role("menuitem")
+                    .label(label)
+                    .h(26.0)
+                    .px(10.0)
+                    .center_y()
+                    .radius(theme::R_SM)
+                    .child(
+                        text(label)
+                            .font(if action == "DownloadTorrent" {
+                                theme::BODY_MED
+                            } else {
+                                theme::BODY
+                            })
+                            .color(if on { PAL.text } else { PAL.faint }),
+                    );
+                m.child(if on {
+                    r.hover(PAL.hover())
+                        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                            tx.instant();
+                            s.feeds_act(&k, action);
+                        })
+                } else {
+                    r
                 })
-                .on_input_change(|s: &mut State, _tx: &mut Tx| s.feeds_refilter()),
-        );
+            }
+        };
+    }
+    Some(m.modal(true, |s: &mut State| s.feeds.ctx = None))
+}
+
+/// "Search for torrents" (Taiga's main toolbar search on Torrents) and "Filter these results".
+fn search_row(s: &State) -> El {
+    let f = &s.feeds;
+    let boxed = |key: &'static str, w: f32, input: El| {
+        row()
+            .key(format!("{key}/box"))
+            .role("textbox")
+            .w(w)
+            .min_w(0.0)
+            .h(28.0)
+            .px(10.0)
+            .center_y()
+            .radius(theme::R_SM)
+            .fill(PAL.field)
+            .border(1.0, PAL.border_strong)
+            .child(input)
+    };
+    let hint = if cfg!(target_os = "macos") {
+        "Search for torrents  \u{2318}F"
+    } else {
+        "Search for torrents  Ctrl+F"
+    };
+    let search = boxed(
+        "feeds/search-box",
+        280.0,
+        text_input(&f.search_box, TextStyle::new(12.0, 400.0))
+            .key("feeds/search-box")
+            .grow(1.0)
+            .min_w(0.0)
+            .single_line()
+            .color(PAL.text)
+            .placeholder(field_hint(&f.search_box, hint), PAL.faint)
+            .on_edit(|s: &mut State| &mut s.feeds.search_box)
+            .on_input_key(crate::ui::field_page_key)
+            .on_submit(|s: &mut State, tx: &mut Tx| {
+                tx.blur();
+                let t = s.feeds.search_box.text.clone();
+                s.feeds_search_title(t, 0);
+            }),
+    );
+    let filter = boxed(
+        "feeds/filter",
+        220.0,
+        text_input(&f.query, TextStyle::new(12.0, 400.0))
+            .key("feeds/filter")
+            .grow(1.0)
+            .min_w(0.0)
+            .single_line()
+            .color(PAL.text)
+            .placeholder(field_hint(&f.query, "Filter these results"), PAL.faint)
+            .on_edit(|s: &mut State| &mut s.feeds.query)
+            .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx: &mut Tx| {
+                if k.key == rune::Key::Escape {
+                    s.feeds_clear_query();
+                    tx.blur();
+                    return true;
+                }
+                false
+            })
+            .on_input_change(|s: &mut State, _tx: &mut Tx| s.feeds_refilter()),
+    );
     let t = s.feeds_table();
     let mut r = row()
         .key("feeds/filter-bar")
@@ -1572,9 +1925,13 @@ fn filter_bar(s: &State) -> El {
         .pb(8.0)
         .center_y()
         .flex_wrap()
-        .child(input);
+        .child(search)
+        .child(filter);
     for v in VIEWS {
-        let n = t.iter().filter(|e| in_view(v, e)).count();
+        let n = t
+            .iter()
+            .filter(|e| e.state != ItemState::DiscardedHidden && in_view(v, e))
+            .count();
         let label = format!("{} {n}", view_label(v));
         r = r.child(
             crate::ui::cell(
@@ -1586,14 +1943,6 @@ fn filter_bar(s: &State) -> El {
             .child(text(label).font(theme::LABEL).color(PAL.text)),
         );
     }
-    if f.visible.len() != t.len() {
-        r = r.child(
-            text(format!("{} of {} shown", f.visible.len(), t.len()))
-                .key("feeds/filter/count")
-                .font(theme::LABEL)
-                .color(PAL.dim),
-        );
-    }
     r
 }
 
@@ -1603,26 +1952,16 @@ struct Cols {
     video: bool,
     peers: bool,
     desc: bool,
+    date: bool,
 }
 
 fn cols(width: f32) -> Cols {
     Cols {
         group: width > 640.0,
         video: width > 760.0,
-        peers: width > 860.0,
-        desc: width > 1040.0,
-    }
-}
-
-#[allow(dead_code)]
-fn head_cell(t: &str, w: Option<f32>) -> El {
-    let x = text(t.to_string())
-        .font(theme::CAPTION)
-        .color(PAL.faint)
-        .truncate();
-    match w {
-        Some(w) => x.w(w),
-        None => x.grow(1.0).min_w(0.0),
+        peers: width > 880.0,
+        desc: width > 1180.0,
+        date: width > 1020.0,
     }
 }
 
@@ -1668,7 +2007,7 @@ fn header(s: &State, c: &Cols) -> El {
         .center_y()
         .px(10.0)
         .child(el().w(W_CHECK))
-        .child(head_sort(s, "ANIME", None, SortCol::Anime))
+        .child(head_sort(s, "RELEASE", None, SortCol::Release))
         .child(head_sort(s, "EPISODE", Some(W_EP), SortCol::Episode));
     if c.group {
         r = r.child(head_sort(s, "GROUP", Some(W_GROUP), SortCol::Group));
@@ -1678,15 +2017,26 @@ fn header(s: &State, c: &Cols) -> El {
         r = r.child(head_sort(s, "VIDEO", Some(W_VIDEO), SortCol::Video));
     }
     if c.peers {
-        r = r.child(head_sort(s, "S / L", Some(W_PEERS), SortCol::Seeders));
+        r = r
+            .child(head_sort(s, "S", Some(W_NUM), SortCol::Seeders))
+            .child(head_sort(s, "L", Some(W_NUM), SortCol::Leechers))
+            .child(head_sort(s, "D", Some(W_NUM), SortCol::Downloads));
     }
     if c.desc {
-        r = r.child(head_sort(s, "DESCRIPTION", None, SortCol::Description));
+        r = r.child(head_sort(
+            s,
+            "DESCRIPTION",
+            Some(200.0),
+            SortCol::Description,
+        ));
+    }
+    if c.date {
+        r = r.child(head_sort(s, "DATE", Some(W_DATE), SortCol::Date));
     }
     r
 }
 
-/// Why an item is dimmed: the filter that discarded it, the history, or no anime on the list.
+/// Why an item is dimmed or kept: the filter that discarded it, the history, no anime.
 pub fn reason(e: &Entry) -> Option<String> {
     if !e.state.is_discarded() && !e.why.is_empty() {
         return Some(e.why.clone());
@@ -1701,7 +2051,7 @@ pub fn reason(e: &Entry) -> Option<String> {
     e.anime_id.is_none().then(|| "Not on your list".into())
 }
 
-/// The Anime column: the list's title, else the parsed one.
+/// The anime: the list's title, else the parsed one (Taiga's Anime title column).
 fn anime_text(s: &State, e: &Entry) -> String {
     match e.anime_id {
         Some(id) => s.feeds_title(id),
@@ -1710,48 +2060,64 @@ fn anime_text(s: &State, e: &Entry) -> String {
     }
 }
 
-fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
+fn date_text(t: Option<i64>) -> String {
+    let Some(t) = t else { return String::new() };
+    let c = kotora_core::time::Clock::at(t, kotora_core::time::local_offset(t));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        c.year,
+        c.month,
+        c.day,
+        c.minute / 60,
+        c.minute % 60
+    )
+}
+
+fn table_row(s: &State, e: &Entry, c: &Cols, grouped: bool) -> El {
     let key = e.item.key();
-    let discarded = e.state.is_discarded();
     let checked = e.state == ItemState::Selected;
     let open = s.feeds.open_row.as_deref() == Some(&key);
     let busy = s.feeds.busy.contains(&key);
-    let fg = if discarded { PAL.faint } else { PAL.text };
-    let mut anime = row().gap(6.0).grow(1.0).min_w(0.0).center_y().child(
-        text(anime_text(s, e))
-            .font(if is_new(e) {
-                theme::BODY_MED
-            } else {
-                theme::BODY
-            })
+    // Taiga greys only the deactivated ones.
+    let fg = if e.state == ItemState::DiscardedInactive {
+        PAL.faint
+    } else {
+        PAL.text
+    };
+    let mut name = row().gap(6.0).grow(1.0).min_w(0.0).center_y().child(
+        text(e.item.title.clone())
+            .font(theme::LABEL)
             .color(fg)
             .truncate()
             .min_w(0.0),
     );
-    if e.category != Category::Anime {
-        anime = anime.child(crate::ui::tag(e.category.label(), PAL.dim, false));
-    }
-    if let Some(why) = reason(e) {
-        anime = anime.child(
-            text(why)
-                .key(format!("feeds/why/{}", e.item.key()))
+    if !grouped && category(e) != Category::Other {
+        name = name.child(
+            text(anime_text(s, e))
                 .font(theme::LABEL)
                 .color(PAL.faint)
                 .truncate()
-                .min_w(0.0),
+                .max_w(180.0),
+        );
+    }
+    if let Some(why) = reason(e) {
+        name = name.child(
+            text(why)
+                .key(format!("feeds/why/{key}"))
+                .font(theme::SMALL)
+                .color(PAL.faint)
+                .truncate()
+                .max_w(220.0),
         );
     }
     if busy {
-        anime = anime.child(
+        name = name.child(
             text("Downloading\u{2026}")
                 .font(theme::LABEL)
                 .color(PAL.accent_hi),
         );
     }
-    let ep = e.episode_text();
-    let ep_color = if is_new(e) { PAL.accent_hi } else { PAL.dim };
-    let k2 = key.clone();
-    let k3 = key.clone();
+    let (k2, k3, k4) = (key.clone(), key.clone(), key.clone());
     let mut r = row()
         .key(format!("feeds/item/{key}"))
         .role("row")
@@ -1764,11 +2130,11 @@ fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
         .hover(PAL.hover())
         .on_press_tx(move |s: &mut State, tx: &mut Tx| {
             tx.instant();
-            s.feeds.open_row = if s.feeds.open_row.as_deref() == Some(&k3) {
-                None
-            } else {
-                Some(k3.clone())
-            };
+            s.feeds_open_row(&k3);
+        })
+        .on_secondary_press(move |s: &mut State, p: rune::PointerPress, tx: &mut Tx| {
+            tx.instant();
+            s.feeds.ctx = Some((k4.clone(), p.x, p.y));
         })
         .child(check_box(
             format!("feeds/check/{key}"),
@@ -1776,8 +2142,16 @@ fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
             checked,
             move |s| s.feeds_toggle(&k2),
         ))
-        .child(anime)
-        .child(cell_text(ep, Some(W_EP), ep_color));
+        .child(name)
+        .child(cell_text(
+            e.episode_text(),
+            Some(W_EP),
+            if e.new_episode {
+                PAL.accent_hi
+            } else {
+                PAL.dim
+            },
+        ));
     if checked {
         r = r.fill(PAL.tint(PAL.accent, 0.10));
     }
@@ -1800,116 +2174,112 @@ fn table_row(s: &State, e: &Entry, c: &Cols) -> El {
         r = r.child(cell_text(e.video_text(), Some(W_VIDEO), PAL.dim));
     }
     if c.peers {
-        let p = match (e.item.seeders, e.item.leechers) {
-            (None, None) => String::new(),
-            (a, b) => format!(
-                "{}/{}",
-                a.map_or("?".into(), |n| n.to_string()),
-                b.map_or("?".into(), |n| n.to_string())
-            ),
-        };
-        r = r.child(cell_text(p, Some(W_PEERS), PAL.dim));
+        let n = |v: Option<u32>| v.map_or(String::new(), |n| n.to_string());
+        r = r
+            .child(cell_text(n(e.item.seeders), Some(W_NUM), PAL.dim))
+            .child(cell_text(n(e.item.leechers), Some(W_NUM), PAL.dim))
+            .child(cell_text(n(e.item.downloads), Some(W_NUM), PAL.dim));
     }
     if c.desc {
-        r = r.child(cell_text(e.item.description.clone(), None, PAL.dim));
+        r = r.child(cell_text(e.item.description.clone(), Some(200.0), PAL.dim));
     }
-    if discarded {
-        r = r.opacity(if e.state == ItemState::DiscardedInactive {
-            0.4
-        } else {
-            0.6
-        });
+    if c.date {
+        r = r.child(cell_text(
+            date_text(e.item.published),
+            Some(W_DATE),
+            PAL.dim,
+        ));
     }
     r
 }
 
-/// The open row's line: the file name and the actions (Taiga's context menu).
-fn row_actions(s: &State, e: &Entry) -> El {
+/// The open row's actions, right under it: the menu's actions as buttons.
+fn row_actions(e: &Entry) -> El {
     let key = e.item.key();
-    let mut facts = vec![e.item.title.clone()];
-    if !e.item.category.is_empty() {
-        facts.push(e.item.category.clone());
-    }
-    if let Some(n) = e.item.downloads {
-        facts.push(format!("{n} downloads"));
-    }
-    let (k1, k2, k3) = (key.clone(), key.clone(), key.clone());
     let mut b = row()
-        .gap(6.0)
-        .flex_wrap()
-        .child(small(
-            format!("feeds/act/download/{key}"),
-            "Download",
-            true,
-            move |s| s.feeds_download(vec![k1.clone()]),
-        ))
-        .child(small(
-            format!("feeds/act/select/{key}"),
-            "Select",
-            false,
-            move |s| s.feeds_mark(vec![k2.clone()], ItemState::Selected),
-        ))
-        .child(small(
-            format!("feeds/act/discard/{key}"),
-            "Discard",
-            false,
-            move |s| s.feeds_mark(vec![k3.clone()], ItemState::DiscardedNormal),
-        ));
-    if let Some(page) = e.item.page.clone() {
-        b = b.child(small(
-            format!("feeds/act/page/{key}"),
-            "Open page",
-            false,
-            move |s| crate::online::open_url(s, page.clone()),
-        ));
-    }
-    if let Some(id) = e.anime_id {
-        if let Some(g) = e.release.parsed.group.clone().filter(|g| !g.is_empty()) {
-            let on = taiga::fansub_groups(&s.feeds.filters, id)
-                .iter()
-                .any(|x| x.eq_ignore_ascii_case(&g));
-            let label = if on {
-                format!("Stop preferring {g}")
-            } else {
-                format!("Prefer {g} for this anime")
-            };
-            b = b.child(small(
-                format!("feeds/act/prefer/{key}"),
-                &label,
-                false,
-                move |s| s.feeds_prefer_group(id, if on { "" } else { &g }),
-            ));
-        }
-        b = b.child(small(
-            format!("feeds/act/discard-anime/{key}"),
-            "Discard this anime",
-            false,
-            move |s| s.feeds_discard_anime(id),
-        ));
-        b = b.child(small(
-            format!("feeds/act/details/{key}"),
-            "Anime details",
-            false,
-            move |s| {
-                if let Some(e) = s.entries.iter().find(|e| e.id == id) {
-                    let stub = crate::details::Stub::from_entry(e);
-                    s.open_details(stub);
-                }
-            },
-        ));
-    }
-    col()
         .key(format!("feeds/open/{key}"))
+        .h(ROW_H)
         .gap(6.0)
-        .px(42.0)
-        .pb(8.0)
-        .child(
-            text(facts.join(" \u{b7} "))
-                .font(theme::LABEL)
-                .color(PAL.dim)
-                .wrap(),
-        )
-        .child(b)
+        .pl(42.0)
+        .center_y();
+    for it in menu_items(e).into_iter().flatten() {
+        let (action, label, on) = it;
+        if !on {
+            continue;
+        }
+        let short = match action {
+            "DownloadTorrent" => "Download",
+            "Info" => "Anime info",
+            "TorrentInfo" => "Torrent page",
+            "DiscardTorrent" => "Discard",
+            "DiscardTorrents" => "Discard this anime",
+            "SelectFansub" => "Select this group",
+            "MoreTorrents" => "More torrents",
+            "SearchService" => "Search anime",
+            _ => label,
+        };
+        let k = key.clone();
+        b = b.child(small(
+            format!("feeds/act/{action}/{key}"),
+            short,
+            action == "DownloadTorrent",
+            move |s| s.feeds_act(&k, action),
+        ));
+    }
+    b
+}
+
+fn slot_el(s: &State, slot: Option<&Slot>, c: &Cols) -> El {
+    let t = s.feeds_table();
+    let grouped = matches!(s.feeds.sort.0, SortCol::State | SortCol::Release);
+    match slot {
+        Some(Slot::Category(cat, n)) => row()
+            .h(ROW_H)
+            .px(10.0)
+            .gap(8.0)
+            .center_y()
+            .child(
+                text(cat.label().to_string())
+                    .font(theme::SECTION)
+                    .color(PAL.text),
+            )
+            .child(text(n.to_string()).font(theme::LABEL).color(PAL.dim)),
+        Some(Slot::Anime(a, n)) => row()
+            .h(ROW_H)
+            .pl(42.0)
+            .gap(8.0)
+            .center_y()
+            .child(
+                text(a.clone())
+                    .font(theme::BODY_MED)
+                    .color(PAL.text)
+                    .truncate()
+                    .min_w(0.0),
+            )
+            .child(text(format!("{n}")).font(theme::LABEL).color(PAL.dim)),
+        Some(Slot::Item(i)) => t
+            .get(*i)
+            .map_or_else(|| el().h(ROW_H), |e| table_row(s, e, c, grouped)),
+        Some(Slot::Actions(i)) => t.get(*i).map_or_else(|| el().h(ROW_H), row_actions),
+        None => el().h(ROW_H),
+    }
+}
+
+fn slot_key(s: &State, r: usize) -> String {
+    let t = s.feeds_table();
+    match s.feeds.slots.get(r) {
+        Some(Slot::Category(c, _)) => format!("feeds/cat/{}", c.label()),
+        Some(Slot::Anime(a, _)) => format!("feeds/anime/{a}"),
+        Some(Slot::Item(i)) => t.get(*i).map_or_else(
+            || format!("gone-{r}"),
+            |e| format!("feeds/item/{}", e.item.key()),
+        ),
+        Some(Slot::Actions(i)) => t.get(*i).map_or_else(
+            || format!("gone-{r}"),
+            |e| format!("feeds/actions/{}", e.item.key()),
+        ),
+        None => format!("gone-{r}"),
+    }
 }
 
 fn history_view(s: &State) -> El {
@@ -1974,7 +2344,7 @@ fn tab(key: &str, label: &str, on: bool, f: impl Fn(&mut State) + 'static) -> El
     )
 }
 
-/// The search bar while "Search torrents" results replace the feeds' items.
+/// While a search's results replace the feeds': its title, the count, Back to feeds.
 fn search_bar(s: &State) -> Option<El> {
     let sv = s.feeds.search.as_ref()?;
     let mut bar = row()
@@ -1992,7 +2362,7 @@ fn search_bar(s: &State) -> Option<El> {
         );
     bar = if sv.loading {
         bar.child(
-            text("Searching\u{2026}")
+            text("Searching torrents\u{2026}")
                 .key("feeds/search/loading")
                 .font(theme::LABEL)
                 .color(PAL.dim),
@@ -2019,6 +2389,7 @@ fn search_bar(s: &State) -> Option<El> {
         false,
         |s| {
             s.feeds.search = None;
+            s.feeds.search_box = TextEdit::default();
             s.feeds_reselect();
         },
     )))
@@ -2042,7 +2413,7 @@ fn scroller(key: &str, inner: f32, body: El) -> El {
         )
 }
 
-/// The Torrents page: Your shows (default), All releases (Taiga's table), History.
+/// The Torrents page: Your shows (Kotora's), All releases (Taiga's torrent list), History.
 pub fn page(s: &State, width: f32) -> El {
     let f = &s.feeds;
     let inner = (width - 2.0 * theme::PAGE_PAD).max(320.0);
@@ -2065,17 +2436,19 @@ pub fn page(s: &State, width: f32) -> El {
         .child(spacer());
     let can_check = !f.cfg.sources.is_empty() || !f.cfg.search.trim().is_empty();
     if f.tab != 2 && can_check {
-        tools = tools.child(small("feeds/check".into(), "Check now", false, |s| {
-            s.feeds_check_now();
-            s.shows_refresh(true);
-        }));
+        tools = tools.child(small(
+            "feeds/check".into(),
+            "Check new torrents",
+            false,
+            State::feeds_check_new,
+        ));
     }
     let mut page = col()
         .key("page/feeds")
         .w_full()
         .h_full()
         .child(crate::ui::top(s, "Torrents", Some(s.feeds_count()), false));
-    let said = f.said.as_ref().map(|t| {
+    let status = f.status.as_ref().or(f.said.as_ref()).map(|t| {
         text(t.clone())
             .key("feeds/said")
             .font(theme::LABEL)
@@ -2088,98 +2461,64 @@ pub fn page(s: &State, width: f32) -> El {
         2 => page
             .child(tools)
             .child(scroller("feeds-scroll", inner, history_view(s))),
-        0 => {
-            page = page.child(tools).children(said);
-            page.child(scroller(
-                "feeds-scroll",
-                inner,
-                crate::shows::view(s, inner),
-            ))
-        }
+        0 => page.child(tools).children(status).child(scroller(
+            "feeds-scroll",
+            inner,
+            crate::shows::view(s, inner),
+        )),
         _ => {
-            let table = s.feeds_table();
-            let checked = table
+            let checked = s
+                .feeds_table()
                 .iter()
                 .filter(|e| e.state == ItemState::Selected)
                 .count();
-            let news = table.iter().filter(|e| is_new(e)).count();
             tools = tools
                 .child(small(
-                    "feeds/select-new".into(),
-                    &format!("Select all new ({news})"),
-                    false,
-                    State::feeds_select_new,
-                ))
-                .child(small(
-                    "feeds/discard".into(),
-                    "Discard marked",
-                    false,
-                    State::feeds_discard_marked,
-                ))
-                .child(small(
-                    "feeds/discard-rest".into(),
-                    "Discard unmarked",
-                    false,
-                    State::feeds_discard_rest,
-                ))
-                .child(small(
                     "feeds/download".into(),
-                    &format!("Download marked ({checked})"),
+                    &format!("Download marked torrents ({checked})"),
                     checked > 0,
                     move |s| {
                         if checked > 0 {
                             s.feeds_download_marked();
                         }
                     },
-                ));
-            page = page.child(tools).children(search_bar(s)).children(said);
-            if f.cfg.sources.is_empty() && f.search.is_none() {
-                let empty = col()
-                    .key("feeds/empty")
-                    .gap(10.0)
-                    .py(30.0)
-                    .items_center()
-                    .w_full()
-                    .child(text("No feeds yet").font(theme::BODY_MED).color(PAL.text))
-                    .child(
-                        text("Add an RSS feed in Settings \u{2192} Feeds, or see Your shows.")
-                            .font(theme::BODY)
-                            .color(PAL.dim)
-                            .wrap(),
-                    )
-                    .child(small(
-                        "feeds/open-settings".into(),
-                        "Open Settings",
-                        true,
-                        |s| crate::settings::open(s, crate::settings::Section::Feeds),
-                    ));
-                return page.child(scroller("feeds-scroll", inner, empty));
-            }
+                ))
+                .child(small(
+                    "feeds/discard".into(),
+                    "Discard all",
+                    false,
+                    State::feeds_discard_marked,
+                ))
+                .child(small(
+                    "feeds/select-new".into(),
+                    "Select all new",
+                    false,
+                    State::feeds_select_new,
+                ))
+                .child(small("feeds/settings".into(), "Settings", false, |s| {
+                    crate::settings::open(s, crate::settings::Section::Feeds)
+                }));
+            page = page.child(tools).children(search_bar(s)).children(status);
             let c = cols(inner);
             let mut fixed = col()
                 .key("feeds/table")
                 .px(theme::PAGE_PAD)
                 .w(inner + 2.0 * theme::PAGE_PAD)
-                .child(filter_bar(s))
+                .child(search_row(s))
                 .child(header(s, &c))
                 .child(el().h(1.0).w_full().fill(PAL.border));
-            if let Some(e) = f
-                .open_row
-                .as_ref()
-                .and_then(|k| table.iter().find(|e| &e.item.key() == k))
-            {
-                fixed = fixed.child(row_actions(s, e));
-            }
-            let n = f.visible.len();
-            if n == 0 {
+            let t = s.feeds_table();
+            if f.cfg.sources.is_empty() && f.search.is_none() {
+                fixed = fixed.child(text("No feeds yet. Search for torrents above, or add a feed in Settings \u{2192} Feeds.").key("feeds/empty").font(theme::BODY).color(PAL.dim).py(12.0).px(10.0));
+            } else if f.slots.is_empty() {
                 let waiting = f.search.as_ref().map_or(
                     f.lines.is_empty() || f.lines.values().any(|l| l.checking),
                     |sv| sv.loading,
                 );
-                let line = if table.is_empty() && waiting {
-                    "Checking your feeds\u{2026}"
-                } else if table.is_empty() {
-                    "No torrents."
+                let line = if t.is_empty() && waiting {
+                    "Checking new torrents\u{2026}"
+                } else if t.is_empty() {
+                    "No new torrents found."
                 } else {
                     "No torrents match."
                 };
@@ -2193,7 +2532,7 @@ pub fn page(s: &State, width: f32) -> El {
                 );
             }
             page = page.child(fixed);
-            let wide = c.clone();
+            let n = f.slots.len();
             page.child(
                 col()
                     .key("feeds-scroll")
@@ -2211,26 +2550,8 @@ pub fn page(s: &State, width: f32) -> El {
                             .virtual_rows(
                                 n,
                                 ROW_H,
-                                |s: &State, r| {
-                                    s.feeds
-                                        .visible
-                                        .get(r)
-                                        .and_then(|&i| s.feeds_table().get(i))
-                                        .map_or_else(
-                                            || format!("gone-{r}"),
-                                            |e| format!("feeds/item/{}", e.item.key()),
-                                        )
-                                        .into()
-                                },
-                                move |s: &State, r| match s
-                                    .feeds
-                                    .visible
-                                    .get(r)
-                                    .and_then(|&i| s.feeds_table().get(i))
-                                {
-                                    Some(e) => table_row(s, e, &wide),
-                                    None => el().h(ROW_H),
-                                },
+                                |s: &State, r| slot_key(s, r).into(),
+                                move |s: &State, r| slot_el(s, s.feeds.slots.get(r), &c),
                             ),
                     ),
             )

@@ -598,6 +598,36 @@ pub const SCENES: &[Scene] = &[
         s.feeds.tab = 1;
         s.open_feeds();
     }),
+    // All releases with real show names: the anime once per group, one row open (its actions
+    // under it), and Taiga's right-click menu.
+    ("feeds-all-real", |s| {
+        shows_scene(s);
+        s.feeds.tab = 1;
+        let k = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| e.item.title.contains("Erai-raws"))
+            .map(|e| e.item.key());
+        if let Some(k) = k {
+            s.feeds_open_row(&k);
+        }
+        s.open_feeds();
+    }),
+    ("feeds-ctx", |s| {
+        shows_scene(s);
+        s.feeds.tab = 1;
+        s.feeds_refilter();
+        let k = s
+            .feeds
+            .entries
+            .iter()
+            .find(|e| e.item.title.contains("Erai-raws"))
+            .map(|e| e.item.key())
+            .unwrap_or_default();
+        s.feeds.ctx = Some((k, 520.0, 260.0));
+        s.open_feeds();
+    }),
     ("feeds-details", |s| {
         crate::feeds::fake(s);
         let id = s
@@ -3815,10 +3845,11 @@ mod tests {
                 .state,
             kotora_core::feeds::taiga::ItemState::Selected
         );
+        // Taiga's Discard all: the checked ones, into the archive.
         s.feeds_discard_marked();
         assert!(s.feeds_checked().is_empty());
-        s.feeds.manual.clear();
-        s.feeds_discard_rest();
+        assert!(s.feeds.archive.as_ref().unwrap().contains(&e.item.title));
+        s.feeds.archive = Some(Default::default());
         s.feeds.manual.clear();
         s.feeds_reselect();
         s.feeds_select_new();
@@ -3876,7 +3907,7 @@ mod tests {
             for key in [
                 "feeds/filter",
                 "feeds/view/new",
-                "feeds/sort/Anime",
+                "feeds/sort/Release",
                 "feeds/rows",
             ] {
                 assert!(rt.find(key).is_some(), "{key} at {size:?}");
@@ -3945,15 +3976,73 @@ mod tests {
                 .all(|&i| s.feeds.entries[i].state.is_discarded())
         );
         s.set_feeds_view("all");
+        // Taiga: S starts descending, a second click ascending; sorted inside the groups.
+        let seeds = |s: &State| -> Vec<u32> {
+            s.feeds
+                .visible
+                .iter()
+                .filter(|&&i| {
+                    s.feeds.entries[i].category == kotora_core::feeds::taiga::Category::Anime
+                        && s.feeds.entries[i].anime_id.is_some()
+                })
+                .map(|&i| s.feeds.entries[i].item.seeders.unwrap_or(0))
+                .collect()
+        };
         s.feeds_sort_by(crate::torrents::SortCol::Seeders);
+        assert!(seeds(&s).windows(2).all(|w| w[0] >= w[1]));
         s.feeds_sort_by(crate::torrents::SortCol::Seeders);
-        let seeds: Vec<u32> = s
+        assert!(seeds(&s).windows(2).all(|w| w[0] <= w[1]));
+        // Unchecking is discarding (Taiga's LVN_ITEMCHANGED), and says how many are marked.
+        let k = s
             .feeds
-            .visible
+            .entries
             .iter()
-            .map(|&i| s.feeds.entries[i].item.seeders.unwrap_or(0))
+            .find(|e| e.state == kotora_core::feeds::taiga::ItemState::Selected)
+            .map(|e| e.item.key());
+        if let Some(k) = k {
+            s.feeds_toggle(&k);
+            assert!(
+                s.feeds
+                    .entries
+                    .iter()
+                    .find(|e| e.item.key() == k)
+                    .unwrap()
+                    .state
+                    .is_discarded()
+            );
+            assert!(s.feeds.status.as_deref().unwrap().starts_with("Marked"));
+        }
+        // The row's actions open right under it, in the virtual list; Esc closes them.
+        s.feeds.sort = Default::default();
+        let k = s.feeds.entries[0].item.key();
+        s.feeds_open_row(&k);
+        let at = s.feeds.slots.iter().position(|x| matches!(x, crate::torrents::Slot::Item(i) if s.feeds.entries[*i].item.key() == k)).unwrap();
+        assert!(matches!(
+            s.feeds.slots[at + 1],
+            crate::torrents::Slot::Actions(_)
+        ));
+        assert!(s.feeds_close_row());
+        assert!(
+            !s.feeds
+                .slots
+                .iter()
+                .any(|x| matches!(x, crate::torrents::Slot::Actions(_)))
+        );
+        // The anime once per group: a header before its releases.
+        assert!(s.feeds.slots.iter().any(
+            |x| matches!(x, crate::torrents::Slot::Anime(a, _) if a == "Dragon Ball Super: Beerus")
+        ));
+        // Taiga's right-click menu, in its order.
+        let e = &s.feeds.entries[0];
+        let labels: Vec<&str> = crate::torrents::menu_items(e)
+            .into_iter()
+            .map(|x| x.map_or("-", |x| x.1))
             .collect();
-        assert!(seeds.windows(2).all(|w| w[0] >= w[1]));
+        assert_eq!(labels[0], "Download torrent");
+        assert_eq!(labels[4], "Discard");
+        assert_eq!(labels[9], "Search for anime with this title");
+        s.feeds.ctx = Some((k.clone(), 300.0, 200.0));
+        s.page = crate::model::Page::Feeds;
     }
 
     /// Statistics: every part at both sizes, the empty state's line, manga's words, and the

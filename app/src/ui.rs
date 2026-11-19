@@ -73,6 +73,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
                 .map(|c| crate::ctxmenu::view(s, c))
                 .unwrap_or_default(),
         )
+        .children(
+            (s.page == Page::Feeds)
+                .then(|| crate::torrents::ctx_view(s))
+                .flatten(),
+        )
         .children(s.toast.as_ref().map(crate::library::toast))
         .children(account_tip(s))
         .children(crate::volfill::editor_tip(s));
@@ -179,8 +184,13 @@ pub fn on_key(s: &mut State, k: &rune::KeyEvent, tx: &mut Tx) -> bool {
         go_to(s, s.list_page(status), tx);
         return true;
     }
-    if k.is_command('f') && s.page == Page::Feeds && s.feeds.tab == 1 {
-        s.feeds.query.focused = true;
+    if k.is_command('f') && s.page == Page::Feeds {
+        // Taiga's Ctrl+F on Torrents: the search box.
+        s.feeds.tab = 1;
+        s.feeds.search_box.focused = true;
+        return true;
+    }
+    if k.key == rune::Key::Escape && s.page == Page::Feeds && s.feeds_close_row() {
         return true;
     }
     if k.is_command('f') && matches!(s.page, Page::Manga(_)) && s.has_list() {
