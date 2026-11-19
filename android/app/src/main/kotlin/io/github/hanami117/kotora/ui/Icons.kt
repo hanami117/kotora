@@ -67,4 +67,11 @@ object KIcons {
         "M3 3l18 18",
     )
     val Alert = icon("alert", "M12 4l9 16H3z", "M12 10v4.5M12 17.5v.01")
+
+    // The list's view switch and the smiley score (parity C).
+    val Grid = icon("grid", "M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z")
+    val Large = icon("large", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z")
+    val FaceSad = icon("face-sad", circle(12f, 12f, 8.5f), "M9 10v.01M15 10v.01", "M8.5 16.5c2-2 5-2 7 0")
+    val FaceNeutral = icon("face-neutral", circle(12f, 12f, 8.5f), "M9 10v.01M15 10v.01", "M8.5 15h7")
+    val FaceHappy = icon("face-happy", circle(12f, 12f, 8.5f), "M9 10v.01M15 10v.01", "M8.5 14c2 2.5 5 2.5 7 0")
 }

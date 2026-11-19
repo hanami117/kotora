@@ -14,6 +14,10 @@ import io.github.hanami117.kotora.core.MediaKind
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
 import io.github.hanami117.kotora.data.SampleEditing
+import io.github.hanami117.kotora.core.ListQuery
+import io.github.hanami117.kotora.core.ListSort
+import io.github.hanami117.kotora.core.ListViewMode
+import io.github.hanami117.kotora.core.QuickFilter
 import io.github.hanami117.kotora.data.SampleRepository
 import io.github.hanami117.kotora.ui.EntryActions
 import io.github.hanami117.kotora.ui.EntryEditorScreen
@@ -61,12 +65,28 @@ class ScreenshotTest {
         compose.onRoot().captureRoboImage("build/outputs/roborazzi/$name-${if (dark) "dark" else "light"}.png")
     }
 
-    private fun listUi(kind: MediaKind = MediaKind.ANIME, status: ListStatus = ListStatus.WATCHING, waiting: Boolean = true) = runBlocking {
+    private fun listUi(
+        kind: MediaKind = MediaKind.ANIME,
+        status: ListStatus = ListStatus.WATCHING,
+        waiting: Boolean = true,
+        filter: QuickFilter = QuickFilter.ALL,
+        query: String = "",
+        sort: ListSort = ListSort.UPDATED,
+        view: ListViewMode = ListViewMode.LIST,
+    ) = runBlocking {
+        val page = repo.listPage(kind, ListQuery(status, filter, query, sort, false))
         ListUi(
             kind = kind,
             status = status,
-            sort = Sort.UPDATED,
-            rows = repo.list(kind, status, Sort.UPDATED),
+            sort = sort,
+            filter = filter,
+            query = query,
+            view = view,
+            rows = page.lines.map { it.row },
+            lines = page.lines,
+            empty = page.empty,
+            emptyTitle = page.emptyTitle,
+            emptyHelp = page.emptyHelp,
             counts = repo.counts(kind),
             syncedAt = now - 240,
             waiting = if (waiting) repo.waitingCount() else 0u,
@@ -82,7 +102,11 @@ class ScreenshotTest {
     @Test fun listLight() = list("list", false, listUi())
     @Test fun listMangaDark() = list("list-manga", true, listUi(MediaKind.MANGA, waiting = false))
     @Test fun listOfflineDark() = list("list-offline", true, listUi().copy(problem = "Can't reach MyAnimeList. Showing your saved list."))
-    @Test fun listEmptyLight() = list("list-empty", false, listUi().copy(rows = emptyList(), syncedAt = null, waiting = 0u))
+    @Test fun listEmptyLight() = list("list-empty", false, listUi(query = "zzz"))
+    @Test fun listGridDark() = list("list-grid", true, listUi(view = ListViewMode.GRID))
+    @Test fun listLargeLight() = list("list-large", false, listUi(view = ListViewMode.LARGE, sort = ListSort.PROGRESS))
+    @Test fun listNewEpisodeDark() = list("list-new-episode", true, listUi(filter = QuickFilter.NEW_EPISODE))
+    @Test fun listFilterLight() = list("list-filter", false, listUi(query = "ka"))
     @Test fun listSyncingDark() = list("list-syncing", true, listUi().copy(syncing = true))
 
     private fun details(name: String, dark: Boolean, id: UInt) = shot(name, dark) {

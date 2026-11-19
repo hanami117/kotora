@@ -173,6 +173,10 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
                     onSignIn = vm::signIn,
                     linksFor = { r -> vm.serviceLinks(r.kind, r.id) },
                     onOpenUrl = vm::openUrl,
+                    onReverse = { vm.select(reverse = it) },
+                    onFilter = { vm.select(filter = it) },
+                    onQuery = { vm.select(query = it) },
+                    onView = vm::setView,
                 )
             }
             composable(Tab.AIRING.route) {

@@ -22,6 +22,10 @@ import io.github.hanami117.kotora.core.Platform
 import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
+import io.github.hanami117.kotora.core.ListPage
+import io.github.hanami117.kotora.core.ListQuery
+import io.github.hanami117.kotora.core.ListViewMode
+import io.github.hanami117.kotora.ui.ListPageSource
 import io.github.hanami117.kotora.core.StatusCount
 import io.github.hanami117.kotora.core.SyncReport
 import java.io.File
@@ -36,7 +40,7 @@ import kotlinx.coroutines.withContext
  * Files: the database and the tokens in `noBackupFilesDir` (never backed up), `config.toml` in
  * `filesDir/config`, caches in `cacheDir/kotora`.
  */
-class CoreRepository(context: Context) : Repository, AccountRepository {
+class CoreRepository(context: Context) : Repository, AccountRepository, ListPageSource {
     private val app = context.applicationContext
     private val vault = KeystoreVault(File(app.noBackupFilesDir, "tokens"))
     internal val kotora: Kotora = Kotora(
@@ -56,6 +60,9 @@ class CoreRepository(context: Context) : Repository, AccountRepository {
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
     override suspend fun accounts(): List<Account> = io { kotora.accounts() }
+    override suspend fun listPage(kind: MediaKind, query: ListQuery): ListPage = io { kotora.listPage(kind, query) }
+    override suspend fun listView(kind: MediaKind, status: ListStatus): ListViewMode = io { kotora.listView(kind, status) }
+    override suspend fun setListView(kind: MediaKind, status: ListStatus, view: ListViewMode) = io { kotora.setListView(kind, status, view) }
     override suspend fun list(kind: MediaKind, status: ListStatus?, sort: Sort): List<Row> = io { kotora.list(kind, status, sort) }
     override suspend fun counts(kind: MediaKind): List<StatusCount> = io { kotora.counts(kind) }
     override suspend fun entry(kind: MediaKind, id: UInt): Row? = io { kotora.entry(kind, id) }

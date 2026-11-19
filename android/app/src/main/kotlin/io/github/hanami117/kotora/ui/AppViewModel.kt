@@ -18,7 +18,12 @@ import io.github.hanami117.kotora.core.NotifySettings
 import io.github.hanami117.kotora.core.PendingSignIn
 import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
-import io.github.hanami117.kotora.core.Sort
+import io.github.hanami117.kotora.core.ListEmptyKind
+import io.github.hanami117.kotora.core.ListQuery
+import io.github.hanami117.kotora.core.ListSort
+import io.github.hanami117.kotora.core.ListViewMode
+import io.github.hanami117.kotora.core.PageLine
+import io.github.hanami117.kotora.core.QuickFilter
 import io.github.hanami117.kotora.core.StatusCount
 import io.github.hanami117.kotora.core.ProfileInfo
 import io.github.hanami117.kotora.core.ServiceLink
@@ -42,8 +47,19 @@ sealed interface Session {
 data class ListUi(
     val kind: MediaKind = MediaKind.ANIME,
     val status: ListStatus = ListStatus.WATCHING,
-    val sort: Sort = Sort.UPDATED,
+    val sort: ListSort = ListSort.UPDATED,
+    /** The order's second direction (desktop `sort_rev`). */
+    val reverse: Boolean = false,
+    val filter: QuickFilter = QuickFilter.ALL,
+    /** The "Filter your list" box. */
+    val query: String = "",
+    val view: ListViewMode = ListViewMode.LIST,
     val rows: List<Row> = emptyList(),
+    /** The rows with their tags and score, and the empty state (`ListPage`). */
+    val lines: List<PageLine> = emptyList(),
+    val empty: ListEmptyKind = ListEmptyKind.NONE,
+    val emptyTitle: String = "",
+    val emptyHelp: String = "",
     val counts: List<StatusCount> = emptyList(),
     val syncedAt: Long? = null,
     val waiting: UInt = 0u,
@@ -147,8 +163,19 @@ class AppViewModel(
         val r = repo ?: return
         val l = list
         try {
-            list = l.copy(
-                rows = r.list(l.kind, l.status, l.sort),
+            val src = r as? ListPageSource
+            val page = src?.listPage(l.kind, ListQuery(l.status, l.filter, l.query, l.sort, l.reverse))
+            val view = src?.listView(l.kind, l.status) ?: ListViewMode.LIST
+            val now = list
+            // Keep what changed meanwhile (another page, order, chip or filter picked).
+            if (now.kind != l.kind || now.status != l.status || now.sort != l.sort || now.reverse != l.reverse || now.filter != l.filter || now.query != l.query) return
+            list = now.copy(
+                rows = page?.lines?.map { it.row } ?: emptyList(),
+                lines = page?.lines ?: emptyList(),
+                empty = page?.empty ?: ListEmptyKind.NONE,
+                emptyTitle = page?.emptyTitle ?: "",
+                emptyHelp = page?.emptyHelp ?: "",
+                view = view,
                 counts = r.counts(l.kind),
                 syncedAt = r.syncedAt(l.kind),
                 waiting = r.waitingCount(),
@@ -161,12 +188,37 @@ class AppViewModel(
         }
     }
 
-    fun select(kind: MediaKind = list.kind, status: ListStatus = list.status, sort: Sort = list.sort) {
+    fun select(
+        kind: MediaKind = list.kind,
+        status: ListStatus = list.status,
+        sort: ListSort = list.sort,
+        reverse: Boolean? = null,
+        filter: QuickFilter? = null,
+        query: String = list.query,
+    ) {
         val kindChanged = kind != list.kind
-        list = list.copy(kind = kind, status = if (kindChanged) ListStatus.WATCHING else status, sort = sort)
+        val newStatus = if (kindChanged) ListStatus.WATCHING else status
+        // A new page starts on All (desktop `go`); a new order starts in its own direction.
+        val pageChanged = kindChanged || newStatus != list.status
+        list = list.copy(
+            kind = kind,
+            status = newStatus,
+            sort = sort,
+            reverse = reverse ?: (if (sort != list.sort) false else list.reverse),
+            filter = filter ?: (if (pageChanged) QuickFilter.ALL else list.filter),
+            query = query,
+        )
         viewModelScope.launch {
             if (kindChanged && kind == MediaKind.MANGA && !mangaEnabled) switchManga(true) else reload()
         }
+    }
+
+    /** List, Grid or Large for the page's tab (saved per tab). */
+    fun setView(v: ListViewMode) {
+        val l = list
+        list = l.copy(view = v)
+        val src = repo as? ListPageSource ?: return
+        viewModelScope.launch { src.setListView(l.kind, l.status, v) }
     }
 
     fun sync() {

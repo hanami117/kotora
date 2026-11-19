@@ -18,6 +18,11 @@ import io.github.hanami117.kotora.core.PendingSignIn
 import io.github.hanami117.kotora.core.Row
 import io.github.hanami117.kotora.core.Service
 import io.github.hanami117.kotora.core.Sort
+import io.github.hanami117.kotora.core.ListPage
+import io.github.hanami117.kotora.core.ListQuery
+import io.github.hanami117.kotora.core.ListViewMode
+import io.github.hanami117.kotora.ui.ListPageSource
+import io.github.hanami117.kotora.ui.samplePage
 import io.github.hanami117.kotora.core.StatusCount
 import io.github.hanami117.kotora.core.SyncReport
 import java.time.Instant
@@ -29,12 +34,17 @@ import java.util.Locale
  * Made-up lists in memory (the mockup's titles; nothing real). Edits change the rows here only;
  * nothing goes anywhere. Used by the screenshot tests and by "Look around" in debug builds.
  */
-class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, AccountRepository {
+class SampleRepository(private val now: Long = 1_795_000_000L) : Repository, AccountRepository, ListPageSource {
     override val isSample = true
 
     internal val rows: MutableList<Row> = sampleRows(now).toMutableList()
 
     override fun hasClientId(service: Service) = true
+
+    private val views = mutableMapOf<Pair<MediaKind, ListStatus>, ListViewMode>()
+    override suspend fun listPage(kind: MediaKind, query: ListQuery): ListPage = samplePage(rows.toList(), kind, query) { r, s -> showsIn(r, s) }
+    override suspend fun listView(kind: MediaKind, status: ListStatus) = views[kind to status] ?: ListViewMode.LIST
+    override suspend fun setListView(kind: MediaKind, status: ListStatus, view: ListViewMode) { views[kind to status] = view }
 
     override suspend fun accounts() = listOf(Account(Service.MAL, "sample-user", null, true))
 

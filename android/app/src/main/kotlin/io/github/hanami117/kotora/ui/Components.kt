@@ -92,7 +92,7 @@ fun tileBrush(id: Int): Brush {
     }
 }
 
-enum class TagKind { PLAIN, AIR, NEW, WAIT }
+enum class TagKind { PLAIN, AIR, NEW, WAIT, HIATUS }
 
 @Composable
 fun Tag(text: String, kind: TagKind = TagKind.PLAIN) {
@@ -102,6 +102,7 @@ fun Tag(text: String, kind: TagKind = TagKind.PLAIN) {
         TagKind.AIR -> k.air to k.air.copy(alpha = .13f)
         TagKind.NEW -> k.accentHi to k.tint
         TagKind.WAIT -> k.onHold to k.onHold.copy(alpha = .13f)
+        TagKind.HIATUS -> k.dropped to k.dropped.copy(alpha = .13f)
     }
     Text(
         text,
