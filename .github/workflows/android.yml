@@ -4,7 +4,7 @@ name: android
 
 on:
   push:
-    branches: [main, android]
+    branches: [main]
     tags: ["android-v*"]
     paths: ["core/**", "mobile/**", "android/**", "Cargo.toml", "Cargo.lock", ".github/workflows/android.yml"]
   pull_request:
