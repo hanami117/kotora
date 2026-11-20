@@ -23,7 +23,8 @@ Website: <https://kotora.moe> · Support: <https://ko-fi.com/hanami117>
 ## Features
 
 - Your MyAnimeList or AniList list (from 0.2): Watching, Plan to watch, Completed, On hold, Dropped, with
-  covers, progress, score and airing information. On AniList, airing times are AniList's exact schedule.
+  covers, progress, score and airing information. Airing times are AniList's exact schedule, on MyAnimeList too
+  for the shows you watch or plan to watch (else estimated from the weekly broadcast slot).
 - Recognises the episode in your player and offers to record it ("Update to episode 6"). Updating
   automatically is a switch, and it is off by default.
 - Edit progress, score and status. Changes go to a visible sync queue, so they work offline and conflicts

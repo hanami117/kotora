@@ -2,6 +2,14 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **Exact air times on MyAnimeList:** for the airing shows you watch or plan to watch, Airing, Home, `kot airing`
+  and the New episode notifications now use AniList's exact time of the next episode (usually one request after a
+  sync, none while the times are fresh). When it can't be had, the time is estimated from the weekly slot as
+  before. The note on the Airing page says which times are exact.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
