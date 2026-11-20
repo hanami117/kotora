@@ -1,6 +1,8 @@
 //! Airing notifications (Settings → Notifications): what to announce, decided from the saved
 //! list. No network of its own: the list sync and the details page refresh the saved airing
-//! status, and the episode times are the Airing page's estimate ([`Timetable`]).
+//! status, and the episode times are the Airing page's ([`Timetable`]): exact when the list
+//! has the next airing (AniList's, or kept for a MyAnimeList list by `airtimes`), else the
+//! estimate from the weekly slot.
 //!
 //! - **Started airing**: a Plan to watch show whose airing status went from `not_yet_aired` to
 //!   `currently_airing` since Kotora last looked (`air_seen`).
@@ -59,7 +61,7 @@ pub fn started(it: &ListItem, seen: Option<&str>) -> bool {
     it.status == Status::PlanToWatch && it.media.air_status == "currently_airing" && seen == Some("not_yet_aired")
 }
 
-/// The episode of a Watching show that came out (by the estimate) in the last [`RECENT`]
+/// The episode of a Watching show that came out (by its timetable) in the last [`RECENT`]
 /// seconds, when it is past the progress. The timetable moves forward with the progress, as
 /// on the Airing page.
 pub fn new_episode(it: &ListItem, now: i64) -> Option<u32> {

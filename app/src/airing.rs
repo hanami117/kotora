@@ -144,7 +144,7 @@ pub struct Slot {
     /// Index into `Airing::shows`.
     pub show: usize,
     pub episode: u32,
-    /// Unix seconds (estimated).
+    /// Unix seconds (exact or estimated: [`Airing::times`]).
     pub at: i64,
     /// "16:30", local.
     pub time: String,
@@ -238,6 +238,33 @@ pub struct Airing {
     pub today: u8,
     /// The minute the texts were made for (`poll` rebuilds when it changes).
     pub minute: i64,
+    /// Which times shown are exact (the service's own) and which estimated: the note says so.
+    pub times: Times,
+}
+
+/// Where the times on the page come from, for the note under the filters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Times {
+    /// All estimated from the weekly slot (or no times at all).
+    #[default]
+    Estimated,
+    /// All exact.
+    Exact,
+    /// The list's shows exact, the others estimated.
+    ExactMine,
+    /// Some of each.
+    Mixed,
+}
+
+impl Times {
+    pub fn note(self) -> &'static str {
+        match self {
+            Times::Estimated => "Times are estimated; ~ marks estimated counts",
+            Times::Exact => "Exact times; ~ marks estimated counts",
+            Times::ExactMine => "Exact times for your shows; others estimated",
+            Times::Mixed => "Some times are estimated; ~ marks estimated counts",
+        }
+    }
 }
 
 /// A worker's answer.
@@ -479,6 +506,10 @@ impl State {
             let send = &mut |a: Answer| h.update_if(move |s, _| s.airing_answer(a));
             // A season picked meanwhile has the budget: the previous season waits.
             run_current(&run, &list, get, &|| token.load(Ordering::SeqCst) == mine, send);
+            // The exact times of the list's shows (MyAnimeList), when due.
+            if let (Some(st), true) = (store.as_ref(), online) {
+                crate::online::air_times(&h, st);
+            }
         });
     }
 
@@ -535,6 +566,7 @@ impl State {
         let shows: HashMap<u32, &SeasonAnime> = self.airing.shown().iter().map(|s| (s.id, s)).collect();
         let behind: HashMap<u32, kotora_core::airing::ToWatch> = self.entries.iter().filter_map(|e| Some((e.id, self.to_watch_in(e, shows.get(&e.id).copied())?))).collect();
         let lang = self.prefs.titles;
+        let exact = self.exact_times();
         let a = &mut self.airing;
         a.minute = now.div_euclid(60);
         let today = a.clock(now);
@@ -550,6 +582,8 @@ impl State {
         // Another season: a plain grid. No timetable (the shows aired, or have not started), so no
         // week, no countdowns and no "airing" notes.
         let browsing = a.browse.is_some();
+        // Times shown: [others, the list's] x [exact, estimated].
+        let mut kinds = [[false; 2]; 2];
         let src = a.browse.as_ref().map_or(&a.shows, |b| &b.shows);
         for (i, show) in src.iter().enumerate() {
             let entry = mine.get(&show.id).copied().filter(|(st, _)| *st != Status::Dropped);
@@ -557,13 +591,17 @@ impl State {
                 continue;
             }
             // Self-correction: a progress past the estimate moves the episodes forward.
-            let tt = Timetable::of(show)
+            let tt = show_timetable(show, &exact)
                 .filter(|_| !browsing)
                 .map(|t| match entry {
                     Some((_, p)) => t.with_progress(p, now),
                     None => t,
                 });
             let next = tt.and_then(|t| t.next(now));
+            if tt.is_some() {
+                let is_exact = show.next_airing.is_some() || exact.contains_key(&show.id);
+                kinds[usize::from(entry.is_some())][usize::from(!is_exact)] = true;
+            }
             // The week.
             match tt {
                 Some(t) => {
@@ -625,6 +663,16 @@ impl State {
             let to_watch = behind.get(&show.id).map(|w| (w.label(), w.behind));
             a.cards.push(Card { show: i, meta: meta.join(" \u{b7} "), when, status: entry.map(|(st, _)| st), lit, to_watch });
         }
+        let [[other_exact, other_est], [mine_exact, mine_est]] = kinds;
+        a.times = if !(mine_exact || other_exact) {
+            Times::Estimated
+        } else if !(mine_est || other_est) {
+            Times::Exact
+        } else if !mine_est && !other_exact {
+            Times::ExactMine
+        } else {
+            Times::Mixed
+        };
         if a.order == Order::ToWatch {
             // Stable: equal ones keep the popular order; shows not watched last.
             a.cards.sort_by_key(|c| std::cmp::Reverse(c.to_watch.as_ref().map_or(-1, |(_, n)| i64::from(*n))));
@@ -647,6 +695,39 @@ impl State {
             a.week.extend((0..a.untimed.len()).map(WeekRow::Untimed));
         }
         let _ = lang;
+    }
+
+    /// New exact air times for the MyAnimeList list (`online::air_times`): (id, next airing,
+    /// timetable) of each saved entry. Redraws the Airing page and Home, and has the
+    /// notifications look again.
+    pub fn set_air_times(&mut self, times: Vec<(u32, Option<kotora_core::airing::NextAiring>, Option<Timetable>)>) -> bool {
+        // Switched to AniList meanwhile: these were for the other list.
+        if self.service != kotora_core::service::ServiceId::Mal {
+            return false;
+        }
+        let times: HashMap<u32, _> = times.into_iter().map(|(id, n, t)| (id, (n, t))).collect();
+        let mut changed = false;
+        for e in &mut self.entries {
+            if let Some(&(n, t)) = times.get(&e.id)
+                && (e.next_airing, e.timetable) != (n, t)
+            {
+                (e.next_airing, e.timetable) = (n, t);
+                changed = true;
+            }
+        }
+        if changed {
+            self.airing_rebuild();
+            self.kick_air_notes();
+        }
+        changed
+    }
+
+    /// The exact next airing of the list's shows, by id: the list's own (AniList, or the times
+    /// kept for a MyAnimeList list), else the mirror's AniList copy.
+    pub fn exact_times(&self) -> HashMap<u32, kotora_core::airing::NextAiring> {
+        let mut m: HashMap<u32, kotora_core::airing::NextAiring> = self.mirror.next.clone();
+        m.extend(self.entries.iter().filter_map(|e| Some((e.id, e.next_airing?))));
+        m
     }
 
     /// The title of show `i` in the chosen language.
@@ -677,9 +758,10 @@ impl State {
     pub fn ctl_airing(&self) -> Vec<kotora_ctl::AiringItem> {
         let now = self.clock();
         let mut out: Vec<kotora_ctl::AiringItem> = Vec::new();
+        let exact = self.exact_times();
         for (i, show) in self.airing.shows.iter().enumerate() {
             let Some(e) = self.entries.iter().find(|e| e.id == show.id && e.status != Status::Dropped) else { continue };
-            let Some(t) = Timetable::of(show).map(|t| t.with_progress(e.progress, now)) else { continue };
+            let Some(t) = show_timetable(show, &exact).map(|t| t.with_progress(e.progress, now)) else { continue };
             let Some((episode, at)) = t.next(now) else { continue };
             if at - now <= WEEK {
                 let (c, today) = (self.airing.clock(at), self.airing.clock(now));
@@ -708,13 +790,14 @@ impl State {
     /// and the last sync. Reads state only (no disk walk, no network).
     pub fn ctl_dash(&self) -> kotora_ctl::Dashboard {
         let now = self.clock();
+        let exact = self.exact_times();
         let rows = self
             .entries
             .iter()
             .filter(|e| e.status == Status::Watching || e.rewatching)
             .map(|e| {
                 let on_disk = crate::library::has_next_file(self, e);
-                let timetable = self.airing.shows.iter().find(|a| a.id == e.id).and_then(Timetable::of).map(|t| t.with_progress(e.progress, now));
+                let timetable = self.airing.shows.iter().find(|a| a.id == e.id).and_then(|a| show_timetable(a, &exact)).map(|t| t.with_progress(e.progress, now));
                 let mut row = kotora_ctl::DashRow { title: e.title.clone(), progress: e.progress, episodes: e.episodes, updated_at: e.updated_at, on_disk, ..Default::default() };
                 if let Some(t) = timetable {
                     if t.aired(now) > e.progress {
@@ -729,6 +812,15 @@ impl State {
             })
             .collect();
         kotora_ctl::Dashboard { now_unix: now, now: self.ctl_now(), rows, queue: self.queue, synced_at: self.synced_at, offline: self.offline }
+    }
+}
+
+/// A show's timetable: the season list's exact next airing, else the list's (`exact`), else the
+/// estimate from the weekly slot.
+fn show_timetable(show: &SeasonAnime, exact: &HashMap<u32, kotora_core::airing::NextAiring>) -> Option<Timetable> {
+    match (show.next_airing, exact.get(&show.id)) {
+        (None, Some(n)) => Some(Timetable::from_next(*n, show.episodes)),
+        _ => Timetable::of(show),
     }
 }
 
@@ -1207,7 +1299,7 @@ fn filters(s: &State) -> El {
             r = r.child(chip(format!("airing/order/{}", o.label()), o.label(), a.order == o, move |s: &mut State| s.airing_order(o)));
         }
     }
-    r.child(spacer()).child(text("Times are estimated; ~ marks estimated counts".to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
+    r.child(spacer()).child(text(a.times.note().to_string()).key("airing/estimated").font(theme::SMALL).color(PAL.faint))
 }
 
 fn loading(season: &str) -> El {
@@ -2024,6 +2116,54 @@ mod tests {
         assert_eq!(card.to_watch, Some(("3 to watch".to_string(), 3)), "exact: no ~");
         let e = s.entries.iter().find(|e| e.id == tide).unwrap();
         assert_eq!(s.to_watch(e).map(|w| (w.out, w.exact)), Some((11, true)));
+    }
+
+    #[test]
+    fn exact_times_for_a_myanimelist_list_replace_the_estimate() {
+        let mut s = page();
+        assert_eq!(s.service, kotora_core::service::ServiceId::Mal);
+        assert_eq!(s.airing.times, Times::Estimated);
+        let e = s.entries.iter().find(|e| e.title == "Tidepool Radio").unwrap();
+        let (tide, eps) = (e.id, e.episodes);
+        let slot = |s: &State| s.airing.days.iter().flatten().find(|x| s.airing.shows[x.show].id == tide).map(|x| (x.episode, x.at));
+        let before = slot(&s);
+        // AniList says episode 12 airs in two days at an odd minute (a delay the slot can't know).
+        let at = FAKE + 2 * 86_400 + 3 * 3600 + 17 * 60;
+        let next = kotora_core::airing::NextAiring { episode: 12, at };
+        let tt = Some(Timetable::from_next(next, eps));
+        assert!(s.set_air_times(vec![(tide, Some(next), tt), (999_999, None, None)]));
+        assert_ne!(slot(&s), before);
+        assert_eq!(slot(&s), Some((12, at)));
+        assert_eq!(s.airing.times, Times::Mixed, "the other shows keep their estimate");
+        assert_eq!(s.to_watch(s.entries.iter().find(|e| e.id == tide).unwrap()).map(|w| (w.out, w.exact)), Some((11, true)));
+        assert!(s.ctl_airing().iter().any(|x| x.at == at && x.episode == 12));
+        // The same again: nothing to redraw.
+        assert!(!s.set_air_times(vec![(tide, Some(next), tt)]));
+        // Every timed show exact: the note says so.
+        let all: Vec<_> = s.airing.shows.iter().map(|a| (a.id, kotora_core::airing::NextAiring { episode: 2, at: FAKE + 3600 })).collect();
+        for a in &mut s.airing.shows {
+            a.next_airing = all.iter().find(|(id, _)| *id == a.id).map(|x| x.1);
+        }
+        s.airing_rebuild();
+        assert_eq!(s.airing.times, Times::Exact);
+        // An AniList answer for the other list is dropped.
+        s.service = kotora_core::service::ServiceId::AniList;
+        assert!(!s.set_air_times(vec![(tide, None, None)]));
+    }
+
+    #[test]
+    fn the_note_says_where_the_times_come_from() {
+        let mut s = page();
+        let mine: Vec<u32> = s.entries.iter().map(|e| e.id).collect();
+        // Every show on the list exact, the others estimated.
+        for a in &mut s.airing.shows {
+            if mine.contains(&a.id) {
+                a.next_airing = Some(kotora_core::airing::NextAiring { episode: 3, at: FAKE + 7200 });
+            }
+        }
+        s.airing_rebuild();
+        assert_eq!(s.airing.times, Times::ExactMine);
+        assert_eq!(s.airing.times.note(), "Exact times for your shows; others estimated");
     }
 
     const FAKE: i64 = crate::model::FAKE_NOW;
