@@ -1,0 +1,16 @@
+// Build settings for both configurations. Kotora's Client IDs are public by design (an app
+// can't keep a secret): ONE MyAnimeList client and ONE AniList client serve both the Android and
+// the iOS app, with the redirects io.github.hanami117.kotora://oauth/mal and …/oauth/anilist.
+// The same values as android/gradle.properties ("Kotora Mobile"); keep the two in step. Empty: a
+// build without them can't sign in (the sign-in page says so). Never put a client SECRET here.
+// Override for a local build in Config/Local.xcconfig or on the xcodebuild command line.
+KOTORA_MAL_CLIENT_ID = 23a8b55204906011804809793ac5e01b
+KOTORA_ANILIST_CLIENT_ID = 57503
+
+// A free Apple ID's Personal Team: put DEVELOPMENT_TEAM = <team id> in Config/Local.xcconfig
+// (git-ignored), or pick the team in Xcode (Signing & Capabilities).
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+
+// The Rust core is built for Apple-silicon simulators only (aarch64-apple-ios-sim).
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64

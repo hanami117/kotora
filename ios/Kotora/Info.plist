@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleDisplayName</key><string>Kotora</string>
+	<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- The sign-in redirects (io.github.hanami117.kotora://oauth/mal, …/oauth/anilist), as on Android.
+	     ASWebAuthenticationSession catches them itself; the scheme is also here so a redirect that
+	     comes in as a URL (a test with `simctl openurl`) reaches the same code. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>io.github.hanami117.kotora.oauth</string>
+			<key>CFBundleURLSchemes</key><array><string>io.github.hanami117.kotora</string></array>
+		</dict>
+	</array>
+	<!-- From Config/*.xcconfig (public by design). -->
+	<key>KotoraMalClientId</key><string>$(KOTORA_MAL_CLIENT_ID)</string>
+	<key>KotoraAniListClientId</key><string>$(KOTORA_ANILIST_CLIENT_ID)</string>
+	<!-- Sends the waiting changes (the core's queue) in the background, as Android's FlushWorker. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array><string>io.github.hanami117.kotora.flush</string><string>io.github.hanami117.kotora.refresh</string></array>
+	<key>UIBackgroundModes</key>
+	<array><string>fetch</string></array>
+	<key>LSRequiresIPhoneOS</key><true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
+	<key>UILaunchScreen</key>
+	<dict><key>UIColorName</key><string>LaunchBackground</string></dict>
+	<key>UIAppFonts</key>
+	<array><string>inter_regular.ttf</string><string>inter_medium.ttf</string><string>inter_semibold.ttf</string></array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array><string>UIInterfaceOrientationPortrait</string></array>
+	<key>ITSAppUsesNonExemptEncryption</key><false/>
+</dict>
+</plist>
