@@ -9,6 +9,7 @@ pub mod activity;
 pub mod airing;
 pub mod anilist;
 pub mod airnotes;
+pub mod airtimes;
 pub mod config;
 pub mod covers;
 pub mod discord;

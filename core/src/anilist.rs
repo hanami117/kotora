@@ -249,6 +249,54 @@ fn answer(resp: Response) -> Result<Value, CallError> {
     Err(CallError::Other(format!("AniList answered HTTP {status}{words}")))
 }
 
+/// Why [`Client::next_airing_by_mal`] got no answer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AirFail {
+    /// A 429: nothing more before this many seconds (`Retry-After`, else a minute).
+    Wait(u64),
+    /// No answer, or one that can't be used (offline, a timeout, an error).
+    Failed,
+}
+
+/// The exact next airing by MyAnimeList id: the fields asked for and nothing more.
+fn next_by_mal_query() -> &'static str {
+    "query ($ids: [Int]) { Page(perPage: 50) { media(idMal_in: $ids, type: ANIME) { idMal nextAiringEpisode { episode airingAt } } } }"
+}
+
+impl<T: Transport> Client<T> {
+    /// The next episode and its exact time of anime by their MyAnimeList ids, from AniList's
+    /// public data: no sign-in, no token. One request per [`MAL_IDS_PER_REQUEST`] ids, through
+    /// the app's AniList budget. Every id asked is in the answer, `None` when AniList has no next
+    /// episode for it (or no such anime). A 429 is not retried here: the caller holds off for
+    /// `Retry-After` (see `airtimes`).
+    pub fn next_airing_by_mal(&mut self, mal_ids: &[u32]) -> Result<Vec<(u32, Option<NextAiring>)>, AirFail> {
+        let mut out: Vec<(u32, Option<NextAiring>)> = Vec::new();
+        for chunk in mal_ids.chunks(MAL_IDS_PER_REQUEST) {
+            let body = json!({ "query": next_by_mal_query(), "variables": { "ids": chunk } }).to_string();
+            let req = Request { method: "POST", url: API.into(), bearer: None, form: None, json: Some(body) };
+            let wait = self.limiter.lock().unwrap_or_else(|e| e.into_inner()).acquire(Instant::now());
+            if !wait.is_zero() {
+                (self.sleep)(wait);
+            }
+            let resp = self.transport.send(&req).map_err(|_| AirFail::Failed)?;
+            if resp.status == 429 {
+                let secs = resp.retry_after.unwrap_or(60).max(1);
+                self.limiter.lock().unwrap_or_else(|e| e.into_inner()).hold(Instant::now(), Duration::from_secs(secs.min(MAX_WAIT)));
+                return Err(AirFail::Wait(secs));
+            }
+            let (media, _) = answer(resp).map_err(|_| AirFail::Failed).and_then(|d| page_media(d).map_err(|_| AirFail::Failed))?;
+            for &id in chunk {
+                // Two AniList entries may share a MyAnimeList id: the one with a next episode wins.
+                let next = media.iter().filter(|m| m.id_mal == Some(id)).find_map(RawMedia::next);
+                if !out.iter().any(|(i, _)| *i == id) {
+                    out.push((id, next));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
 impl<T: Transport> std::fmt::Debug for Client<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("anilist::Client")
