@@ -93,6 +93,11 @@ fn form(pairs: &[(&str, &str)]) -> String {
 
 /// The page the browser opens. `code_challenge_method=plain`: the challenge is the verifier.
 pub fn authorize_url(client_id: &str, pkce: &Pkce) -> String {
+    authorize_url_to(client_id, pkce, REDIRECT_URI)
+}
+
+/// [`authorize_url`] with another registered redirect (Android: the app's own URI scheme).
+pub fn authorize_url_to(client_id: &str, pkce: &Pkce, redirect_uri: &str) -> String {
     format!(
         "{AUTHORIZE_URL}?{}",
         form(&[
@@ -101,7 +106,7 @@ pub fn authorize_url(client_id: &str, pkce: &Pkce) -> String {
             ("code_challenge", &pkce.verifier),
             ("code_challenge_method", "plain"),
             ("state", &pkce.state),
-            ("redirect_uri", REDIRECT_URI),
+            ("redirect_uri", redirect_uri),
         ])
     )
 }
@@ -204,13 +209,18 @@ impl<T: Transport> Client<T> {
 
     /// Step 3 of the sign-in: the code from the redirect, with the verifier.
     pub fn exchange_code(&mut self, code: &str, verifier: &str) -> Result<Token, ServiceError> {
+        self.exchange_code_to(code, verifier, REDIRECT_URI)
+    }
+
+    /// [`Client::exchange_code`] for a sign-in that used another redirect ([`authorize_url_to`]).
+    pub fn exchange_code_to(&mut self, code: &str, verifier: &str, redirect_uri: &str) -> Result<Token, ServiceError> {
         let id = self.client_id.clone();
         Ok(self.token_request(&[
             ("client_id", &id),
             ("grant_type", "authorization_code"),
             ("code", code),
             ("code_verifier", verifier),
-            ("redirect_uri", REDIRECT_URI),
+            ("redirect_uri", redirect_uri),
         ])?)
     }
 
@@ -885,7 +895,12 @@ impl<T: Transport> Mal<T> {
 
     /// Completes a sign-in: exchanges the code and saves the token file.
     pub fn complete_sign_in(&mut self, code: &str, verifier: &str) -> Result<(), ServiceError> {
-        let t = self.client.exchange_code(code, verifier)?;
+        self.complete_sign_in_to(code, verifier, REDIRECT_URI)
+    }
+
+    /// [`Mal::complete_sign_in`] for a sign-in that used another redirect.
+    pub fn complete_sign_in_to(&mut self, code: &str, verifier: &str, redirect_uri: &str) -> Result<(), ServiceError> {
+        let t = self.client.exchange_code_to(code, verifier, redirect_uri)?;
         self.save(&t)
     }
 }

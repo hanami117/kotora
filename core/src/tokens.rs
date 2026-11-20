@@ -1,9 +1,13 @@
 //! The token file: `$XDG_DATA_HOME/kotora/tokens.json`, mode 0600, in a 0700 folder. Not encrypted.
 //! Never in the database, never in logs: `Debug` hides the values. One token per service (`mal`,
 //! `anilist`); saving or forgetting one keeps the other.
+//!
+//! Kotora for Android keeps the tokens elsewhere: a [`TokenVault`] the app supplies (Keystore-
+//! wrapped files), through [`TokenStore::with_vault`]. Same API for the services either way.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -48,13 +52,31 @@ impl File {
     }
 }
 
+/// Somewhere else to keep the tokens than the file: one opaque blob per service (`mal`,
+/// `anilist`), the token as JSON. The Android app encrypts it with a Keystore key.
+pub trait TokenVault: Send + Sync {
+    fn load(&self, service: &str) -> Option<Vec<u8>>;
+    fn save(&self, service: &str, bytes: &[u8]) -> std::io::Result<()>;
+    /// Forgetting a token that isn't there is fine.
+    fn delete(&self, service: &str) -> std::io::Result<()>;
+}
+
+const SERVICES: [&str; 2] = ["mal", "anilist"];
+
+#[derive(Clone)]
 pub struct TokenStore {
     path: PathBuf,
+    vault: Option<Arc<dyn TokenVault>>,
 }
 
 impl TokenStore {
     pub fn new(path: PathBuf) -> Self {
-        TokenStore { path }
+        TokenStore { path, vault: None }
+    }
+
+    /// The tokens in `vault` instead of a file; [`TokenStore::path`] is then empty.
+    pub fn with_vault(vault: Arc<dyn TokenVault>) -> Self {
+        TokenStore { path: PathBuf::new(), vault: Some(vault) }
     }
 
     pub fn path(&self) -> &Path {
@@ -68,6 +90,9 @@ impl TokenStore {
 
     /// The token of `service` (`mal`, `anilist`).
     pub fn load(&self, service: &str) -> Option<Token> {
+        if let Some(v) = &self.vault {
+            return serde_json::from_slice(&v.load(service)?).ok();
+        }
         self.read()?.slot(service)?.clone()
     }
 
@@ -81,6 +106,12 @@ impl TokenStore {
 
     /// Saves the token of `service`; the other service's token stays.
     pub fn save(&self, service: &str, t: &Token) -> std::io::Result<()> {
+        if let Some(v) = &self.vault {
+            if !SERVICES.contains(&service) {
+                return Err(std::io::Error::other(format!("no token slot for {service}")));
+            }
+            return v.save(service, &serde_json::to_vec(t).map_err(std::io::Error::other)?);
+        }
         let mut file = self.read().unwrap_or_default();
         *file.slot(service).ok_or_else(|| std::io::Error::other(format!("no token slot for {service}")))? = Some(t.clone());
         self.write(&file)
@@ -118,6 +149,9 @@ impl TokenStore {
 
     /// Sign out of one service: its token goes, the other's stays (the file goes with the last).
     pub fn forget(&self, service: &str) -> std::io::Result<()> {
+        if let Some(v) = &self.vault {
+            return v.delete(service);
+        }
         let Some(mut file) = self.read() else { return self.delete() };
         if let Some(slot) = file.slot(service) {
             *slot = None;
@@ -127,6 +161,9 @@ impl TokenStore {
 
     /// The whole file goes.
     pub fn delete(&self) -> std::io::Result<()> {
+        if let Some(v) = &self.vault {
+            return SERVICES.iter().try_for_each(|s| v.delete(s));
+        }
         match std::fs::remove_file(&self.path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
@@ -183,6 +220,43 @@ mod tests {
         assert_eq!(store.load_mal().map(|t| t.expires_at), Some(5));
         assert_eq!(store.load_anilist(), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A vault in memory, as the Android app's Keystore-backed one behaves.
+    #[derive(Default)]
+    struct MemVault(std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>);
+
+    impl TokenVault for MemVault {
+        fn load(&self, service: &str) -> Option<Vec<u8>> {
+            self.0.lock().unwrap().get(service).cloned()
+        }
+        fn save(&self, service: &str, bytes: &[u8]) -> std::io::Result<()> {
+            self.0.lock().unwrap().insert(service.into(), bytes.to_vec());
+            Ok(())
+        }
+        fn delete(&self, service: &str) -> std::io::Result<()> {
+            self.0.lock().unwrap().remove(service);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_vault_keeps_each_service_apart_and_no_file_is_written() {
+        let vault = Arc::new(MemVault::default());
+        let store = TokenStore::with_vault(vault.clone());
+        let al = Token { access_token: "fake-anilist".into(), refresh_token: String::new(), expires_at: 2000 };
+        store.save_mal(&tok()).unwrap();
+        store.save_anilist(&al).unwrap();
+        assert_eq!((store.load_mal(), store.load_anilist()), (Some(tok()), Some(al.clone())));
+        assert!(store.save("nope", &tok()).is_err());
+        store.forget("mal").unwrap();
+        assert_eq!((store.load_mal(), store.load_anilist()), (None, Some(al)));
+        store.delete().unwrap();
+        assert!(vault.0.lock().unwrap().is_empty());
+        assert_eq!(store.path(), Path::new(""));
+        // A blob that isn't a token (a wrong key, a damaged file) reads as signed out.
+        vault.save("mal", b"garbage").unwrap();
+        assert_eq!(store.load_mal(), None);
     }
 
     #[test]

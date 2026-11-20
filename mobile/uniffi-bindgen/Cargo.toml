@@ -1,0 +1,11 @@
+# Writes the Kotlin bindings from the built library: `cargo run -p uniffi-bindgen -- generate
+# --library <libkotora_mobile.so> --language kotlin --out-dir <dir>`. Host only.
+[package]
+name = "uniffi-bindgen"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+uniffi = { version = "=0.32.2", features = ["cli"] }

@@ -71,7 +71,7 @@ pub fn parse_token_input(raw: &str, now: i64) -> Result<Token, String> {
         let mut expires_in = None;
         for pair in s[i..].split(['&', '#', '?']) {
             match pair.split_once('=') {
-                Some(("access_token", v)) => access = Some(crate::loopback::pct_decode(v)),
+                Some(("access_token", v)) => access = Some(crate::http::pct_decode(v)),
                 Some(("expires_in", v)) => expires_in = v.trim().parse::<i64>().ok(),
                 _ => {}
             }
@@ -79,7 +79,7 @@ pub fn parse_token_input(raw: &str, now: i64) -> Result<Token, String> {
         (access.unwrap_or_default(), expires_in)
     } else if let Some(i) = s.find("error=") {
         let e = s[i + 6..].split('&').next().unwrap_or("");
-        return Err(format!("AniList refused the sign-in ({})", crate::loopback::pct_decode(e)));
+        return Err(format!("AniList refused the sign-in ({})", crate::http::pct_decode(e)));
     } else {
         (s.to_string(), None)
     };

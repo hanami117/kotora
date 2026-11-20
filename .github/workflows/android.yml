@@ -1,0 +1,139 @@
+# Kotora for Android: the core without its desktop feature, the mobile crate, and a debug APK
+# (debug key, as an artifact); on an android-v tag, the signed release APK. Never publishes anything.
+name: android
+
+on:
+  push:
+    branches: [main, android]
+    tags: ["android-v*"]
+    paths: ["core/**", "mobile/**", "android/**", "Cargo.toml", "Cargo.lock", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["core/**", "mobile/**", "android/**", "Cargo.toml", "Cargo.lock", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: "29.0.14206865"
+  CARGO_NDK_VERSION: "4.1.2"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK packages (platform 37.2 to compile against, build-tools 36, pinned NDK)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.2" "build-tools;36.0.0" "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Rust targets and cargo-ndk
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked --version "$CARGO_NDK_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            . -> target
+            mobile -> target
+      - name: Core without the desktop feature (tests, clippy)
+        run: |
+          cargo test -p kotora-core --no-default-features --locked
+          cargo clippy -p kotora-core --no-default-features --all-targets --locked -- -D warnings
+      - name: Mobile crate (tests, clippy)
+        working-directory: mobile
+        # pages:: and insights:: each want the process's first Kotora (its folders and time
+        # zone are global): one process per group.
+        run: |
+          cargo test --locked -- --skip pages:: --skip insights::
+          cargo test --locked pages::
+          cargo test --locked insights::
+          cargo clippy --all-targets --locked -- -D warnings
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Debug APK, unit and screenshot tests, lint
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest recordRoborazziDebug lintDebug
+      - name: Native library size (budget 6 MB per ABI) and 16 KB pages
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk" | tail -1
+          unzip -l "$apk" 'lib/*' | awk '/\.so$/ { printf "%-40s %6.2f MB\n", $4, $1/1048576; if ($1 > 6*1048576) bad=1 } END { exit bad }'
+          ls -l "$apk"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kotora-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: kotora-android-screens-and-reports
+          path: |
+            android/app/build/outputs/roborazzi/
+            android/app/build/reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The signed release APK (R8), only on an `android-v<version>` tag or by hand: the keystore comes
+  # from secrets, is decoded to the runner's temp dir and deleted at the end. Uploaded as an artifact;
+  # the GitHub release (draft) is made by hand.
+  release-apk:
+    if: startsWith(github.ref, 'refs/tags/android-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.2" "build-tools;36.0.0" "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Rust targets and cargo-ndk
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked --version "$CARGO_NDK_VERSION"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Signed release APK
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KOTORA_ANDROID_KEYSTORE_B64 }}
+          KOTORA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KOTORA_ANDROID_KEYSTORE_PASSWORD }}
+          KOTORA_ANDROID_KEY_ALIAS: ${{ secrets.KOTORA_ANDROID_KEY_ALIAS }}
+          KOTORA_ANDROID_KEY_PASSWORD: ${{ secrets.KOTORA_ANDROID_KEY_PASSWORD }}
+        run: |
+          export KOTORA_ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$KOTORA_ANDROID_KEYSTORE"' EXIT
+          printf %s "$KEYSTORE_B64" | base64 -d > "$KOTORA_ANDROID_KEYSTORE"
+          ./gradlew --no-daemon assembleRelease
+          apk=app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | grep -v -i password
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' ../Cargo.toml | head -1)
+          mv "$apk" "$RUNNER_TEMP/kotora-android-$version.apk"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kotora-android-release-apk
+          path: ${{ runner.temp }}/kotora-android-*.apk
+          if-no-files-found: error
+          retention-days: 30
