@@ -443,6 +443,28 @@ impl Store {
         Ok(())
     }
 
+    /// A sign-in to `service` as `user_name` (before its name is saved). Another account than
+    /// the saved one: what Kotora kept of the old one goes, as at a sign out (its list, queue and
+    /// mirror), since none of it belongs to the new account. While changes made with the old
+    /// account still wait, the sign-in is refused instead: sent now, they would land on the
+    /// other account's list (edits, adds and removals alike). The caller then forgets the new
+    /// token. Names are compared without case.
+    pub fn sign_in_as(&mut self, service: &str, user_name: &str) -> Result<()> {
+        let Some(old) = self.account(service)? else { return self.set_account(service, user_name) };
+        if old.to_lowercase() == user_name.to_lowercase() {
+            return self.set_account(service, user_name);
+        }
+        let waiting = self.open_count(service)?;
+        if waiting > 0 {
+            let changes = if waiting == 1 { "1 change".to_string() } else { format!("{waiting} changes") };
+            return Err(StoreError(format!(
+                "You signed in as {user_name}, but {changes} made as {old} still wait to be sent. Sign in as {old} to send them, or sign out to drop them, then sign in as {user_name}."
+            )));
+        }
+        self.clear_service(service)?;
+        self.set_account(service, user_name)
+    }
+
     pub fn account(&self, service: &str) -> Result<Option<String>> {
         Ok(self.conn.query_row("SELECT user_name FROM account WHERE service = ?1", [service], |r| r.get(0)).optional()?)
     }
@@ -911,6 +933,35 @@ pub(crate) mod tests {
             updated_at,
             volumes: 0,
         }
+    }
+
+    /// Review 2026-11-24 (A2): "sign in again" with another account must not send the old
+    /// account's waiting changes to it (they would edit, add or remove entries on the other
+    /// account's list). Refused while they wait; with none waiting, the old list goes.
+    #[test]
+    fn signing_in_as_another_account_never_sends_it_the_old_changes() {
+        let mut s = Store::open_memory().unwrap();
+        s.set_account("mal", "first_user").unwrap();
+        s.replace_list("mal", &[item(1, "Lanterns", Status::Watching, 3, 100)], 100).unwrap();
+        s.enqueue("mal", 1, crate::Change { progress: Some(4), ..Default::default() }, 200).unwrap();
+        s.remove_from_list("mal", 1, 210).unwrap();
+        // The same account (any case): fine, the queue stays.
+        s.sign_in_as("mal", "First_User").unwrap();
+        assert_eq!(s.open_count("mal").unwrap(), 2);
+        // Another account: refused, nothing dropped, the old name kept.
+        let e = s.sign_in_as("mal", "second_user").unwrap_err().to_string();
+        assert!(e.contains("2 changes") && e.contains("First_User"), "{e}");
+        assert_eq!(s.open_count("mal").unwrap(), 2);
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("First_User"));
+        // Nothing waits: the old account's list goes, the new name is saved.
+        s.conn.execute("DELETE FROM pending_op", []).unwrap();
+        s.sign_in_as("mal", "second_user").unwrap();
+        assert!(s.load_list("mal").unwrap().is_empty());
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("second_user"));
+        // The other service is not touched.
+        s.set_account("anilist", "someone").unwrap();
+        s.sign_in_as("mal", "third_user").unwrap();
+        assert_eq!(s.account("anilist").unwrap().as_deref(), Some("someone"));
     }
 
     /// A database from before rewatching (schema 4), with a list and a waiting change, opens
