@@ -160,6 +160,17 @@ fn the_saved_myanimelist_list_carries_the_times() {
 }
 
 #[test]
+fn with_no_times_kept_the_saved_list_reads_as_before() {
+    // The phones never look times up: what the list saved stays as it was.
+    let mut st = Store::open_memory().unwrap();
+    let mut l = list();
+    l[0].media.next_airing = next(3, NOW);
+    st.replace_list("mal", &l, NOW).unwrap();
+    assert_eq!(st.load_item("mal", 10).unwrap().unwrap().media.next_airing, next(3, NOW));
+    assert!(st.load_list("mal").unwrap().iter().filter(|it| it.media.id != 10).all(|it| it.media.next_airing.is_none()));
+}
+
+#[test]
 fn a_new_episode_note_follows_the_exact_time() {
     let mut st = Store::open_memory().unwrap();
     let now = crate::time::now_unix();

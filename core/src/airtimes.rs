@@ -167,10 +167,13 @@ pub fn refresh(store: &Store, items: &[ListItem], now: i64, fetch: &mut dyn FnMu
 }
 
 /// Puts the kept times on a MyAnimeList anime list (what `Store::load_list` returns). A show
-/// without one has no exact time: the estimate is used.
+/// without one keeps what was saved with the list (MyAnimeList saves none: the estimate is
+/// used), so a list nobody looks up times for (the phones) reads as before.
 pub fn overlay(items: &mut [ListItem], times: &HashMap<u32, NextAiring>) {
     for it in items.iter_mut().filter(|it| it.media.kind == Kind::Anime) {
-        it.media.next_airing = times.get(&it.media.id).copied();
+        if let Some(t) = times.get(&it.media.id) {
+            it.media.next_airing = Some(*t);
+        }
     }
 }
 
