@@ -522,10 +522,26 @@ impl Store {
     /// in one transaction. Entries and media that are no longer on the list go away (no
     /// hoarding); the other kind's list is not touched. Records the sync time. Changes still in
     /// the queue are laid over the fetched entries: they win until sent.
+    ///
+    /// `now` is when the list was read (taken before the fetch). A change the queue sent after
+    /// that is newer than the read: its entry keeps what the service answered to the send (or
+    /// stays off the list, for a removal) unless the read shows a later edit.
     pub fn replace_list<'a>(&mut self, scope: impl Into<Scope<'a>>, items: &[ListItem], now: i64) -> Result<()> {
         let Scope { service, kind } = scope.into();
         let k = kind.name();
         let tx = self.conn.transaction()?;
+        // Sent while the list was being read: (media id, removed, the entry as the send left it).
+        let sent_after: Vec<(u32, bool, Option<(crate::Values, i64)>)> = {
+            let mut st = tx.prepare(
+                "SELECT media_id, MAX(removed) FROM pending_op WHERE service = ?1 AND kind = ?2 AND state = 'done' AND sent_at >= ?3 GROUP BY media_id",
+            )?;
+            let ids = st.query_map(params![service, k, now], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, bool>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut out = Vec::with_capacity(ids.len());
+            for (id, removed) in ids {
+                out.push((id, removed, crate::queue::entry_values(&tx, Scope::new(service, kind), id)?));
+            }
+            out
+        };
         tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?2", [service, k])?;
         {
             let mut media = tx.prepare(
@@ -565,6 +581,26 @@ impl Store {
                     m.id_mal
                 ])?;
                 entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at, k, it.volumes])?;
+            }
+        }
+        for (id, removed, kept) in sent_after {
+            let read = items.iter().find(|it| it.media.id == id).map(|it| it.updated_at);
+            match kept {
+                // A removal sent after the read: the read's copy is older.
+                None if removed => {
+                    if read.is_some() {
+                        tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?2 AND media_id = ?3", params![service, k, id])?;
+                    }
+                }
+                // The read is older than the send's answer (or doesn't have the entry yet).
+                Some((v, at)) if read.is_none_or(|r| r < at) => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO entry (service, kind, media_id, status, progress, score, rewatching, times_rewatched, volumes, updated_at)
+                         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 WHERE EXISTS (SELECT 1 FROM media WHERE service = ?1 AND kind = ?2 AND id = ?3)",
+                        params![service, k, id, v.status.mal_name(), v.progress, v.score, v.rewatching, v.times_rewatched, v.volumes, at],
+                    )?;
+                }
+                _ => {}
             }
         }
         crate::queue::lay_over(&tx, Scope::new(service, kind))?;
