@@ -553,7 +553,7 @@ impl Store {
         let k = kind.name();
         let tx = self.conn.transaction()?;
         // Sent while the list was being read: (media id, removed, the entry as the send left it).
-        let sent_after: Vec<(u32, bool, Option<(crate::Values, i64)>)> = {
+        let sent_after: Vec<SentAfter> = {
             let mut st = tx.prepare(
                 "SELECT media_id, MAX(removed) FROM pending_op WHERE service = ?1 AND kind = ?2 AND state = 'done' AND sent_at >= ?3 GROUP BY media_id",
             )?;
@@ -899,6 +899,10 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
         volumes: r.get(20)?,
     })
 }
+
+/// A change sent while a list was read: its media id, whether it was a removal, and the entry
+/// as the send left it ([`Store::replace_list`]).
+type SentAfter = (u32, bool, Option<(crate::Values, i64)>);
 
 #[cfg(test)]
 pub(crate) mod tests {
