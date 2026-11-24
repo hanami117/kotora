@@ -84,7 +84,8 @@ impl State {
                 // The window may know a newer progress than the saved list.
                 What::Episode(n) if self.prefs.notify.new_episode && e.status == Status::Watching && e.progress < n => {
                     let play = matches!(crate::library::next_for(self, e), Some(Next::Ready { .. }));
-                    let body = format!("Estimated from the broadcast time. You\u{2019}re at episode {}.", e.progress);
+                    // With an exact time (AniList's, or kept for a MyAnimeList list) it aired then.
+                    let body = if e.next_airing.is_some() { format!("You\u{2019}re at episode {}.", e.progress) } else { format!("Estimated from the broadcast time. You\u{2019}re at episode {}.", e.progress) };
                     Note {
                         // The same id as the offer for that episode: one replaces the other.
                         id: format!("kotora-{}-ep{n}", e.id),

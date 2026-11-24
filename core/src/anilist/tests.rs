@@ -376,3 +376,50 @@ fn mal_ids_map_to_anilist_media_fifty_a_request() {
     assert_eq!(pairs, vec![(171001, Some(1001)), (171004, Some(1004))]);
     assert_eq!(got[1].title, "Shizuka na Niwa");
 }
+
+#[test]
+fn air_times_by_mal_id_ask_without_a_token_and_match_every_id() {
+    // 101 has two AniList entries (the one with a next episode wins), 102 none ahead, 103 isn't on AniList.
+    let body = r#"{"data":{"Page":{"media":[
+        {"idMal":101,"nextAiringEpisode":null},
+        {"idMal":101,"nextAiringEpisode":{"episode":7,"airingAt":1795271400}},
+        {"idMal":102,"nextAiringEpisode":null},
+        {"idMal":999,"nextAiringEpisode":{"episode":2,"airingAt":1795000000}}]}}}"#;
+    let (mut c, seen, _) = client(vec![ok(body)]);
+    let got = c.next_airing_by_mal(&[101, 102, 103]).unwrap();
+    assert_eq!(got, vec![(101, Some(NextAiring { episode: 7, at: 1_795_271_400 })), (102, None), (103, None)]);
+    let seen = seen.lock().unwrap();
+    let (url, bearer, req) = &seen[0];
+    assert_eq!((url.as_str(), bearer), ("https://graphql.anilist.co", &None), "public data: no token");
+    assert_eq!(req["variables"]["ids"], json!([101, 102, 103]));
+    let q = req["query"].as_str().unwrap();
+    assert!(q.contains("idMal_in: $ids") && q.contains("nextAiringEpisode { episode airingAt }") && !q.contains("mediaListEntry"));
+}
+
+#[test]
+fn air_times_go_fifty_ids_a_request() {
+    let empty = r#"{"data":{"Page":{"media":[]}}}"#;
+    let (mut c, seen, _) = client(vec![ok(empty), ok(empty)]);
+    let ids: Vec<u32> = (1..=60).collect();
+    assert_eq!(c.next_airing_by_mal(&ids).unwrap().len(), 60);
+    let seen = seen.lock().unwrap();
+    let sizes: Vec<usize> = seen.iter().map(|(_, _, b)| b["variables"]["ids"].as_array().unwrap().len()).collect();
+    assert_eq!(sizes, vec![50, 10]);
+}
+
+#[test]
+fn air_times_never_retry_a_429_and_pass_on_its_retry_after() {
+    let r429 = |after| Ok(Response { status: 429, retry_after: after, body: r#"{"errors":[{"message":"Too Many Requests.","status":429}]}"#.into() });
+    let (mut c, seen, _) = client(vec![r429(Some(42))]);
+    assert_eq!(c.next_airing_by_mal(&[1]), Err(AirFail::Wait(42)));
+    assert_eq!(seen.lock().unwrap().len(), 1, "one request, no retry");
+    let (mut c, _, _) = client(vec![r429(None)]);
+    assert_eq!(c.next_airing_by_mal(&[1]), Err(AirFail::Wait(60)), "no Retry-After: a minute");
+    // No answer, a server error, an unreadable answer: failed.
+    let (mut c, _, _) = client(vec![Err("timed out".into())]);
+    assert_eq!(c.next_airing_by_mal(&[1]), Err(AirFail::Failed));
+    let (mut c, _, _) = client(vec![status(500, "")]);
+    assert_eq!(c.next_airing_by_mal(&[1]), Err(AirFail::Failed));
+    let (mut c, _, _) = client(vec![ok("not json")]);
+    assert_eq!(c.next_airing_by_mal(&[1]), Err(AirFail::Failed));
+}

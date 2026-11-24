@@ -149,6 +149,43 @@ fn sync_now(h: &Handle, mut store: Store) {
         for m in refresh_user(service.as_mut(), &store, now_unix()) {
             send(h, m);
         }
+        air_times(h, &store);
+    }
+}
+
+/// One air-times look at a time (the sync and the Airing page's worker may both get here).
+static AIR_TIMES_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// MyAnimeList without the AniList mirror (the mirror brings its own times): the exact air times
+/// of the list's airing shows from AniList's public data, when they are due
+/// ([`kotora_core::airtimes`]: usually one request, none while fresh or held off). Called on
+/// workers that already run, after a sync and after the Airing page's seasons; never headless
+/// or offline. A failure leaves the slot estimates, and says nothing.
+pub fn air_times(h: &Handle, store: &Store) {
+    use kotora_core::airtimes::{self, Outcome};
+    if rune::is_headless() || paths::offline_forced() || account::active() != ServiceId::Mal {
+        return;
+    }
+    if store.mirror_link().ok().flatten().is_some_and(|l| l.main == ServiceId::Mal && l.to == ServiceId::AniList) {
+        return;
+    }
+    if AIR_TIMES_BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let svc = ServiceId::Mal.name();
+    let r = match store.load_list(svc) {
+        Ok(items) => {
+            let mut client = anilist::Client::new(UreqTransport::default());
+            airtimes::refresh(store, &items, now_unix(), &mut |ids| client.next_airing_by_mal(ids))
+        }
+        Err(_) => Outcome::Unchanged,
+    };
+    AIR_TIMES_BUSY.store(false, Ordering::SeqCst);
+    if matches!(r, Outcome::Updated(_))
+        && let Ok(items) = store.load_list(svc)
+    {
+        let times = items.iter().map(|it| (it.media.id, it.media.next_airing, kotora_core::airing::Timetable::of_media(&it.media))).collect();
+        h.update_if(move |s, _| s.set_air_times(times));
     }
 }
 

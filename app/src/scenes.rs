@@ -1129,6 +1129,22 @@ pub const SCENES: &[Scene] = &[
         airing(s, crate::airing::View::Week);
         s.airing_mine(crate::airing::Mine::On);
     }),
+    // MyAnimeList with exact times for the list's shows (AniList's public data): the list's
+    // lines move to their real time, the note says which times are exact.
+    ("airing-week-exact", |s| {
+        airing(s, crate::airing::View::Week);
+        let now = s.clock();
+        let times = s
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let n = kotora_core::airing::NextAiring { episode: e.progress + 1, at: now + (i as i64 % 6) * 86_400 + 5 * 3600 + 25 * 60 };
+                (e.id, Some(n), Some(kotora_core::airing::Timetable::from_next(n, e.episodes)))
+            })
+            .collect();
+        s.set_air_times(times);
+    }),
     ("airing-season", |s| airing(s, crate::airing::View::Season)),
     // The list's airing shows with the most episodes out and not watched first.
     ("airing-season-to-watch", |s| {

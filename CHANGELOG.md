@@ -4,6 +4,12 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Changed
+- **Exact air times on MyAnimeList:** for the airing shows you watch or plan to watch, Airing, Home, `kot airing`
+  and the New episode notifications now use AniList's exact time of the next episode (usually one request after a
+  sync, none while the times are fresh). When it can't be had, the time is estimated from the weekly slot as
+  before. The note on the Airing page says which times are exact.
+
 ### Fixed
 - **Android and iOS, sign in while signed in** (another account, or signing in again): a refused sign-in now shows
   its whole message in a dialog, e.g. why another account can't sign in while changes wait. On iOS it showed only

@@ -642,16 +642,31 @@ impl Store {
         let Scope { service, kind } = scope.into();
         let mut st = self.conn.prepare(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.kind = ?2 ORDER BY e.updated_at DESC, m.id"))?;
         let rows = st.query_map([service, kind.name()], item_row)?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let mut items = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        self.air_times(service, kind, &mut items);
+        Ok(items)
+    }
+
+    /// A MyAnimeList anime list gets the exact air times kept by [`crate::airtimes`]; any other
+    /// list keeps its own (AniList's, saved with the list).
+    fn air_times(&self, service: &str, kind: Kind, items: &mut [ListItem]) {
+        if service == "mal" && kind == Kind::Anime && !items.is_empty() {
+            let times = crate::airtimes::Cache::load(self).usable(crate::time::now_unix());
+            crate::airtimes::overlay(items, &times);
+        }
     }
 
     /// One saved entry.
     pub fn load_item<'a>(&self, scope: impl Into<Scope<'a>>, media_id: u32) -> Result<Option<ListItem>> {
         let Scope { service, kind } = scope.into();
-        Ok(self
+        let mut item = self
             .conn
             .query_row(&format!("{ITEM_SELECT} WHERE e.service = ?1 AND e.kind = ?2 AND e.media_id = ?3"), params![service, kind.name(), media_id], item_row)
-            .optional()?)
+            .optional()?;
+        if let Some(it) = item.as_mut() {
+            self.air_times(service, kind, std::slice::from_mut(it));
+        }
+        Ok(item)
     }
 
     /// Whether Manga mode was turned on (opened once). Off by default: then a sync never asks
