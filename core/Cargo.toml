@@ -18,6 +18,8 @@ desktop = ["dep:anitomy-ng"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.2", default-features = false, features = ["std", "serde", "parse"] }
+# Edits of config.toml keep the user's comments and layout (values over several lines too).
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 # SQLite is compiled in (bundled): the same on Arch and macOS, no system library.
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Blocking HTTP on worker threads (no async runtime of our own).
