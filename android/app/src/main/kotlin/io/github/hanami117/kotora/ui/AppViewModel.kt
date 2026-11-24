@@ -141,6 +141,11 @@ class AppViewModel(
     var expired by mutableStateOf<Service?>(null)
     /** A +1 of an episode not aired yet by the estimate, waiting for "Mark anyway" or Cancel. */
     var markAnyway by mutableStateOf<MarkAnyway?>(null)
+    /**
+     * A sign-in problem while signed in (adding an account, signing in again): a dialog, since it
+     * can be long and ask for something, e.g. another account refused while changes wait.
+     */
+    var signInProblem by mutableStateOf<String?>(null)
     /** The Score › menu's choices in the active account's format, high to low. */
     var scoreChoices by mutableStateOf<List<io.github.hanami117.kotora.core.ScoreChoice>>(emptyList())
         private set
@@ -540,9 +545,9 @@ class AppViewModel(
 
     private val signedIn: Boolean get() = session is Session.SignedIn
 
-    /** A sign-in problem: on the sign-in page when signed out, at the bottom when adding an account or signing in again. */
+    /** A sign-in problem: on the sign-in page when signed out, in a dialog when adding an account or signing in again. */
     private fun fail(text: String) {
-        if (signedIn) viewModelScope.launch { snacks.send(Snack(text)) } else session = Session.SignedOut(error = text)
+        if (signedIn) signInProblem = text else session = Session.SignedOut(error = text)
     }
 
     /** Show the lists of another signed-in account (MyAnimeList and AniList can both be signed in). */

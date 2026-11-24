@@ -4,6 +4,11 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
 
 ## [Unreleased]
 
+### Fixed
+- **Android and iOS, sign in while signed in** (another account, or signing in again): a refused sign-in now shows
+  its whole message in a dialog, e.g. why another account can't sign in while changes wait. On iOS it showed only
+  two lines, and nothing on the Settings tab.
+
 ## [0.5.1] - 2026-11-24
 
 ### Fixed

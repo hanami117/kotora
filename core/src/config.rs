@@ -946,7 +946,9 @@ impl Config {
 /// Sets `key = value` (a TOML literal) in `[section]` of `text`: replaces the key's value, or adds
 /// it to the section, or adds the section at the end. Everything else stays as it was: a TOML
 /// editor keeps comments, values written over several lines and headers with a comment. Only
-/// text it can't read falls back to the line edit.
+/// text it can't read falls back to the line edit. Without the `desktop` feature (the phones, whose
+/// file only the app writes) it is the line edit.
+#[cfg(feature = "desktop")]
 pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
     if let (Ok(mut doc), Ok(v)) = (text.parse::<toml_edit::DocumentMut>(), value.parse::<toml_edit::Value>()) {
         if !doc.contains_key(section) {
@@ -971,6 +973,11 @@ pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
             return out;
         }
     }
+    set_line_plain(text, section, key, value)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
     set_line_plain(text, section, key, value)
 }
 
@@ -1539,6 +1546,7 @@ mod tests {
     /// Review 2026-11-24 (C2): a value written by hand over several lines, or a section header
     /// with a comment, must not stop Kotora saving that setting (the line edit made a file the
     /// reader refuses, so the save failed).
+    #[cfg(feature = "desktop")]
     #[test]
     fn hand_written_shapes_can_still_be_saved() {
         let text = "[library]\nfolders = [\n  \"/media/anime\",\n  \"/media/more\",\n]\nopen_with = \"mpv\"\n";

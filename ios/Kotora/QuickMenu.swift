@@ -44,3 +44,17 @@ struct MarkAnywayAlert: ViewModifier {
         }
     }
 }
+
+/// A sign-in problem while signed in, in full: e.g. another account refused while the old one's
+/// changes still wait to be sent.
+struct SignInProblemAlert: ViewModifier {
+    @EnvironmentObject private var model: AppModel
+
+    func body(content: Content) -> some View {
+        content.alert("Couldn\u{2019}t sign in", isPresented: Binding(get: { model.signInProblem != nil }, set: { if !$0 { model.signInProblem = nil } }), presenting: model.signInProblem) { _ in
+            Button("OK", role: .cancel) { model.signInProblem = nil }
+        } message: { text in
+            Text(text)
+        }
+    }
+}

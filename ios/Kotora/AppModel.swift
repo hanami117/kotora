@@ -92,6 +92,9 @@ final class AppModel: ObservableObject {
     @Published var snack: Snack?
     /// A +1 of an episode not aired yet by the estimate, waiting for "Mark anyway" or Cancel.
     @Published var markAnyway: MarkAnyway?
+    /// A sign-in problem while signed in (adding an account, signing in again): an alert, since it
+    /// can be long and ask for something, e.g. another account refused while changes wait.
+    @Published var signInProblem: String?
     /// The Score ▸ menu's choices in the active account's format, high to low.
     @Published var scoreChoices: [ScoreChoice] = []
     /// The service that asked to sign in again (the "Sign in again" banner); the list stays.
@@ -339,9 +342,10 @@ final class AppModel: ObservableObject {
 
     private var signedIn: Bool { if case .signedIn = session { return true } else { return false } }
 
-    /// A sign-in problem: on the sign-in page when signed out, at the bottom when adding a second account.
+    /// A sign-in problem: on the sign-in page when signed out, in an alert when adding an account or
+    /// signing in again (any tab, Settings too, and never cut to two lines).
     private func fail(_ text: String) {
-        if signedIn { snack = Snack(text: text) } else { session = .signedOut(error: text) }
+        if signedIn { signInProblem = text } else { session = .signedOut(error: text) }
     }
 
     /// Show the lists of another signed-in account (MyAnimeList and AniList can both be signed in).

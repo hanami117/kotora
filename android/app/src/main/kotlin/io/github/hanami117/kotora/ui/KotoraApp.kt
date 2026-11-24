@@ -166,6 +166,7 @@ private fun SignedIn(vm: AppViewModel, s: Session.SignedIn, version: String, now
         val accounts = Accounts(s.accounts, vm.isSample, vm::hasClientId, vm::setActive, vm::signIn, { nav.navigate("profile") }, { nav.navigate("stats") })
         val quick = QuickActions(vm.scoreChoices, vm::moveTo, vm::setScore)
         vm.markAnyway?.let { m -> MarkAnywayDialog(m, { vm.plusOneNow(m.row) }, { vm.markAnyway = null }) }
+        vm.signInProblem?.let { text -> SignInProblemDialog(text) { vm.signInProblem = null } }
         CompositionLocalProvider(LocalAccounts provides accounts, LocalQuickActions provides quick) {
         NavHost(nav, startDestination = Tab.HOME.route, modifier = Modifier.padding(bottom = pad.calculateBottomPadding())) {
             composable(Tab.HOME.route) {

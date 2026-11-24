@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,4 +107,20 @@ fun SignInScreen(
             Text("No account with Kotora · no ads · no tracking", color = k.faint, fontSize = 12.sp)
         }
     }
+}
+
+/**
+ * A sign-in problem while signed in (adding an account, signing in again), in full: e.g. another
+ * account refused while the old one's changes still wait to be sent.
+ */
+@Composable
+fun SignInProblemDialog(text: String, onDismiss: () -> Unit) {
+    val k = Kotora.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Couldn\u2019t sign in", color = k.text) },
+        text = { Text(text, color = k.dim) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK", color = k.accentHi) } },
+        containerColor = k.raised,
+    )
 }

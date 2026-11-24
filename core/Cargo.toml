@@ -7,19 +7,21 @@ edition.workspace = true
 description = "Kotora's core: data model, store, services, sync queue and recognition (no UI)"
 
 # `desktop` (on by default): what only the desktop app needs: recognition (anitomy), the library
-# scan, the loopback sign-in page, Discord, the update check and reading detection. Kotora for
-# Android (`mobile/`) builds the core with `default-features = false`: lists, store, queue, sync,
-# mirror, the services, Airing and Publishing.
+# scan, the loopback sign-in page, Discord, the update check, reading detection and the
+# comment-keeping config.toml editor. Kotora for Android and iOS (`mobile/`) builds the core with
+# `default-features = false`: lists, store, queue, sync, mirror, the services, Airing and Publishing.
 [features]
 default = ["desktop"]
-desktop = ["dep:anitomy-ng"]
+desktop = ["dep:anitomy-ng", "dep:toml_edit"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.2", default-features = false, features = ["std", "serde", "parse"] }
 # Edits of config.toml keep the user's comments and layout (values over several lines too).
-toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
+# Desktop only: the phones' config.toml is in the app's own storage and only the app writes it,
+# and the editor would take the Android library past its 6 MB budget.
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"], optional = true }
 # SQLite is compiled in (bundled): the same on Arch and macOS, no system library.
 rusqlite = { version = "0.41", features = ["bundled"] }
 # Blocking HTTP on worker threads (no async runtime of our own).

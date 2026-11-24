@@ -41,27 +41,41 @@ extension SampleRepository: InsightsSource {
             if (60..<70).contains(i - start) { days[i] = 0 }
         }
         for i in (n - 6)..<n { days[i] = max(days[i], 1) }
-        let sum = { (k: Int) in days.suffix(k).reduce(0, +) }
+        // Closure types written out: inferred, these took the type-checker past its time limit.
+        let sum: (Int) -> UInt32 = { k in days.suffix(k).reduce(0, +) }
         let per: UInt64 = kind == .anime ? 24 : 0
-        let period = { (k: Int, titles: UInt32) in
-            StatsPeriod(units: sum(k), volumes: kind == .manga ? sum(k) / 8 : 0, minutes: UInt64(sum(k)) * per, titles: titles)
+        let period: (Int, UInt32) -> StatsPeriod = { k, titles in
+            let units: UInt32 = sum(k)
+            let volumes: UInt32 = kind == .manga ? units / 8 : 0
+            return StatsPeriod(units: units, volumes: volumes, minutes: UInt64(units) * per, titles: titles)
         }
-        let names = kind == .anime ? ["Hoshikuzu Relay", "Kagerou Bakery", "Tsukimi Station 2nd Season", "Neko Tantei Rin", "Sakamichi Cycle Club"]
+        let names: [String] = kind == .anime ? ["Hoshikuzu Relay", "Kagerou Bakery", "Tsukimi Station 2nd Season", "Neko Tantei Rin", "Sakamichi Cycle Club"]
             : ["Paper Lanterns", "Umibe no Atelier", "Hoshi no Tegami", "Kaminari Bento", "Kaze no Shiori"]
         let ids: [UInt32] = kind == .anime ? [7, 3, 11, 5, 23] : [101, 102, 104, 103, 105]
-        let titles = { (k: Int) in
-            (0..<k).map { i in StatsTitle(mediaId: ids[i], title: names[i], coverUrl: nil, progress: UInt32(6 + i), total: 12, units: UInt32(max(0, 14 - i * 3))) }
+        let title: (Int) -> StatsTitle = { i in
+            let units: UInt32 = UInt32(max(0, 14 - i * 3))
+            return StatsTitle(mediaId: ids[i], title: names[i], coverUrl: nil, progress: UInt32(6 + i), total: 12, units: units)
         }
-        let named = { (v: [(String, UInt32)]) in v.map { NamedCount(name: $0.0, count: $0.1) } }
+        let titles: (Int) -> [StatsTitle] = { k in (0..<k).map(title) }
+        let named: ([(String, UInt32)]) -> [NamedCount] = { v in v.map { NamedCount(name: $0.0, count: $0.1) } }
+        let anime = kind == .anime
+        let genres: [(String, UInt32)] = [("Drama", 34), ("Comedy", 29), ("Action", 25), ("Slice of Life", 19), ("Romance", 16), ("Fantasy", 12), ("Mystery", 9), ("Sci-Fi", 7)]
+        let studios: [(String, UInt32)] = [("Studio Lantern", 9), ("Harbour Works", 7), ("Iron Garden Pictures", 5), ("Studio Kite", 4), ("Paper Moon", 3), ("Ninefold", 2)]
+        let authors: [(String, UInt32)] = [("Aoi Kurata", 4), ("Ren Mizuno", 3), ("Sora Ikeda", 3), ("Mei Tachibana", 2)]
+        let airing: [StatsTitle] = anime ? titles(4).map { (t: StatsTitle) -> StatsTitle in
+            StatsTitle(mediaId: t.mediaId, title: t.title, coverUrl: nil, progress: t.progress, total: t.total, units: 0)
+        } : []
+        let units: UInt64 = anime ? 3790 : 6120
+        let volumes: UInt64 = anime ? 0 : 512
+        let minutes: UInt64 = anime ? 90_870 : 0
         return StatsData(
             kind: kind, today: today, sinceDay: today - 118,
             titles: 304, statuses: [11, 48, 236, 7, 2], scores: [0, 1, 2, 4, 9, 22, 48, 71, 40, 15],
-            units: kind == .anime ? 3790 : 6120, volumes: kind == .manga ? 512 : 0, minutes: kind == .anime ? 90_870 : 0,
+            units: units, volumes: volumes, minutes: minutes,
             guessed: 12, watched: 256, withDetails: 61,
-            genres: named([("Drama", 34), ("Comedy", 29), ("Action", 25), ("Slice of Life", 19), ("Romance", 16), ("Fantasy", 12), ("Mystery", 9), ("Sci-Fi", 7)]),
-            makers: kind == .anime ? named([("Studio Lantern", 9), ("Harbour Works", 7), ("Iron Garden Pictures", 5), ("Studio Kite", 4), ("Paper Moon", 3), ("Ninefold", 2)])
-                : named([("Aoi Kurata", 4), ("Ren Mizuno", 3), ("Sora Ikeda", 3), ("Mei Tachibana", 2)]),
-            airing: kind == .anime ? titles(4).map { StatsTitle(mediaId: $0.mediaId, title: $0.title, coverUrl: nil, progress: $0.progress, total: $0.total, units: 0) } : [],
+            genres: named(genres),
+            makers: named(anime ? studios : authors),
+            airing: airing,
             days: days, firstDay: today - Int64(n - 1),
             week: period(4, 3), month: period(19, 6), year: period(120, 14), all: period(n, 14),
             streak: 6, bestStreak: 11,

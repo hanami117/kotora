@@ -191,6 +191,7 @@ struct SignedInView: View {
         }
         .onAppear { if let ref = PendingOpen.take() { open(ref) } }
         .modifier(MarkAnywayAlert())
+        .modifier(SignInProblemAlert())
         .animation(.easeOut(duration: 0.2), value: model.snack)
     }
 
