@@ -443,6 +443,28 @@ impl Store {
         Ok(())
     }
 
+    /// A sign-in to `service` as `user_name` (before its name is saved). Another account than
+    /// the saved one: what Kotora kept of the old one goes, as at a sign out (its list, queue and
+    /// mirror), since none of it belongs to the new account. While changes made with the old
+    /// account still wait, the sign-in is refused instead: sent now, they would land on the
+    /// other account's list (edits, adds and removals alike). The caller then forgets the new
+    /// token. Names are compared without case.
+    pub fn sign_in_as(&mut self, service: &str, user_name: &str) -> Result<()> {
+        let Some(old) = self.account(service)? else { return self.set_account(service, user_name) };
+        if old.to_lowercase() == user_name.to_lowercase() {
+            return self.set_account(service, user_name);
+        }
+        let waiting = self.open_count(service)?;
+        if waiting > 0 {
+            let changes = if waiting == 1 { "1 change".to_string() } else { format!("{waiting} changes") };
+            return Err(StoreError(format!(
+                "You signed in as {user_name}, but {changes} made as {old} still wait to be sent. Sign in as {old} to send them, or sign out to drop them, then sign in as {user_name}."
+            )));
+        }
+        self.clear_service(service)?;
+        self.set_account(service, user_name)
+    }
+
     pub fn account(&self, service: &str) -> Result<Option<String>> {
         Ok(self.conn.query_row("SELECT user_name FROM account WHERE service = ?1", [service], |r| r.get(0)).optional()?)
     }
@@ -522,10 +544,26 @@ impl Store {
     /// in one transaction. Entries and media that are no longer on the list go away (no
     /// hoarding); the other kind's list is not touched. Records the sync time. Changes still in
     /// the queue are laid over the fetched entries: they win until sent.
+    ///
+    /// `now` is when the list was read (taken before the fetch). A change the queue sent after
+    /// that is newer than the read: its entry keeps what the service answered to the send (or
+    /// stays off the list, for a removal) unless the read shows a later edit.
     pub fn replace_list<'a>(&mut self, scope: impl Into<Scope<'a>>, items: &[ListItem], now: i64) -> Result<()> {
         let Scope { service, kind } = scope.into();
         let k = kind.name();
         let tx = self.conn.transaction()?;
+        // Sent while the list was being read: (media id, removed, the entry as the send left it).
+        let sent_after: Vec<SentAfter> = {
+            let mut st = tx.prepare(
+                "SELECT media_id, MAX(removed) FROM pending_op WHERE service = ?1 AND kind = ?2 AND state = 'done' AND sent_at >= ?3 GROUP BY media_id",
+            )?;
+            let ids = st.query_map(params![service, k, now], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, bool>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut out = Vec::with_capacity(ids.len());
+            for (id, removed) in ids {
+                out.push((id, removed, crate::queue::entry_values(&tx, Scope::new(service, kind), id)?));
+            }
+            out
+        };
         tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?2", [service, k])?;
         {
             let mut media = tx.prepare(
@@ -565,6 +603,26 @@ impl Store {
                     m.id_mal
                 ])?;
                 entry.execute(params![service, m.id, it.status.mal_name(), it.progress, it.score, it.rewatching, it.times_rewatched, it.updated_at, k, it.volumes])?;
+            }
+        }
+        for (id, removed, kept) in sent_after {
+            let read = items.iter().find(|it| it.media.id == id).map(|it| it.updated_at);
+            match kept {
+                // A removal sent after the read: the read's copy is older.
+                None if removed => {
+                    if read.is_some() {
+                        tx.execute("DELETE FROM entry WHERE service = ?1 AND kind = ?2 AND media_id = ?3", params![service, k, id])?;
+                    }
+                }
+                // The read is older than the send's answer (or doesn't have the entry yet).
+                Some((v, at)) if read.is_none_or(|r| r < at) => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO entry (service, kind, media_id, status, progress, score, rewatching, times_rewatched, volumes, updated_at)
+                         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 WHERE EXISTS (SELECT 1 FROM media WHERE service = ?1 AND kind = ?2 AND id = ?3)",
+                        params![service, k, id, v.status.mal_name(), v.progress, v.score, v.rewatching, v.times_rewatched, v.volumes, at],
+                    )?;
+                }
+                _ => {}
             }
         }
         crate::queue::lay_over(&tx, Scope::new(service, kind))?;
@@ -857,6 +915,10 @@ fn item_row(r: &rusqlite::Row) -> rusqlite::Result<ListItem> {
     })
 }
 
+/// A change sent while a list was read: its media id, whether it was a removal, and the entry
+/// as the send left it ([`Store::replace_list`]).
+type SentAfter = (u32, bool, Option<(crate::Values, i64)>);
+
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::score::ten;
@@ -890,6 +952,35 @@ pub(crate) mod tests {
             updated_at,
             volumes: 0,
         }
+    }
+
+    /// Review 2026-11-24 (A2): "sign in again" with another account must not send the old
+    /// account's waiting changes to it (they would edit, add or remove entries on the other
+    /// account's list). Refused while they wait; with none waiting, the old list goes.
+    #[test]
+    fn signing_in_as_another_account_never_sends_it_the_old_changes() {
+        let mut s = Store::open_memory().unwrap();
+        s.set_account("mal", "first_user").unwrap();
+        s.replace_list("mal", &[item(1, "Lanterns", Status::Watching, 3, 100)], 100).unwrap();
+        s.enqueue("mal", 1, crate::Change { progress: Some(4), ..Default::default() }, 200).unwrap();
+        s.remove_from_list("mal", 1, 210).unwrap();
+        // The same account (any case): fine, the queue stays.
+        s.sign_in_as("mal", "First_User").unwrap();
+        assert_eq!(s.open_count("mal").unwrap(), 2);
+        // Another account: refused, nothing dropped, the old name kept.
+        let e = s.sign_in_as("mal", "second_user").unwrap_err().to_string();
+        assert!(e.contains("2 changes") && e.contains("First_User"), "{e}");
+        assert_eq!(s.open_count("mal").unwrap(), 2);
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("First_User"));
+        // Nothing waits: the old account's list goes, the new name is saved.
+        s.conn.execute("DELETE FROM pending_op", []).unwrap();
+        s.sign_in_as("mal", "second_user").unwrap();
+        assert!(s.load_list("mal").unwrap().is_empty());
+        assert_eq!(s.account("mal").unwrap().as_deref(), Some("second_user"));
+        // The other service is not touched.
+        s.set_account("anilist", "someone").unwrap();
+        s.sign_in_as("mal", "third_user").unwrap();
+        assert_eq!(s.account("anilist").unwrap().as_deref(), Some("someone"));
     }
 
     /// A database from before rewatching (schema 4), with a list and a waiting change, opens

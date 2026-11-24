@@ -902,3 +902,29 @@ fn a_removal_of_an_unsent_add_sends_both() {
     assert_eq!(f.calls, ["get 7", "patch 7", "get 7", "delete 7"]);
     assert!(!f.remote.contains_key(&7));
 }
+
+/// Review 2026-11-24 (A1): a sync reads the list while the queue worker sends a change. The
+/// list read before the send must not put the old value back: the entry keeps what the service
+/// answered to the send, until a list read after it.
+#[test]
+fn a_list_read_before_a_send_does_not_undo_it() {
+    let (mut s, mut f) = setup();
+    // The sync starts at 450 and reads the list: show 1 at progress 3.
+    let fetched = vec![item(1, 3, 100), item(2, 3, 100)];
+    // Meanwhile the worker sends progress 4 (at 500).
+    s.enqueue("mal", 1, progress(4), 480).unwrap();
+    assert!(matches!(step(&mut s, &mut f, 500).unwrap(), Step::Handled { outcome: Outcome::Sent, .. }));
+    // The sync saves what it read.
+    s.replace_list("mal", &fetched, 450).unwrap();
+    assert_eq!(entry(&s, 1).progress, 4, "the sent progress stays");
+    // A later read (after the send) is the truth again, whatever it says.
+    let mut later = vec![item(1, 2, f.clock + 5), item(2, 3, 100)];
+    later[0].status = Status::Watching;
+    s.replace_list("mal", &later, 600).unwrap();
+    assert_eq!(entry(&s, 1).progress, 2, "a website edit after the send wins");
+    // A removal sent while the list was read stays removed.
+    s.remove_from_list("mal", 2, 700).unwrap();
+    assert!(matches!(step(&mut s, &mut f, 710).unwrap(), Step::Handled { outcome: Outcome::Sent, .. }));
+    s.replace_list("mal", &later, 690).unwrap();
+    assert!(s.load_item("mal", 2).unwrap().is_none(), "the removed entry doesn't come back");
+}

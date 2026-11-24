@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from assets/icons/io.github.hanami117.kotora.svg (C2). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:width="108dp" android:height="108dp" android:viewportWidth="1024" android:viewportHeight="1024"><path android:pathData="M0,0 h1024 v1024 h-1024 z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="0" android:endX="0" android:endY="1024"><item android:offset="0" android:color="#FF2A3A5C"/><item android:offset="1" android:color="#FF1B2640"/></gradient></aapt:attr></path></vector>

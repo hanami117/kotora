@@ -113,3 +113,25 @@ fn signing_out_keeps_the_log() {
     s.clear_service("mal").unwrap();
     assert_eq!(units(&s), [(1, 3, 4)]);
 }
+
+/// Review 2026-11-24 (A4): taking back a rewatch that just started (Undo puts the entry back at
+/// its last episode, or Discard of the queued start) is no watching: nothing is logged.
+#[test]
+fn undoing_a_rewatch_start_logs_nothing() {
+    let mut s = store(&[item(Kind::Anime, 1, Status::Completed, 12, Some(12))]);
+    // Undo after the start was sent: the old values queued as a new edit.
+    s.enqueue("mal", 1, Change { rewatching: Some(true), progress: Some(1), ..Default::default() }, T).unwrap();
+    s.conn.execute("UPDATE pending_op SET state = 'done', sent_at = ?1", [T + 1]).unwrap();
+    s.enqueue("mal", 1, Change { rewatching: Some(false), progress: Some(12), ..Default::default() }, T + 60).unwrap();
+    assert_eq!(units(&s), [], "an Undo of a rewatch start counts no episodes");
+    // Discard of the queued start.
+    let mut s = store(&[item(Kind::Anime, 2, Status::Completed, 12, Some(12))]);
+    let id = s.enqueue("mal", 2, Change { rewatching: Some(true), progress: Some(1), ..Default::default() }, T).unwrap().unwrap();
+    s.discard("mal", id, T + 60).unwrap();
+    assert_eq!(units(&s), [], "a Discard of a rewatch start counts no episodes");
+    // A rewatch that ends at the last episode still counts it.
+    let mut s = store(&[item(Kind::Anime, 3, Status::Completed, 12, Some(12))]);
+    s.enqueue("mal", 3, Change { rewatching: Some(true), progress: Some(11), ..Default::default() }, T).unwrap();
+    s.enqueue("mal", 3, Change { rewatching: Some(false), progress: Some(12), times_rewatched: Some(1), ..Default::default() }, T + 60).unwrap();
+    assert_eq!(units(&s), [(3, 11, 12)]);
+}

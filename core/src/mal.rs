@@ -93,6 +93,11 @@ fn form(pairs: &[(&str, &str)]) -> String {
 
 /// The page the browser opens. `code_challenge_method=plain`: the challenge is the verifier.
 pub fn authorize_url(client_id: &str, pkce: &Pkce) -> String {
+    authorize_url_to(client_id, pkce, REDIRECT_URI)
+}
+
+/// [`authorize_url`] with another registered redirect (Android: the app's own URI scheme).
+pub fn authorize_url_to(client_id: &str, pkce: &Pkce, redirect_uri: &str) -> String {
     format!(
         "{AUTHORIZE_URL}?{}",
         form(&[
@@ -101,7 +106,7 @@ pub fn authorize_url(client_id: &str, pkce: &Pkce) -> String {
             ("code_challenge", &pkce.verifier),
             ("code_challenge_method", "plain"),
             ("state", &pkce.state),
-            ("redirect_uri", REDIRECT_URI),
+            ("redirect_uri", redirect_uri),
         ])
     )
 }
@@ -204,13 +209,18 @@ impl<T: Transport> Client<T> {
 
     /// Step 3 of the sign-in: the code from the redirect, with the verifier.
     pub fn exchange_code(&mut self, code: &str, verifier: &str) -> Result<Token, ServiceError> {
+        self.exchange_code_to(code, verifier, REDIRECT_URI)
+    }
+
+    /// [`Client::exchange_code`] for a sign-in that used another redirect ([`authorize_url_to`]).
+    pub fn exchange_code_to(&mut self, code: &str, verifier: &str, redirect_uri: &str) -> Result<Token, ServiceError> {
         let id = self.client_id.clone();
         Ok(self.token_request(&[
             ("client_id", &id),
             ("grant_type", "authorization_code"),
             ("code", code),
             ("code_verifier", verifier),
-            ("redirect_uri", REDIRECT_URI),
+            ("redirect_uri", redirect_uri),
         ])?)
     }
 
@@ -864,8 +874,18 @@ impl<T: Transport> Mal<T> {
         self.refresh_now(&t)
     }
 
+    /// Refreshes `old` (the token that is stale, or got a 401). One refresh at a time in the
+    /// process: the workers (sync, queue, mirror, search) each have their own `Mal`, and
+    /// MyAnimeList takes a refresh token once. A worker that waited uses the token the one
+    /// before it just saved instead of refreshing again with a used refresh token.
     fn refresh_now(&mut self, old: &Token) -> Result<String, ServiceError> {
-        let fresh = self.client.refresh(&old.refresh_token)?;
+        static REFRESHING: Mutex<()> = Mutex::new(());
+        let _one = REFRESHING.lock().unwrap_or_else(|e| e.into_inner());
+        let cur = self.tokens.load_mal().ok_or(ServiceError::SignInAgain)?;
+        if cur.access_token != old.access_token && !cur.is_stale(time::now_unix()) {
+            return Ok(cur.access_token);
+        }
+        let fresh = self.client.refresh(&cur.refresh_token)?;
         self.save(&fresh)?;
         Ok(fresh.access_token)
     }
@@ -875,7 +895,7 @@ impl<T: Transport> Mal<T> {
         let access = self.access()?;
         match f(&mut self.client, &access) {
             Err(ServiceError::SignInAgain) => {
-                let old = self.tokens.load_mal().ok_or(ServiceError::SignInAgain)?;
+                let old = Token { access_token: access, refresh_token: String::new(), expires_at: 0 };
                 let access = self.refresh_now(&old)?;
                 f(&mut self.client, &access)
             }
@@ -885,7 +905,12 @@ impl<T: Transport> Mal<T> {
 
     /// Completes a sign-in: exchanges the code and saves the token file.
     pub fn complete_sign_in(&mut self, code: &str, verifier: &str) -> Result<(), ServiceError> {
-        let t = self.client.exchange_code(code, verifier)?;
+        self.complete_sign_in_to(code, verifier, REDIRECT_URI)
+    }
+
+    /// [`Mal::complete_sign_in`] for a sign-in that used another redirect.
+    pub fn complete_sign_in_to(&mut self, code: &str, verifier: &str, redirect_uri: &str) -> Result<(), ServiceError> {
+        let t = self.client.exchange_code_to(code, verifier, redirect_uri)?;
         self.save(&t)
     }
 }
@@ -1223,6 +1248,61 @@ mod tests {
         let mut mal = Mal::new(c, tmp_tokens("401", Some(token("old", 3000))));
         assert!(mal.fetch_list().is_ok());
         assert_eq!(seen.lock().unwrap().len(), 3);
+    }
+
+    /// A MyAnimeList that takes each refresh token once (a used one is refused, HTTP 400) and
+    /// answers a refresh slowly, as over a real network.
+    #[derive(Clone)]
+    struct OneUseServer {
+        valid: Arc<Mutex<Vec<String>>>,
+        issued: Arc<Mutex<u32>>,
+    }
+
+    impl Transport for OneUseServer {
+        fn send(&self, req: &Request) -> Result<Response, String> {
+            let Some(form) = req.form.as_deref().filter(|_| req.url == TOKEN_URL) else { return ok(r#"{"my_list_status":null}"#) };
+            let used = form.split('&').find_map(|p| p.strip_prefix("refresh_token=")).unwrap_or("").to_string();
+            let fine = {
+                let mut v = self.valid.lock().unwrap();
+                let at = v.iter().position(|t| *t == used);
+                at.map(|i| v.remove(i)).is_some()
+            };
+            std::thread::sleep(Duration::from_millis(300));
+            if !fine {
+                return status(400, None);
+            }
+            let n = {
+                let mut i = self.issued.lock().unwrap();
+                *i += 1;
+                *i
+            };
+            let access = format!("new{n}");
+            self.valid.lock().unwrap().push(format!("fake-refresh-{access}"));
+            ok(&tok_json(&access))
+        }
+    }
+
+    /// Review 2026-11-24 (A3): two workers (the sync and the queue) start together with an
+    /// expired token; both refresh with the same refresh token. The second must not end in
+    /// "sign in again" when the first one already got a fresh token.
+    #[test]
+    fn two_workers_refreshing_at_once_both_keep_working() {
+        let tokens = tmp_tokens("race", Some(token("old", -10)));
+        let server = OneUseServer { valid: Arc::new(Mutex::new(vec!["fake-refresh-old".into()])), issued: Arc::default() };
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let (tokens, server) = (tokens.clone(), server.clone());
+                std::thread::spawn(move || {
+                    let c = Client::new("fake-client-id".into(), server).with_own_budget().with_sleep(|_| {});
+                    let mut mal = Mal::new(c, tokens);
+                    mal.get_entry(1)
+                })
+            })
+            .collect();
+        let got: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        assert!(got.iter().all(Result::is_ok), "{got:?}");
+        assert_eq!(*server.issued.lock().unwrap(), 1, "one refresh");
+        assert!(tokens.load_mal().is_some_and(|t| t.access_token == "new1"));
     }
 
     #[test]

@@ -206,27 +206,7 @@ fn send(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
     );
 }
 
-pub fn pct_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'%' if b.len() >= i + 3 => {
-                if let Some(v) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                    out.push(v);
-                    i += 3;
-                    continue;
-                }
-                out.push(b'%');
-            }
-            b'+' => out.push(b' '),
-            c => out.push(c),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+pub use crate::http::pct_decode;
 
 #[cfg(test)]
 mod tests {

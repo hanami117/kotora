@@ -80,24 +80,55 @@ fn xdg(var: &str, home_rel: &str) -> PathBuf {
     .join("kotora")
 }
 
+/// Folders given by the app instead of found in the environment: Android has no `HOME` or XDG
+/// variables, so the app passes its own (`noBackupFilesDir`, `cacheDir`, ...). Each is the
+/// final folder (no `kotora` is added).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Roots {
+    pub config: PathBuf,
+    pub data: PathBuf,
+    pub cache: PathBuf,
+    pub state: PathBuf,
+}
+
+static ROOTS: std::sync::OnceLock<Roots> = std::sync::OnceLock::new();
+
+/// Sets the [`Roots`] for the whole process, once; false when they were set already. The
+/// desktop app never sets them.
+pub fn set_roots(roots: Roots) -> bool {
+    ROOTS.set(roots).is_ok()
+}
+
 /// `$XDG_CONFIG_HOME/kotora` (`~/.config/kotora`): `config.toml`.
 pub fn config_dir() -> PathBuf {
+    if let Some(r) = ROOTS.get() {
+        return r.config.clone();
+    }
     xdg("XDG_CONFIG_HOME", ".config")
 }
 
 /// `$XDG_DATA_HOME/kotora` (`~/.local/share/kotora`): `kotora.db`, `tokens.json`.
 pub fn data_dir() -> PathBuf {
+    if let Some(r) = ROOTS.get() {
+        return r.data.clone();
+    }
     xdg("XDG_DATA_HOME", ".local/share")
 }
 
 /// `$XDG_CACHE_HOME/kotora` (`~/.cache/kotora`): downloaded covers. Safe to delete.
 pub fn cache_dir() -> PathBuf {
+    if let Some(r) = ROOTS.get() {
+        return r.cache.clone();
+    }
     xdg("XDG_CACHE_HOME", ".cache")
 }
 
 /// `$XDG_STATE_HOME/kotora`, else `~/.local/state/kotora` (on macOS too): what the app
 /// remembers by itself, apart from the settings. Windows: `%LOCALAPPDATA%\kotora`.
 pub fn state_dir() -> Option<PathBuf> {
+    if let Some(r) = ROOTS.get() {
+        return Some(r.state.clone());
+    }
     #[cfg(windows)]
     return Some(win(Kind::State));
     #[cfg(not(windows))]

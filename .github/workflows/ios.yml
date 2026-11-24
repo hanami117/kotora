@@ -1,0 +1,48 @@
+# Kotora for iOS: kotora-mobile for the Apple-silicon Simulator, the Swift bindings, and the
+# SwiftUI app built for the Simulator. No signing, no device build, never publishes anything.
+# The core's and the mobile crate's tests and clippy run in android.yml.
+name: ios
+
+on:
+  push:
+    branches: [main]
+    paths: ["core/**", "mobile/**", "ios/**", "Cargo.toml", "Cargo.lock", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["core/**", "mobile/**", "ios/**", "Cargo.toml", "Cargo.lock", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust target and XcodeGen
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add aarch64-apple-ios-sim
+          brew install xcodegen
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: mobile -> target
+      - name: kotora-mobile for the Simulator, bindings, XCFramework
+        run: ios/scripts/build-rust.sh release --sim-only
+      - name: The app for the Simulator (unsigned)
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project Kotora.xcodeproj -scheme Kotora -configuration Debug \
+            -destination "generic/platform=iOS Simulator" -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO build -quiet

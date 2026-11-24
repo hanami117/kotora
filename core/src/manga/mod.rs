@@ -9,11 +9,17 @@
 //! - [`reading`]: what was read → a manga on the list, the offer, and the library watcher.
 //! - [`chapter_read`]: the one rule that says when Kotora counts a chapter as read.
 
+#[cfg(feature = "desktop")]
 pub mod name;
+#[cfg(feature = "desktop")]
 pub mod openfile;
+#[cfg(feature = "desktop")]
 pub mod reading;
+#[cfg(feature = "desktop")]
 pub mod resume;
+#[cfg(feature = "desktop")]
 pub mod viewer;
+#[cfg(feature = "desktop")]
 pub mod yacreader;
 
 /// Whether a chapter counts as read.

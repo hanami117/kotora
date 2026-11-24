@@ -1,0 +1,36 @@
+# Kotora for Android (and later iOS): the app-facing API over kotora-core, exported with UniFFI.
+# Its own workspace, so the desktop workspace, its Cargo.lock and its builds don't change.
+[workspace]
+resolver = "3"
+members = [".", "uniffi-bindgen"]
+
+[workspace.package]
+version = "0.5.1"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/hanami117/kotora"
+edition = "2024"
+
+[package]
+name = "kotora-mobile"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+description = "Kotora's mobile API: kotora-core for the Android app, through UniFFI"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+kotora-core = { path = "../core", default-features = false }
+uniffi = "=0.32.2"
+
+# The .so goes into the APK: small and fast. Debug APKs use it too (an unoptimized core is slow
+# and three times the size). Panics unwind: UniFFI turns one into a Kotlin exception instead of
+# closing the app.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

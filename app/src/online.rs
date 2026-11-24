@@ -331,8 +331,13 @@ fn finish_anilist(token: &kotora_core::tokens::Token) -> Result<(String, Option<
 }
 
 fn save_account(id: ServiceId, user: &User) -> Result<(String, Option<String>), String> {
-    let store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
-    store.set_account(id.name(), &user.name).map_err(|e| e.to_string())?;
+    let mut store = Store::open(&paths::db_file()).map_err(|e| e.to_string())?;
+    // Another account while the old one's changes wait: refused (they'd go to this account).
+    // The token just saved is this other account's: it goes again.
+    if let Err(e) = store.sign_in_as(id.name(), &user.name) {
+        let _ = TokenStore::new(paths::token_file()).forget(id.name());
+        return Err(e.to_string());
+    }
     let _ = store.set_picture(id.name(), user.picture.as_deref(), now_unix());
     let _ = store.set_profile(id.name(), &user.profile);
     Ok((user.name.clone(), user.picture.clone()))

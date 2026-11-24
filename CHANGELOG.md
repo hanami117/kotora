@@ -10,6 +10,24 @@ All notable changes to Kotora. Versions follow [semantic versioning](https://sem
   sync, none while the times are fresh). When it can't be had, the time is estimated from the weekly slot as
   before. The note on the Airing page says which times are exact.
 
+### Fixed
+- **Android and iOS, sign in while signed in** (another account, or signing in again): a refused sign-in now shows
+  its whole message in a dialog, e.g. why another account can't sign in while changes wait. On iOS it showed only
+  two lines, and nothing on the Settings tab.
+
+## [0.5.1] - 2026-11-24
+
+### Fixed
+- **Sign in again with another account:** the changes still waiting from your old account are no longer sent to the
+  new one. While they wait, the sign-in is refused and says what to do. Desktop and Android.
+- **A sync during a send:** it no longer puts the old progress back on screen (Now Playing could offer the same
+  episode twice).
+- **Settings:** two settings saved at the same moment no longer lose one, and a hand-edited `config.toml` (a list over
+  several lines, a comment after a `[section]`) no longer stops Kotora saving. Your comments and layout stay.
+- **MyAnimeList sign-in:** after a month away, Kotora no longer ends in "sign in again".
+- **Statistics:** undoing a rewatch you just started no longer counts the whole show as watched.
+- **Recognition:** a recap numbered "12.5" is read as episode 12, not episode 5.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added

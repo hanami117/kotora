@@ -12,10 +12,13 @@ pub mod airnotes;
 pub mod airtimes;
 pub mod config;
 pub mod covers;
+#[cfg(feature = "desktop")]
 pub mod discord;
 pub mod http;
+#[cfg(feature = "desktop")]
 pub mod library;
 pub mod listxml;
+#[cfg(feature = "desktop")]
 pub mod loopback;
 pub mod mal;
 pub mod manga;
@@ -26,6 +29,7 @@ pub mod model;
 pub mod paths;
 pub mod queue;
 pub mod ratelimit;
+#[cfg(feature = "desktop")]
 pub mod recognize;
 pub mod score;
 pub mod service;
@@ -34,6 +38,7 @@ pub mod store;
 pub mod sync;
 pub mod time;
 pub mod tokens;
+#[cfg(feature = "desktop")]
 pub mod update;
 
 pub use model::{Change, ListItem, Media, Remote, Values};
