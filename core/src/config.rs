@@ -943,9 +943,38 @@ impl Config {
     }
 }
 
-/// Sets `key = value` (a TOML literal) in `[section]` of `text`: replaces the key's line, or adds
-/// it at the section's end, or adds the section at the end. Everything else stays as it was.
+/// Sets `key = value` (a TOML literal) in `[section]` of `text`: replaces the key's value, or adds
+/// it to the section, or adds the section at the end. Everything else stays as it was: a TOML
+/// editor keeps comments, values written over several lines and headers with a comment. Only
+/// text it can't read falls back to the line edit.
 pub fn set_line(text: &str, section: &str, key: &str, value: &str) -> String {
+    if let (Ok(mut doc), Ok(v)) = (text.parse::<toml_edit::DocumentMut>(), value.parse::<toml_edit::Value>()) {
+        if !doc.contains_key(section) {
+            doc[section] = toml_edit::table();
+        }
+        if let Some(t) = doc[section].as_table_like_mut() {
+            match t.get_mut(key).and_then(|i| i.as_value_mut()) {
+                Some(old) => {
+                    // The comment after the old value stays.
+                    let decor = old.decor().clone();
+                    *old = v;
+                    *old.decor_mut() = decor;
+                }
+                None => {
+                    t.insert(key, toml_edit::value(v));
+                }
+            }
+            let mut out = doc.to_string();
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            return out;
+        }
+    }
+    set_line_plain(text, section, key, value)
+}
+
+fn set_line_plain(text: &str, section: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let header = format!("[{section}]");
     let is_header = |l: &str| l.trim_start().starts_with('[');
@@ -1089,19 +1118,30 @@ pub fn client_id_hint(id: &str) -> String {
 }
 
 /// Writes one setting to the file (0600, through a temp file and a rename).
+/// One writer at a time: settings save on their own threads, and two read-modify-writes at once
+/// would lose one of the changes.
 pub fn write_setting(path: &Path, section: &str, key: &str, value: &str) -> Result<(), String> {
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let old = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("can't read config.toml: {e}")),
     };
+    // A file Kotora can't read is left as it is (the user's to fix), never rewritten.
+    if !old.trim().is_empty()
+        && let Err(e) = Config::parse(&old)
+    {
+        return Err(format!("{e}; fix it (or remove it) and Kotora saves settings again"));
+    }
     let new = set_line(&old, section, key, value);
     // Never write a file the reader would refuse.
     Config::parse(&new)?;
     if let Some(dir) = path.parent() {
         crate::paths::create_private_dir(dir).map_err(|e| format!("can't create the config folder: {e}"))?;
     }
-    let tmp = path.with_extension("toml.tmp");
+    // A temp name of this process: another Kotora (a test copy) never shares it.
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
     {
         use std::io::Write;
         let mut o = std::fs::OpenOptions::new();
@@ -1468,5 +1508,48 @@ mod tests {
         assert!(write_setting(&path, "updates", "auto", "\"not a bool\"").is_err(), "a value the reader refuses is not written");
         assert!(Config::load(&path).unwrap().updates.auto);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Review 2026-11-24 (C1): settings are saved on their own threads (one per switch); two
+    /// saves at once must both land (a read-modify-write each, and one temp file name).
+    #[test]
+    fn saves_at_the_same_time_keep_every_setting() {
+        let dir = std::env::temp_dir().join(format!("kot-config-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        write_setting(&path, "updates", "auto", "true").unwrap();
+        for round in 0..20 {
+            let threads: Vec<_> = (0..8)
+                .map(|i| {
+                    let path = path.clone();
+                    std::thread::spawn(move || write_setting(&path, "review", &format!("k{round}_{i}"), "true"))
+                })
+                .collect();
+            let errors: Vec<String> = threads.into_iter().filter_map(|t| t.join().unwrap().err()).collect();
+            assert!(errors.is_empty(), "round {round}: {errors:?}");
+            let text = std::fs::read_to_string(&path).unwrap();
+            for i in 0..8 {
+                assert!(text.contains(&format!("k{round}_{i} = true")), "round {round}: k{round}_{i} lost\n{text}");
+            }
+        }
+        assert!(Config::load(&path).unwrap().updates.auto);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Review 2026-11-24 (C2): a value written by hand over several lines, or a section header
+    /// with a comment, must not stop Kotora saving that setting (the line edit made a file the
+    /// reader refuses, so the save failed).
+    #[test]
+    fn hand_written_shapes_can_still_be_saved() {
+        let text = "[library]\nfolders = [\n  \"/media/anime\",\n  \"/media/more\",\n]\nopen_with = \"mpv\"\n";
+        let new = set_line(text, "library", "folders", &quote_list(&["/media/new".to_string()]));
+        let c = Config::parse(&new).unwrap_or_else(|e| panic!("{e}\n{new}"));
+        assert_eq!(c.library.folders, ["/media/new"]);
+        assert_eq!(c.library.open_with, "mpv");
+        let text = "[updates] # mine\nauto = true\n";
+        let new = set_line(text, "updates", "threshold", "80");
+        let c = Config::parse(&new).unwrap_or_else(|e| panic!("{e}\n{new}"));
+        assert!(c.updates.auto && c.updates.threshold == 80, "{new}");
+        assert!(new.contains("# mine"), "{new}");
     }
 }

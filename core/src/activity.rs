@@ -14,7 +14,7 @@
 //!   to Completed in one step, are a title watched before, not now: no row.
 //! - Progress down (an Undo, a Discard, a correction): the entry's rows of the last two days give
 //!   back what is above the new progress. A rewatch that starts (progress back to 0) gives back
-//!   nothing.
+//!   nothing, and a rewatch stopped before its end (an Undo of its start) logs nothing.
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -77,6 +77,9 @@ fn follow_with(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>
         Some(b) => (b.progress, b.volumes),
     };
     let rewatch_start = before.is_some_and(|b| (after.rewatching && !b.rewatching) || after.times_rewatched > b.times_rewatched);
+    // A rewatch stopped without being finished (an Undo or Discard of its start, or turned
+    // off): the progress goes back to where it was before; nothing was watched.
+    let rewatch_undone = before.is_some_and(|b| b.rewatching && !after.rewatching && after.times_rewatched <= b.times_rewatched);
     if after.progress < from && !rewatch_start {
         take_back(tx, sc, media_id, after.progress, Col::Progress, now)?;
     }
@@ -85,7 +88,7 @@ fn follow_with(tx: &Connection, sc: Scope, media_id: u32, before: Option<Values>
     }
     let up = after.progress > from;
     let vol_up = after.volumes > vol_from;
-    if !ups || (!up && !vol_up) {
+    if !ups || rewatch_undone || (!up && !vol_up) {
         return Ok(());
     }
     let (from, to) = if up { (from, after.progress) } else { (after.progress, after.progress) };

@@ -426,8 +426,13 @@ impl Kotora {
     }
 
     fn save_account(&self, service: Service, user: &User) -> Result<Account, KotoraError> {
-        let store = self.store();
-        store.set_account(service.name(), &user.name)?;
+        let mut store = self.store();
+        // Another account while the old one's changes wait: refused (they'd go to this
+        // account), and the token just saved goes again.
+        if let Err(e) = store.sign_in_as(service.name(), &user.name) {
+            let _ = self.tokens.forget(service.name());
+            return Err(KotoraError::SignInFailed { message: e.to_string() });
+        }
         let _ = store.set_picture(service.name(), user.picture.as_deref(), time::now_unix());
         let _ = store.set_profile(service.name(), &user.profile);
         // The first account (or the one just signed in to, when the other isn't) is the active one.

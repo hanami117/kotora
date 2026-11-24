@@ -2,6 +2,23 @@
 
 All notable changes to Kotora. Versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Sign in again with another account:** Kotora no longer sends the changes still waiting from your old account to
+  the new one (they could edit, add or remove entries on the other account's list). While they wait, the sign-in is
+  refused and says what to do; with nothing waiting, the old account's saved list goes, as at a sign out. Desktop and
+  Android.
+- **A sync during a send:** a list read while a change was being sent no longer puts the old progress back on screen
+  until the next sync (Now Playing could offer, and the activity log count, the same episode twice).
+- **Settings:** two settings saved at the same moment no longer lose one of them, and `config.toml` edited by hand
+  (a list over several lines, a comment after a `[section]`) no longer stops Kotora saving a setting. Comments and
+  layout stay as you wrote them.
+- **MyAnimeList sign-in:** after a month away, the workers starting together no longer refresh the token twice and
+  end in "sign in again".
+- **Statistics:** undoing a rewatch you just started no longer counts the whole show as watched.
+- **Recognition:** a recap numbered "12.5" is read as episode 12, not episode 5.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
