@@ -49,8 +49,24 @@ impl Parsed {
 }
 
 fn last_number(s: &str) -> Option<u32> {
-    // "06", "06v2" (the version is its own element), "01-02" (the last), "12.5" (the whole part).
-    s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).next_back()
+    // "06", "06v2" (the version is its own element), "01-02" (the last), "12.5" (the whole part:
+    // the digits after a decimal point are no number of their own).
+    let mut last = None;
+    let mut run_start = None;
+    for (i, c) in s.char_indices().chain(std::iter::once((s.len(), ' '))) {
+        match (c.is_ascii_digit(), run_start) {
+            (true, None) => run_start = Some(i),
+            (false, Some(st)) => {
+                run_start = None;
+                let decimals = s[..st].strip_suffix('.').is_some_and(|b| b.ends_with(|c: char| c.is_ascii_digit()));
+                if !decimals {
+                    last = s[st..i].parse().ok().or(last);
+                }
+            }
+            _ => {}
+        }
+    }
+    last
 }
 
 fn parse_name(name: &str) -> Parsed {
@@ -465,3 +481,4 @@ pub fn skipped(progress: u32, episode: u32) -> Option<(u32, u32)> {
 
 #[cfg(test)]
 mod tests;
+

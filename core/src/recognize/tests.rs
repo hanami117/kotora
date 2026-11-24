@@ -304,3 +304,17 @@ fn a_search_prefers_the_files_season() {
     let f = from_search(&p, &[hit(11, "Yakusou no Sasayaki"), hit(91, "Yakusou no Sasayaki Movie")], &items);
     assert_eq!(f, Found::List { media_id: 11, sure: false, why: "found by a MyAnimeList search, but the file says season 4".into() });
 }
+
+/// Review 2026-11-24 (C3): a recap numbered "12.5" is read as episode 12 (its whole part), not
+/// episode 5.
+#[test]
+fn a_half_episode_is_not_read_as_its_decimal() {
+    let p = parse("[Group] Lanterns of Kirigaoka - 12.5 [1080p].mkv").unwrap();
+    assert_eq!(p.title, "Lanterns of Kirigaoka");
+    assert_eq!(p.episode, Some(12), "12.5 read as episode 5 before");
+    assert_eq!(last_number("12.5"), Some(12));
+    assert_eq!(last_number("01-02"), Some(2));
+    assert_eq!(last_number("06"), Some(6));
+    assert_eq!(last_number("E07"), Some(7));
+    assert_eq!(last_number("v2"), Some(2));
+}
